@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-14 (Veraltete Ansichten: Tasks, Policy und Verbrauch ziehen nach)
+- **Befund aus der Praxis:** in der Tasks-Tabelle stand als letztes Ergebnis noch
+  ein DNS-Fehler von 08:08, waehrend `tasks.json` laengst "Nichts zu tun." und
+  einen erfolgreichen Lauf um 17:08 fuehrte. Die Tabelle laedt naemlich nur
+  einmal beim Oeffnen der Seite — wer den Tab offenliess, sah beliebig alte
+  Staende und hielt ein behobenes Problem fuer aktuell.
+- Tasks und Policy ziehen jetzt alle 15 s nach, aber nur fuer den sichtbaren
+  Tab und nicht im Hintergrund-Reiter (`document.hidden`).
+- Die Verbrauchszeilen werden nicht mehr nur serverseitig gerendert: sie tragen
+  ein `data-usage` und werden aus `/api/usage` aktualisiert, ebenso die Summe in
+  der Fusszeile. Damit waechst der Zaehler beim Zuschauen mit.
+- Nebenbei: die Zeitzone des Hosts stand auf `America/Chicago` (UTC und NTP
+  waren korrekt, nur die Zone nicht) — 7 Stunden Versatz in `daily HH:MM`,
+  in der Tagesgrenze des Verbrauchszaehlers und in allen Server-Zeitstempeln.
+  Nach `timedatectl set-timezone Europe/Berlin` braucht der Manager einen
+  Neustart, glibc liest die Zone nur einmal pro Prozess.
+
 ## 2026-08-14 (Rest der Oberflaechen gegen Industry geprueft)
 - **Web-Chat (`/chat`) war das groesste Loch**: eigene Palette mit orangem
   Akzent (#e8590c), 14 px Rundung, system-ui. Jetzt Industry-Tokens unter den

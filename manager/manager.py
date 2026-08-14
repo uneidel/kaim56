@@ -2091,8 +2091,8 @@ footer{border-top:1px solid var(--color-divider)}
 
 </main>
 <footer><div class="foot-in text-muted">
-  <span>NAT via __HOSTIF__</span><span>Pool __POOL__</span><span>__SPEND__</span>
-  <span style="margin-left:auto">kAIm56</span>
+  <span>NAT via __HOSTIF__</span><span>Pool __POOL__</span>
+  <span id=spend></span><span style="margin-left:auto">kAIm56</span>
 </div></footer>
 </div>
 
@@ -2263,6 +2263,25 @@ function saveTask(){
       document.getElementById('tk-msg').value='';loadTasks();});
 }
 async function delTask(id){if(confirm('Delete task?')){await fetch('/api/tasks/'+encodeURIComponent(id)+'/delete',{method:'POST'});loadTasks();}}
+
+/* — Verbrauch: dieselben Zahlen wie serverseitig, nur nachgereicht — */
+function fmtTok(n){n=n||0;
+  return n>=1e6?(n/1e6).toFixed(1).replace(/\\.0$/,'')+'M'
+       : n>=1000?(n/1000).toFixed(1).replace(/\\.0$/,'')+'k' : String(n)}
+function fmtCost(c){c=c||0; return '$'+(c>=0.01?c.toFixed(2):c.toFixed(4))}
+async function refreshUsage(){
+  let u; try{u=await (await fetch('/api/usage')).json()}catch(e){return}
+  let day=0,all=0;
+  document.querySelectorAll('[data-usage]').forEach(el=>{
+    const v=u[el.dataset.usage]; if(!v)return;
+    el.innerHTML='Tokens heute '+fmtTok(v.today.in)+'&nbsp;/&nbsp;'+fmtTok(v.today.out)+
+      ' · '+fmtCost(v.today.cost)+' &nbsp;·&nbsp; gesamt '+fmtTok(v.total.in)+
+      '&nbsp;/&nbsp;'+fmtTok(v.total.out)+' · '+fmtCost(v.total.cost);
+  });
+  Object.values(u).forEach(v=>{day+=(v.today||{}).cost||0; all+=(v.total||{}).cost||0});
+  const f=document.getElementById('spend');
+  if(f)f.textContent='LLM heute '+fmtCost(day)+' · gesamt '+fmtCost(all);
+}
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
 const TABS=['instances','personas','skills','mcp','tasks','policy','models','sharing','secrets','settings','changelog'];
@@ -2739,6 +2758,18 @@ function saveSecrets(){
 window.onload=()=>{
   showTab(location.hash.slice(1));
   renderSettings();renderParams();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
+  refreshUsage();
+  // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
+  // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
+  // laengst behobenes Problem fuer aktuell). Alle 15 s nachziehen, aber nur
+  // fuer den sichtbaren Tab und nicht im Hintergrund-Reiter.
+  setInterval(()=>{
+    if(document.hidden)return;
+    const t=location.hash.slice(1)||'instances';
+    if(t==='tasks')loadTasks();
+    else if(t==='policy')loadPolicy();
+    else if(t==='instances')refreshUsage();
+  },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};
   // Haken merken, ohne bei jedem Klick die ganze Tabelle neu zu bauen.
   document.getElementById('mdlrows').onchange=e=>{
@@ -2831,10 +2862,10 @@ def render():
                       if model else "")
         u = usage.get(name) or {}
         ut, ud = u.get("total") or {}, u.get("today") or {}
-        usage_line = ""
+        usage_line = f"<span class='text-muted' style='font-size:12px' data-usage='{name}'></span>"
         if ut.get("calls"):
             usage_line = (
-                f"<span class='text-muted' style='font-size:12px' "
+                f"<span class='text-muted' style='font-size:12px' data-usage='{name}' "
                 f"title='Von diesem Agenten gemeldeter LLM-Verbrauch "
                 f"({ut['calls']} Aufrufe gesamt)'>"
                 f"Tokens heute {_fmt_tok(ud.get('in'))}&nbsp;/&nbsp;{_fmt_tok(ud.get('out'))}"
@@ -2898,10 +2929,7 @@ def render():
                 .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
                 .replace("__SKILLS__", json.dumps(load_skills(), ensure_ascii=False))
                 .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
-                .replace("__SPEND__", "LLM heute " + _fmt_cost(
-                    sum((u.get("today") or {}).get("cost", 0) for u in usage.values()))
-                    + " · gesamt " + _fmt_cost(
-                    sum((u.get("total") or {}).get("cost", 0) for u in usage.values()))))
+                )
 
 
 # ---- Chat (Oberflaeche unter /chat, siehe chatui.py) ------------------------
