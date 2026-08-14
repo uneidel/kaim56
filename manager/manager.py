@@ -541,6 +541,32 @@ def add_task(instance, message, schedule=""):
     return t
 
 
+def update_task(task_id, message=None, schedule=None):
+    """Aufgabe aendern. Ein geaenderter Zeitplan wird sofort neu terminiert —
+    sonst liefe die Aufgabe noch einmal nach dem alten Plan. Ein leerer Plan
+    macht aus der Wiederholung eine einmalige Aufgabe (faellig jetzt); eine
+    gerade laufende Aufgabe wird nicht angefasst."""
+    tasks = load_tasks()
+    t = next((x for x in tasks if x.get("id") == task_id), None)
+    if t is None:
+        return "unknown"
+    if t.get("status") == "running":
+        return "task is running — try again when it is done"
+    now = int(time.time())
+    if message is not None and str(message).strip():
+        t["message"] = str(message).strip()
+    if schedule is not None:
+        sched = str(schedule).strip()
+        if sched != t.get("schedule", ""):
+            t["schedule"] = sched
+            t["next_run"] = _next_run(sched, now) if sched else now
+            t["status"] = "scheduled" if sched else "pending"
+    t["updated"] = now
+    save_tasks(tasks)
+    when = time.strftime("%d.%m. %H:%M", time.localtime(t["next_run"]))
+    return f"task {task_id} updated (next run {when})"
+
+
 def _next_run(schedule, from_ts):
     """Nächster Ausführungszeitpunkt (epoch) für eine Zeitplan-Angabe.
     Formate: 'every 30m' | 'every 2h' | 'every 1d' | 'daily HH:MM' | 'hourly'."""
@@ -1985,7 +2011,7 @@ footer{border-top:1px solid var(--color-divider)}
   </table>
   <div class="panel blueprint" style="margin-top:32px">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-    <h4 style="margin:0 0 16px">New task</h4>
+    <h4 style="margin:0 0 16px" id=tk-head>New task</h4>
     <div class=grid2>
       <div class=field><label>Instance</label><select class=input id=tk-inst></select></div>
       <div class=field><label>Schedule (empty = once, right away)</label>
@@ -1995,7 +2021,7 @@ footer{border-top:1px solid var(--color-divider)}
       <div class="field span2"><label>Job (the message sent to the agent)</label>
         <textarea class=input id=tk-msg style="min-height:90px" placeholder="e.g. Summarise the new Home Assistant events and report anything unusual."></textarea></div>
     </div>
-    <div class=panel-foot><span id=tkmsg class=msg></span><button class="btn btn-primary" onclick=saveTask()>Create task</button></div>
+    <div class=panel-foot><span id=tkmsg class=msg></span><button class="btn btn-secondary" id=tk-cancel style="display:none" onclick=cancelEdit()>Cancel</button><button class="btn btn-primary" id=tk-save onclick=saveTask()>Create task</button></div>
   </div>
 </section>
 
@@ -2241,6 +2267,7 @@ async function loadTasks(){
   const sel=document.getElementById('tk-inst');
   if(sel)sel.innerHTML=insts.map(i=>`<option value="${esc(i.name)}">${escT(i.name)}</option>`).join('')||'<option value="">— no instance —</option>';
   const tag={scheduled:'tag-accent',pending:'tag-accent',running:'tag-accent',done:'tag-neutral',error:'tag-neutral'};
+  TASKS=tasks||[];
   document.getElementById('taskrows').innerHTML=(tasks||[]).map(t=>{
     const nr=t.schedule?` · next ${fmtTs(t.next_run)}`:'';
     const res=(t.result||'').slice(0,120);
@@ -2249,14 +2276,54 @@ async function loadTasks(){
       `<td data-label=Schedule class=mono style="font-size:12px">${escT(t.schedule||'once')}${nr}</td>`+
       `<td data-label=Status><span class="tag ${tag[t.status]||'tag-neutral'}">${escT(t.status)}</span></td>`+
       `<td data-label=Result class=text-muted style="font-size:12px">${escT(res)}</td>`+
-      `<td><button class="btn btn-icon btn-secondary" style="width:30px;height:30px" title=Delete onclick="delTask('${esc(t.id)}')">${I_DEL}</button></td></tr>`;
+      `<td style="white-space:nowrap">`+
+      `<button class="btn btn-icon btn-secondary" style="width:30px;height:30px;margin-right:4px" `+
+        `title="Edit (schedule / job)" onclick="editTask('${esc(t.id)}')">${I_EDIT}</button>`+
+      `<button class="btn btn-icon btn-secondary" style="width:30px;height:30px" `+
+        `title=Delete onclick="delTask('${esc(t.id)}')">${I_DEL}</button></td></tr>`;
   }).join('')||'<tr><td colspan=6 class=text-muted style="padding:14px">no tasks yet</td></tr>';
+}
+let TASKS=[], TK_EDIT='';
+/* Bearbeiten laeuft ueber dasselbe Formular — eine zweite Maske waere doppelt
+   gepflegt. Die Instanz bleibt gesperrt: sie zu wechseln waere ein anderer
+   Task (andere Tools/Secrets), dafuer gibt es Anlegen. */
+function editTask(id){
+  const t=TASKS.find(x=>x.id===id); if(!t)return;
+  TK_EDIT=id;
+  const inst=document.getElementById('tk-inst');
+  inst.value=t.instance; inst.disabled=true;
+  document.getElementById('tk-sched').value=t.schedule||'';
+  document.getElementById('tk-msg').value=t.message||'';
+  document.getElementById('tk-head').textContent='Edit task · '+t.instance;
+  document.getElementById('tk-save').textContent='Save changes';
+  document.getElementById('tk-cancel').style.display='';
+  document.getElementById('tkmsg').textContent='';
+  document.getElementById('tk-head').scrollIntoView({behavior:'smooth',block:'center'});
+}
+function cancelEdit(){
+  TK_EDIT='';
+  const inst=document.getElementById('tk-inst'); inst.disabled=false;
+  document.getElementById('tk-sched').value='';
+  document.getElementById('tk-msg').value='';
+  document.getElementById('tk-head').textContent='New task';
+  document.getElementById('tk-save').textContent='Create task';
+  document.getElementById('tk-cancel').style.display='none';
 }
 function saveTask(){
   const instance=document.getElementById('tk-inst').value,
         message=document.getElementById('tk-msg').value.trim(),
         schedule=document.getElementById('tk-sched').value.trim();
-  if(!instance||!message)return alert('Instance + job?');
+  if(!message)return alert('Job?');
+  if(TK_EDIT){
+    fetch('/api/tasks/'+encodeURIComponent(TK_EDIT)+'/update',
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({message,schedule})})
+      .then(r=>r.json()).then(d=>{
+        document.getElementById('tkmsg').textContent=(d.msg||'saved')+' ✓';
+        cancelEdit();loadTasks();});
+    return;
+  }
+  if(!instance)return alert('Instance?');
   fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({instance,message,schedule})})
     .then(r=>r.json()).then(d=>{document.getElementById('tkmsg').textContent=(d.msg||'created')+' ✓';
@@ -2766,7 +2833,7 @@ window.onload=()=>{
   setInterval(()=>{
     if(document.hidden)return;
     const t=location.hash.slice(1)||'instances';
-    if(t==='tasks')loadTasks();
+    if(t==='tasks'&&!TK_EDIT)loadTasks();
     else if(t==='policy')loadPolicy();
     else if(t==='instances')refreshUsage();
   },15000);
@@ -3625,6 +3692,10 @@ class H(BaseHTTPRequestHandler):
                 tid = parts[2]
                 save_tasks([x for x in load_tasks() if x["id"] != tid])
                 msg = f"task {tid} deleted"
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "update":
+                ln = int(self.headers.get("Content-Length", 0) or 0)
+                b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+                msg = update_task(parts[2], b.get("message"), b.get("schedule"))
             elif parts == ["api", "secret-policy"]:
                 if instance_by_ip(self.client_address[0]) is not None:
                     msg = "forbidden (admin only)"
