@@ -1,0 +1,60 @@
+{
+  "template": "pi",
+  "description": "Pi Coding Agent (pi.dev, multi-provider)",
+  "rootfs": "instances/pi-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 2048,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport",
+      "type": "select",
+      "options": ["signal", "web"],
+      "default": "signal"
+    },
+    {
+      "key": "SIGNAL_NUMBER",
+      "label": "Signal number (bot)",
+      "default": "+490000000000"
+    },
+    {
+      "key": "ALLOWED_SENDERS",
+      "label": "Allowed number(s)",
+      "default": "+490000000000"
+    },
+    {
+      "key": "PI_PROVIDER",
+      "label": "Provider (empty = derive from model)",
+      "default": "openrouter"
+    },
+    {
+      "key": "PI_MODEL",
+      "label": "Model (tool-capable, shortlist)",
+      "type": "select",
+      "source": "openrouter",
+      "tools": true,
+      "relevant": true,
+      "default": "google/gemini-2.5-flash"
+    },
+    {
+      "key": "OPENROUTER_API_KEY",
+      "label": "OpenRouter API key",
+      "default": ""
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "label": "Anthropic API key",
+      "default": ""
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "label": "OpenAI API key",
+      "default": ""
+    },
+    {
+      "key": "PI_EXTRA_ARGS",
+      "label": "Extra pi flags (optional)",
+      "default": ""
+    }
+  ]
+}

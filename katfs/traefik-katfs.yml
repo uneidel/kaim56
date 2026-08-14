@@ -1,0 +1,19 @@
+# Auf .198 in die Traefik-Dynamic-Config (File-Provider) einfügen —
+# dieselbe Datei/Verzeichnis, in der auch rtr-agents/srv-agents/agents-auth stehen.
+http:
+  routers:
+    rtr-katfs:
+      rule: "Host(`katfs.kat56.de`)"
+      entryPoints: ["websecure"]
+      middlewares: ["agents-auth@file"]     # gleiche Basic-Auth wie agents (admin / AGENTS_PASS)
+      service: "srv-katfs"
+      tls:
+        certResolver: "desec"
+        domains:
+          - main: "kat56.de"
+            sans: ["*.kat56.de"]
+  services:
+    srv-katfs:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.240:8790"

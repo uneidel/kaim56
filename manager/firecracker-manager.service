@@ -1,0 +1,31 @@
+[Unit]
+Description=Firecracker Manager (Web-UI + microVM control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ulrich/firecracker
+Environment=PORT=8700
+Environment=HOSTIF=enp0s31f6
+# Web-Auth (leer = keine Auth -> nur hinter Traefik/SSO betreiben!):
+Environment=MANAGER_USER=admin
+Environment=MANAGER_PASS=
+ExecStart=/usr/bin/python3 /home/ulrich/firecracker/manager.py
+Restart=always
+RestartSec=5
+# Die microVMs sind Kindprozesse des Managers und haengen damit in seiner
+# Cgroup: ohne dies nimmt jedes `systemctl restart` alle laufenden Instanzen
+# mit. KillMode=process beendet nur den Manager selbst, die VMs laufen weiter
+# und bleiben ueber ihre pidfiles steuerbar.
+KillMode=process
+# Muss root sein (kvm, ip, iptables):
+User=root
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation:
+#   sudo cp firecracker-manager.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
+#   journalctl -u firecracker-manager -f

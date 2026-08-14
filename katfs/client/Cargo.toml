@@ -1,0 +1,19 @@
+[package]
+name = "katfs-share"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "katfs-share"
+path = "src/main.rs"
+
+[dependencies]
+# Auf die Version des Host-Knotens festgenagelt — beide Seiten muessen sich
+# ueber iroh einig sein, das eigene katfs/0 sitzt nur obendrauf.
+iroh = "=1.0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.release]
+opt-level = 2

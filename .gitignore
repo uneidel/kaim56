@@ -1,0 +1,35 @@
+# --- Laufzeit & Daten: gehoeren auf den Host, nie ins Repo -------------------
+manager/settings.json          # API-Keys (0600)
+manager/chats.json             # Chat-Verlauf
+manager/tasks.json
+manager/memory.json
+manager/inbox_wm.json
+manager/history.db
+manager/security.json          # Befunde ueber die eigene Installation
+manager/traefik-agents.yml     # enthaelt den basicAuth-Hash -> examples/
+manager/audit/
+manager/run/
+manager/instances/
+manager/bin/
+
+# --- Build-Artefakte ----------------------------------------------------------
+__pycache__/
+*.pyc
+*.bak-*
+app/app/build/
+app/build/
+app/.gradle/
+app/dist/
+local.properties
+katfs/**/target/
+katfs/dist/
+*.log
+
+# --- Nichts Grosses und nichts Geheimes ---------------------------------------
+*.apk                          # Releases gehoeren an Gitea-Releases
+*.ext4                         # rootfs-Images (GB-Bereich), werden gebaut
+vmlinux
+app/keystore/                  # Signaturschluessel der App
+secret.key                     # iroh-Node-Identitaet (katfs)
+*.jks
+*.p12

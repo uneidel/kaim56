@@ -1,0 +1,22 @@
+{
+  "template": "prime",
+  "description": "Prime Agent (primeintellect.ai, self-improving CLI)",
+  "rootfs": "instances/prime-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 2048,
+  "params": [
+    {"key": "TRANSPORT", "label": "Transport", "type": "select", "options": ["signal", "web"], "default": "signal"},
+    {"key": "SIGNAL_NUMBER", "label": "Signal number (bot)", "default": "+490000000000"},
+    {"key": "ALLOWED_SENDERS", "label": "Allowed number(s)", "default": "+490000000000"},
+    {"key": "PRIME_PROVIDER", "label": "Provider", "default": "openrouter"},
+    {"key": "PRIME_MODEL", "label": "Model (tool-capable, shortlist)", "type": "select",
+     "source": "openrouter", "tools": true, "relevant": true, "default": "google/gemini-2.5-flash"},
+    {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API key", "default": ""},
+    {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API key", "default": ""},
+    {"key": "OPENAI_API_KEY", "label": "OpenAI API key", "default": ""},
+    {"key": "PRIME_API_KEY", "label": "Prime Inference API key", "default": ""},
+    {"key": "PRIME_AUTONOMOUS", "label": "Autonomous (until gates/limits)", "type": "select", "options": ["false", "true"], "default": "false"},
+    {"key": "PRIME_MAX_TURNS", "label": "Max autonomous turns", "default": ""},
+    {"key": "PRIME_EXTRA_ARGS", "label": "Extra prime-agent flags (optional)", "default": ""}
+  ]
+}

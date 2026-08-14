@@ -1,0 +1,26 @@
+[package]
+name = "katfs-web"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# iroh in relay-only mode for the browser. default-features off + tls-ring
+# mirrors n0-computer/iroh-examples/browser-echo (the working WASM reference).
+iroh = { version = "1", default-features = false, features = ["tls-ring"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+# getrandom must use the JS backend on wasm. Also requires:
+#   RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
