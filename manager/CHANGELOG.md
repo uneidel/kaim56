@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-14 (Rest der Oberflaechen gegen Industry geprueft)
+- **Web-Chat (`/chat`) war das groesste Loch**: eigene Palette mit orangem
+  Akzent (#e8590c), 14 px Rundung, system-ui. Jetzt Industry-Tokens unter den
+  gleichen Variablennamen — Slate-Blau, Barlow/Barlow Condensed, eckig,
+  Haarlinien. Eigene Nachricht gefuellt wie `.btn-primary`, Antwort als Karte
+  mit Haarlinie — dieselbe Aufteilung wie in der App.
+- **Fund im Manager:** `.radio .dot` war eckig (2 px). Im System ist der
+  Radio-Punkt ausdruecklich **rund** (`border-radius: 50%`) — korrigiert. Der
+  Statuspunkt im Chat bleibt aus demselben Grund rund.
+- **Browser-Terminal**: Konsole bleibt dunkel (dafuer gibt es keine
+  Systemkomponente, und ein heller Terminalgrund waere schlechter), aber Leiste
+  und Tasten folgen jetzt dem dunklen Band, Slate-Blau, eckig, Barlow.
+- **Offen: katfs-Freigabeseite** (`katfs/web/index.html`) — eigene dunkle
+  Palette mit Blau/Gruen, Rundungen 5/10/50 %, system-ui. Nicht angefasst,
+  weil dort auch die WASM-Bruecke haengt.
+
 ## 2026-08-14 (App folgt dem Design-System "Industry")
 - Tokens direkt aus dem Projekt gelesen (`DesignSync get_file` auf
   `theme.json` + `styles.css`) statt nachgebaut — die App hatte bisher nur

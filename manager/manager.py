@@ -1693,7 +1693,7 @@ code{font-family:var(--font-mono);font-size:.88em;background:var(--color-neutral
 textarea.input{min-height:90px;resize:vertical;line-height:1.5}
 .radio{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px}
 .radio input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
-.radio .dot{width:16px;height:16px;flex:none;border-radius:2px;border:1.5px solid var(--color-divider)}
+.radio .dot{width:16px;height:16px;flex:none;border-radius:50%;border:1.5px solid var(--color-divider)}
 .radio:hover .dot{border-color:var(--color-accent)}
 .radio input:checked+.dot{border-color:var(--color-accent);background:var(--color-accent);
   box-shadow:inset 0 0 0 4px var(--color-bg)}

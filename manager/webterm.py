@@ -33,16 +33,21 @@ PAGE = """<!doctype html><html lang=en><meta charset=utf-8>
 <title>Terminal</title>
 <link rel=stylesheet href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
- html,body{height:100%;margin:0;background:#0f1115}
+ /* Die Konsole bleibt dunkel — dafuer gibt es im System keine Komponente und
+    ein heller Terminalgrund waere schlechter. Alles drumherum folgt Industry:
+    dunkles Band, Slate-Blau als Akzent, eckig, Barlow. */
+ html,body{height:100%;margin:0;background:#141618}
  body{display:flex;flex-direction:column;height:100vh}
- #bar{font:13px system-ui,sans-serif;color:#9aa4b2;padding:6px 10px;background:#171a21;flex:none}
- #bar b{color:#c8e6c9}
- #keys{display:flex;gap:6px;padding:6px 8px;background:#141821;overflow-x:auto;
+ #bar{font:13px "Barlow",system-ui,sans-serif;color:rgba(232,233,234,.55);
+      padding:6px 10px;background:#1c1f22;flex:none}
+ #bar b{color:#94bce3}
+ #keys{display:flex;gap:6px;padding:6px 8px;background:#1c1f22;overflow-x:auto;
        white-space:nowrap;flex:none;-webkit-overflow-scrolling:touch}
- #keys button{font:13px system-ui,sans-serif;color:#e6e6e6;background:#242a36;border:1px solid #333;
-              border-radius:6px;padding:8px 12px;flex:none;min-width:40px;touch-action:manipulation}
- #keys button:active{background:#3a6df0}
- #keys button.on{background:#3a6df0;border-color:#3a6df0}
+ #keys button{font:13px "Barlow Condensed",system-ui,sans-serif;font-weight:600;
+              color:#e8e9ea;background:transparent;border:1px solid rgba(232,233,234,.16);
+              border-radius:0;padding:8px 12px;flex:none;min-width:40px;touch-action:manipulation}
+ #keys button:active{background:#94bce3;color:#141618}
+ #keys button.on{background:#94bce3;border-color:#94bce3;color:#141618}
  #term{flex:1;min-height:0;padding:4px 6px}
 </style>
 <div id=bar>🖥️ <b id=st>connecting…</b></div>

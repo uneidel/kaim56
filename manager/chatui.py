@@ -16,24 +16,31 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <title>kAIm56 chat</title>
 <link rel=icon type="image/svg+xml" href="/logo.svg">
 <style>
+/* Design-System "Industry" (claude.ai/design) — dieselben Variablennamen wie
+   zuvor, aber die Werte kommen aus styles.css: Slate-Blau, Barlow, eckig,
+   Haarlinien. Der dunkle Block ist eine Erweiterung (das System liefert nur
+   das helle Band aus), abgeleitet aus denselben Rampen. */
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
 :root{
-  --bg:#f3f4f6;--panel:#ffffff;--panel-2:#f7f8fa;--border:#e4e7eb;
-  --text:#1b1f24;--muted:#6b7280;--heading:#111418;
-  --accent:#e8590c;--accent-contrast:#ffffff;
-  --ok:#0a8a3f;--off:#9aa4b2;--bubble:#ececf1;
-  --radius:14px;--shadow:0 1px 2px rgba(0,0,0,.05),0 10px 28px rgba(0,0,0,.05);
+  --bg:#f2f2f3;--panel:#e9e9ea;--panel-2:#f5f5f8;--border:rgba(29,31,32,.16);
+  --text:#1d1f20;--muted:rgba(29,31,32,.55);--heading:#1d1f20;
+  --accent:#5980a6;--accent-contrast:#f2f2f3;
+  --ok:#416180;--off:#98989b;--bubble:#e9e9ea;
+  --radius:0;--shadow:0 1px 2px rgba(43,43,45,.14);
+  --font-body:"Barlow",system-ui,sans-serif;
+  --font-heading:"Barlow Condensed",system-ui,sans-serif;
 }
 @media(prefers-color-scheme:dark){:root{
-  --bg:#0e1116;--panel:#161b22;--panel-2:#1b222b;--border:#2a313b;
-  --text:#e6e9ee;--muted:#9aa4b2;--heading:#f2f5f9;
-  --accent:#fb923c;--accent-contrast:#1a0f06;
-  --ok:#3ddc84;--off:#6b7480;--bubble:#252c36;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.35);
+  --bg:#141618;--panel:#1c1f22;--panel-2:#2b2d31;--border:rgba(232,233,234,.16);
+  --text:#e8e9ea;--muted:rgba(232,233,234,.55);--heading:#e8e9ea;
+  --accent:#94bce3;--accent-contrast:#141618;
+  --ok:#94bce3;--off:#7a7a7d;--bubble:#1c1f22;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
 }}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);color:var(--text);
-  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  font-family:var(--font-body);line-height:1.55;-webkit-font-smoothing:antialiased}
 
 /* ---- Sidebar ---- */
 #side{width:270px;flex:none;background:var(--panel);border-right:1px solid var(--border);
@@ -42,10 +49,10 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 .side-top{padding:.75rem;border-bottom:1px solid var(--border)}
 #new{width:100%;display:flex;align-items:center;justify-content:center;gap:.45rem;
   padding:.6rem;font:inherit;font-weight:600;font-size:.9rem;cursor:pointer;
-  border:1px solid var(--border);border-radius:10px;background:var(--panel-2);color:var(--text)}
+  border:1px solid var(--border);border-radius:0;background:var(--panel-2);color:var(--text)}
 #new:hover{border-color:var(--accent)}
 #convs{flex:1;overflow-y:auto;padding:.5rem}
-.conv{display:flex;align-items:center;gap:.4rem;padding:.5rem .6rem;border-radius:9px;cursor:pointer;
+.conv{display:flex;align-items:center;gap:.4rem;padding:.5rem .6rem;border-radius:0;cursor:pointer;
   font-size:.88rem;color:var(--text);white-space:nowrap}
 .conv:hover{background:var(--panel-2)}
 .conv.sel{background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--border)}
@@ -53,7 +60,7 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 .conv .x{opacity:0;border:none;background:none;color:var(--muted);cursor:pointer;font-size:.95rem;padding:0 .15rem}
 .conv:hover .x{opacity:1}
 .conv .x:hover{color:var(--accent)}
-.conv .ag{font-size:.68rem;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:0 .28rem}
+.conv .ag{font-size:.68rem;color:var(--muted);border:1px solid var(--border);border-radius:0;padding:0 .28rem}
 .side-foot{padding:.7rem .8rem;border-top:1px solid var(--border);font-size:.82rem}
 .side-foot a{color:var(--muted);text-decoration:none}
 .side-foot a:hover{color:var(--accent)}
@@ -63,10 +70,10 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 header{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bottom:1px solid var(--border);
   background:var(--panel);flex:none}
 .icon{border:1px solid transparent;background:none;color:var(--muted);cursor:pointer;font-size:1.05rem;
-  padding:.3rem .45rem;border-radius:8px;line-height:1}
+  padding:.3rem .45rem;border-radius:0;line-height:1}
 .icon:hover{color:var(--text);border-color:var(--border)}
 #agent{font:inherit;font-weight:600;font-size:.95rem;color:var(--text);background:var(--panel-2);
-  border:1px solid var(--border);border-radius:9px;padding:.4rem .6rem;max-width:15rem}
+  border:1px solid var(--border);border-radius:0;padding:.4rem .6rem;max-width:15rem}
 #agent:focus{outline:2px solid var(--accent);outline-offset:1px}
 #state{font-size:.8rem;color:var(--muted);display:flex;align-items:center;gap:.35rem}
 .dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--off);flex:none}
@@ -77,23 +84,25 @@ header{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bott
 .wrap{max-width:760px;margin:0 auto}
 .row{display:flex;gap:.75rem;margin:0 0 1.5rem}
 .row.me{justify-content:flex-end}
-.av{width:30px;height:30px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:.9rem;
+.av{width:30px;height:30px;flex:none;border-radius:0;display:grid;place-items:center;font-size:.9rem;
   background:var(--panel-2);border:1px solid var(--border);color:var(--accent)}
 .icon svg,.av svg{display:block}
 .body{min-width:0;max-width:100%}
-.row.me .body{background:var(--bubble);border-radius:16px;padding:.6rem .9rem;max-width:80%}
+.row.me .body{background:var(--accent);color:var(--accent-contrast);padding:.6rem .9rem;max-width:80%}
+.row:not(.me) .body{border:1px solid var(--border);padding:.6rem .9rem}
 .body p{margin:.55rem 0}.body p:first-child{margin-top:0}.body p:last-child{margin-bottom:0}
-.body h1,.body h2,.body h3{color:var(--heading);margin:1rem 0 .5rem;font-size:1.05rem}
+.body h1,.body h2,.body h3{color:var(--heading);margin:1rem 0 .5rem;font-size:1.15rem;
+  font-family:var(--font-heading);font-weight:600;letter-spacing:-.015em;line-height:1.12}
 .body ul,.body ol{margin:.5rem 0;padding-left:1.3rem}
 .body li{margin:.2rem 0}
 .body a{color:var(--accent)}
-.body img{max-width:280px;border-radius:10px;margin:.3rem 0;display:block}
-.body code{background:rgba(127,127,127,.16);padding:.08rem .34rem;border-radius:5px;font-size:.88em}
-.body pre{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+.body img{max-width:280px;border-radius:0;margin:.3rem 0;display:block}
+.body code{background:rgba(127,127,127,.16);padding:.08rem .34rem;border-radius:0;font-size:.88em}
+.body pre{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:0;
   padding:.8rem .9rem;overflow-x:auto;margin:.7rem 0}
 .body pre code{background:none;padding:0;font-size:.85rem;line-height:1.5}
 .cp{position:absolute;top:.4rem;right:.4rem;font:inherit;font-size:.72rem;color:var(--muted);cursor:pointer;
-  background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:.15rem .4rem}
+  background:var(--panel-2);border:1px solid var(--border);border-radius:0;padding:.15rem .4rem}
 .cp:hover{color:var(--text);border-color:var(--accent)}
 .tools{margin-top:.35rem;height:1.1rem}
 .tools button{font:inherit;font-size:.75rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;opacity:0}
@@ -109,24 +118,24 @@ header{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bott
 #hello p{color:var(--muted);margin:0 0 1.6rem;font-size:.92rem}
 .chips{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center}
 .chips button{font:inherit;font-size:.85rem;color:var(--text);background:var(--panel);cursor:pointer;
-  border:1px solid var(--border);border-radius:999px;padding:.45rem .9rem}
+  border:1px solid var(--border);border-radius:0;padding:.45rem .9rem}
 .chips button:hover{border-color:var(--accent)}
 
 /* ---- Composer ---- */
 #comp{flex:none;padding:.5rem .9rem 1rem;background:var(--bg)}
 #box{max-width:760px;margin:0 auto;background:var(--panel);border:1px solid var(--border);
-  border-radius:22px;box-shadow:var(--shadow);padding:.45rem .5rem .45rem .9rem}
+  border-radius:0;box-shadow:var(--shadow);padding:.45rem .5rem .45rem .9rem}
 #box:focus-within{border-color:var(--accent)}
 #thumbs{display:flex;gap:.4rem;padding:.35rem 0 .1rem}
 #thumbs:empty{display:none}
 #thumbs .th{position:relative}
-#thumbs img{height:54px;border-radius:8px;display:block}
+#thumbs img{height:54px;border-radius:0;display:block}
 #thumbs .x{position:absolute;top:-6px;right:-6px;background:var(--panel-2);border:1px solid var(--border);
-  color:var(--text);border-radius:50%;width:18px;height:18px;font-size:.7rem;line-height:1;cursor:pointer}
+  color:var(--text);border-radius:0;width:18px;height:18px;font-size:.7rem;line-height:1;cursor:pointer}
 .inrow{display:flex;align-items:flex-end;gap:.3rem}
 #t{flex:1;border:none;background:none;color:var(--text);font:inherit;font-size:1rem;resize:none;
   max-height:180px;padding:.55rem 0;outline:none}
-#send{flex:none;width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;font-size:1rem;
+#send{flex:none;width:36px;height:36px;border-radius:0;border:none;cursor:pointer;font-size:1rem;
   background:var(--accent);color:var(--accent-contrast)}
 #send[disabled]{opacity:.35;cursor:default}
 #send.stop{background:var(--text);color:var(--panel)}
