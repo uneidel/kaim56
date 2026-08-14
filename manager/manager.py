@@ -431,7 +431,52 @@ def _hist_conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, target TEXT, task TEXT, result TEXT, ok INTEGER,
         schedule TEXT, origin TEXT)""")
+    # Verbrauch je LLM-Aufruf. Die Agenten melden ihn nach jedem Call an
+    # /api/usage; der Manager erkennt die Instanz an der Quell-IP. cost ist
+    # das, was der Anbieter fuer diesen Aufruf abrechnet (OpenRouter liefert
+    # es bei "usage":{"include":true} mit) — 0.0, wenn er nichts nennt.
+    c.execute("""CREATE TABLE IF NOT EXISTS llm_usage(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER, instance TEXT, model TEXT,
+        prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_usage_inst_ts ON llm_usage(instance, ts)")
     return c
+
+
+def usage_add(instance, model, prompt_tokens, completion_tokens, cost):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            c.execute("INSERT INTO llm_usage(ts,instance,model,prompt_tokens,"
+                      "completion_tokens,cost) VALUES(?,?,?,?,?,?)",
+                      (int(time.time()), str(instance)[:80], str(model)[:120],
+                       int(prompt_tokens or 0), int(completion_tokens or 0),
+                       float(cost or 0.0)))
+        return "ok"
+    except Exception as e:
+        return f"error: {e!r}"
+
+
+def usage_summary():
+    """Verbrauch je Instanz: heute (lokale Mitternacht) und gesamt."""
+    midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
+    out = {}
+    try:
+        with _hist_lock, _hist_conn() as c:
+            for since, key in ((0, "total"), (midnight, "today")):
+                for inst, calls, pt, ct, cost in c.execute(
+                        "SELECT instance, COUNT(*), SUM(prompt_tokens), "
+                        "SUM(completion_tokens), SUM(cost) FROM llm_usage "
+                        "WHERE ts >= ? GROUP BY instance", (since,)):
+                    out.setdefault(inst, {})[key] = {
+                        "calls": calls, "in": pt or 0, "out": ct or 0,
+                        "cost": round(cost or 0.0, 4)}
+    except Exception:
+        return {}
+    empty = {"calls": 0, "in": 0, "out": 0, "cost": 0.0}
+    for v in out.values():
+        v.setdefault("today", dict(empty))
+        v.setdefault("total", dict(empty))
+    return out
 
 
 def history_add(target, task, result, ok, schedule="", origin=""):
@@ -2046,7 +2091,7 @@ footer{border-top:1px solid var(--color-divider)}
 
 </main>
 <footer><div class="foot-in text-muted">
-  <span>NAT via __HOSTIF__</span><span>Pool __POOL__</span>
+  <span>NAT via __HOSTIF__</span><span>Pool __POOL__</span><span>__SPEND__</span>
   <span style="margin-left:auto">kAIm56</span>
 </div></footer>
 </div>
@@ -2752,8 +2797,23 @@ IC_FILES2 = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=curre
              '2v13a2 2 0 0 0 2 2Z"></path></svg>')
 
 
+def _fmt_tok(n):
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M".replace(".0M", "M")
+    if n >= 1000:
+        return f"{n/1000:.1f}k".replace(".0k", "k")
+    return str(n)
+
+
+def _fmt_cost(c):
+    c = float(c or 0.0)
+    return f"${c:.2f}" if c >= 0.01 else f"${c:.4f}"
+
+
 def render():
     rows = ""
+    usage = usage_summary()
     for inst in load_instances():
         n = net_of(inst)
         run = is_running(inst)
@@ -2769,6 +2829,18 @@ def render():
         model_line = (f"<span class='mono' style='font-size:12px;color:var(--color-accent-700);"
                       f"display:inline-flex;align-items:center;gap:5px'>{_chip}{model}</span>"
                       if model else "")
+        u = usage.get(name) or {}
+        ut, ud = u.get("total") or {}, u.get("today") or {}
+        usage_line = ""
+        if ut.get("calls"):
+            usage_line = (
+                f"<span class='text-muted' style='font-size:12px' "
+                f"title='Von diesem Agenten gemeldeter LLM-Verbrauch "
+                f"({ut['calls']} Aufrufe gesamt)'>"
+                f"Tokens heute {_fmt_tok(ud.get('in'))}&nbsp;/&nbsp;{_fmt_tok(ud.get('out'))}"
+                f" · {_fmt_cost(ud.get('cost'))}"
+                f" &nbsp;·&nbsp; gesamt {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
+                f" · {_fmt_cost(ut['cost'])}</span>")
         st = (f"<span class='tag tag-accent'>● running</span>" if run
               else f"<span class='tag tag-neutral'>○ off</span>")
         net = inst.get("internet", True)
@@ -2805,6 +2877,7 @@ def render():
                  f"<span style=\"font-family:var(--font-heading);font-weight:600;font-size:16px\">{name}</span>"
                  f"<span class='text-muted' style='font-size:12px'>{sub}</span>"
                  f"{model_line}"
+                 f"{usage_line}"
                  f"<span class='text-muted' style='font-size:12px'>{inst.get('description','')}</span>"
                  f"{mtxt}</div></td>"
                  f"<td data-label=Status><div style='display:flex;flex-direction:column;gap:4px;align-items:flex-start'>{st}{ntag}{ttag}</div></td>"
@@ -2824,7 +2897,11 @@ def render():
                 .replace("__SETTINGS_SCHEMA__", json.dumps(SETTINGS_SCHEMA))
                 .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
                 .replace("__SKILLS__", json.dumps(load_skills(), ensure_ascii=False))
-                .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL))
+                .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
+                .replace("__SPEND__", "LLM heute " + _fmt_cost(
+                    sum((u.get("today") or {}).get("cost", 0) for u in usage.values()))
+                    + " · gesamt " + _fmt_cost(
+                    sum((u.get("total") or {}).get("cost", 0) for u in usage.values()))))
 
 
 # ---- Chat (Oberflaeche unter /chat, siehe chatui.py) ------------------------
@@ -3309,7 +3386,7 @@ class H(BaseHTTPRequestHandler):
         # Nur fuer die Admin-UI: Gaeste haben hier nichts zu suchen. /api/settings
         # trug bis eben die API-Keys im Klartext aus — an Broker und Policy vorbei.
         _p = self.path.split("?", 1)[0]
-        if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks"):
+        if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks", "/api/usage"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
@@ -3337,6 +3414,9 @@ class H(BaseHTTPRequestHandler):
             ct = "application/json"
         elif self.path == "/api/tasks":
             body = json.dumps(load_tasks()).encode()
+            ct = "application/json"
+        elif _p == "/api/usage":
+            body = json.dumps(usage_summary()).encode()
             ct = "application/json"
         elif self.path == "/api/personas":
             body = json.dumps(load_personas(), ensure_ascii=False).encode()
@@ -3380,6 +3460,18 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._auth():
             return
+        if self.path == "/api/usage":
+            # Verbrauchsmeldung eines Agenten. Wie /api/audit nur fuer echte
+            # Gaeste: die Instanz kommt aus der Quell-IP, nicht aus dem Body —
+            # sonst koennte eine VM den Verbrauch einer anderen faelschen.
+            inst = instance_by_ip(self.client_address[0])
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            if inst is not None:
+                usage_add(inst["name"], body.get("model", ""),
+                          body.get("prompt_tokens"), body.get("completion_tokens"),
+                          body.get("cost"))
+            self.send_response(204); self.end_headers(); return
         if self.path == "/api/audit":
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-14 (Token-Zaehler je Instanz)
+- Neue Tabelle `llm_usage` in `history.db` und Gast-Route **`POST /api/usage`**:
+  der Agent meldet nach jedem LLM-Aufruf Tokens und Kosten, der Manager bucht
+  sie auf die Instanz. Die Zuordnung kommt aus der **Quell-IP**, nicht aus dem
+  Body — eine VM kann den Verbrauch einer anderen nicht faelschen.
+- `GET /api/usage` (Admin, fuer Gaeste gesperrt) liefert je Instanz heute und
+  gesamt: Aufrufe, Tokens rein/raus, Kosten.
+- Die Instanz-Tabelle zeigt die Zeile unter dem Modell-Chip, die Fusszeile die
+  Summe ueber alle Instanzen.
+- `agent.py`: fordert `usage:{include:true}` an (damit OpenRouter die realen
+  Kosten je Aufruf mitschickt), meldet streamend wie nicht-streamend, und
+  `OPENROUTER_URL` ist jetzt per Env setzbar. Melden ist fire-and-forget: faellt
+  der Manager aus, stoert das den Chat nicht.
+- Rootfs `openrouter` neu gebaut; verifiziert: ein Prompt an den Orchestrator
+  buchte 1313/29 Tokens und $0.0005.
+- Grenze: nur die `openrouter`-Vorlage meldet. `pi` und `prime` rufen ihre
+  eigenen CLIs auf, `claude` rechnet ueber das Abo — dort gibt es (noch) keine
+  Zahlen.
+
 ## 2026-08-14 (Gaeste ohne Internet: HOSTIF zeigte ins Leere)
 - **Befund:** seit dem Reboot um 03:07 erreichte keine microVM mehr DNS oder LLM
   (`gaierror -3`), auch der Orchestrator-Heartbeat lief ins Leere. Ursache war

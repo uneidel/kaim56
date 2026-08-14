@@ -21,7 +21,7 @@ import uuid
 # an der Source-IP und prueft die Allowlist aus secret-policy.json.
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o")
-OR_URL = "https://openrouter.ai/api/v1/chat/completions"
+OR_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
@@ -666,16 +666,41 @@ def exec_tool(name, args):
         return f"Tool-Fehler ({name}): {e!r}"
 
 
+# --- Verbrauch melden -------------------------------------------------------
+def report_usage(u):
+    """Token/Kosten eines Aufrufs an den Manager melden (fire-and-forget).
+    Die Instanz erkennt der Manager an der Quell-IP; wir schicken nur Zahlen.
+    Faellt der Manager aus, darf das den Chat nicht stoeren -> alles schlucken."""
+    if not isinstance(u, dict):
+        return
+    try:
+        payload = json.dumps({
+            "model": OR_MODEL,
+            "prompt_tokens": u.get("prompt_tokens") or 0,
+            "completion_tokens": u.get("completion_tokens") or 0,
+            "cost": u.get("cost") or 0.0,
+        }).encode()
+        req = urllib.request.Request(f"{_manager_base()}/api/usage", data=payload,
+                                     method="POST",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+
+
 # --- OpenRouter chat --------------------------------------------------------
 def or_chat(messages, tools):
     body = json.dumps({"model": OR_MODEL, "messages": messages, "tools": tools,
-                       "tool_choice": "auto"}).encode()
+                       "tool_choice": "auto",
+                       "usage": {"include": True}}).encode()
     req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
         "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
         "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
     try:
         r = urllib.request.urlopen(req, timeout=120)
-        return json.loads(r.read().decode())["choices"][0]["message"]
+        d = json.loads(r.read().decode())
+        report_usage(d.get("usage"))
+        return d["choices"][0]["message"]
     except urllib.error.HTTPError as e:
         return {"content": f"⚠️ OpenRouter HTTP {e.code}: {e.read().decode()[:300]}"}
     except Exception as e:
@@ -713,7 +738,8 @@ def or_chat_stream(messages, tools, on_token):
     """Wie or_chat, aber streamend: ruft on_token(text) je Delta. Baut die
     (assistant-)Nachricht inkl. evtl. tool_calls aus dem Stream zusammen."""
     body = json.dumps({"model": OR_MODEL, "messages": messages, "tools": tools,
-                       "tool_choice": "auto", "stream": True}).encode()
+                       "tool_choice": "auto", "stream": True,
+                       "usage": {"include": True}}).encode()
     req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
         "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
         "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
@@ -729,8 +755,14 @@ def or_chat_stream(messages, tools, on_token):
             if data == "[DONE]":
                 break
             try:
-                delta = json.loads(data)["choices"][0]["delta"]
+                chunk = json.loads(data)
             except Exception:
+                continue
+            if chunk.get("usage"):          # letzter Chunk traegt die Abrechnung
+                report_usage(chunk["usage"])
+            try:
+                delta = chunk["choices"][0]["delta"]
+            except (KeyError, IndexError):
                 continue
             c = delta.get("content")
             if c:
