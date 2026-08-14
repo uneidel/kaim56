@@ -257,18 +257,47 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
             val remote = res.chats ?: continue           // Zeitablauf, nichts Neues
             var waited = 0
             while (busy && waited++ < 120) delay(500)
+            // WICHTIG: bestehende Conversation-Objekte werden BEFUELLT, nicht
+            // ersetzt. send() haelt eine Referenz auf current.messages fest und
+            // streamt die Antwort dorthin — tauscht man das Objekt aus, landen
+            // Frage und Antwort in einer abgehaengten Liste: unsichtbar,
+            // ungespeichert, nie gepusht. Die offene Konversation bleibt
+            // zusaetzlich unangetastet, solange ein Turn laeuft.
             val byId = LinkedHashMap<String, Conversation>()
             for (c in conversations) byId[c.id] = c
             var changed = false
             for (r in store.fromJson(remote)) {
                 val local = byId[r.id]
-                if (local == null || r.updatedAt > local.updatedAt) { byId[r.id] = r; changed = true }
+                if (local == null) {                        // wirklich neu
+                    byId[r.id] = r; changed = true
+                    continue
+                }
+                if (r.updatedAt <= local.updatedAt) continue   // lokal ist aktueller
+                if (busy && local.id == currentId) continue    // laufender Turn
+                // Nachrichten nur ANHAENGEN. Ein Ersetzen wuerde eine gerade
+                // getippte, noch nicht gepushte Frage wegwischen - genau der
+                // Fall, in dem die Gegenseite (Web/Manager) eine neuere Uhr
+                // hat. Nur wenn die lokale Liste ein Praefix der entfernten
+                // ist, sind wir sicher, dass nichts Eigenes verlorengeht;
+                // sonst gleicht der naechste Push das aus.
+                val lm = local.messages
+                val rm = r.messages
+                if (rm.size < lm.size || lm.indices.any { lm[it] != rm[it] }) continue
+                if (rm.size > lm.size) {
+                    for (i in lm.size until rm.size) lm.add(rm[i])
+                    changed = true
+                }
+                if (local.title != r.title && r.title.isNotBlank()) { local.title = r.title; changed = true }
+                if (local.instance != r.instance && r.instance.isNotBlank()) local.instance = r.instance
+                local.updatedAt = r.updatedAt
             }
             if (!changed) continue
+            val merged = byId.values.sortedByDescending { it.updatedAt }
             conversations.clear()
-            conversations.addAll(byId.values.sortedByDescending { it.updatedAt })
-            if (conversations.none { it.id == currentId }) currentId = conversations.first().id
-            store.save(conversations)                    // nur lokal — kein Push, kein Ping-Pong
+            conversations.addAll(merged)
+            if (conversations.isNotEmpty() && conversations.none { it.id == currentId })
+                currentId = conversations.first().id
+            store.save(conversations)                    // nur lokal, kein Push
         }
     }
 

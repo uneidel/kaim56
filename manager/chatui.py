@@ -225,7 +225,18 @@ function applyRemote(remote){
   remote.forEach(r=>{
     if(ctrl&&cur&&r.id===cur.id)return;
     const l=byId[r.id];
-    if(!l||(r.ts||0)>(l.ts||0)){byId[r.id]=r;changed=true;}
+    if(!l){byId[r.id]=r;changed=true;return;}
+    if((r.ts||0)<=(l.ts||0))return;
+    /* Nachrichten nur ANHAENGEN, nie ersetzen: sonst wischt ein Stand der
+       Gegenseite eine gerade getippte, noch nicht gepushte Frage weg. Nur
+       wenn die lokale Liste ein Praefix der entfernten ist, ist das sicher. */
+    const lm=l.msgs||[], rm=r.msgs||[];
+    if(rm.length<lm.length)return;
+    for(let i=0;i<lm.length;i++)
+      if(lm[i].role!==rm[i].role||lm[i].content!==rm[i].content)return;
+    if(rm.length>lm.length){lm.push(...rm.slice(lm.length));l.msgs=lm;changed=true;}
+    if(r.title&&l.title!==r.title){l.title=r.title;changed=true;}
+    l.ts=r.ts;
   });
   if(!changed)return false;
   convs=Object.values(byId).sort((a,b)=>(b.ts||0)-(a.ts||0));

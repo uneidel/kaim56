@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-14 (Fix: Frage aus der App verschwand)
+- **Regression aus dem Live-Sync (3.7).** Der Merge ersetzte Conversation-
+  Objekte (`byId[id] = r`). `send()` haelt aber eine Referenz auf
+  `current.messages` und streamt die Antwort dorthin — wurde das Objekt
+  ausgetauscht, landeten Frage und Antwort in einer abgehaengten Liste:
+  aus der App verschwunden, nie gespeichert, nie gepusht.
+- Der Merge **befuellt jetzt das bestehende Objekt** statt es zu ersetzen, und
+  Nachrichten werden nur **angehaengt**: nur wenn die lokale Liste ein Praefix
+  der entfernten ist, wird uebernommen. Damit kann ein neuerer Stand der
+  Gegenseite (Web/Manager, ggf. mit vorgehender Uhr) eine gerade getippte,
+  noch nicht gepushte Frage nicht mehr wegwischen. Die offene Konversation
+  bleibt waehrend eines laufenden Turns ganz unangetastet.
+- Dieselbe Absicherung in der Web-Oberflaeche (`chatui.py`) — dort haelt
+  `send()` das Reply-Objekt genauso fest.
+- KatAgent **3.8** (versionCode 38).
+
 ## 2026-08-14 (Token-Zaehler je Instanz)
 - Neue Tabelle `llm_usage` in `history.db` und Gast-Route **`POST /api/usage`**:
   der Agent meldet nach jedem LLM-Aufruf Tokens und Kosten, der Manager bucht
