@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-14 (App folgt dem Design-System "Industry")
+- Tokens direkt aus dem Projekt gelesen (`DesignSync get_file` auf
+  `theme.json` + `styles.css`) statt nachgebaut — die App hatte bisher nur
+  Farben und Schriftfamilie uebernommen.
+- **Eckig ausnahmslos**: `styles.css` ueberstimmt am Ende das `radius:4` aus
+  `theme.json` mit `border-radius:0` fuer Card/Button/Input/Tag/Dialog. Shapes
+  auf 0, Kreis-Avatare und -Modussymbole sowie die 2/3/8-dp-Rundungen raus.
+- **Typo-Skala 1:1**: h1 42 / h2 32 / h3 25 / h4 20 / h5 16, Headings mit
+  line-height 1.12 und -0.015em, Body 15/1.55; `labelSmall` traegt jetzt die
+  h6-Rolle (13 px, versal, 0.08em) statt Materials Default.
+- **Raster** aus `density: 0.85` als `IndustrySpacing` (3.4/6.8/10.2/13.6/20.4/27.2).
+- Neu `IndustryComponents.kt`: `blueprintFrame()` zeichnet Haarlinie plus die
+  vier Registermarken *ausserhalb* der Box (in CSS `.corner tl|tr|bl|br`),
+  dazu `BlueprintBox`, `Tag` und `IndustryDivider`.
+- **Chat-Bubbles** ohne Material-Tonung: eigene Nachricht gefuellt wie
+  `.btn-primary`, Antwort des Agenten transparent mit Haarlinie wie `.card`.
+- Dark-Mode bleibt (Handy wird nachts benutzt) — im System ist er als
+  `band: light` nicht vorgesehen, hier also eine bewusste Erweiterung.
+- KatAgent **3.9** (versionCode 39).
+
 ## 2026-08-14 (Fix: Frage aus der App verschwand)
 - **Regression aus dem Live-Sync (3.7).** Der Merge ersetzte Conversation-
   Objekte (`byId[id] = r`). `send()` haelt aber eine Referenz auf

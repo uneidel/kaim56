@@ -14,6 +14,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -499,7 +502,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                 ) {
                     Image(
                         pendingImage!!.asImageBitmap(), "Anhang",
-                        Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
+                        Modifier.size(40.dp).clip(RectangleShape),
                         contentScale = ContentScale.Crop
                     )
                     Spacer(Modifier.width(10.dp))
@@ -527,7 +530,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                             input, { input = it }, Modifier.weight(1f),
                             placeholder = { Text(if (current.mode == "server") "Nachricht…" else "Frag Gemma…") },
                             maxLines = 5,
-                            shape = RoundedCornerShape(2.dp)
+                            shape = RectangleShape
                         )
                         FilledIconButton(
                             { send() },
@@ -583,7 +586,7 @@ fun DrawerContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) {
+            Surface(shape = RectangleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) {
                 Box(contentAlignment = Alignment.Center) {
                     Text("56", style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
@@ -662,7 +665,7 @@ fun EmptyState(mode: String, instance: String = "", running: Boolean = false, mo
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp)) {
+        Surface(shape = RectangleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp)) {
             Box(contentAlignment = Alignment.Center) {
                 if (mode == "server")
                     Icon(Icons.Filled.Cloud, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.onPrimary)
@@ -693,17 +696,22 @@ fun EmptyState(mode: String, instance: String = "", running: Boolean = false, mo
 
 @Composable
 fun Bubble(m: Msg) {
-    val bg = if (m.user) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val fg = if (m.user) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-    val shape = if (m.user)
-        RoundedCornerShape(3.dp, 3.dp, 0.dp, 3.dp)
-    else
-        RoundedCornerShape(3.dp, 3.dp, 3.dp, 0.dp)
+    // Industry kennt keine getoenten Flaechen: die eigene Nachricht ist die
+    // gefuellte Aktion (.btn-primary), die des Agenten eine Karte — transparent
+    // mit Haarlinie. Eckig beides, wie alles im System.
+    val fg = if (m.user) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.user) Arrangement.End else Arrangement.Start) {
-        Surface(color = bg, shape = shape, tonalElevation = if (m.user) 0.dp else 1.dp, modifier = Modifier.widthIn(max = 320.dp)) {
+        Box(
+            Modifier
+                .widthIn(max = 320.dp)
+                .then(
+                    if (m.user) Modifier.background(MaterialTheme.colorScheme.primary, RectangleShape)
+                    else Modifier.border(1.dp, Industry.divider, RectangleShape)
+                )
+        ) {
             Text(
                 m.text.ifEmpty { "…" },
-                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                Modifier.padding(horizontal = IndustrySpacing.s4, vertical = IndustrySpacing.s3),
                 color = fg,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -1036,7 +1044,7 @@ fun TasksDialog(prefs: Prefs, instances: List<AgentInstance>, onDismiss: () -> U
                         }
                         if (expanded == t.id && t.result.isNotBlank()) {
                             Surface(color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(2.dp), modifier = Modifier.fillMaxWidth()) {
+                                shape = RectangleShape, modifier = Modifier.fillMaxWidth()) {
                                 Text(t.result, Modifier.padding(10.dp), style = MaterialTheme.typography.bodySmall)
                             }
                         }

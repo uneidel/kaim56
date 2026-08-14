@@ -6,12 +6,15 @@ package de.kat56.agent
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,32 +68,64 @@ val IndustryDark = darkColorScheme(
     error = Color(0xFFF2B8B5),
 )
 
-// Ecken fast quadratisch — der Blueprint-Look des Managers.
+// Eckig, ausnahmslos. styles.css setzt am Ende
+//   .card, .btn, .input, .tag, .seg, .dialog { border-radius: 0 }
+// und ueberstimmt damit das radius:4 aus theme.json — die Rundung gilt nur
+// fuer Flaechen, die keine Komponente sind.
 val IndustryShapes = Shapes(
     extraSmall = RoundedCornerShape(0.dp),
-    small = RoundedCornerShape(2.dp),
-    medium = RoundedCornerShape(2.dp),
-    large = RoundedCornerShape(3.dp),
-    extraLarge = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(0.dp),
+    medium = RoundedCornerShape(0.dp),
+    large = RoundedCornerShape(0.dp),
+    extraLarge = RoundedCornerShape(0.dp),
 )
 
-// Headings in Barlow Condensed, Body in Barlow.
-val IndustryTypography = Typography().let { d ->
-    d.copy(
-        displayLarge = d.displayLarge.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        displayMedium = d.displayMedium.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        displaySmall = d.displaySmall.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        headlineLarge = d.headlineLarge.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        headlineMedium = d.headlineMedium.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        headlineSmall = d.headlineSmall.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold),
-        titleLarge = d.titleLarge.copy(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold, letterSpacing = 0.2.sp),
-        titleMedium = d.titleMedium.copy(fontFamily = Barlow, fontWeight = FontWeight.SemiBold),
-        titleSmall = d.titleSmall.copy(fontFamily = Barlow, fontWeight = FontWeight.SemiBold),
-        bodyLarge = d.bodyLarge.copy(fontFamily = Barlow),
-        bodyMedium = d.bodyMedium.copy(fontFamily = Barlow),
-        bodySmall = d.bodySmall.copy(fontFamily = Barlow),
-        labelLarge = d.labelLarge.copy(fontFamily = Barlow, fontWeight = FontWeight.Medium),
-        labelMedium = d.labelMedium.copy(fontFamily = Barlow, fontWeight = FontWeight.Medium),
-        labelSmall = d.labelSmall.copy(fontFamily = Barlow, fontWeight = FontWeight.Medium),
-    )
+/** Raster aus theme.json (density 0.85): 4/8/12/16/24/32 px * 0.85. */
+object IndustrySpacing {
+    val s1 = 3.4.dp
+    val s2 = 6.8.dp
+    val s3 = 10.2.dp
+    val s4 = 13.6.dp
+    val s6 = 20.4.dp
+    val s8 = 27.2.dp
 }
+
+/**
+ * Rollen, die Material3 nicht kennt, Industry aber sehr wohl: die Haarlinie
+ * (Text auf 16 %), gedaempfter Text (55 %) und die Tag-Paare. Als Funktionen
+ * ueber dem aktuellen Schema, damit sie in beiden Baendern stimmen.
+ */
+object Industry {
+    val divider: Color @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.16f)
+    val muted: Color @Composable get() = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+    val tagAccentBg: Color @Composable get() = MaterialTheme.colorScheme.primaryContainer
+    val tagAccentFg: Color @Composable get() = MaterialTheme.colorScheme.onPrimaryContainer
+    val tagNeutralBg: Color @Composable get() = MaterialTheme.colorScheme.surfaceVariant
+    val tagNeutralFg: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+// Typo-Skala 1:1 aus styles.css: Headings in Barlow Condensed mit
+// line-height 1.12 und letter-spacing -0.015em, Body in Barlow 15/1.55.
+// h6 ist versal mit 0.08em Sperrung — das traegt im System die Kicker-Rolle.
+private fun head(size: Int, lh: Double = 1.12) = TextStyle(
+    fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold,
+    fontSize = size.sp, lineHeight = (size * lh).sp, letterSpacing = (-0.015 * size).sp,
+)
+
+private fun body(size: Int, weight: FontWeight = FontWeight.Normal) = TextStyle(
+    fontFamily = Barlow, fontWeight = weight,
+    fontSize = size.sp, lineHeight = (size * 1.55).sp,
+)
+
+val IndustryTypography = Typography(
+    displayLarge = head(42), displayMedium = head(32), displaySmall = head(25),
+    headlineLarge = head(32), headlineMedium = head(25), headlineSmall = head(20),
+    titleLarge = head(20), titleMedium = head(17), titleSmall = head(16),
+    bodyLarge = body(15), bodyMedium = body(15), bodySmall = body(13),
+    labelLarge = body(14, FontWeight.Medium), labelMedium = body(12, FontWeight.Medium),
+    // labelSmall = h6: versal, gesperrt — der Kicker des Systems
+    labelSmall = TextStyle(
+        fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold,
+        fontSize = 13.sp, lineHeight = 15.sp, letterSpacing = 1.04.sp,
+    ),
+)
