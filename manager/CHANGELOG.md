@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-14 (Sicherheitsreview: VM konnte sich das Host-Dateisystem einhaengen)
+- **Kritisch, behoben.** Die GET-Routen waren gegen Gaeste gesperrt, die
+  schreibenden **nicht**: eine Agent-VM erreicht den Broker am Gateway (dort
+  holt sie ihre Secrets) und konnte damit u. a.
+  `POST /api/instances/<n>/mounts` aufrufen. Der Manager laeuft als root und
+  exportiert den gewuenschten Ordner per NFS in den Gast — eine kompromittierte
+  VM haette sich so `/` schreibbar einhaengen koennen. Ebenso offen:
+  `/api/create` (neue Instanz mit beliebigen Mounts), `/api/settings`
+  (ALLOWED_SENDERS/SIGNAL_NUMBER = Steuerkanal), `/api/tasks`, `/api/personas`,
+  `/api/instances/<n>/{delete,internet,tools,start,stop}`. Secret-Allowlist,
+  Tool-Gating und Egress-Regeln waren damit umgehbar.
+- Fix: **Positivliste** ganz oben in `do_POST` — Gaeste duerfen nur `/api/usage`,
+  `/api/audit`, `/api/task`, `/api/chat-log` und `/api/memory/…`, alles andere
+  403. Bewusst als Allowlist statt Einzelpruefungen: eine neue Route ist dann
+  standardmaessig zu, nicht standardmaessig offen.
+- Verifiziert: Admin-Routen unveraendert 200, echte Gast-Meldung kommt weiter an
+  (Verbrauchszaehler 45 -> 46 nach einem Prompt).
+- **Stored XSS, behoben.** Im serverseitigen Rendering gab es kein einziges
+  HTML-Escape. Modell-ID (seit dem freien Textfeld beliebig), Beschreibung,
+  Mount-Pfade und Werkzeugliste landeten roh im Markup der Admin-Seite. Neues
+  `h()` (html.escape) davor; mit praeparierter Instanz nachgewiesen: 0 rohe,
+  4 entschaerfte Vorkommen.
+- **Offen (Konfiguration, kein Code):** `MANAGER_PASS` ist leer, `_auth()` laesst
+  dann jeden durch. Der Schutz haengt allein an Traefik — wer 10.0.0.240:8700
+  direkt erreicht, ist Admin. Siehe Hinweis unten.
+
 ## 2026-08-14 (Veraltete Ansichten: Tasks, Policy und Verbrauch ziehen nach)
 - **Befund aus der Praxis:** in der Tasks-Tabelle stand als letztes Ergebnis noch
   ein DNS-Fehler von 08:08, waehrend `tasks.json` laengst "Nichts zu tun." und

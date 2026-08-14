@@ -8,6 +8,7 @@ instances/<name>.json; Netz wird pro Instanz aus 'index' abgeleitet:
 """
 import base64
 import codecs
+import html
 import json
 import os
 import re
@@ -49,6 +50,16 @@ SETTINGS_SCHEMA = [
 # der microVM. Der Agent holt sie zur Laufzeit ueber den Secret-Broker
 # (/api/secret/<name>, Gast per Source-IP erkannt, Allowlist per Policy).
 SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+# Schreibende Routen, die eine Agent-VM benutzen DARF. Alles andere ist
+# Verwaltung und gehoert dem Admin. Ohne diese Positivliste kaeme eine
+# kompromittierte VM ueber /api/instances/<n>/mounts an das Host-Dateisystem
+# (der Manager laeuft als root und exportiert den Ordner per NFS in den Gast)
+# oder legte sich ueber /api/create gleich eine neue Instanz an — die
+# Secret-Allowlist, das Tool-Gating und die Egress-Regeln waeren damit egal.
+# Positivliste statt Einzelpruefungen: eine neue Route ist dann standardmaessig
+# zu, nicht standardmaessig offen.
+GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log")
+GUEST_POST_PREFIXES = ("/api/memory/",)
 # Gesetzte Geheimnisse verlassen den Manager nie im Klartext — die UI bekommt
 # diesen Marker und schickt ihn beim Speichern unveraendert zurueck, wo er
 # verworfen wird. Ein echter leerer Wert loescht den Eintrag weiterhin.
@@ -2895,6 +2906,15 @@ IC_FILES2 = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=curre
              '2v13a2 2 0 0 0 2 2Z"></path></svg>')
 
 
+def h(v):
+    """HTML-Escape fuers serverseitige Rendern. Der Instanzname ist beim Anlegen
+    auf [a-z0-9-_] beschnitten, alles andere kommt aber frei aus Formularen oder
+    Vorlagen — Modell-ID (freies Textfeld), Beschreibung, Mount-Pfade, Werkzeug-
+    Liste. Ohne Escape landet das roh im Markup: wer eine Mount-Zeile oder eine
+    eigene Modell-ID setzt, schreibt sonst Skript in die Admin-Seite."""
+    return html.escape(str(v if v is not None else ""), quote=True)
+
+
 def _fmt_tok(n):
     n = int(n or 0)
     if n >= 1_000_000:
@@ -2925,7 +2945,7 @@ def render():
                  '<rect x=6 y=6 width=12 height=12 rx=1/><path d="M9 2v2M15 2v2M9 20v2M15 20v2'
                  'M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>')
         model_line = (f"<span class='mono' style='font-size:12px;color:var(--color-accent-700);"
-                      f"display:inline-flex;align-items:center;gap:5px'>{_chip}{model}</span>"
+                      f"display:inline-flex;align-items:center;gap:5px'>{_chip}{h(model)}</span>"
                       if model else "")
         u = usage.get(name) or {}
         ut, ud = u.get("total") or {}, u.get("today") or {}
@@ -2947,7 +2967,7 @@ def render():
                 f"style='border:none;cursor:pointer' title='Toggle internet access' "
                 f"onclick=\"toggleNet('{name}',{str(not net).lower()})\">"
                 f"{'🌐 internet on' if net else '🚫 offline'}</button>")
-        ttag = (f"<span class='tag tag-neutral' title='{tools_cfg}'>🔧 {len(tools_cfg.split(','))} Tools</span>"
+        ttag = (f"<span class='tag tag-neutral' title='{h(tools_cfg)}'>🔧 {len(tools_cfg.split(','))} Tools</span>"
                 if tools_cfg else "")
         btn = ""
         if run:
@@ -2968,22 +2988,22 @@ def render():
                 f"color:var(--color-neutral-600)\" title=Delete onclick=\"del('{name}')\">{IC_DEL}</button>")
         mtxt = ""
         for m in inst.get("mounts", []) or []:
-            mtxt += (f"<div class='text-muted' style='font-size:12px'>{IC_FILES2} {m.get('host')} → "
-                     f"{m.get('guest')}{' (ro)' if m.get('readonly') else ''}</div>")
+            mtxt += (f"<div class='text-muted' style='font-size:12px'>{IC_FILES2} {h(m.get('host'))} → "
+                     f"{h(m.get('guest'))}{' (ro)' if m.get('readonly') else ''}</div>")
         rows += (f"<tr><td data-label=Instance>"
                  f"<div style='display:flex;flex-direction:column;gap:2px'>"
                  f"<span style=\"font-family:var(--font-heading);font-weight:600;font-size:16px\">{name}</span>"
-                 f"<span class='text-muted' style='font-size:12px'>{sub}</span>"
+                 f"<span class='text-muted' style='font-size:12px'>{h(sub)}</span>"
                  f"{model_line}"
                  f"{usage_line}"
-                 f"<span class='text-muted' style='font-size:12px'>{inst.get('description','')}</span>"
+                 f"<span class='text-muted' style='font-size:12px'>{h(inst.get('description',''))}</span>"
                  f"{mtxt}</div></td>"
                  f"<td data-label=Status><div style='display:flex;flex-direction:column;gap:4px;align-items:flex-start'>{st}{ntag}{ttag}</div></td>"
                  f"<td data-label='vCPU / RAM' style='font-variant-numeric:tabular-nums'>"
                  f"{inst.get('vcpus',2)} / {inst.get('mem_mib',1024)} MiB</td>"
                  f"<td data-label='Guest IP' class=mono>{n['guest']}</td>"
                  f"<td data-label=Actions><div class=acts>{btn}</div></td></tr>")
-    tpls = "".join(f"<option value='{t['template']}'>{t['template']} — {t.get('description','')}</option>"
+    tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in load_templates())
     empty = ("<tr><td colspan=5 class=text-muted style='padding:18px 8px'>"
              "no instances yet — create one below</td></tr>")
@@ -3554,6 +3574,14 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._auth():
+            return
+        _pp = self.path.split("?", 1)[0]
+        if instance_by_ip(self.client_address[0]) is not None and not (
+                _pp in GUEST_POST_PATHS or _pp.startswith(GUEST_POST_PREFIXES)):
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"forbidden"}')
             return
         if self.path == "/api/usage":
             # Verbrauchsmeldung eines Agenten. Wie /api/audit nur fuer echte
