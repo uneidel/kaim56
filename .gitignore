@@ -4,7 +4,7 @@ manager/chats.json             # Chat-Verlauf
 manager/tasks.json
 manager/memory.json
 manager/inbox_wm.json
-manager/history.db
+manager/history.db*                # inkl. -wal/-shm (SQLite WAL)
 manager/security.json          # Befunde ueber die eigene Installation
 manager/traefik-agents.yml     # enthaelt den basicAuth-Hash -> examples/
 manager/audit/
