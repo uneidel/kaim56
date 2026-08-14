@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/ulrich/firecracker
 Environment=PORT=8700
-Environment=HOSTIF=enp0s31f6
+# HOSTIF nur setzen, wenn die Default-Route NICHT ueber den gewuenschten
+# Uplink laeuft — der Manager ermittelt ihn sonst selbst. Ein hier fest
+# eingetragener, spaeter umbenannter NIC bricht die NAT der Gaeste still.
+# Environment=HOSTIF=eno2
 # Web-Auth (leer = keine Auth -> nur hinter Traefik/SSO betreiben!):
 Environment=MANAGER_USER=admin
 Environment=MANAGER_PASS=

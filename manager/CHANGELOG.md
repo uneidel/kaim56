@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-14 (Gaeste ohne Internet: HOSTIF zeigte ins Leere)
+- **Befund:** seit dem Reboot um 03:07 erreichte keine microVM mehr DNS oder LLM
+  (`gaierror -3`), auch der Orchestrator-Heartbeat lief ins Leere. Ursache war
+  nicht die VM, sondern die NAT-Regel des Hosts: die Unit setzte
+  `Environment=HOSTIF=enp0s31f6`, der Uplink heisst aber `eno2`. MASQUERADE auf
+  ein nicht existierendes Interface trifft nichts — die Pakete der Gaeste gingen
+  unmaskiert raus und kamen nie zurueck. Kein Log, keine Fehlermeldung.
+- **Fix:** `manager.py` verlaesst sich nicht mehr blind auf den Namen. Ein
+  gesetztes `HOSTIF` gilt nur, wenn `/sys/class/net/<name>` existiert; sonst
+  gewinnt das Interface der Default-Route (mit Hinweis im Log). Die Unit-Vorlage
+  hat die Zeile jetzt auskommentiert.
+- Verifiziert: nach Manager- und Instanz-Neustart antwortet der Orchestrator in
+  1,6 s ("pong") statt nach 20 s DNS-Timeout.
+- Hinweis: die installierte Unit unter `/etc/systemd/system/` traegt weiterhin
+  `HOSTIF=enp0s31f6` (root-only). Dank der Erkennung ist das folgenlos, sollte
+  aber bei Gelegenheit aufgeraeumt werden.
+
 ## 2026-08-14 (Chats live zwischen App und Web)
 - `/api/chats` kann jetzt **Long-Poll**: `?since=<rev>&wait=<sek>` blockiert, bis
   jemand schreibt, und antwortet dann mit `{rev, chats}` (bei Zeitablauf

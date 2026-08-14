@@ -59,7 +59,34 @@ SETTINGS_KEEP = "__unchanged__"
 NEVER_PERSIST = SECRET_PARAMS | {"MCP_CONFIG"}
 
 POOL = "172.30.0.0/16"
-HOSTIF = os.environ.get("HOSTIF", "eno2")
+def _uplink_iface():
+    """Interface der Default-Route ("… dev eno2 …")."""
+    try:
+        out = subprocess.run(["ip", "-o", "route", "show", "default"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+        return out[out.index("dev") + 1]
+    except Exception:
+        return ""
+
+
+def _pick_hostif():
+    """Uplink fuer die MASQUERADE-Regel der Gaeste. Ein fest verdrahteter
+    NIC-Name ist eine stille Falle: benennt ihn der Kernel um (Update, neue
+    Hardware, Reboot), zeigt die NAT-Regel ins Leere — die microVMs erreichen
+    dann weder DNS noch LLM, und nichts protokolliert einen Fehler. Deshalb
+    zaehlt ein gesetzter Name nur, wenn es das Interface wirklich gibt;
+    sonst gewinnt die Default-Route."""
+    want = os.environ.get("HOSTIF", "")
+    if want and os.path.exists(f"/sys/class/net/{want}"):
+        return want
+    auto = _uplink_iface()
+    if want and auto:
+        print(f"[net] HOSTIF={want} existiert nicht — nutze {auto} (Default-Route)",
+              flush=True)
+    return auto or want or "eno2"
+
+
+HOSTIF = _pick_hostif()
 LISTEN = ("0.0.0.0", int(os.environ.get("PORT", "8700")))
 USER = os.environ.get("MANAGER_USER", "admin")
 PW = os.environ.get("MANAGER_PASS", "")   # leer => keine Auth (nur hinter Traefik!)
