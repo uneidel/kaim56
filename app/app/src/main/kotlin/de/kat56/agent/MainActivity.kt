@@ -11,57 +11,83 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,19 +97,42 @@ class MainActivity : ComponentActivity() {
         val store = ChatStore(this)
         store.migrate(prefs)   // v1.0-Modell uebernehmen, falls vorhanden
         setContent {
-            val dark = isSystemInDarkTheme()
-            // Feste Industry-Palette (wie der Manager) statt Material-You-Dynamic-Color.
-            val colors = if (dark) IndustryDark else IndustryLight
+            // Der Prototyp ist nur in einem Band gezeichnet (dark="true"),
+            // deshalb kein isSystemInDarkTheme() mehr.
             MaterialTheme(
-                colorScheme = colors,
-                typography = IndustryTypography,
-                shapes = IndustryShapes,
+                colorScheme = KatColors,
+                typography = KatTypography,
+                shapes = KatShapes,
             ) {
                 KatAgentApp(prefs, gemma, store)
             }
         }
     }
 }
+
+/** Ein Modell-Vorschlag aus dem Prototyp (Name, Beschreibung, Marke, Groesse, URL). */
+private data class Preset(
+    val name: String, val desc: String, val tag: String, val size: String, val url: String,
+)
+
+private val PRESETS = listOf(
+    Preset("Gemma-4 E4B", "Text · Bild · Audio, beste Qualität", "multimodal", "3,7 GB",
+        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"),
+    Preset("Gemma-4 E2B", "Text · Bild · Audio, sparsamer", "multimodal", "2,6 GB",
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"),
+    Preset("Gemma-3n E2B", "Bewährt, int4-quantisiert", "text", "3,0 GB",
+        "https://huggingface.co/litert-community/Gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"),
+    Preset("Qwen2.5 1.5B", "Schnell, gut für einfache Aufgaben", "text", "1,6 GB",
+        "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.litertlm"),
+    Preset("Qwen2 0.5B", "Minimal, läuft auf schwacher Hardware", "klein", "0,6 GB",
+        "https://huggingface.co/litert-community/Qwen2-0.5B-Instruct/resolve/main/Qwen2-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.litertlm"),
+)
+
+private fun nowHm(): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date())
+
+/** Kurzname des Agenten eines Chats — im Prototyp die Zeile unter dem Titel. */
+private fun agentOf(c: Conversation): String =
+    if (c.mode == "server") c.instance.ifBlank { "server" } else "device"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,12 +154,18 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
-    var showSettings by remember { mutableStateOf(false) }
+    // Der Prototyp kennt drei Vollbilder: Chat, Tasks, Settings.
+    var screen by remember { mutableStateOf<String?>(null) }
     var showAgents by remember { mutableStateOf(false) }
-    var showTasks by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var attachOpen by remember { mutableStateOf(false) }
     var pendingImage by remember { mutableStateOf<Bitmap?>(null) }
     var web by remember { mutableStateOf(prefs.webAccess) }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
+    // Kopfzeile und Einstellungen zeigen den Sync-Zustand ("Syncing …" / "Synced · N chats").
+    var syncing by remember { mutableStateOf(false) }
+    var lastSync by remember { mutableStateOf("") }
+    var online by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     fun loadInstances() {
@@ -120,8 +175,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
             if (j != null) instances = ManagerSync.parseInstances(j)
         }
     }
-    // Beim Start laden und nach dem Schließen der Agenten-Verwaltung erneut.
+    // Beim Start laden und nach dem Schliessen der Agenten-Verwaltung erneut.
     LaunchedEffect(showAgents) { if (!showAgents) loadInstances() }
+    // Der Prototyp hat keinen Aktualisieren-Knopf mehr in der Chip-Zeile; die
+    // Liste wird stattdessen beim Oeffnen der Schublade nachgezogen.
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Open) loadInstances()
+    }
 
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS) }
@@ -160,6 +220,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
             val bmp = withContext(Dispatchers.IO) { loadBitmap(context, uri) }
             if (bmp != null) pendingImage = bmp else status = "⚠️ Bild konnte nicht geladen werden"
         }
+    }
+    // Anhang-Blatt des Prototyps: "Camera" nimmt eine Vorschau auf (kein
+    // FileProvider noetig), send() verarbeitet ohnehin nur Bitmaps.
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp: Bitmap? ->
+        if (bmp != null) pendingImage = bmp
     }
 
     // Debounced Hintergrund-Push zum Manager, damit neue/geaenderte Chats live
@@ -217,12 +282,25 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
         store.save(conversations)
     }
 
+    fun selectModel(f: File) {
+        prefs.activeModel = f.name
+        status = "Modell wird geladen…"
+        scope.launch {
+            withContext(Dispatchers.IO) { try { gemma.load(f.absolutePath) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
+            if (gemma.isReady()) status = "Modell geladen ✅"
+        }
+    }
+
     fun sync() {
         if (prefs.serverUrl.isBlank()) { status = "⚠️ Server-URL fehlt (Einstellungen)"; return }
         scope.launch {
+            syncing = true
             status = "Sync…"
             val remoteJson = withContext(Dispatchers.IO) { ManagerSync.pull(prefs.serverUrl, prefs.user, prefs.pass) }
-            if (remoteJson == null) { status = "⚠️ Sync: Server nicht erreichbar"; return@launch }
+            if (remoteJson == null) {
+                syncing = false; online = false
+                status = "⚠️ Sync: Server nicht erreichbar"; return@launch
+            }
             val byId = LinkedHashMap<String, Conversation>()
             for (c in conversations) byId[c.id] = c
             for (r in store.fromJson(remoteJson)) {
@@ -237,7 +315,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
             }
             store.save(conversations)
             val ok = withContext(Dispatchers.IO) { ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toJson(conversations)) }
-            status = if (ok) "Sync ✅ (${conversations.size} Chats)" else "⚠️ Push fehlgeschlagen"
+            syncing = false; online = ok; lastSync = nowHm()
+            status = if (ok) "" else "⚠️ Push fehlgeschlagen"
         }
     }
 
@@ -255,7 +334,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
             val res = withContext(Dispatchers.IO) {
                 ManagerSync.pollChats(prefs.serverUrl, prefs.user, prefs.pass, chatsRev[0], 25)
             }
-            if (res == null) { delay(5000); continue }   // offline / alter Manager
+            if (res == null) { online = false; delay(5000); continue }   // offline / alter Manager
+            online = true
             chatsRev[0] = res.rev
             val remote = res.chats ?: continue           // Zeitablauf, nichts Neues
             var waited = 0
@@ -295,6 +375,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                 local.updatedAt = r.updatedAt
             }
             if (!changed) continue
+            lastSync = nowHm()
             val merged = byId.values.sortedByDescending { it.updatedAt }
             conversations.clear()
             conversations.addAll(merged)
@@ -325,7 +406,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                 scope.launch {
                     val r = withContext(Dispatchers.IO) { ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, inst, message, schedule) }
                     msgs.add(Msg(false, if (r != null)
-                        "✅ Aufgabe auf @$inst angelegt${if (schedule.isNotBlank()) " ($schedule)" else " (Hintergrund)"}. Menü → Aufgaben."
+                        "✅ Aufgabe auf @$inst angelegt${if (schedule.isNotBlank()) " ($schedule)" else " (Hintergrund)"}. Schublade → Tasks."
                         else "⚠️ ${ManagerSync.lastStatus}"))
                     persist()
                 }
@@ -404,334 +485,848 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
         }
     }
 
+    // Wie im Prototyp (componentDidUpdate): die Liste haengt am unteren Rand.
+    LaunchedEffect(current.messages.size, currentId) {
+        if (current.messages.isNotEmpty()) listState.animateScrollToItem(current.messages.size)
+    }
+
+    // ── abgeleitete Beschriftungen ──────────────────────────────────────────
+    val serverModel = instances.firstOrNull { it.name == current.instance }?.model ?: ""
+    val modelLabel = if (current.mode == "server")
+        serverModel.ifBlank { current.instance.ifBlank { "server" } }
+    else prefs.activeModel.ifBlank { "kein Modell geladen" }
+    val agentLabel = agentOf(current)
+    val syncLabel = if (syncing) "Syncing …" else "Synced · ${conversations.size} chats"
+
+    BackHandler(screen != null || menuOpen || attachOpen) {
+        when {
+            menuOpen -> menuOpen = false
+            attachOpen -> attachOpen = false
+            else -> screen = null
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
+        scrimColor = Kat.scrim,
         drawerContent = {
-            DrawerContent(
+            KatDrawer(
                 conversations.sortedByDescending { it.updatedAt },
                 currentId,
+                agentCount = instances.size,
+                online = online,
                 onSelect = { currentId = it; scope.launch { drawerState.close() } },
                 onNew = { newChat(); scope.launch { drawerState.close() } },
                 onDelete = { deleteChat(it) },
-                onSync = { sync(); scope.launch { drawerState.close() } },
-                onTasks = { showTasks = true; scope.launch { drawerState.close() } },
-                onSettings = { showSettings = true; scope.launch { drawerState.close() } },
+                onTasks = { screen = "tasks"; scope.launch { drawerState.close() } },
+                onSettings = { screen = "settings"; scope.launch { drawerState.close() } },
             )
         }
     ) {
-        Scaffold(
-            topBar = {
-                CenterAlignedTopAppBar(
-                    title = { Text(current.title, maxLines = 1) },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Filled.Menu, "Chats")
+        Box(Modifier.fillMaxSize().background(Kat.bg)) {
+            Column(Modifier.fillMaxSize()) {
+                // ── Kopf: Menue, Titel + Sync-Zeile, Ueberlaufmenue ─────────
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RoundIconButton({ scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Filled.Menu, "Chats", Modifier.size(20.dp), tint = Kat.textDim)
+                    }
+                    Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                        Text(
+                            current.title, style = MaterialTheme.typography.titleMedium,
+                            color = Kat.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(6.dp).clip(CircleShape)
+                                .background(if (online) Kat.green else Kat.textGhost))
+                            Text(
+                                syncLabel, fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
-                )
-            }
-        ) { pad ->
-            Column(Modifier.padding(pad).fillMaxSize()) {
+                    RoundIconButton(
+                        { menuOpen = !menuOpen },
+                        background = if (menuOpen) Kat.hover else Color.Transparent,
+                    ) { Icon(Icons.Filled.MoreVert, "Menü", Modifier.size(18.dp), tint = Kat.textDim) }
+                }
+
+                // ── Agenten-Chips ───────────────────────────────────────────
                 val chips = if (instances.isNotEmpty()) instances
                     else if (prefs.instance.isNotBlank()) listOf(AgentInstance(prefs.instance, false, "", "", "")) else emptyList()
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FilterChip(
-                        selected = current.mode == "local",
-                        onClick = { switchToAgent("local", "") },
-                        leadingIcon = { Icon(Icons.Filled.PhoneAndroid, null, Modifier.size(18.dp)) },
-                        label = { Text("Gerät") }
-                    )
-                    chips.forEach { inst ->
-                        FilterChip(
-                            selected = current.mode == "server" && current.instance == inst.name,
-                            onClick = { switchToAgent("server", inst.name) },
-                            leadingIcon = {
-                                Icon(
-                                    if (inst.running) Icons.Filled.Cloud else Icons.Outlined.CloudOff,
-                                    null, Modifier.size(18.dp)
-                                )
-                            },
-                            label = { Text(inst.name) }
-                        )
+                    AgentChip("Device", current.mode == "local", { switchToAgent("local", "") }) {
+                        Icon(Icons.Filled.PhoneAndroid, null, Modifier.size(13.dp), tint = it)
                     }
-                    IconButton({ loadInstances() }) {
-                        Icon(Icons.Filled.Sync, "Agenten aktualisieren", Modifier.size(20.dp))
+                    chips.forEach { inst ->
+                        AgentChip(
+                            inst.name,
+                            current.mode == "server" && current.instance == inst.name,
+                            { switchToAgent("server", inst.name) },
+                        ) {
+                            Icon(
+                                if (inst.running) Icons.Filled.Cloud else Icons.Outlined.CloudOff,
+                                null, Modifier.size(14.dp), tint = it,
+                            )
+                        }
                     }
                 }
+                Hairline()
+
+                // Rueckmeldungen (Download, Modell-Ladefehler, Sync-Probleme).
+                // Steht so nicht im Prototyp, ist aber die einzige Stelle, an der
+                // diese Meldungen ueberhaupt sichtbar werden.
                 if (status.isNotEmpty()) Text(
                     status,
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (status.startsWith("⚠️")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    maxLines = 2
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    fontSize = 12.sp, fontFamily = Plex,
+                    color = if (status.startsWith("⚠️")) Kat.red else Kat.accentText,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
-                // Modell der aktuell gewaehlten Server-Instanz zeigen (wie im Manager).
-                if (current.mode == "server") {
-                    val m = chips.firstOrNull { it.name == current.instance }?.model ?: ""
-                    if (m.isNotEmpty()) Text(
-                        "🧠 $m",
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+
+                // ── Nachrichten ─────────────────────────────────────────────
+                val bubbleMax = (LocalConfiguration.current.screenWidthDp * 0.78f).dp
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Kat.wash)
+                                    .border(1.dp, Kat.hairline, RoundedCornerShape(14.dp))
+                                    .padding(horizontal = 12.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    modelLabel, fontFamily = PlexMono, fontSize = 11.5.sp,
+                                    color = Kat.textFaint, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
                     if (current.messages.isEmpty()) {
-                        val sel = instances.firstOrNull { it.name == current.instance }
-                        EmptyState(current.mode, current.instance,
-                            sel?.running ?: false, sel?.model ?: "")
+                        item { EmptyState(agentLabel, current.mode, Modifier.fillParentMaxHeight(0.72f)) }
                     } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(vertical = 10.dp)
-                        ) { items(current.messages) { m -> Bubble(m) } }
+                        items(current.messages) { m -> Bubble(m, agentLabel, current.mode, bubbleMax) }
                     }
                 }
-                if (pendingImage != null) Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Image(
-                        pendingImage!!.asImageBitmap(), "Anhang",
-                        Modifier.size(40.dp).clip(RectangleShape),
-                        contentScale = ContentScale.Crop
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("Bild angehängt", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.weight(1f))
-                    IconButton({ pendingImage = null }) { Icon(Icons.Filled.Close, "Entfernen") }
-                }
-                Surface(tonalElevation = 3.dp) {
+
+                // ── Anhang-Vorschau (nicht im Prototyp, sonst waere der
+                //    angehaengte Schnappschuss unsichtbar) ───────────────────
+                pendingImage?.let { bmp ->
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.Bottom,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        if (current.mode == "local") FilledTonalIconButton(
-                            { web = !web; prefs.webAccess = web }, enabled = !busy,
-                            colors = if (web) IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ) else IconButtonDefaults.filledTonalIconButtonColors()
-                        ) { Icon(Icons.Outlined.Public, "Web-Zugriff (an/aus)") }
-                        FilledTonalIconButton(
-                            { imagePicker.launch("image/*") }, enabled = !busy
-                        ) { Icon(Icons.Outlined.AddPhotoAlternate, "Bild anhängen") }
-                        OutlinedTextField(
-                            input, { input = it }, Modifier.weight(1f),
-                            placeholder = { Text(if (current.mode == "server") "Nachricht…" else "Frag Gemma…") },
-                            maxLines = 5,
-                            shape = RectangleShape
+                        Image(
+                            bmp.asImageBitmap(), "Anhang",
+                            Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop,
                         )
-                        FilledIconButton(
-                            { send() },
-                            enabled = !busy && (input.isNotBlank() || pendingImage != null)
-                        ) { Icon(Icons.AutoMirrored.Filled.Send, "Senden") }
+                        Text("Bild angehängt", fontSize = 13.sp, fontFamily = Plex,
+                            color = Kat.textDim, modifier = Modifier.weight(1f))
+                        RoundIconButton({ pendingImage = null }, size = 32.dp) {
+                            Icon(Icons.Filled.Close, "Entfernen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                        }
+                    }
+                }
+
+                // ── Eingabezeile ────────────────────────────────────────────
+                Hairline()
+                Row(
+                    Modifier.fillMaxWidth().background(Kat.bg)
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RoundIconButton({ attachOpen = true }, enabled = !busy) {
+                        Icon(Icons.Filled.Add, "Anhängen", Modifier.size(20.dp), tint = Kat.textMuted)
+                    }
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Kat.surface)
+                            .border(1.dp, Kat.border, RoundedCornerShape(22.dp))
+                            .padding(horizontal = 18.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        val style = TextStyle(fontFamily = Plex, fontSize = 15.sp, color = Kat.text)
+                        BasicTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            textStyle = style,
+                            singleLine = true,
+                            cursorBrush = SolidColor(Kat.accentText),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { send() }),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (input.isEmpty())
+                                    Text("Message …", style = style.copy(color = Kat.textSubtle), maxLines = 1)
+                                inner()
+                            },
+                        )
+                    }
+                    val canSend = !busy && (input.isNotBlank() || pendingImage != null)
+                    RoundIconButton(
+                        { send() }, enabled = canSend,
+                        background = if (canSend) Kat.accent else Kat.tile,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send, "Senden", Modifier.size(18.dp),
+                            tint = if (canSend) Kat.onAccent else Kat.textSubtle,
+                        )
                     }
                 }
             }
-        }
-    }
 
-    if (showSettings) {
-        SettingsDialog(
-            prefs, store,
-            onDismiss = { showSettings = false },
-            onSelectModel = { f ->
-                prefs.activeModel = f.name; showSettings = false; status = "Modell wird geladen…"
-                scope.launch {
-                    withContext(Dispatchers.IO) { try { gemma.load(f.absolutePath) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
-                    if (gemma.isReady()) status = "Modell geladen ✅"
+            // ── Ueberlaufmenue ──────────────────────────────────────────────
+            if (menuOpen) {
+                Box(Modifier.fillMaxSize().tap { menuOpen = false })
+                Column(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 56.dp, end = 10.dp)
+                        .width(238.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Kat.surface)
+                        .border(1.dp, Kat.border, RoundedCornerShape(14.dp))
+                        .padding(6.dp),
+                ) {
+                    Kicker("Model", Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp))
+                    if (current.mode == "local") {
+                        val models = remember(menuOpen) { store.models() }
+                        if (models.isEmpty()) Text(
+                            "Kein Modell geladen", Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            fontSize = 12.5.sp, fontFamily = PlexMono, color = Kat.textMuted,
+                        )
+                        models.forEach { f ->
+                            MenuModelRow(f.name, f.name == prefs.activeModel) {
+                                selectModel(f); menuOpen = false
+                            }
+                        }
+                    } else {
+                        // Das Modell eines Server-Agenten setzt der Manager, nicht
+                        // die App — die Zeile zeigt es, schaltet aber nicht um.
+                        MenuModelRow(modelLabel, true, null)
+                    }
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
+                        .height(1.dp).background(Kat.hairlineStrong))
+                    MenuRow("Clear conversation", Kat.textDim, Icons.Outlined.DeleteSweep) {
+                        current.messages.clear(); menuOpen = false; persist()
+                    }
+                    MenuRow("Delete chat", Kat.red, Icons.Outlined.DeleteOutline) {
+                        menuOpen = false; deleteChat(current)
+                    }
                 }
-            },
-            onDeleteModel = { f -> f.delete(); if (prefs.activeModel == f.name) { prefs.activeModel = ""; gemma.close() } },
-            onPickModel = { picker.launch(arrayOf("application/octet-stream", "*/*")) },
-            onDownload = { url, token -> showSettings = false; DownloadService.start(context, url, token); status = "Download startet… (Hintergrund)" },
-            onManageAgents = { showSettings = false; showAgents = true },
-        )
+            }
+
+            // ── Anhang-Blatt ────────────────────────────────────────────────
+            AnimatedVisibility(attachOpen, enter = fadeIn(), exit = fadeOut()) {
+                Box(Modifier.fillMaxSize().background(Kat.scrim).tap { attachOpen = false })
+            }
+            AnimatedVisibility(
+                attachOpen,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically { it }, exit = slideOutVertically { it },
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                        .background(Kat.elevated)
+                        .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 28.dp),
+                ) {
+                    Box(
+                        Modifier.align(Alignment.CenterHorizontally).padding(bottom = 10.dp)
+                            .size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp))
+                            .background(Color(0x26FFFFFF))
+                    )
+                    Kicker("Attach", Modifier.padding(start = 4.dp, bottom = 12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AttachTile("Camera", Icons.Outlined.PhotoCamera, Modifier.weight(1f)) {
+                            attachOpen = false; camera.launch(null)
+                        }
+                        AttachTile("Gallery", Icons.Outlined.PhotoLibrary, Modifier.weight(1f)) {
+                            attachOpen = false; imagePicker.launch("image/*")
+                        }
+                    }
+                }
+            }
+
+            // ── Vollbilder Tasks / Settings ─────────────────────────────────
+            AnimatedVisibility(
+                screen == "tasks",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                TasksScreen(
+                    prefs, instances,
+                    onClose = { screen = null },
+                    onStatus = { status = it },
+                    onOpenChat = { instance ->
+                        // Der Manager fuehrt je Instanz EINEN Aufgaben-Verlauf
+                        // unter der festen id "task-<instanz>" (chat_log_append,
+                        // kind="task"). Dieselbe id lokal verwenden, damit der
+                        // Sync beide Seiten zusammenfuehrt statt zu doppeln.
+                        val cid = "task-$instance"
+                        if (conversations.none { it.id == cid }) {
+                            conversations.add(0, Conversation(
+                                id = cid, title = "Tasks · $instance",
+                                mode = "server", instance = instance,
+                                updatedAt = System.currentTimeMillis(),
+                            ))
+                            store.save(conversations)
+                        }
+                        currentId = cid
+                        prefs.mode = "server"
+                        prefs.instance = instance
+                        screen = null
+                    },
+                )
+            }
+            AnimatedVisibility(
+                screen == "settings",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                SettingsScreen(
+                    prefs, store, dl,
+                    web = web, onWeb = { web = it; prefs.webAccess = it },
+                    syncing = syncing, lastSync = lastSync, online = online,
+                    onClose = { screen = null },
+                    onSelectModel = { selectModel(it) },
+                    onDeleteModel = { f -> f.delete(); if (prefs.activeModel == f.name) { prefs.activeModel = ""; gemma.close() } },
+                    onPickModel = { picker.launch(arrayOf("application/octet-stream", "*/*")) },
+                    onDownload = { url, token ->
+                        DownloadService.start(context, url, token); status = "Download startet… (Hintergrund)"
+                    },
+                    onManageAgents = { showAgents = true },
+                    onSync = { sync() },
+                )
+            }
+        }
     }
 
     if (showAgents) {
         ServerAgentsDialog(prefs, onDismiss = { showAgents = false }, onStatus = { status = it })
     }
+}
 
-    if (showTasks) {
-        TasksDialog(prefs, instances, onDismiss = { showTasks = false }, onStatus = { status = it })
+// ── Chat-Bausteine ──────────────────────────────────────────────────────────
+
+@Composable
+private fun AgentChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable (Color) -> Unit,
+) {
+    val fg = if (selected) Kat.accentBright else Kat.textMuted
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) Kat.chipSel else Color.Transparent)
+            .border(1.dp, if (selected) Kat.borderFocus else Kat.border, RoundedCornerShape(18.dp))
+            .tap { onClick() }
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon(fg)
+        Text(
+            label, fontSize = 13.5.sp, fontFamily = Plex,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = fg, maxLines = 1,
+        )
     }
 }
 
 @Composable
-fun DrawerContent(
+private fun MenuModelRow(label: String, selected: Boolean, onClick: (() -> Unit)?) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(9.dp))
+            .then(if (onClick != null) Modifier.tap { onClick() } else Modifier)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label, Modifier.weight(1f), fontSize = 12.5.sp, fontFamily = PlexMono,
+            color = if (selected) Kat.accentBright else Kat.textMuted,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        if (selected) Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = Kat.accentText)
+    }
+}
+
+@Composable
+private fun MenuRow(
+    label: String,
+    color: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(9.dp))
+            .tap { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(16.dp), tint = color)
+        Text(label, fontSize = 14.sp, fontFamily = Plex, color = color, maxLines = 1)
+    }
+}
+
+@Composable
+private fun AttachTile(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Kat.surface)
+            .border(1.dp, Kat.border, RoundedCornerShape(16.dp))
+            .tap { onClick() }
+            .padding(horizontal = 8.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(icon, null, Modifier.size(24.dp), tint = Kat.accentText)
+        Text(label, fontSize = 13.sp, fontFamily = Plex, fontWeight = FontWeight.Medium, color = Kat.textDim)
+    }
+}
+
+/** 28-dp-Kachel links neben der Agenten-Nachricht. */
+@Composable
+private fun AgentAvatar(mode: String, size: androidx.compose.ui.unit.Dp = 28.dp) {
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(size / 3.5f))
+            .background(Kat.tile)
+            .border(1.dp, Kat.tileBorder, RoundedCornerShape(size / 3.5f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (mode == "server") Icons.Filled.Cloud else Icons.Filled.PhoneAndroid,
+            null, Modifier.size(size / 2), tint = Kat.accentText,
+        )
+    }
+}
+
+@Composable
+fun EmptyState(agent: String, mode: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+    ) {
+        Box(
+            Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(Kat.tile)
+                .border(1.dp, Kat.tileBorder, RoundedCornerShape(16.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (mode == "server") Icons.Filled.Cloud else Icons.Filled.PhoneAndroid,
+                null, Modifier.size(24.dp), tint = Kat.accentText,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("New conversation with", fontSize = 14.sp, fontFamily = Plex, color = Kat.textSubtle)
+            Text(agent, fontSize = 13.sp, fontFamily = PlexMono, color = Kat.accentText,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+fun Bubble(m: Msg, agentLabel: String, mode: String, maxWidth: androidx.compose.ui.unit.Dp) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = if (m.user) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top,
+    ) {
+        if (!m.user) {
+            AgentAvatar(mode)
+            Spacer(Modifier.width(10.dp))
+        }
+        Column(
+            horizontalAlignment = if (m.user) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            val shape = if (m.user)
+                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp)
+            else
+                RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
+            Box(
+                Modifier
+                    .widthIn(max = maxWidth)
+                    .clip(shape)
+                    .background(if (m.user) Kat.accent else Kat.surface)
+                    .then(if (m.user) Modifier else Modifier.border(1.dp, Kat.hairlineStrong, shape))
+                    .padding(horizontal = 16.dp, vertical = 11.dp)
+            ) {
+                Text(
+                    m.text.ifEmpty { "…" },
+                    fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex,
+                    color = if (m.user) Kat.onAccent else if (m.text.isEmpty()) Kat.textFaint else Kat.textStrong,
+                )
+            }
+            // Der Prototyp setzt hier "Uhrzeit · Agent". Msg traegt keine
+            // Uhrzeit (und darf keine bekommen, sonst bricht der Chat-Sync),
+            // deshalb bleibt der Agentenname.
+            if (!m.user) Text(
+                agentLabel, Modifier.padding(horizontal = 4.dp),
+                fontSize = 11.sp, fontFamily = Plex, color = Kat.textSubtle, maxLines = 1,
+            )
+        }
+    }
+}
+
+// ── Schublade ───────────────────────────────────────────────────────────────
+
+@Composable
+fun KatDrawer(
     conversations: List<Conversation>,
     currentId: String,
+    agentCount: Int,
+    online: Boolean,
     onSelect: (String) -> Unit,
     onNew: () -> Unit,
     onDelete: (Conversation) -> Unit,
-    onSync: () -> Unit,
     onTasks: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    ModalDrawerSheet {
+    ModalDrawerSheet(
+        modifier = Modifier.fillMaxWidth(0.82f),
+        drawerShape = RoundedCornerShape(0.dp),
+        drawerContainerColor = Kat.elevated,
+    ) {
         Row(
-            Modifier.fillMaxWidth().padding(20.dp),
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(shape = RectangleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("56", style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF2D5C96), Color(0xFF1E3D63)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("K", fontSize = 19.sp, fontWeight = FontWeight.Bold, fontFamily = Plex, color = Color(0xFFEAF2FB))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("KatAgent", style = MaterialTheme.typography.titleLarge, color = Kat.text)
+                Text(
+                    "$agentCount agents · ${if (online) "connected" else "offline"}",
+                    fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint,
+                )
+            }
+        }
+        Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) {
+            FilledPill(
+                "New chat", onNew, Modifier.fillMaxWidth(), height = 46.dp,
+                leading = { Icon(Icons.Filled.Add, null, Modifier.size(17.dp), tint = Kat.onAccent) },
+            )
+        }
+        Kicker("History", Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 6.dp))
+        LazyColumn(
+            Modifier.weight(1f).padding(horizontal = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            items(conversations, key = { it.id }) { c ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (c.id == currentId) Kat.rowSel else Color.Transparent)
+                        .tap { onSelect(c.id) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            c.title, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium,
+                            color = Kat.textStrong, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        val a = agentOf(c)
+                        Text(
+                            a, Modifier.padding(top = 2.dp), fontSize = 12.sp, fontFamily = PlexMono,
+                            color = Kat.agent(a), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    RoundIconButton({ onDelete(c) }, size = 32.dp) {
+                        Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                    }
                 }
             }
-            Text("KatAgent", style = MaterialTheme.typography.titleLarge)
         }
-        NavigationDrawerItem(
-            label = { Text("Neuer Chat") },
-            selected = false,
-            icon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
-            onClick = onNew,
-            modifier = Modifier.padding(horizontal = 12.dp)
-        )
-        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-        LazyColumn(Modifier.weight(1f)) {
-            items(conversations) { c ->
-                NavigationDrawerItem(
-                    label = {
-                        Column {
-                            Text(c.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                val server = c.mode == "server"
-                                Icon(
-                                    if (server) Icons.Filled.Cloud else Icons.Filled.PhoneAndroid,
-                                    null, Modifier.size(13.dp)
-                                )
-                                Text(
-                                    if (server) c.instance.ifBlank { "Server" } else "Gerät",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                                )
+        Hairline()
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
+            DrawerAction("Settings", Icons.Outlined.Settings, onSettings)
+        }
+    }
+}
+
+@Composable
+private fun DrawerAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .tap { onClick() }
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(18.dp), tint = Kat.textDim)
+        Text(label, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium, color = Kat.textDim)
+    }
+}
+
+/** Kopf der beiden Vollbilder: Zurueck-Pfeil + Titel + Haarlinie. */
+@Composable
+private fun ScreenHeader(title: String, onClose: () -> Unit) {
+    Column {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RoundIconButton(onClose) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück", Modifier.size(20.dp), tint = Kat.textDim)
+            }
+            Text(
+                title, Modifier.weight(1f).padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
+                style = MaterialTheme.typography.titleMedium, color = Kat.text,
+            )
+        }
+        Hairline()
+    }
+}
+
+// ── Tasks ───────────────────────────────────────────────────────────────────
+
+@Composable
+fun TasksScreen(
+    prefs: Prefs,
+    instances: List<AgentInstance>,
+    onClose: () -> Unit,
+    onStatus: (String) -> Unit,
+    onOpenChat: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var tasks by remember { mutableStateOf<List<AgentTask>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
+    var expanded by remember { mutableStateOf("") }
+    val targets = if (instances.isNotEmpty()) instances.map { it.name }
+        else if (prefs.instance.isNotBlank()) listOf(prefs.instance) else emptyList()
+    var target by remember { mutableStateOf(prefs.instance.ifBlank { targets.firstOrNull() ?: "" }) }
+    var message by remember { mutableStateOf("") }
+    var schedule by remember { mutableStateOf("") }
+
+    LaunchedEffect(reload) {
+        loading = true
+        val j = withContext(Dispatchers.IO) { ManagerSync.listTasks(prefs.serverUrl, prefs.user, prefs.pass) }
+        loading = false
+        if (j == null) onStatus("⚠️ Aufgaben nicht ladbar: ${ManagerSync.lastStatus}") else tasks = ManagerSync.parseTasks(j)
+    }
+    LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
+
+    Column(Modifier.fillMaxSize().background(Kat.bg)) {
+        ScreenHeader("Tasks", onClose)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // Der Prototyp zeigt nur die Liste. Ohne dieses Feld liesse sich in
+            // der App aber keine Aufgabe mehr anlegen (nur noch per /task).
+            KatCard {
+                Kicker("Neue Aufgabe")
+                if (targets.isEmpty()) {
+                    Text("Kein Server-Agent verfügbar.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        targets.forEach { n ->
+                            AgentChip(n, target == n, { target = n }) {
+                                Icon(Icons.Filled.Cloud, null, Modifier.size(14.dp), tint = it)
                             }
                         }
-                    },
-                    selected = c.id == currentId,
-                    onClick = { onSelect(c.id) },
-                    badge = { IconButton({ onDelete(c) }) { Icon(Icons.Outlined.DeleteOutline, "Löschen") } },
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                )
+                    }
+                    KatField(message, { message = it }, placeholder = "Auftrag")
+                    KatField(schedule, { schedule = it }, placeholder = "Zeitplan (leer = einmalig)", mono = true)
+                    FilledPill(
+                        if (schedule.isBlank()) "Im Hintergrund starten" else "Zeitplan anlegen",
+                        {
+                            val m = message.trim()
+                            if (m.isNotBlank() && target.isNotBlank()) {
+                                onStatus("Aufgabe wird angelegt…")
+                                scope.launch {
+                                    val r = withContext(Dispatchers.IO) {
+                                        ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, target, m, schedule.trim())
+                                    }
+                                    message = ""
+                                    onStatus(r?.let { "" } ?: "⚠️ ${ManagerSync.lastStatus}")
+                                    reload++
+                                }
+                            }
+                        },
+                        Modifier.fillMaxWidth(),
+                        enabled = message.isNotBlank() && target.isNotBlank(),
+                    )
+                }
+            }
+
+            if (tasks.isEmpty() && !loading) Text(
+                "Noch keine Aufgaben.", Modifier.padding(top = 4.dp),
+                fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
+            )
+            tasks.forEach { t ->
+                val done = t.status == "done"
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Kat.surface)
+                        .border(1.dp, Kat.hairlineStrong, RoundedCornerShape(14.dp))
+                        // Erster Tipp klappt auf, zweiter springt in den
+                        // Aufgaben-Chat der Instanz — dort laesst sich das
+                        // Ergebnis direkt weiterverhandeln.
+                        .tap { if (expanded == t.id) onOpenChat(t.instance) else expanded = t.id }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // Anzeige, kein Schalter: der Manager kennt kein
+                        // "abhaken", nur den Status des Laufs.
+                        Box(
+                            Modifier.size(24.dp).clip(CircleShape)
+                                .background(if (done) Kat.green else Color.Transparent)
+                                .border(2.dp, if (done) Kat.green else Kat.textGhost, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (done) Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = Kat.bg)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                t.message, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium,
+                                color = if (done) Kat.textSubtle else Kat.textStrong,
+                                textDecoration = if (done) TextDecoration.LineThrough else TextDecoration.None,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                t.instance + " · " + t.schedule.ifBlank { "einmalig" },
+                                Modifier.padding(top = 3.dp),
+                                fontSize = 12.sp, fontFamily = PlexMono, color = Kat.agent(t.instance),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        val (bg, fg, bd) = when {
+                            done -> Triple(Color(0x1A4CC38A), Kat.green, Color(0x404CC38A))
+                            t.status == "error" -> Triple(Color(0x1AE06C75), Kat.red, Color(0x40E06C75))
+                            t.status == "running" || t.status == "pending" ->
+                                Triple(Color(0x1A7FB0E8), Kat.accentText, Color(0x4D7FB0E8))
+                            else -> Triple(Kat.hover, Kat.textMuted, Color(0x1AFFFFFF))
+                        }
+                        StatusBadge(t.status, bg, fg, bd)
+                        RoundIconButton({
+                            scope.launch {
+                                withContext(Dispatchers.IO) { ManagerSync.deleteTask(prefs.serverUrl, prefs.user, prefs.pass, t.id) }
+                                reload++
+                            }
+                        }, size = 32.dp) {
+                            Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                        }
+                    }
+                    if (expanded == t.id) {
+                        // Oben ist der Auftrag auf zwei Zeilen gekuerzt —
+                        // aufgeklappt gehoert er vollstaendig hin.
+                        if (t.message.length > 90) Text(
+                            t.message, Modifier.padding(top = 10.dp),
+                            fontSize = 13.sp, fontFamily = Plex, color = Kat.textSubtle,
+                        )
+                        if (t.result.isNotBlank()) Text(
+                            t.result, Modifier.padding(top = 10.dp),
+                            fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
+                        )
+                        Row(
+                            Modifier.padding(top = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, null,
+                                Modifier.size(14.dp), tint = Kat.accentText)
+                            Text(
+                                "Nochmal tippen: im Chat mit @${t.instance} weiterreden",
+                                fontSize = 12.sp, fontFamily = Plex, color = Kat.accentText,
+                            )
+                        }
+                    }
+                }
             }
         }
-        HorizontalDivider()
-        NavigationDrawerItem(
-            label = { Text("Aufgaben") },
-            selected = false,
-            icon = { Icon(Icons.Outlined.Checklist, null) },
-            onClick = onTasks,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-        )
-        NavigationDrawerItem(
-            label = { Text("Mit Server synchronisieren") },
-            selected = false,
-            icon = { Icon(Icons.Filled.Sync, null) },
-            onClick = onSync,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-        )
-        NavigationDrawerItem(
-            label = { Text("Einstellungen") },
-            selected = false,
-            icon = { Icon(Icons.Outlined.Settings, null) },
-            onClick = onSettings,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-        )
     }
 }
 
-@Composable
-fun EmptyState(mode: String, instance: String = "", running: Boolean = false, model: String = "") {
-    val title = if (mode == "server") (instance.ifBlank { "Server-Agent" }) else "Gerät – Gemma offline"
-    Column(
-        Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Surface(shape = RectangleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp)) {
-            Box(contentAlignment = Alignment.Center) {
-                if (mode == "server")
-                    Icon(Icons.Filled.Cloud, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                else
-                    Icon(Icons.Filled.PhoneAndroid, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.onPrimary)
-            }
-        }
-        Spacer(Modifier.height(18.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        if (mode == "server" && instance.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (running) "● läuft" else "○ gestoppt – startet beim ersten Prompt",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (model.isNotBlank()) Text(model, style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Stell eine Frage, um den Chat zu starten.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
+// ── Einstellungen ───────────────────────────────────────────────────────────
 
 @Composable
-fun Bubble(m: Msg) {
-    // Industry kennt keine getoenten Flaechen: die eigene Nachricht ist die
-    // gefuellte Aktion (.btn-primary), die des Agenten eine Karte — transparent
-    // mit Haarlinie. Eckig beides, wie alles im System.
-    val fg = if (m.user) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.user) Arrangement.End else Arrangement.Start) {
-        Box(
-            Modifier
-                .widthIn(max = 320.dp)
-                .then(
-                    if (m.user) Modifier.background(MaterialTheme.colorScheme.primary, RectangleShape)
-                    else Modifier.border(1.dp, Industry.divider, RectangleShape)
-                )
-        ) {
-            Text(
-                m.text.ifEmpty { "…" },
-                Modifier.padding(horizontal = IndustrySpacing.s4, vertical = IndustrySpacing.s3),
-                color = fg,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SettingsDialog(
+fun SettingsScreen(
     prefs: Prefs,
     store: ChatStore,
-    onDismiss: () -> Unit,
+    dl: Dl,
+    web: Boolean,
+    onWeb: (Boolean) -> Unit,
+    syncing: Boolean,
+    lastSync: String,
+    online: Boolean,
+    onClose: () -> Unit,
     onSelectModel: (File) -> Unit,
     onDeleteModel: (File) -> Unit,
     onPickModel: () -> Unit,
     onDownload: (String, String) -> Unit,
     onManageAgents: () -> Unit,
+    onSync: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val ver = remember {
         try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
     }
@@ -742,63 +1337,233 @@ fun SettingsDialog(
     var token by remember { mutableStateOf(prefs.hfToken) }
     var modelUrl by remember { mutableStateOf(prefs.modelUrl) }
     var models by remember { mutableStateOf(store.models()) }
-    val presets = listOf(
-        "Gemma-4 E4B (~3,7 GB · multimodal)" to
-            "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm",
-        "Gemma-4 E2B (~2,6 GB · multimodal)" to
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
-        "Gemma-3n E2B (~3,7 GB)" to
-            "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm",
-    )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton({
-                prefs.serverUrl = url.trim(); prefs.instance = instance.trim(); prefs.user = user.trim()
-                prefs.pass = pass; prefs.hfToken = token.trim(); prefs.modelUrl = modelUrl.trim(); onDismiss()
-            }) { Text("Speichern") }
-        },
-        dismissButton = { TextButton(onDismiss) { Text("Schließen") } },
-        title = { Text(if (ver.isEmpty()) "Einstellungen" else "Einstellungen · v$ver") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Modelle (On-Device)", style = MaterialTheme.typography.labelLarge)
-                if (models.isEmpty()) Text("Noch kein Modell geladen.", style = MaterialTheme.typography.bodySmall)
-                models.forEach { f ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(prefs.activeModel == f.name, { onSelectModel(f) })
-                        Text("${f.name}  (${f.length() / 1_000_000} MB)", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        IconButton({ onDeleteModel(f); models = store.models() }) { Icon(Icons.Outlined.DeleteOutline, "Löschen") }
+    var copied by remember { mutableStateOf(false) }
+    // Der Prototyp hat keinen Speichern-Knopf: die Felder schreiben direkt.
+    LaunchedEffect(copied) { if (copied) { delay(2000); copied = false } }
+    // Nach einem fertigen Download taucht das Modell in der Liste auf.
+    LaunchedEffect(dl) { models = store.models() }
+
+    Column(Modifier.fillMaxSize().background(Kat.bg)) {
+        ScreenHeader("Settings", onClose)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // ── Modelle (On-Device) ────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Modelle (On-Device)", Modifier.padding(horizontal = 4.dp))
+                KatCard(padding = PaddingValues(4.dp), spacing = 0.dp) {
+                    if (models.isEmpty()) Text(
+                        "Noch kein Modell geladen.", Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                        fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
+                    )
+                    models.forEach { f ->
+                        val sel = prefs.activeModel == f.name
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .tap { onSelectModel(f) }
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier.size(20.dp).clip(CircleShape)
+                                    .border(2.dp, if (sel) Kat.accentText else Kat.textGhost, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (sel) Box(Modifier.size(10.dp).clip(CircleShape).background(Kat.accentText))
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(f.name, fontSize = 13.sp, fontFamily = PlexMono, color = Kat.textStrong)
+                                Text(
+                                    "${f.length() / 1_000_000} MB", Modifier.padding(top = 2.dp),
+                                    fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint,
+                                )
+                            }
+                            RoundIconButton({ onDeleteModel(f); models = store.models() }, size = 36.dp) {
+                                Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(17.dp), tint = Kat.textSubtle)
+                            }
+                        }
+                    }
+                    (dl as? Dl.Progress)?.let { p ->
+                        val pct = if (p.total > 0) (p.done * 100 / p.total).toInt() else 0
+                        Column(
+                            Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(
+                                    modelUrl.substringAfterLast('/'), Modifier.weight(1f),
+                                    fontSize = 12.sp, fontFamily = PlexMono, color = Kat.textFaint,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                                Text("$pct%", fontSize = 12.sp, fontFamily = PlexMono, color = Kat.textFaint)
+                            }
+                            Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(Kat.bg)) {
+                                Box(Modifier.fillMaxWidth(pct / 100f).height(5.dp)
+                                    .clip(RoundedCornerShape(3.dp)).background(Kat.accent))
+                            }
+                        }
                     }
                 }
-                OutlinedTextField(token, { token = it }, label = { Text("HuggingFace-Token") }, singleLine = true)
-                OutlinedTextField(modelUrl, { modelUrl = it }, label = { Text("Modell-URL (.litertlm)") }, maxLines = 3)
-                Text("Presets:", style = MaterialTheme.typography.labelSmall)
-                presets.forEach { (name, u) ->
-                    TextButton({ modelUrl = u }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                        Text(name, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button({ onDownload(modelUrl.trim(), token.trim()) }, enabled = modelUrl.isNotBlank()) { Text("Herunterladen") }
-                    OutlinedButton(onPickModel) { Text("Datei wählen") }
-                }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Text("Server-Verbindung", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(url, { url = it }, label = { Text("Server-URL") }, singleLine = true)
-                OutlinedTextField(user, { user = it }, label = { Text("Benutzer") }, singleLine = true)
-                OutlinedTextField(pass, { pass = it }, label = { Text("Passwort") }, singleLine = true)
-                OutlinedTextField(instance, { instance = it }, label = { Text("Aktive Instanz") }, singleLine = true)
-                Button(onClick = {
-                    prefs.serverUrl = url.trim(); prefs.user = user.trim(); prefs.pass = pass
-                    onManageAgents()
-                }) { Text("Server-Agenten verwalten →") }
-                Text("Alle Agenten auflisten, aktiven wählen, anlegen, starten/stoppen/löschen.",
-                    style = MaterialTheme.typography.labelSmall)
             }
+
+            // ── Server-Verbindung ──────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Server-Verbindung", Modifier.padding(horizontal = 4.dp))
+                KatCard {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LabeledField("Server-URL", url, { url = it; prefs.serverUrl = it.trim() },
+                            Modifier.weight(1f), mono = true)
+                        StatusBadge(
+                            if (online) "connected" else "offline",
+                            if (online) Color(0x1A4CC38A) else Kat.hover,
+                            if (online) Kat.green else Kat.textMuted,
+                            if (online) Color(0x404CC38A) else Color(0x1AFFFFFF),
+                            Modifier.padding(top = 20.dp),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LabeledField("Benutzer", user, { user = it; prefs.user = it.trim() }, Modifier.weight(1f))
+                        LabeledField("Passwort", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)
+                    }
+                    LabeledField("Aktive Instanz", instance, { instance = it; prefs.instance = it.trim() }, mono = true)
+                    FilledPill(
+                        "Server-Agenten verwalten", onManageAgents, Modifier.fillMaxWidth(),
+                        trailing = {
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(15.dp), tint = Kat.onAccent)
+                        },
+                    )
+                    Text(
+                        "Alle Agenten auflisten, aktiven wählen, anlegen, starten/stoppen/löschen.",
+                        fontSize = 11.5.sp, lineHeight = 17.sp, fontFamily = Plex, color = Kat.textSubtle,
+                    )
+                    Hairline(color = Kat.hairline)
+                    Row(
+                        Modifier.fillMaxWidth().tap { onSync() },
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Auto-sync", fontSize = 14.5.sp, fontFamily = Plex,
+                                fontWeight = FontWeight.Medium, color = Kat.text)
+                            Text(
+                                "Last sync " + lastSync.ifBlank { "—" }, Modifier.padding(top = 2.dp),
+                                fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textFaint,
+                            )
+                        }
+                        Text(
+                            if (syncing) "running …" else "up to date",
+                            fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textFaint,
+                        )
+                    }
+                }
+            }
+
+            // ── Chat ───────────────────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Chat", Modifier.padding(horizontal = 4.dp))
+                KatCard(padding = PaddingValues(4.dp), spacing = 0.dp) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .tap { onWeb(!web) }.padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Web-Zugriff", fontSize = 14.5.sp, fontFamily = Plex,
+                                fontWeight = FontWeight.Medium, color = Kat.text)
+                            Text(
+                                "Suchergebnisse als Kontext für das Gerätemodell", Modifier.padding(top = 2.dp),
+                                fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textFaint,
+                            )
+                        }
+                        KatSwitch(web, { onWeb(!web) })
+                    }
+                }
+            }
+
+            // ── Modell herunterladen ───────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Modell herunterladen", Modifier.padding(horizontal = 4.dp))
+                KatCard {
+                    LabeledField("HuggingFace-Token", token, { token = it; prefs.hfToken = it.trim() },
+                        mono = true, password = true)
+                    LabeledField("Modell-URL (.litertlm)", modelUrl, { modelUrl = it; prefs.modelUrl = it.trim() },
+                        mono = true, fontSize = 12f)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "Modell-Katalog (litert-community)", Modifier.weight(1f),
+                                fontSize = 12.sp, fontFamily = Plex, color = Kat.textSubtle,
+                            )
+                            Text(
+                                if (copied) "Link kopiert ✓" else "Link zum Katalog kopieren",
+                                Modifier.tap {
+                                    clipboard.setText(AnnotatedString("https://huggingface.co/models?library=litert-lm"))
+                                    copied = true
+                                },
+                                fontSize = 11.5.sp, fontFamily = Plex, color = Kat.accentText,
+                            )
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            PRESETS.forEach { p ->
+                                val sel = modelUrl == p.url
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                        .background(if (sel) Kat.chipSel else Color.Transparent)
+                                        .border(1.dp, if (sel) Kat.borderFocus else Kat.border, RoundedCornerShape(10.dp))
+                                        .tap { modelUrl = p.url; prefs.modelUrl = p.url }
+                                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            p.name, fontSize = 12.5.sp, fontFamily = PlexMono,
+                                            color = if (sel) Kat.accentBright else Kat.textDim,
+                                        )
+                                        Text(
+                                            p.desc, Modifier.padding(top = 1.dp),
+                                            fontSize = 11.5.sp, fontFamily = Plex, color = Kat.textSubtle,
+                                        )
+                                    }
+                                    val (tbg, tfg) = when (p.tag) {
+                                        "multimodal" -> Color(0x1F7FB0E8) to Kat.accentText
+                                        "klein" -> Color(0x1F4CC38A) to Kat.green
+                                        else -> Kat.hairline to Kat.textMuted
+                                    }
+                                    MiniTag(p.tag, tbg, tfg)
+                                    Text(p.size, fontSize = 11.5.sp, fontFamily = PlexMono, color = Kat.textFaint)
+                                }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilledPill(
+                            "Herunterladen",
+                            { onDownload(modelUrl.trim(), token.trim()) },
+                            Modifier.weight(1f),
+                            enabled = modelUrl.isNotBlank(),
+                            leading = { Icon(Icons.Outlined.Download, null, Modifier.size(15.dp), tint = Kat.onAccent) },
+                        )
+                        OutlinePill("Datei wählen", onPickModel, Modifier.weight(1f))
+                    }
+                }
+            }
+
+            Text(
+                "KatAgent ${ver.ifBlank { "" }} · de.kat56.agent",
+                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                fontSize = 12.sp, fontFamily = Plex, color = Kat.textGhost,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
         }
-    )
+    }
 }
+
+// ── Server-Agenten (im Prototyp nicht gezeichnet — unveraendert uebernommen) ─
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -832,6 +1597,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = Kat.surface,
         confirmButton = { TextButton(onDismiss) { Text("Schließen") } },
         dismissButton = { TextButton({ refresh() }, enabled = !loading) { Text("Aktualisieren") } },
         title = { Text("Server-Agenten") },
@@ -851,11 +1617,10 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                                 append(if (inst.running) "● läuft" else "○ aus")
                                 if (inst.template.isNotEmpty()) append(" · ${inst.template}")
                             }
-                            Text(sub, style = MaterialTheme.typography.labelSmall,
-                                color = if (inst.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(sub, style = MaterialTheme.typography.labelMedium,
+                                color = if (inst.running) Kat.green else Kat.textFaint)
                             if (inst.model.isNotEmpty()) Text(inst.model,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp, fontFamily = PlexMono, color = Kat.textFaint,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (busyName == inst.name) {
@@ -893,7 +1658,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                         }
                     }
                 }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Kat.hairline)
                 Text("Neuen Agenten anlegen", style = MaterialTheme.typography.labelLarge)
                 OutlinedTextField(name, { name = it }, label = { Text("Name (z. B. gemma4)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -935,121 +1700,6 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                     },
                     enabled = name.isNotBlank() && busyName.isEmpty(),
                 ) { Text("Anlegen & starten") }
-            }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TasksDialog(prefs: Prefs, instances: List<AgentInstance>, onDismiss: () -> Unit, onStatus: (String) -> Unit) {
-    val scope = rememberCoroutineScope()
-    var tasks by remember { mutableStateOf<List<AgentTask>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var reload by remember { mutableStateOf(0) }
-    var expanded by remember { mutableStateOf("") }
-    val targets = if (instances.isNotEmpty()) instances.map { it.name }
-        else if (prefs.instance.isNotBlank()) listOf(prefs.instance) else emptyList()
-    var target by remember { mutableStateOf(prefs.instance.ifBlank { targets.firstOrNull() ?: "" }) }
-    var message by remember { mutableStateOf("") }
-    var schedule by remember { mutableStateOf("") }
-
-    LaunchedEffect(reload) {
-        loading = true
-        val j = withContext(Dispatchers.IO) { ManagerSync.listTasks(prefs.serverUrl, prefs.user, prefs.pass) }
-        loading = false
-        if (j == null) onStatus("⚠️ Aufgaben nicht ladbar: ${ManagerSync.lastStatus}") else tasks = ManagerSync.parseTasks(j)
-    }
-    LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
-
-    fun statusLabel(s: String) = when (s) {
-        "pending" -> "⏳ wartet"; "running" -> "⏳ läuft"; "done" -> "✅ fertig"
-        "error" -> "⚠️ Fehler"; "scheduled" -> "🕒 geplant"; else -> s
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onDismiss) { Text("Schließen") } },
-        dismissButton = { TextButton({ reload++ }, enabled = !loading) { Text("Aktualisieren") } },
-        title = { Text("Aufgaben") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                // --- Neue Aufgabe ---
-                Text("Neue Aufgabe", style = MaterialTheme.typography.labelLarge)
-                if (targets.isEmpty()) {
-                    Text("Kein Server-Agent verfügbar (oben Instanz wählen/anlegen).",
-                        style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        targets.forEach { n ->
-                            FilterChip(target == n, { target = n },
-                                leadingIcon = { Icon(Icons.Filled.Cloud, null, Modifier.size(16.dp)) },
-                                label = { Text(n) })
-                        }
-                    }
-                    OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(),
-                        label = { Text("Auftrag") }, maxLines = 3)
-                    OutlinedTextField(schedule, { schedule = it }, Modifier.fillMaxWidth(),
-                        label = { Text("Zeitplan (leer = einmalig)") }, singleLine = true)
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("einmalig" to "", "täglich 8h" to "daily 08:00",
-                               "stündlich" to "hourly", "alle 30m" to "every 30m").forEach { (lbl, v) ->
-                            AssistChip(onClick = { schedule = v }, label = { Text(lbl) })
-                        }
-                    }
-                    Button(
-                        onClick = {
-                            val m = message.trim()
-                            if (m.isBlank() || target.isBlank()) return@Button
-                            onStatus("Aufgabe wird angelegt…")
-                            scope.launch {
-                                val r = withContext(Dispatchers.IO) {
-                                    ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, target, m, schedule.trim())
-                                }
-                                message = ""; onStatus(r?.let { "✅ angelegt" } ?: "⚠️ ${ManagerSync.lastStatus}")
-                                reload++
-                            }
-                        },
-                        enabled = message.isNotBlank() && target.isNotBlank()
-                    ) { Text(if (schedule.isBlank()) "Im Hintergrund starten" else "Zeitplan anlegen") }
-                }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                // --- Liste ---
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Laufende & erledigte", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                }
-                if (tasks.isEmpty() && !loading) Text("Noch keine Aufgaben.", style = MaterialTheme.typography.bodySmall)
-                tasks.forEach { t ->
-                    Column(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).clickable { expanded = if (expanded == t.id) "" else t.id }) {
-                                Text(t.message, style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                val meta = buildString {
-                                    append(statusLabel(t.status)); append(" · @${t.instance}")
-                                    if (t.schedule.isNotBlank()) append(" · ${t.schedule}")
-                                }
-                                Text(meta, style = MaterialTheme.typography.labelSmall,
-                                    color = if (t.status == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            IconButton({
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { ManagerSync.deleteTask(prefs.serverUrl, prefs.user, prefs.pass, t.id) }
-                                    reload++
-                                }
-                            }) { Icon(Icons.Outlined.DeleteOutline, "Löschen") }
-                        }
-                        if (expanded == t.id && t.result.isNotBlank()) {
-                            Surface(color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RectangleShape, modifier = Modifier.fillMaxWidth()) {
-                                Text(t.result, Modifier.padding(10.dp), style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
             }
         }
     )

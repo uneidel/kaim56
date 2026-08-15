@@ -12,8 +12,8 @@ android {
         applicationId = "de.kat56.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "3.9"
+        versionCode = 41
+        versionName = "4.1"
         ndk {
             // Xiaomi 15 = arm64-v8a. Nur diese ABI -> deutlich kleinere APK.
             abiFilters += "arm64-v8a"
@@ -70,6 +70,8 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    // Ein-/Ausblenden der Vollbilder und des Anhang-Blatts (AnimatedVisibility).
+    implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
     // Vollständige Google-Material-Icons (R8 entfernt ungenutzte -> kaum Größenzuwachs).
     implementation("androidx.compose.material:material-icons-extended")
