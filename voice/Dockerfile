@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+# ffmpeg wandelt Opus/AAC/M4A in 16-kHz-Mono-PCM — ohne das scheitert die
+# Erkennung an allem, was kein WAV ist.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir "onnx-asr[cpu,hub]"
+# Piper: eigenstaendiges Binary, kein Python noetig.
+RUN mkdir -p /opt/piper && cd /opt/piper && \
+    curl -sL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
+      | tar xz --strip-components=1 && \
+    curl -sL -o de-thorsten-medium.onnx \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx && \
+    curl -sL -o de-thorsten-medium.onnx.json \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json
+ENV LD_LIBRARY_PATH=/opt/piper
+COPY server.py /opt/voice/server.py
+EXPOSE 8770
+CMD ["python", "-u", "/opt/voice/server.py"]

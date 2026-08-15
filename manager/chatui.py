@@ -140,6 +140,8 @@ header{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bott
 #send[disabled]{opacity:.35;cursor:default}
 #send.stop{background:var(--text);color:var(--panel)}
 .foot{max-width:760px;margin:.45rem auto 0;text-align:center;color:var(--muted);font-size:.72rem}
+#micBtn.rec{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent)}
+#micBtn:disabled{opacity:.4}
 .home{display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit}
 .home svg{flex:none}
 
@@ -173,6 +175,7 @@ header{display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;border-bott
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision-capable agents only)" onclick="document.getElementById('file').click()"></button>
+        <button class=icon id=micBtn title="Sprechen (nochmal tippen = fertig)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*" hidden onchange=addImage(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
         <button id=send onclick=send() title="Send">➤</button>
@@ -351,7 +354,8 @@ function draw(){
     if(x.role==='user')
       return `<div class="row me"><div class=body>${pic}${esc(x.content).replace(/\n/g,'<br>')}</div></div>`;
     const busy=x.busy?'<span class=cursor></span>':'';
-    const tools=x.busy?'':`<div class=tools><button onclick="copyMsg(this,${i})">Copy</button></div>`;
+    const tools=x.busy?'':`<div class=tools><button onclick="copyMsg(this,${i})">Copy</button>`+
+      `<button onclick="speakMsg(${i})">Vorlesen</button></div>`;
     return `<div class=row><div class=av>${IC.bot}</div><div class=body>${md(x.content)}${busy}${tools}</div></div>`;
   }).join('');
   scroll();
@@ -411,6 +415,51 @@ function drawThumb(){
     `<button class=x onclick="img=null;drawThumb()">✕</button></div>`:'';
 }
 
+/* ---------- Sprache ----------
+   Aufnahme im Browser, Erkennung und Ausgabe im Manager. Was per Sprache
+   gefragt wurde, wird auch vorgelesen — getippte Fragen nicht, sonst liest er
+   ungefragt lange Erklaerungen vor. */
+let REC=null, CHUNKS=[], VOICE_IN=false, AUDIO=null;
+async function micToggle(){
+  const b=$('micBtn');
+  if(REC&&REC.state==='recording'){REC.stop();return;}
+  let stream;
+  try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch(e){ $('foot').textContent='Kein Mikrofon: '+(e&&e.name||e); return; }
+  CHUNKS=[]; REC=new MediaRecorder(stream);
+  REC.ondataavailable=e=>{ if(e.data&&e.data.size)CHUNKS.push(e.data); };
+  REC.onstop=async()=>{
+    stream.getTracks().forEach(t=>t.stop());
+    b.classList.remove('rec'); b.disabled=true;
+    const blob=new Blob(CHUNKS,{type:(REC.mimeType||'audio/webm')});
+    try{
+      const r=await fetch('/api/stt',{method:'POST',
+        headers:{'Content-Type':blob.type},body:blob});
+      const d=await r.json();
+      if(d.text&&d.text.trim()){
+        $('t').value=d.text.trim(); autogrow();
+        VOICE_IN=true; send();                 /* freihaendig: direkt abschicken */
+      } else {
+        $('foot').textContent='Nichts verstanden'+(d.error?': '+d.error:'');
+      }
+    }catch(e){ $('foot').textContent='Erkennung fehlgeschlagen'; }
+    b.disabled=false;
+  };
+  REC.start(); b.classList.add('rec');
+}
+async function speakText(text){
+  if(!text||!text.trim())return;
+  try{
+    const r=await fetch('/api/tts',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    if(!r.ok)return;
+    const url=URL.createObjectURL(await r.blob());
+    if(AUDIO){ AUDIO.pause(); URL.revokeObjectURL(AUDIO.src); }
+    AUDIO=new Audio(url); AUDIO.play().catch(()=>{});
+  }catch(e){}
+}
+function speakMsg(i){ if(cur&&cur.msgs[i])speakText(cur.msgs[i].content); }
+
 /* ---------- Senden ---------- */
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
 $('t').addEventListener('input',autogrow);
@@ -446,6 +495,7 @@ async function send(){
   }finally{
     ctrl=null;reply.busy=false;
     if(!reply.content)reply.content='_(empty reply)_';
+    if(VOICE_IN){ VOICE_IN=false; speakText(reply.content); }
     $('send').textContent='➤';$('send').classList.remove('stop');
     save();draw();refreshState();
   }

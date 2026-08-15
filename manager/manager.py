@@ -58,7 +58,9 @@ SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
 # Secret-Allowlist, das Tool-Gating und die Egress-Regeln waeren damit egal.
 # Positivliste statt Einzelpruefungen: eine neue Route ist dann standardmaessig
 # zu, nicht standardmaessig offen.
-GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log")
+VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # Sprachdienst, Loopback
+GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
+                    "/api/stt", "/api/tts")
 GUEST_POST_PREFIXES = ("/api/memory/",)
 # Gesetzte Geheimnisse verlassen den Manager nie im Klartext — die UI bekommt
 # diesen Marker und schickt ihn beim Speichern unveraendert zurueck, wo er
@@ -3582,6 +3584,34 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"error":"forbidden"}')
+            return
+        # Sprache: der Dienst lauscht auf dem Loopback und ist von aussen nicht
+        # erreichbar. Der Manager ist die einzige Tuer — er kennt den Anrufer
+        # bereits (Basic-Auth bzw. Quell-IP) und reicht Roh-Audio bzw. WAV
+        # unveraendert durch, statt es umzupacken.
+        if _pp in ("/api/stt", "/api/tts"):
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            payload = self.rfile.read(ln) if ln else b""
+            try:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{VOICE_PORT}{_pp[len('/api'):]}",
+                    data=payload, method="POST",
+                    headers={"Content-Type": self.headers.get(
+                        "Content-Type", "application/octet-stream")})
+                with urllib.request.urlopen(req, timeout=180) as r:
+                    data = r.read()
+                    ct = r.headers.get("Content-Type", "application/json")
+                code = 200
+            except urllib.error.HTTPError as e:
+                data, ct, code = e.read(), "application/json", e.code
+            except Exception as e:
+                data = json.dumps({"error": f"voice service unreachable: {e!r}"}).encode()
+                ct, code = "application/json", 503
+            self.send_response(code)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
         if self.path == "/api/usage":
             # Verbrauchsmeldung eines Agenten. Wie /api/audit nur fuer echte

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-15 (Sprache: Stufe 1 — Dienst, Manager-Routen, Mikrofon im Web)
+- Neuer **Sprachdienst** (`voice/`): Parakeet TDT v3 (ONNX int8) fuer die
+  Erkennung, Piper mit der Stimme Thorsten fuer die Ausgabe, dazu ffmpeg fuer
+  die Formatwandlung. Ein Host-Container, Loopback, ~700 MB Modelle einmal im
+  Speicher statt je microVM.
+- Manager reicht als `/api/stt` und `/api/tts` durch — die einzige Tuer nach
+  aussen. Beide stehen in der Gast-Positivliste, damit spaeter auch Agenten
+  (z. B. die Signal-Bridge) transkribieren koennen.
+- Weboberflaeche: Mikrofonknopf in der Eingabezeile (Aufnahme im Browser,
+  Erkennung im Manager, wird freihaendig direkt abgeschickt) und ein
+  "Vorlesen" je Antwort. **Vorgelesen wird nur, was per Sprache gefragt
+  wurde** — sonst liest er ungefragt lange Erklaerungen vor.
+- Gemessen ueber den Manager: sprechen 0,38 s, erkennen 0,31 s; im Rundlauf
+  6,5 s Audio in 0,67 s erzeugt und in 0,61 s wieder erkannt.
+- Falle dabei: im Container auf 127.0.0.1 zu binden macht den Dienst
+  unerreichbar — Dockers Portweiterleitung kennt das Container-Loopback nicht.
+  Die Beschraenkung gehoert auf die Host-Seite der Zuordnung.
+
 ## 2026-08-14 (Sicherheitsreview: VM konnte sich das Host-Dateisystem einhaengen)
 - **Kritisch, behoben.** Die GET-Routen waren gegen Gaeste gesperrt, die
   schreibenden **nicht**: eine Agent-VM erreicht den Broker am Gateway (dort
