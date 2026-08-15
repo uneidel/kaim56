@@ -1,6 +1,10 @@
 package de.kat56.agent
 
 import android.Manifest
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import android.media.MediaPlayer
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -45,13 +49,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Download
@@ -416,6 +423,97 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
         }
     }
 
+    // ── Sprachbedienung ────────────────────────────────────────────────────
+    // Aufnehmen im Geraet, Erkennen und Sprechen im Manager (Parakeet/Piper).
+    // Vorgelesen wird nur, was per Sprache gefragt wurde — eine lange
+    // Erklaerung ungefragt vorzulesen waere eine Zumutung.
+    var recording by remember { mutableStateOf(false) }
+    var transcribing by remember { mutableStateOf(false) }
+    var voiceIn by remember { mutableStateOf(false) }
+    // send() ist weiter unten deklariert; eine lokale Funktion darf man in
+    // Kotlin nicht vorher aufrufen. Der Merker ueberbrueckt das.
+    var pendingVoiceSend by remember { mutableStateOf(false) }
+    val recorder = remember { arrayOfNulls<MediaRecorder>(1) }
+    val recFile = remember { arrayOfNulls<java.io.File>(1) }
+    val player = remember { arrayOfNulls<MediaPlayer>(1) }
+
+    fun speakText(text: String) {
+        if (text.isBlank() || prefs.serverUrl.isBlank()) return
+        scope.launch {
+            val wav = withContext(Dispatchers.IO) {
+                ManagerSync.tts(prefs.serverUrl, prefs.user, prefs.pass, text.take(4000))
+            }
+            if (wav == null) { status = "⚠️ Vorlesen: ${ManagerSync.lastStatus}"; return@launch }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val f = java.io.File(context.cacheDir, "speak.wav")
+                    f.writeBytes(wav)
+                    player[0]?.release()
+                    player[0] = MediaPlayer().apply {
+                        setDataSource(f.absolutePath)
+                        setOnCompletionListener { mp -> mp.release(); player[0] = null }
+                        prepare(); start()
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopRec() {
+        val r = recorder[0] ?: return
+        recorder[0] = null; recording = false
+        // stop() wirft, wenn zu frueh gestoppt wurde (zu kurze Aufnahme) —
+        // dann gibt es schlicht nichts zu erkennen.
+        val ok = runCatching { r.stop() }.isSuccess
+        runCatching { r.release() }
+        val f = recFile[0]; recFile[0] = null
+        if (!ok || f == null || !f.exists() || f.length() < 2000) {
+            status = "Zu kurz — nochmal halten"; f?.delete(); return
+        }
+        transcribing = true
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val bytes = f.readBytes(); f.delete()
+                ManagerSync.stt(prefs.serverUrl, prefs.user, prefs.pass, bytes, "audio/mp4")
+            }
+            transcribing = false
+            if (text.isNullOrBlank()) { status = "Nichts verstanden (${ManagerSync.lastStatus})"; return@launch }
+            input = text
+            voiceIn = true
+            pendingVoiceSend = true      // freihaendig: gleich abschicken
+        }
+    }
+
+    fun startRec() {
+        if (prefs.serverUrl.isBlank()) { status = "⚠️ Server-URL fehlt (Einstellungen)"; return }
+        val f = java.io.File(context.cacheDir, "rec.m4a")
+        val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
+        val ok = runCatching {
+            r.setAudioSource(MediaRecorder.AudioSource.MIC)
+            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            r.setAudioSamplingRate(16000)      // mehr braucht die Erkennung nicht
+            r.setAudioChannels(1)
+            r.setAudioEncodingBitRate(32000)
+            r.setOutputFile(f.absolutePath)
+            r.prepare(); r.start()
+        }.isSuccess
+        if (!ok) { runCatching { r.release() }; status = "⚠️ Aufnahme nicht möglich"; return }
+        recorder[0] = r; recFile[0] = f; recording = true
+        status = "Aufnahme… nochmal tippen zum Beenden"
+    }
+
+    val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRec() else status = "⚠️ Ohne Mikrofonfreigabe geht es nicht"
+    }
+
+    fun micToggle() {
+        if (recording) { stopRec(); return }
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) startRec() else micPerm.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
     fun send() {
         val text = input.trim()
         if ((text.isEmpty() && pendingImage == null) || busy) return
@@ -446,6 +544,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                 }
                 if (err != null) mainHandler.post { if (idx < msgs.size) msgs[idx] = msgs[idx].copy(text = msgs[idx].text + "\n$err") }
                 busy = false; persist(); listState.animateScrollToItem(msgs.size)
+                if (voiceIn) { voiceIn = false; speakText(msgs.getOrNull(idx)?.text ?: "") }
             }
         } else {
             msgs.add(Msg(false, ""))
@@ -480,6 +579,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                     mainHandler.post { if (idx < msgs.size) msgs[idx] = msgs[idx].copy(text = "⚠️ ${e.message}") }
                 } finally {
                     busy = false; persist(); listState.animateScrollToItem(msgs.size)
+                if (voiceIn) { voiceIn = false; speakText(msgs.getOrNull(idx)?.text ?: "") }
                 }
             }
         }
@@ -491,6 +591,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
     }
 
     // ── abgeleitete Beschriftungen ──────────────────────────────────────────
+    LaunchedEffect(pendingVoiceSend) {
+        if (pendingVoiceSend) { pendingVoiceSend = false; send() }
+    }
+
     val serverModel = instances.firstOrNull { it.name == current.instance }?.model ?: ""
     val modelLabel = if (current.mode == "server")
         serverModel.ifBlank { current.instance.ifBlank { "server" } }
@@ -622,7 +726,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                     if (current.messages.isEmpty()) {
                         item { EmptyState(agentLabel, current.mode, Modifier.fillParentMaxHeight(0.72f)) }
                     } else {
-                        items(current.messages) { m -> Bubble(m, agentLabel, current.mode, bubbleMax) }
+                        items(current.messages) { m -> Bubble(m, agentLabel, current.mode, bubbleMax) { t -> speakText(t) } }
                     }
                 }
 
@@ -683,6 +787,17 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore) {
                                     Text("Message …", style = style.copy(color = Kat.textSubtle), maxLines = 1)
                                 inner()
                             },
+                        )
+                    }
+                    RoundIconButton(
+                        { micToggle() }, enabled = !busy && !transcribing,
+                        background = if (recording) Kat.accent else Kat.tile,
+                    ) {
+                        Icon(
+                            if (transcribing) Icons.Filled.HourglassEmpty else Icons.Filled.Mic,
+                            if (recording) "Aufnahme beenden" else "Sprechen",
+                            Modifier.size(18.dp),
+                            tint = if (recording) Kat.onAccent else Kat.textMuted,
                         )
                     }
                     val canSend = !busy && (input.isNotBlank() || pendingImage != null)
@@ -965,7 +1080,10 @@ fun EmptyState(agent: String, mode: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Bubble(m: Msg, agentLabel: String, mode: String, maxWidth: androidx.compose.ui.unit.Dp) {
+fun Bubble(
+    m: Msg, agentLabel: String, mode: String, maxWidth: androidx.compose.ui.unit.Dp,
+    onSpeak: (String) -> Unit = {},
+) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (m.user) Arrangement.End else Arrangement.Start,
@@ -1000,10 +1118,18 @@ fun Bubble(m: Msg, agentLabel: String, mode: String, maxWidth: androidx.compose.
             // Der Prototyp setzt hier "Uhrzeit · Agent". Msg traegt keine
             // Uhrzeit (und darf keine bekommen, sonst bricht der Chat-Sync),
             // deshalb bleibt der Agentenname.
-            if (!m.user) Text(
-                agentLabel, Modifier.padding(horizontal = 4.dp),
-                fontSize = 11.sp, fontFamily = Plex, color = Kat.textSubtle, maxLines = 1,
-            )
+            if (!m.user) Row(
+                Modifier.padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(agentLabel, fontSize = 11.sp, fontFamily = Plex,
+                    color = Kat.textSubtle, maxLines = 1)
+                if (m.text.isNotBlank()) Icon(
+                    Icons.Outlined.VolumeUp, "Vorlesen",
+                    Modifier.size(15.dp).tap { onSpeak(m.text) }, tint = Kat.textGhost,
+                )
+            }
         }
     }
 }

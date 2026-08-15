@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-15 (Sprache Stufe 2: die App hoert und spricht — KatAgent 4.2)
+- Mikrofonknopf in der Eingabezeile: aufnehmen (AAC/M4A, 16 kHz mono), zum
+  Manager schicken, erkannten Text **freihaendig direkt abschicken**. Neue
+  Berechtigung `RECORD_AUDIO` samt Laufzeitabfrage.
+- Lautsprecher unter jeder Agentenantwort; **automatisch vorgelesen wird nur,
+  was per Sprache gefragt wurde**.
+- `ManagerSync.stt()` und `.tts()` sprechen die Manager-Routen von Stufe 1 an
+  (Basic-Auth wie der uebrige Verkehr, 120 s Lesetimeout).
+- Aufnahmen unter 2 KB werden verworfen ("zu kurz") statt eine leere Erkennung
+  zu schicken.
+- Zwei Kotlin-Fallen beim Bau: `send()` ist eine lokale Funktion und darf nicht
+  vor ihrer Deklaration aufgerufen werden (jetzt ueber einen Merker, den ein
+  LaunchedEffect abarbeitet), und `VolumeUp` liegt nicht unter `AutoMirrored`.
+
 ## 2026-08-15 (Sprache: Stufe 1 — Dienst, Manager-Routen, Mikrofon im Web)
 - Neuer **Sprachdienst** (`voice/`): Parakeet TDT v3 (ONNX int8) fuer die
   Erkennung, Piper mit der Stimme Thorsten fuer die Ausgabe, dazu ffmpeg fuer

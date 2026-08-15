@@ -95,6 +95,57 @@ object ManagerSync {
         } catch (e: Exception) { emptyList() }
     }
 
+    /**
+     * Aufnahme zum Manager schicken und den erkannten Text holen.
+     * Der Manager reicht an den Sprachdienst durch (Parakeet); das Format ist
+     * egal, dort wandelt ffmpeg auf 16-kHz-Mono.
+     */
+    fun stt(baseUrl: String, user: String, pass: String, audio: ByteArray, mime: String): String? {
+        val conn = URL("${baseUrl.trimEnd('/')}/api/stt").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 15000
+            conn.readTimeout = 120000
+            if (user.isNotEmpty()) {
+                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
+                conn.setRequestProperty("Authorization", "Basic $cred")
+            }
+            conn.setRequestProperty("Content-Type", mime)
+            conn.doOutput = true
+            conn.outputStream.use { it.write(audio) }
+            val code = conn.responseCode
+            if (code !in 200..299) { lastStatus = "HTTP $code"; return null }
+            lastStatus = "OK"
+            JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                .optString("text").takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            lastStatus = e.message ?: e.toString(); null
+        } finally { conn.disconnect() }
+    }
+
+    /** Text sprechen lassen; liefert die WAV-Daten oder null. */
+    fun tts(baseUrl: String, user: String, pass: String, text: String): ByteArray? {
+        val conn = URL("${baseUrl.trimEnd('/')}/api/tts").openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 15000
+            conn.readTimeout = 120000
+            if (user.isNotEmpty()) {
+                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
+                conn.setRequestProperty("Authorization", "Basic $cred")
+            }
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.outputStream.use { it.write(JSONObject().put("text", text).toString().toByteArray()) }
+            val code = conn.responseCode
+            if (code !in 200..299) { lastStatus = "HTTP $code"; return null }
+            lastStatus = "OK"
+            conn.inputStream.readBytes()
+        } catch (e: Exception) {
+            lastStatus = e.message ?: e.toString(); null
+        } finally { conn.disconnect() }
+    }
+
     fun pull(baseUrl: String, user: String, pass: String): String? =
         request("GET", "${baseUrl.trimEnd('/')}/api/chats", user, pass, null)
 
