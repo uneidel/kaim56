@@ -106,8 +106,16 @@ ein geschlossenes SaaS auf dieser Basis ist nicht zulässig.
 Copyright (C) 2026 Ulrich Neidel. Die Android-App (`app/`) steht unter derselben Lizenz.
 
 ### Drittanbieter / Attribution
-kAIm56 bündelt keinen Fremdcode (Python-Teil ist stdlib-only). Einzelne **Konzepte** wurden
-adaptiert — nicht 1:1 kopiert:
+Der Python-Teil (Manager + Agent) ist **stdlib-only**, ohne gebündelten Fremdcode.
+
+**katfs** (Rust, `katfs/`) ist eigener Code (AGPL wie der Rest), nutzt aber Crates von
+crates.io — nicht im Repo vendored, sondern beim Bauen bezogen: **iroh** (P2P), **tokio**,
+**serde**/**serde_json**, **anyhow**, **tiny_http**. Alle stehen unter permissiven Lizenzen
+(MIT bzw. Apache-2.0) und sind mit der AGPL vereinbar. Wer ein **gebautes katfs-Binary**
+weitergibt, muss die Copyright-/Lizenzhinweise dieser Crates mitliefern (übliche MIT/Apache-
+Pflicht bei Binär-Distribution); genaue Terms im jeweiligen Crate-Repo.
+
+Adaptierte **Konzepte** (nicht 1:1 kopiert):
 - Kontext-/Harness-Muster (Summarizing, Context-Offloader, Goal-Loop, Interventions) angelehnt
   an **strands-agents/harness-sdk** (Apache-2.0); der Summarization-Prompt ist die einzige
   textnahe Stelle.
