@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# kAIm56 — self-hosted Firecracker AI-agent platform
+# Copyright (C) 2026 Ulrich Neidel
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This program is free software under the GNU AGPL v3+; see LICENSE.
 """Transport-Layer fuer den OpenRouter-Agent: TRANSPORT=signal | web."""
 import json
 import os

@@ -1,3 +1,7 @@
+# kAIm56 — self-hosted Firecracker AI-agent platform
+# Copyright (C) 2026 Ulrich Neidel
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This program is free software under the GNU AGPL v3+; see LICENSE.
 """Manager-Weboberflaeche: das komplette HTML/CSS/JS als eine Konstante.
 Reine Daten — Logik (render/Ersetzungen) bleibt in manager.py."""
 

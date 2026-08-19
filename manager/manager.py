@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# kAIm56 — self-hosted Firecracker AI-agent platform
+# Copyright (C) 2026 Ulrich Neidel
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This program is free software under the GNU AGPL v3+; see LICENSE.
 """kAIm56 — Manager (Web-UI + API) für 1..x microVM-Instanzen (Firecracker).
 
 Laeuft als root (braucht /dev/kvm, ip, iptables) — z. B. via systemd. Reine

@@ -92,3 +92,24 @@ plus Embedding-/MCP-Hub-Container (`--with-voice`, `--with-agents` optional),
 richtet den systemd-Dienst mit generiertem Passwort ein und laeuft die
 Offline-Testsuite als Smoke-Test. Idempotent — erneut ausfuehren = Update.
 Danach: Web-UI Port 8700 → Settings-Tab → API-Key eintragen.
+
+
+## Lizenz
+
+kAIm56 steht unter der **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** — siehe [LICENSE](LICENSE).
+
+Kurz: Du darfst die Software nutzen, verändern und selbst betreiben. **Betreibst du sie
+(auch verändert) als über ein Netzwerk erreichbaren Dienst, musst du den Quellcode deiner
+Version den Nutzern zugänglich machen.** Damit bleibt kAIm56 auch in Forks/Deployments offen —
+ein geschlossenes SaaS auf dieser Basis ist nicht zulässig.
+
+Copyright (C) 2026 Ulrich Neidel. Die Android-App (`app/`) steht unter derselben Lizenz.
+
+### Drittanbieter / Attribution
+kAIm56 bündelt keinen Fremdcode (Python-Teil ist stdlib-only). Einzelne **Konzepte** wurden
+adaptiert — nicht 1:1 kopiert:
+- Kontext-/Harness-Muster (Summarizing, Context-Offloader, Goal-Loop, Interventions) angelehnt
+  an **strands-agents/harness-sdk** (Apache-2.0); der Summarization-Prompt ist die einzige
+  textnahe Stelle.
+- `/model`, Steering, Prompt-Templates, Tool-Plugins, das Oracle-Tool: Ideen aus **pi.dev**.
+- Credential-Injection-Gateway: Muster aus **OneCLI**.

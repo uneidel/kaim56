@@ -1,3 +1,7 @@
+# kAIm56 — self-hosted Firecracker AI-agent platform
+# Copyright (C) 2026 Ulrich Neidel
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This program is free software under the GNU AGPL v3+; see LICENSE.
 """store: alle Datenhaltung an einem Ort — SQLite (Aufgaben-History, LLM-
 Verbrauch, semantische Vektoren), das flache Agenten-Gedaechtnis (memory.json)
 und der Embedding-Client. Teil des mgr-Pakets; braucht nur BASE.

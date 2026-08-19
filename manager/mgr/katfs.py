@@ -1,3 +1,7 @@
+# kAIm56 — self-hosted Firecracker AI-agent platform
+# Copyright (C) 2026 Ulrich Neidel
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This program is free software under the GNU AGPL v3+; see LICENSE.
 """katfs: P2P-Ordnerfreigabe (iroh) — Proxy-Helfer zum Host-Knoten.
 
 Teil des mgr-Pakets; spricht nur den loopback-gebundenen katfs-Knoten an.
