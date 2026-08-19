@@ -1985,6 +1985,16 @@ def make_config_disk(inst):
         cfg["TASK_ADMIN"] = "1"
     d = os.path.join(RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
+    # Tool-Plugins (firecracker/plugins/*.py) mit auf die Disk — der Agent laedt
+    # sie beim Start aus /config/plugins. Neues Plugin = Datei + Stop/Start.
+    pdst = os.path.join(d, "plugins")
+    shutil.rmtree(pdst, ignore_errors=True)
+    psrc = os.path.join(BASE, "plugins")
+    if os.path.isdir(psrc):
+        os.makedirs(pdst, exist_ok=True)
+        for f0 in sorted(os.listdir(psrc)):
+            if f0.endswith(".py"):
+                shutil.copy2(os.path.join(psrc, f0), os.path.join(pdst, f0))
     with open(os.path.join(d, "config.env"), "w") as f:
         for k, v in cfg.items():
             # Werte quoten (EXTRA_MOUNTS u.a. enthalten Shell-Metazeichen wie | und ;)
@@ -2341,6 +2351,56 @@ def pb_remove(instance, pid):
         d[instance] = [x for x in lst if x.get("id") != str(pid)]
         _save_playbooks(d)
         return n - len(d[instance])
+
+
+# ---- Prompt-Templates: /name -> gespeicherter Prompt (pi.dev-Idee) ----------
+PROMPTS_FILE = os.path.join(BASE, "prompts.json")
+_pr_lock = threading.Lock()
+PROMPTS_MAX = 50
+
+
+def load_prompts():
+    try:
+        with open(PROMPTS_FILE) as fh:
+            d = json.load(fh)
+            return d if isinstance(d, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def prompt_upsert(name, text):
+    name = re.sub(r"[^a-z0-9_-]", "", str(name).lower())[:32]
+    text = str(text or "").strip()[:4000]
+    if not name or not text:
+        return "error: name/text missing"
+    if name in ("reset", "fresh", "reasoning", "goal", "model", "task", "help", "agents"):
+        return f"error: '{name}' ist ein eingebautes Kommando"
+    with _pr_lock:
+        lst = load_prompts()
+        cur = next((p for p in lst if p.get("name") == name), None)
+        if cur:
+            cur["text"] = text
+        elif len(lst) >= PROMPTS_MAX:
+            return f"error: max {PROMPTS_MAX} prompts"
+        else:
+            lst.append({"name": name, "text": text})
+        tmp = PROMPTS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(lst, fh, indent=1, ensure_ascii=False)
+        os.replace(tmp, PROMPTS_FILE)
+    return "saved"
+
+
+def prompt_delete(name):
+    with _pr_lock:
+        lst = load_prompts()
+        n = len(lst)
+        lst = [p for p in lst if p.get("name") != name]
+        tmp = PROMPTS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(lst, fh, indent=1, ensure_ascii=False)
+        os.replace(tmp, PROMPTS_FILE)
+    return "deleted" if len(lst) < n else "unknown"
 
 
 # ---- Missionen: Plan-/Fortschritts-Speicher fuer mehrstufige Auftraege ------
@@ -3356,6 +3416,19 @@ footer{border-top:1px solid var(--color-divider)}
       </div>
     </div>
   </div>
+
+  <div class=sec-head style="margin-top:36px">
+    <div><h6>Wiederkehrende Auftraege</h6><h3 style="font-size:22px">Prompt templates</h3></div>
+    <span class="note text-muted">Als Slash-Kommando im Chat: <code>/name [zusatz]</code> — der Agent expandiert serverseitig (Web, App und Signal)</span>
+  </div>
+  <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div id=promptlist><span class=text-muted style="font-size:13px">…</span></div>
+    <div class=grid2 style="margin-top:16px">
+      <div class=field><label>Name (wird /name)</label><input class=input id=prname placeholder="daily"></div>
+      <div class="field span2"><label>Prompt-Text</label><textarea class=input id=prtext style="min-height:70px" placeholder="Erstelle mein Tagesbriefing: …"></textarea></div>
+    </div>
+    <div class=panel-foot><span id=prmsg class=msg></span><button class="btn btn-primary" onclick=savePrompt()>Save template</button></div>
+  </div>
 </section>
 
 <section class="screen" id=s-skills>
@@ -3693,7 +3766,7 @@ footer{border-top:1px solid var(--color-divider)}
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
   3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; risky
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
-  <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx.</p></div>
+  <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (one .py per tool in <code>plugins/</code>) ride the config disk into the VM and register at agent start.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
@@ -4176,6 +4249,34 @@ function showTab(t){
 }
 window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();});
 
+let PROMPTS=[];
+async function loadPrompts(){
+  try{PROMPTS=(await (await fetch('/api/prompts')).json()).prompts||[]}catch(e){PROMPTS=[]}
+  const el=document.getElementById('promptlist'); if(!el)return;
+  el.innerHTML=PROMPTS.length?PROMPTS.map(p=>
+    `<div style="display:flex;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--color-divider)">`+
+    `<code style="flex:none">/${escT(p.name)}</code>`+
+    `<span class=text-muted style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escT(p.text)}</span>`+
+    `<button class="btn btn-ghost btn-sm" onclick="editPrompt('${esc(p.name)}')">Edit</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick="delPrompt('${esc(p.name)}')">✕</button></div>`).join('')
+    :'<span class=text-muted style="font-size:13px">Keine Templates. Unten anlegen — dann im Chat per /name nutzbar.</span>';
+}
+function editPrompt(n){const p=PROMPTS.find(x=>x.name===n);if(!p)return;
+  document.getElementById('prname').value=p.name;document.getElementById('prtext').value=p.text;}
+async function savePrompt(){
+  const name=document.getElementById('prname').value.trim(),text=document.getElementById('prtext').value.trim();
+  const d=await (await fetch('/api/prompts',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,text})})).json();
+  document.getElementById('prmsg').textContent=d.msg||'?';
+  if(d.msg==='saved'){document.getElementById('prname').value='';document.getElementById('prtext').value='';}
+  loadPrompts();
+}
+async function delPrompt(n){
+  if(!confirm('Template /'+n+' loeschen?'))return;
+  await fetch('/api/prompts',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:n,delete:true})});
+  loadPrompts();
+}
 function renderPersonas(){
   document.getElementById('personas').innerHTML=PERSONAS.map(p=>
     `<div class="card blueprint">${CORNERS}`+
@@ -4755,7 +4856,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
+  renderSettings();renderParams();loadMissions();loadPrompts();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
   refreshUsage();
   // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
   // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
@@ -5681,6 +5782,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(st); self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data))); self.end_headers()
             self.wfile.write(data); return
+        if self.path.split("?", 1)[0] == "/api/prompts":
+            body = json.dumps({"prompts": load_prompts()}, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         if self.path.startswith("/api/voice-health"):
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{VOICE_PORT}/health", timeout=5) as r:
@@ -6034,6 +6140,21 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
+        if self.path == "/api/prompts":
+            # Verwaltung der Prompt-Templates: Admin only.
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            if b.get("delete"):
+                msg = prompt_delete(b.get("name", ""))
+            else:
+                msg = prompt_upsert(b.get("name", ""), b.get("text", ""))
+            out = json.dumps({"msg": msg}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
         if self.path == "/api/notify":
             # Agent schickt eine Push-Benachrichtigung an App + Web. Instanz per IP.
             ln = int(self.headers.get("Content-Length", 0) or 0)

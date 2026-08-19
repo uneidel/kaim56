@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -142,6 +143,34 @@ SYSTEM += (
 
 
 # Reasoning/Thinking des Modells (OpenRouter reasoning-Parameter). None = aus.
+# --- /model: Modell (und optional Backend) zur Laufzeit wechseln ------------
+# Wie bei pi.dev: mitten in der Session hochschalten ("/model orcarouter:
+# anthropic/claude-sonnet-4.6") und wieder zurueck — ohne Neustart, Kontext
+# bleibt. Wirkt nur bis zum Neustart; dauerhaft bleibt die Instanz-Config.
+_MODEL_BACKENDS = {
+    "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1/chat/completions",
+                   "OPENROUTER_API_KEY"),
+    "orcarouter": ("OrcaRouter", "https://api.orcarouter.ai/v1/chat/completions",
+                   "ORCAROUTER_API_KEY"),
+}
+
+
+def _set_model(cmd):
+    global OR_MODEL, OR_URL, LLM_NAME, LLM_KEY_SECRET, LLM_BACKEND, OR_KEY
+    rest = cmd[len("/model"):].strip()
+    if not rest or rest in ("show", "status"):
+        return f"🧠 Modell: {OR_MODEL} ueber {LLM_NAME} ({OR_URL})"
+    if ":" in rest and rest.split(":", 1)[0] in _MODEL_BACKENDS:
+        prov, mdl = rest.split(":", 1)
+        name, url, secret = _MODEL_BACKENDS[prov]
+        LLM_BACKEND, LLM_NAME, OR_URL, LLM_KEY_SECRET = prov, name, url, secret
+        OR_KEY = ""                      # Key des neuen Backends beim Broker holen
+        OR_MODEL = mdl.strip()
+    else:
+        OR_MODEL = rest
+    return f"🧠 Modell jetzt: {OR_MODEL} ueber {LLM_NAME} (bis zum Neustart)"
+
+
 # Default aus Env (OPENROUTER_REASONING), zur Laufzeit per /reasoning umschaltbar.
 _reasoning = (os.environ.get("OPENROUTER_REASONING", "").strip().lower() or None)
 if _reasoning not in (None, "low", "medium", "high"):
@@ -1437,6 +1466,36 @@ def _inject_playbooks():
         _history.insert(1, {"role": "system", "content": block})
 
 
+# --- Prompt-Templates: /name -> im Manager gepflegter Prompt -----------------
+# Wiederkehrende Auftraege als Kommando (pi.dev-Idee "prompt templates").
+# Expansion passiert HIER im Agenten — funktioniert damit in Web, App und
+# Signal gleichermassen. "/daily bitte kurz" -> Template-Text + " bitte kurz".
+_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model")
+_prompts_cache = {"ts": 0.0, "map": {}}
+
+
+def _prompt_templates():
+    if time.time() - _prompts_cache["ts"] > 30:
+        try:
+            lst = json.loads(_mgr_get(_manager_base(), "/api/prompts", timeout=6)).get("prompts", [])
+            _prompts_cache["map"] = {p["name"]: p.get("text", "") for p in lst if p.get("name")}
+        except Exception:
+            pass                       # alten Cache behalten
+        _prompts_cache["ts"] = time.time()
+    return _prompts_cache["map"]
+
+
+def _expand_prompt(message):
+    m = message.strip()
+    if not m.startswith("/") or m.startswith(_BUILTIN_SLASH):
+        return message
+    name, _, rest = m[1:].partition(" ")
+    tpl = _prompt_templates().get(name)
+    if not tpl:
+        return message
+    return tpl + ((" " + rest.strip()) if rest.strip() else "")
+
+
 MISSION_TAG = "[Missionen]"
 
 
@@ -1522,14 +1581,49 @@ def _trim_history():
     _history[:] = [head] + _prefix(new_summary) + recent
 
 
+# --- Steering: dem laufenden Agenten reinrufen -------------------------------
+# Waehrend ein Turn laeuft (Tool-Schleife), kann der Nutzer Nachrichten
+# nachschieben (run_agent: POST /api/steer). Sie werden zwischen zwei Tool-
+# Schritten als User-Nachricht eingespeist — der Agent aendert den Kurs, statt
+# stur zu Ende zu laufen.
+_steer_lock = threading.Lock()
+_steer_q = []
+_busy = [False]
+
+
+def steer_push(msg):
+    """(angenommen?) True, wenn ein Turn laeuft und die Nachricht eingespeist
+    wird; False -> Aufrufer soll sie als normale Nachricht senden."""
+    with _steer_lock:
+        if not _busy[0]:
+            return False
+        _steer_q.append(str(msg)[:2000])
+        return True
+
+
+def _drain_steer(hist, on_token=None):
+    with _steer_lock:
+        msgs, _steer_q[:] = _steer_q[:], []
+    for m in msgs:
+        hist.append({"role": "user", "content":
+                     "[Steuerung — soeben vom Nutzer nachgeschoben, hat Vorrang] " + m})
+        if on_token:
+            on_token(f"\n\u21aa {m}\n")
+    return bool(msgs)
+
+
 def _tool_loop(hist):
     """Tool-Schleife auf einer beliebigen Nachrichtenliste. `hist` ist entweder
     das persistente _history (Gespraech) oder eine Wegwerf-Liste (Heartbeat)."""
     for _ in range(MAX_STEPS):
+        _drain_steer(hist)
         msg = or_chat(hist, TOOLS)
         hist.append(msg)
         tcs = msg.get("tool_calls")
         if not tcs:
+            # Kam waehrend der Antwort noch eine Steuerung rein? Dann weiter.
+            if _drain_steer(hist):
+                continue
             return msg.get("content") or "(leere Antwort)"
         for tc in tcs:
             fn = tc["function"]
@@ -1544,6 +1638,7 @@ def _tool_loop(hist):
 
 
 def run(user_message):
+    user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
         return "🔄 Kontext zurückgesetzt."
@@ -1551,6 +1646,8 @@ def run(user_message):
         return _set_reasoning(user_message)
     if user_message.startswith("/goal"):
         return _set_goal(user_message)
+    if user_message.startswith("/model"):
+        return _set_model(user_message)
     # /fresh: zustandslos in einem Wegwerf-Kontext laufen — das Gespraechs-
     # _history bleibt unangetastet (sonst wischte ein Heartbeat einen laufenden
     # App-Chat weg, weil beide sich dasselbe _history teilen). Fuer den
@@ -1564,9 +1661,13 @@ def run(user_message):
     _inject_missions()
     _recall(user_message)
     _history.append({"role": "user", "content": user_message})
-    if _goal:
-        return _run_goal(_history, user_message)
-    return _tool_loop(_history)
+    _busy[0] = True
+    try:
+        if _goal:
+            return _run_goal(_history, user_message)
+        return _tool_loop(_history)
+    finally:
+        _busy[0] = False
 
 
 def or_chat_stream(messages, tools, on_token):
@@ -1662,6 +1763,7 @@ def run_stream(user_message, on_token, image=None):
     """Wie run(), aber streamt die Antwort-Tokens ueber on_token. Tool-Runden
     erzeugen keinen Text; die finale Antwort wird gestreamt.
     image: optionales Base64-JPEG -> als Vision-Content an OpenRouter."""
+    user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
         on_token("🔄 Kontext zurückgesetzt.")
@@ -1671,6 +1773,9 @@ def run_stream(user_message, on_token, image=None):
         return
     if user_message.startswith("/goal"):
         on_token(_set_goal(user_message))
+        return
+    if user_message.startswith("/model"):
+        on_token(_set_model(user_message))
         return
     # /fresh: wie in run() zustandslos, Gespraech unangetastet. Heartbeats
     # brauchen kein Streaming — einmal die Antwort ausgeben.
@@ -1691,31 +1796,71 @@ def run_stream(user_message, on_token, image=None):
     else:
         content = user_message
     _history.append({"role": "user", "content": content})
-    if _goal:
-        # Mit aktivem Ziel wird die Antwort gegen den Judge verfeinert (nicht
-        # gestreamt) und danach als Ganzes ausgegeben.
-        on_token(_run_goal(_history, user_message))
-        return
-    for _ in range(MAX_STEPS):
-        msg = or_chat_stream(_history, TOOLS, on_token)
-        _history.append(msg)
-        tcs = msg.get("tool_calls")
-        if not tcs:
+    _busy[0] = True
+    try:
+        if _goal:
+            # Mit aktivem Ziel wird die Antwort gegen den Judge verfeinert (nicht
+            # gestreamt) und danach als Ganzes ausgegeben.
+            on_token(_run_goal(_history, user_message))
             return
-        for tc in tcs:
-            fn = tc["function"]
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            out = exec_tool(fn["name"], args)
-            log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
-            _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
-    on_token("\n(max. Tool-Schritte erreicht)")
+        for _ in range(MAX_STEPS):
+            _drain_steer(_history, on_token)
+            msg = or_chat_stream(_history, TOOLS, on_token)
+            _history.append(msg)
+            tcs = msg.get("tool_calls")
+            if not tcs:
+                if _drain_steer(_history, on_token):
+                    continue
+                return
+            for tc in tcs:
+                fn = tc["function"]
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                out = exec_tool(fn["name"], args)
+                log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
+                _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+        on_token("\n(max. Tool-Schritte erreicht)")
+    finally:
+        _busy[0] = False
+
+
+# Tool-Plugins (pi.dev-Extension-Idee, uebersetzt): eine .py-Datei je Tool,
+# vom Manager auf die Config-Disk gelegt (/config/plugins). Konvention:
+#   DESC = "…"; PARAMS = {...}; REQUIRED = [...];  def run(**kwargs): ...
+# Der Dateiname (ohne .py) wird der Tool-Name. Die microVM ist die Sandbox.
+PLUGIN_TOOLS = set()
+PLUGIN_DIR = os.environ.get("PLUGIN_DIR", "/config/plugins")
+
+
+def load_plugins():
+    import importlib.util
+    if not os.path.isdir(PLUGIN_DIR):
+        return
+    for f in sorted(os.listdir(PLUGIN_DIR)):
+        if not f.endswith(".py"):
+            continue
+        name = f[:-3]
+        if name in BUILTIN and name not in PLUGIN_TOOLS:
+            log(f"plugin '{name}' ignoriert: kollidiert mit eingebautem Tool")
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("plugin_" + name,
+                                                          os.path.join(PLUGIN_DIR, f))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            BUILTIN[name] = (mod.run, str(getattr(mod, "DESC", name))[:300],
+                             getattr(mod, "PARAMS", {}), getattr(mod, "REQUIRED", []))
+            PLUGIN_TOOLS.add(name)
+            log(f"plugin geladen: {name}")
+        except Exception as e:
+            log(f"plugin '{name}' FEHLER: {e!r}")
 
 
 def init():
     global TOOLS
     os.makedirs(WORKDIR, exist_ok=True)
+    load_plugins()
     TOOLS = builtin_schema() + init_mcp()
     log(f"agent bereit: backend={LLM_BACKEND} url={OR_URL} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")

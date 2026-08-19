@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-08-19 (pi.dev-Ideen uebernommen: /model, Steering, Prompts, Plugins)
+- **/model** — Modell (und Backend) mitten in der Session wechseln, ohne
+    Neustart, Kontext bleibt: `/model orcarouter:anthropic/claude-sonnet-4.6`,
+    `/model <id>` (nur Modell), `/model` (anzeigen). Wirkt bis zum Neustart.
+    Live verifiziert inkl. Backend-Wechsel OrcaRouter->OpenRouter->zurueck.
+- **Steering** — dem laufenden Agenten reinrufen: neue Nachricht wird zwischen
+    zwei Tool-Schritten als `[Steuerung]`-User-Nachricht eingespeist statt zu
+    warten. Web: Enter mit Text waehrend einer Antwort (Button ■ bricht weiter
+    ab); App 5.8: Senden waehrend busy. Guest-Endpunkt `POST /api/steer`
+    (queued=false wenn kein Turn laeuft -> normal senden).
+- **Prompt-Templates** — wiederkehrende Auftraege als Slash-Kommando: im
+    Personas-Tab pflegen, im Chat `/name [zusatz]`; Expansion passiert im
+    Agenten -> funktioniert in Web, App UND Signal. Store prompts.json,
+    `GET/POST /api/prompts`. Slash-Vorschlaege jetzt auch im Web-Chat.
+- **Tool-Plugins** (pi.dev-Extension-Idee, uebersetzt) — eine .py-Datei je Tool
+    in `firecracker/plugins/` (DESC/PARAMS/REQUIRED + run()); der Manager legt
+    sie auf die Config-Disk, der Agent laedt sie beim Start (/config/plugins).
+    Kollisionen mit eingebauten Tools werden abgewehrt. Beispiel `wuerfel.py`;
+    live: „tools=36", Aufruf funktioniert. Neues Tool = Datei + Stop/Start.
+- 48 Tests gruen (neu: model-switch, steering-queue, prompt-expansion+store,
+    plugin-loader inkl. Kollisionsschutz).
+
+
+## 2026-08-19 (pi/prime stillgelegt)
+- Nutzungsanalyse (llm_usage, task_runs, Instanzen): pi und prime wurden **nie**
+    verwendet; ihr Zweck (Multi-Provider) ist durch openrouter/orcarouter/llama
+    besser abgedeckt, und die Bridges hatten keinen Zugriff auf das kAIm56-
+    Oekosystem (Tools/Memory/Missionen). Entfernt: Templates, rootfs-Images
+    (~7 GB), Docker-Images, Secret-Policy-Eintraege, OVERLAY_ROOTFS, Installer-
+    Verweise, Repo-Verzeichnisse. Quellcode bleibt in der Git-History.
+
+
+## 2026-08-19 (Installer: curl | sh)
+- **install.sh** im kaim56-Repo: installiert die ganze Loesung auf einer
+    frischen Maschine (Preflight inkl. KVM-Check, Laufzeit-Layout, Firecracker
+    v1.16.1 von GitHub, Gast-Kernel via VMLINUX_URL, Rootfs+embed+mcp-hub-
+    Builds, systemd-Unit mit generiertem Passwort, Offline-Tests als Smoke).
+    Flags: --check/--files-only/--no-build/--with-voice/--with-agents; idempotent.
+- Portabilitaet dafuer: GUEST_DNS, CLAUDE_CRED_SRC, AGENT_DIR (NFS), FC_DIR
+    (Build-Skripte), Test-Pfade jetzt per Env; Folder-Picker-HOME dynamisch.
+- Repo vervollstaendigt: embed/, mcp-hub/, tests/, run-tests.sh eingecheckt;
+    kompletter Live-Stand gesynct.
+- Verifiziert: --check gruen; --files-only baute ein frisches Ziel-Layout, aus
+    dem manager.py importiert und **30 Offline-Tests gruen** laufen; das echte
+    Firecracker-Release wurde von GitHub geladen. Offen fuer curl|sh: Repo auf
+    GitHub pushen + vmlinux als Release-Asset (VMLINUX_URL).
+
+
 ## 2026-08-19 (Fix: Tool-Katalog-Drift + Drift-Wache)
 - Die vier Missions-Tools und `offload_read` fehlten im Manager-Werkzeugkatalog
     (`AGENT_TOOLS_CATALOG`) — dadurch tauchten sie nicht im Create-Instance-

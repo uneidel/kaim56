@@ -124,6 +124,16 @@ class H(BaseHTTPRequestHandler):
             d = {}
         message = d.get("message") or ""
         image = d.get("image")   # optionales Base64-JPEG (Vision)
+        # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
+        # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
+        if self.path.rstrip("/").endswith("/steer"):
+            ok = agent.steer_push(message) if message else False
+            b = json.dumps({"queued": bool(ok)}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b)
+            return
         # Streaming: /api/chat/stream -> Tokens als roher Text (chunk-weise).
         if self.path.rstrip("/").endswith("/stream"):
             self.send_response(200)

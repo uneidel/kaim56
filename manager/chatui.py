@@ -175,6 +175,13 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   border:1px solid var(--border);padding:8px 15px}
 .chips button:hover{background:color-mix(in srgb,var(--text) 7%,transparent);border-color:var(--accent)}
 
+.slrow{display:flex;gap:10px;align-items:baseline;padding:6px 12px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--border);border-top:none;font-size:.85rem}
+#slashhint .slrow:first-child{border-top:1px solid var(--border)}
+.slrow:hover{background:var(--panel-2)}
+.slrow code{flex:none;color:var(--accent)}
+.slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* ---- Composer ---- */
 #comp{flex:none;padding:10px 14px 18px;background:var(--bg)}
 #box{max-width:760px;margin:0 auto;background:var(--panel);border:1px solid var(--border);
@@ -232,6 +239,7 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   <div id=log><div class=wrap id=msgs></div></div>
 
   <div id=comp>
+    <div id=slashhint style="max-width:760px;margin:0 auto 6px;display:none"></div>
     <div id=box class=blueprint><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
       <div id=thumbs></div>
       <div class=inrow>
@@ -239,7 +247,7 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
         <button class=icon id=micBtn title="Sprechen (nochmal tippen = fertig)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*" hidden onchange=addImage(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
-        <button id=send onclick=send() title="Send">➤</button>
+        <button id=send onclick=send(true) title="Send: senden · während einer Antwort: ■ = abbrechen (Enter mit Text = reinrufen)">➤</button>
       </div>
     </div>
     <div class=foot id=foot></div>
@@ -569,13 +577,53 @@ async function speakText(text){
 }
 function speakMsg(i){ if(cur&&cur.msgs[i])speakText(splitThink(cur.msgs[i].content).ans); }
 
+/* ---------- Steering: dem laufenden Agenten reinrufen ---------- */
+async function steer(text){
+  $('t').value='';autogrow();
+  cur.msgs.splice(cur.msgs.length-1,0,{role:'user',content:text});  /* vor der laufenden Antwort */
+  draw();
+  try{
+    const d=await (await fetch('/i/'+encodeURIComponent(agent)+'/api/steer',
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})})).json();
+    if(!d.queued) $('foot').textContent='Kein laufender Turn mehr — Nachricht bitte normal senden.';
+  }catch(e){ $('foot').textContent='Steering fehlgeschlagen: '+e; }
+}
+
 /* ---------- Senden ---------- */
+const SLASH_BUILTIN=[
+  ['/model','Modell wechseln (z. B. /model orcarouter:anthropic/claude-sonnet-4.6)'],
+  ['/reasoning','Reasoning umschalten (low·medium·high·off)'],
+  ['/goal','Ziel setzen — Antworten werden gegen einen Judge verfeinert'],
+  ['/reset','Kontext zuruecksetzen'],
+];
+let SLASH_PROMPTS=[],_spTs=0;
+async function slashPrompts(){
+  if(Date.now()-_spTs>30000){_spTs=Date.now();
+    try{SLASH_PROMPTS=((await (await fetch('/api/prompts')).json()).prompts||[])
+      .map(p=>['/'+p.name,p.text.slice(0,70)]);}catch(e){}}
+  return SLASH_PROMPTS;
+}
+async function slashHint(){
+  const el=$('slashhint'),v=$('t').value;
+  if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){el.style.display='none';return}
+  const all=SLASH_BUILTIN.concat(await slashPrompts());
+  const hits=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,5);
+  if(!hits.length){el.style.display='none';return}
+  el.innerHTML=hits.map(h=>`<div class=slrow onclick="pickSlash('${esc(h[0])}')">`+
+    `<code>${escT(h[0])}</code><span>${escT(h[1])}</span></div>`).join('');
+  el.style.display='block';
+}
+function pickSlash(c){$('t').value=c+' ';$('t').focus();$('slashhint').style.display='none';autogrow()}
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
-$('t').addEventListener('input',autogrow);
+$('t').addEventListener('input',()=>{autogrow();slashHint();});
 $('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
 
-async function send(){
-  if(ctrl){ctrl.abort();return}
+async function send(fromButton){
+  if(ctrl){
+    const t=$('t').value.trim();
+    if(!fromButton&&t){ return steer(t); }   /* Enter mit Text: reinrufen */
+    ctrl.abort();return;                      /* Button (■) bricht ab */
+  }
   const text=$('t').value.trim();
   if(!text&&!img)return;
   if(!agent)return alert('No instance with TRANSPORT=web available.');

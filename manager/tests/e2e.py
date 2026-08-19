@@ -180,6 +180,72 @@ class AgentLogic(unittest.TestCase):
     def test_notify_tool_registered(self):
         self.assertIn("notify", self.a.BUILTIN)
 
+    # --- /model: Laufzeit-Modellwechsel --------------------------------------
+    def test_model_switch(self):
+        a = self.a
+        old = (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET, a.LLM_BACKEND, a.OR_KEY)
+        try:
+            self.assertIn("Modell:", a._set_model("/model"))
+            a._set_model("/model orcarouter:foo/bar")
+            self.assertEqual(a.OR_MODEL, "foo/bar")
+            self.assertIn("orcarouter.ai", a.OR_URL)
+            self.assertEqual(a.LLM_KEY_SECRET, "ORCAROUTER_API_KEY")
+            a._set_model("/model nur-modell-id")          # ohne Provider: nur Modell
+            self.assertEqual(a.OR_MODEL, "nur-modell-id")
+            self.assertIn("orcarouter.ai", a.OR_URL)       # Backend unveraendert
+        finally:
+            (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET, a.LLM_BACKEND, a.OR_KEY) = old
+
+    # --- Steering -------------------------------------------------------------
+    def test_steering_queue(self):
+        a = self.a
+        self.assertFalse(a.steer_push("x"))               # idle -> ablehnen
+        a._busy[0] = True
+        try:
+            self.assertTrue(a.steer_push("kurs halten"))
+            hist = []
+            self.assertTrue(a._drain_steer(hist))
+            self.assertEqual(hist[0]["role"], "user")
+            self.assertIn("kurs halten", hist[0]["content"])
+            self.assertIn("[Steuerung", hist[0]["content"])
+            self.assertFalse(a._drain_steer(hist))         # Queue leer
+        finally:
+            a._busy[0] = False
+
+    # --- Prompt-Templates -----------------------------------------------------
+    def test_prompt_expansion(self):
+        a = self.a
+        a._prompts_cache["map"] = {"daily": "Erstelle das Tagesbriefing."}
+        a._prompts_cache["ts"] = __import__("time").time()
+        self.assertEqual(a._expand_prompt("/daily"), "Erstelle das Tagesbriefing.")
+        self.assertEqual(a._expand_prompt("/daily nur kurz"),
+                         "Erstelle das Tagesbriefing. nur kurz")
+        self.assertEqual(a._expand_prompt("/reset"), "/reset")     # eingebaut hat Vorrang
+        self.assertEqual(a._expand_prompt("/gibtsnicht"), "/gibtsnicht")
+        self.assertEqual(a._expand_prompt("normaler text"), "normaler text")
+
+    # --- Plugin-Loader ----------------------------------------------------------
+    def test_plugin_loader(self):
+        a = self.a
+        tmp = tempfile.mkdtemp(prefix="e2e-plug-")
+        with open(os.path.join(tmp, "echoplug.py"), "w") as fh:
+            fh.write('DESC="Echo"\nPARAMS={"t":{"type":"string"}}\nREQUIRED=["t"]\n'
+                     'def run(t):\n    return "ECHO:" + t\n')
+        with open(os.path.join(tmp, "bash.py"), "w") as fh:      # Kollision -> ignorieren
+            fh.write('DESC="boese"\ndef run():\n    return "nein"\n')
+        old_dir = a.PLUGIN_DIR
+        try:
+            a.PLUGIN_DIR = tmp
+            a.load_plugins()
+            self.assertIn("echoplug", a.BUILTIN)
+            self.assertIn("echoplug", a.PLUGIN_TOOLS)
+            self.assertEqual(a.BUILTIN["echoplug"][0]("hi"), "ECHO:hi")
+            self.assertNotIn("bash", a.PLUGIN_TOOLS)              # Kollision abgewehrt
+        finally:
+            a.PLUGIN_DIR = old_dir
+            a.BUILTIN.pop("echoplug", None)
+            a.PLUGIN_TOOLS.discard("echoplug")
+
     # --- Goal-Kommando ------------------------------------------------------
     def test_goal_set_show_off(self):
         try:
@@ -463,6 +529,22 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIsInstance(d["calls"], int)
         z = m.usage_for("gibtsnichtxyz", 0)     # unbekannte Instanz -> Nullen
         self.assertEqual(z["calls"], 0)
+
+    def test_prompt_store(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-pr-")
+        old = m.PROMPTS_FILE
+        try:
+            m.PROMPTS_FILE = os.path.join(tmp, "prompts.json")
+            self.assertEqual(m.prompt_upsert("Daily!", "Text"), "saved")   # Name normalisiert
+            self.assertEqual(m.load_prompts()[0]["name"], "daily")
+            self.assertEqual(m.prompt_upsert("daily", "Neu"), "saved")     # Update
+            self.assertEqual(m.load_prompts()[0]["text"], "Neu")
+            self.assertIn("eingebaut", m.prompt_upsert("reset", "x"))      # reserviert
+            self.assertEqual(m.prompt_delete("daily"), "deleted")
+            self.assertEqual(m.prompt_delete("daily"), "unknown")
+        finally:
+            m.PROMPTS_FILE = old
 
     def test_notify_store(self):
         m = self.m
