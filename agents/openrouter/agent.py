@@ -22,6 +22,47 @@ import uuid
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o")
 OR_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+
+# Selbst gehostetes LLM via llama.cpp (OpenAI-kompatibel). Ist LLAMA_ENDPOINT
+# gesetzt, spricht der Agent den lokalen Server statt OpenRouter an — gleicher
+# Code, nur andere Basis-URL, Modellname und (optionaler) Key. Der Endpoint
+# kommt aus den geteilten Settings ueber die Instanz-Config, der Key als Secret
+# ueber den Broker (LLAMA_API_KEY, darf fehlen -> ohne Auth).
+LLAMA_ENDPOINT = os.environ.get("LLAMA_ENDPOINT", "").strip()
+# OrcaRouter: OpenAI-kompatibles Gateway wie OpenRouter, nur andere Basis-URL
+# und ein sk-orca-Key. Gesetzt ist ORCAROUTER_MODEL (oder eine eigene URL beim
+# Selbsthosten von OrcaRouter-Lite), spricht der Agent OrcaRouter statt
+# OpenRouter an. Der Key kommt als Secret ueber den Broker (ORCAROUTER_API_KEY).
+ORCA_URL = os.environ.get("ORCAROUTER_URL", "").strip()
+ORCA_MODEL = os.environ.get("ORCAROUTER_MODEL", "").strip()
+
+
+def _openai_chat_url(base):
+    """Basis-URL auf den vollen /chat/completions-Pfad bringen — egal ob
+    ".../v1", ".../v1/chat/completions" oder nackter "host:port" reinkommt."""
+    u = base.rstrip("/")
+    if u.endswith("/chat/completions"):
+        return u
+    if u.endswith("/v1"):
+        return u + "/chat/completions"
+    return u + "/v1/chat/completions"
+
+
+LLM_BACKEND = "openrouter"
+LLM_NAME = "OpenRouter"
+LLM_KEY_SECRET = "OPENROUTER_API_KEY"
+if LLAMA_ENDPOINT:
+    LLM_BACKEND = "llama"
+    LLM_NAME = "llama.cpp"
+    LLM_KEY_SECRET = "LLAMA_API_KEY"
+    OR_URL = _openai_chat_url(LLAMA_ENDPOINT)
+    OR_MODEL = os.environ.get("LLAMA_MODEL") or os.environ.get("OPENROUTER_MODEL") or "local-model"
+elif ORCA_MODEL or ORCA_URL:
+    LLM_BACKEND = "orcarouter"
+    LLM_NAME = "OrcaRouter"
+    LLM_KEY_SECRET = "ORCAROUTER_API_KEY"
+    OR_URL = _openai_chat_url(ORCA_URL or "https://api.orcarouter.ai/v1")
+    OR_MODEL = ORCA_MODEL or os.environ.get("OPENROUTER_MODEL") or "openai/gpt-4o"
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
@@ -30,6 +71,104 @@ SYSTEM = os.environ.get("AGENT_SYSTEM",
     "Du bist ein hilfreicher Agent mit Tools (Shell, Dateien, Web, MCP). "
     "Arbeite im Verzeichnis %s. Nutze Tools wenn nötig, antworte sonst direkt. "
     "Fasse dich kurz." % WORKDIR)
+
+# Laufzeit-Selbstauskunft: der Agent soll wissen, WORAUF er selbst laeuft, damit
+# er auf "welches Modell nutzt du?" korrekt antwortet und nicht faelschlich das
+# Template (list_agents zeigt fuers Routing ANDERE Agenten) heranzieht.
+if os.environ.get("TASK_ADMIN"):   # Missions-Tools hat nur der Orchestrator
+    SYSTEM += (
+    "\n\nMissionen: Gibt dir der Nutzer einen MEHRSTUFIGEN Auftrag (mehrere "
+        "Tasks/Tage), lege SOFORT mit mission_start eine Mission mit klaren "
+        "Schritten an. Je Vorstoss: einen Schritt per create_task anstossen und "
+        "die task-id mit mission_update am Schritt vermerken (status doing). Ist "
+        "ein Task fertig, wirst du automatisch getriggert: Ergebnis pruefen, "
+        "Schritt auf done/failed, naechsten Schritt anstossen. Alle Schritte "
+        "fertig -> mission_finish mit Fazit. Blockiert -> notify an den Nutzer. "
+        "Einfache Einzelauftraege bleiben normale Tasks OHNE Mission.")
+
+SYSTEM += (f"\n\nLaufzeit: Du laeufst ueber {LLM_NAME} mit dem Modell "
+           f"'{OR_MODEL}'. Fragt jemand nach deinem Modell/Backend, nenne genau "
+           f"das — verwende dafuer NICHT list_agents (das listet andere Agenten "
+           f"zum Delegieren, nicht dich).")
+
+# Haengt an JEDEN Systemprompt, auch an Personas: die Gedaechtnis-Werkzeuge
+# sind eingebaut, also gehoert die Anweisung dazu hierher — nicht in jede
+# Persona einzeln, wo sie beim naechsten Bearbeiten verloren ginge.
+SYSTEM += (
+    "\n\nGedaechtnis: Innerhalb eines Gespraechs erinnerst du dich ganz normal "
+    "an das bisher Gesagte — nutze das selbstverstaendlich und erklaere dem "
+    "Nutzer NICHT ungefragt, wie dein Gedaechtnis funktioniert oder dass es sich "
+    "zuruecksetzt. Ueber Gespraeche und Neustarts hinweg bleibt nur, was du "
+    "bewusst ablegst: was kuenftige Gespraeche brauchen — Vorlieben des Nutzers, "
+    "getroffene Entscheidungen, laufende Vorhaben, gelernte Eigenheiten der "
+    "Umgebung — merkst du dir sofort und still mit memory_store. Der key ist "
+    "kurz (zum Aktualisieren); der value ist eine VOLLSTAENDIGE, fuer sich "
+    "verstaendliche Aussage (ganzer Satz), denn er wird spaeter nach Bedeutung "
+    "wieder hervorgeholt — 'Ulrichs Lieblingsberg zum Wandern ist der Watzmann', "
+    "nicht bloss 'Watzmann'. Bestehendes unter gleichem key aktualisieren. "
+    "Kein Protokoll fuehren: fluechtige Details nicht speichern. Passende "
+    "fruehere Notizen werden dir automatisch eingeblendet; memory_recall liefert "
+    "bei Bedarf mehr.")
+
+SYSTEM += (
+    "\n\nPlaybooks (feste Regeln): Sagt dir der Nutzer, WIE etwas zu tun ist, "
+    "nennt eine dauerhafte Vorliebe ('immer …', 'fuer X nutze Y') oder korrigiert "
+    "deinen Ansatz, halte das SOFORT und still mit playbook_add als kurze, "
+    "konkrete Regel fest — so waechst dein Wissen mit seinen Wuenschen. Die unter "
+    "[Playbooks] eingeblendeten Regeln befolgst du immer. Mit playbooks zeigst du "
+    "sie, mit playbook_forget entfernst du eine.")
+
+# Verhaltensleitplanken, sinngemaess aus Anthropics veroeffentlichten
+# System-Prompts uebernommen (das Modell-agnostische daran) — gilt fuer jedes
+# Modell hinter diesem Agenten, auch fuer Personas.
+SYSTEM += (
+    "\n\nArbeitsweise: Erfinde nichts. Bist du nicht sicher, ob etwas stimmt "
+    "oder noch aktuell ist, sag das offen und pruefe es mit web_search/"
+    "http_fetch, statt zu raten; erfinde keine Quellen, Zitate oder Links. "
+    "Bevor du behauptest, etwas nicht zu koennen oder keinen Zugriff zu haben, "
+    "sieh nach, ob ein Werkzeug dafuer da ist, und nutze es — selbst handeln "
+    "geht vor darum bitten. Bei unklaren Anfragen triff eine sinnvolle Annahme "
+    "und leg los; frag nur zurueck, wenn es ohne die Angabe wirklich nicht "
+    "geht. Eine begonnene Aufgabe fuehrst du zu Ende statt auf halbem Weg "
+    "aufzuhoeren.\n"
+    "Ton: sachlich, ohne Schmeichelei und ohne uebertriebene Entschuldigungen; "
+    "widersprich freundlich und begruendet, wenn du anderer Meinung bist, statt "
+    "nachzugeben. Lass leere Fuellwoerter wie 'ehrlich gesagt', 'wirklich' oder "
+    "'tatsaechlich' weg — sag es einfach direkt. Antworte knapp und in "
+    "Fliesstext; Listen, Fettung und Ueberschriften nur, wenn der Inhalt es "
+    "wirklich erfordert oder du danach gefragt wirst; Vorbehalte kurz halten, "
+    "der Hauptteil ist die Antwort. Ueber Absichten oder Gemuetszustand anderer "
+    "spekulierst du nicht.")
+
+
+# Reasoning/Thinking des Modells (OpenRouter reasoning-Parameter). None = aus.
+# Default aus Env (OPENROUTER_REASONING), zur Laufzeit per /reasoning umschaltbar.
+_reasoning = (os.environ.get("OPENROUTER_REASONING", "").strip().lower() or None)
+if _reasoning not in (None, "low", "medium", "high"):
+    _reasoning = None
+
+
+# Marker fuer den Denk-/Reasoning-Block im Token-Strom. Sichtbare Unicode-
+# Klammern: kommen in normalem Text praktisch nie vor und werden vom Security
+# Gateway NICHT entfernt (kein Zero-Width/Tag-Zeichen). Web und App klappen den
+# Bereich zwischen den Markern als "Denken" ein.
+THINK_START = "\u27E6think\u27E7"
+THINK_END = "\u27E6/think\u27E7"
+
+
+def _set_reasoning(cmd):
+    """/reasoning [off|low|medium|high] — ohne Argument umschalten (aus <-> medium)."""
+    global _reasoning
+    arg = cmd[len("/reasoning"):].strip().lower()
+    if arg in ("off", "aus", "0", "none", "false"):
+        _reasoning = None
+    elif arg in ("low", "medium", "high"):
+        _reasoning = arg
+    elif arg == "":
+        _reasoning = None if _reasoning else "medium"
+    else:
+        return "Nutzung: /reasoning [off|low|medium|high]"
+    return f"🧠 Reasoning {'aus' if _reasoning is None else 'an (' + _reasoning + ')'}."
 
 
 def log(*a):
@@ -162,19 +301,21 @@ def _mgr(base, path, payload=None, timeout=60):
 
 
 def ensure_or_key():
-    """OPENROUTER_API_KEY beschaffen und im Speicher halten. Leerer Rueckgabewert
-    heisst: weder Env noch Broker haben ihn — der Aufrufer muss das melden."""
+    """LLM-Key beschaffen und im Speicher halten. Bei llama.cpp ist der Key
+    optional — fehlt er, laeuft der Agent ohne Auth (leerer Bearer), das ist
+    fuer einen Server ohne --api-key der Normalfall und kein Fehler."""
     global OR_KEY
     if OR_KEY:
         return OR_KEY
     try:
-        d = json.loads(_mgr_get(_manager_base(), "/api/secret/OPENROUTER_API_KEY"))
+        d = json.loads(_mgr_get(_manager_base(), f"/api/secret/{LLM_KEY_SECRET}"))
         OR_KEY = d.get("value", "") or ""
-        if not OR_KEY:
-            print(f"OPENROUTER_API_KEY: {d.get('error', 'vom Broker nicht freigegeben')}",
+        if not OR_KEY and LLM_BACKEND != "llama":
+            print(f"{LLM_KEY_SECRET}: {d.get('error', 'vom Broker nicht freigegeben')}",
                   flush=True)
     except Exception as e:
-        print(f"OPENROUTER_API_KEY nicht vom Manager zu bekommen: {e!r}", flush=True)
+        if LLM_BACKEND != "llama":
+            print(f"{LLM_KEY_SECRET} nicht vom Manager zu bekommen: {e!r}", flush=True)
     return OR_KEY
 
 
@@ -233,6 +374,104 @@ def t_create_task(task, target="ephemeral", schedule="", wait=False):
         return f"Fehler: {e!r}"
 
 
+def t_mission_start(goal, steps):
+    """Mehrstufigen Auftrag als Mission anlegen: Ziel + geplante Schritte.
+    Der Fortschritt liegt im Manager und ueberlebt Neustart/Reset."""
+    if isinstance(steps, str):
+        steps = [x.strip() for x in steps.split("\n") if x.strip()]
+    try:
+        d = json.loads(_mgr(_manager_base(), "/api/mission-start",
+                            {"goal": goal, "steps": steps}, timeout=10))
+        return f"Mission {d['id']} angelegt." if d.get("id") else f"Nicht angelegt: {d.get('note','')}"
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_missions():
+    """Aktive/pausierte Missionen mit Schritten und Status auflisten."""
+    try:
+        ms = json.loads(_mgr_get(_manager_base(), "/api/missions", timeout=8)).get("missions", [])
+        if not ms:
+            return "keine Missionen"
+        out = []
+        for m in ms:
+            if m.get("status") in ("done", "failed"):
+                continue
+            steps = " | ".join(f"{st['n']}[{st['status']}] {st['text'][:60]}"
+                               + (f" (task {st['task_id']})" if st.get("task_id") else "")
+                               for st in m.get("steps", []))
+            out.append(f"{m['id']} [{m['status']}] {m['goal'][:80]} :: {steps}")
+        return "\n".join(out) or "keine offenen Missionen"
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_mission_update(id, step=None, status="", result="", task_id="", add_step="", note=""):
+    """Missionsschritt fortschreiben: status open|doing|done|failed, result kurz,
+    task_id des angestossenen Tasks vermerken; add_step haengt einen neuen
+    Schritt an; note schreibt nur ins Log."""
+    try:
+        body = {"id": id, "status": status, "result": result,
+                "task_id": task_id, "add_step": add_step, "note": note}
+        if step is not None:
+            body["step"] = int(step)
+        d = json.loads(_mgr(_manager_base(), "/api/mission-update", body, timeout=10))
+        return d.get("msg", "?")
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_mission_finish(id, summary, failed=False):
+    """Mission abschliessen (oder mit failed=true als gescheitert beenden).
+    Fazit wandert ins Langzeitgedaechtnis, der Nutzer bekommt eine Notification."""
+    try:
+        d = json.loads(_mgr(_manager_base(), "/api/mission-finish",
+                            {"id": id, "summary": summary, "failed": bool(failed)}, timeout=10))
+        return d.get("msg", "?")
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_notify(title, message=""):
+    """Eine Push-Benachrichtigung an die Geraete des Nutzers schicken (App als
+    Android-Systemnotification, Web-Manager als Glocke). Fuer wichtige
+    Ereignisse/Ergebnisse, wenn der Nutzer nicht im Chat sitzt. Anders als
+    send_signal (klingelt in Signal) ist das der App/Web-Kanal. Der Versand
+    laeuft ueber den Manager."""
+    try:
+        body = _mgr(_manager_base(), "/api/notify",
+                    {"title": title, "message": message}, timeout=15)
+        d = json.loads(body)
+        return "Benachrichtigung gesendet." if d.get("id") else \
+            "⚠️ nicht gesendet: " + str(d.get("note", ""))
+    except urllib.error.HTTPError as e:
+        try:
+            return "⚠️ nicht gesendet: " + str(json.loads(e.read()).get("note", e.code))
+        except Exception:
+            return f"⚠️ nicht gesendet (HTTP {e.code})"
+    except Exception as e:
+        return f"⚠️ Fehler: {e!r}"
+
+
+def t_send_signal(text, to=""):
+    """Dem Nutzer per Signal schreiben. Der Versand laeuft im Manager: die
+    Bot-Nummer und der API-Zugang liegen dort, und der Empfaenger wird gegen
+    die Liste der erlaubten Nummern geprueft. Von hier aus laesst sich also
+    nicht an beliebige Nummern schreiben — mit Absicht."""
+    try:
+        body = _mgr(_manager_base(), "/api/signal",
+                    {"text": text, "to": (to or "").strip()}, timeout=45)
+        d = json.loads(body)
+        return ("Signal gesendet: " if d.get("ok") else "⚠️ nicht gesendet: ") + str(d.get("note", ""))
+    except urllib.error.HTTPError as e:
+        try:
+            return "⚠️ nicht gesendet: " + str(json.loads(e.read()).get("note", e.code))
+        except Exception:
+            return f"⚠️ nicht gesendet: HTTP {e.code}"
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
 def t_read_inbox(peek=False):
     """Neue Nutzer-Nachrichten (Signal/App/Web) seit dem letzten Lauf lesen —
     der Posteingang des Orchestrators. Standardmaessig wird jede Nachricht nur
@@ -263,7 +502,7 @@ def t_list_agents():
         for a in rows:
             mcp = (" mcp:" + ",".join(a["mcps"])) if a.get("mcps") else ""
             st = "läuft" if a.get("running") else "aus"
-            out.append(f"{a['name']} [{st}] {a.get('template','')} {a.get('model','')}{mcp}")
+            out.append(f"{a['name']} [{st}] {a.get('backend') or a.get('template','')} {a.get('model','')}{mcp}")
         return "\n".join(out)
     except Exception as e:
         return f"Fehler: {e!r}"
@@ -286,6 +525,55 @@ def t_recall_tasks(query="", limit=10):
             out.append(f"[{ts}] {ok}{r.get('target')}: {str(r.get('task',''))[:80]}"
                        f" -> {str(r.get('result','') or '')[:140]}")
         return "\n".join(out)
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_list_tasks():
+    """Laufende/geplante Aufgaben mit IDs auflisten — noetig, um eine gezielt
+    mit delete_task zu entfernen. (recall_tasks liefert dagegen die History
+    erledigter Laeufe, nicht die aktiven mit ihren IDs.)"""
+    try:
+        body = _mgr_get(_manager_base(), "/api/tasks-open")
+        tasks = json.loads(body).get("tasks", [])
+        if not tasks:
+            return "keine laufenden Aufgaben"
+        out = []
+        for t in tasks:
+            sch = f" [{t['schedule']}]" if t.get("schedule") else ""
+            out.append(f"{t.get('id')} @{t.get('instance')} ({t.get('status')}){sch}: "
+                       f"{str(t.get('message',''))[:80]}")
+        return "\n".join(out)
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_delete_task(id):
+    """Eine laufende/geplante Aufgabe per ID entfernen. Die ID kommt aus
+    list_tasks. Endgueltig; eine gerade laufende Aufgabe bricht das nicht ab,
+    verhindert aber kuenftige Laeufe."""
+    try:
+        body = _mgr(_manager_base(), "/api/task-delete", {"id": str(id)})
+        d = json.loads(body)
+        return (f"Aufgabe {id} geloescht." if d.get("deleted")
+                else f"Keine Aufgabe mit ID {id} gefunden.")
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_edit_task(id, message="", schedule=""):
+    """Nachricht und/oder Zeitplan einer Aufgabe aendern (ID aus list_tasks).
+    schedule z. B. 'every 2h', 'daily 08:00', 'hourly'; leerer schedule macht
+    aus einer Wiederholung eine einmalige Aufgabe. Leere Felder bleiben
+    unveraendert. Eine gerade LAUFENDE Aufgabe laesst sich nicht aendern."""
+    try:
+        payload = {"id": str(id)}
+        if message:
+            payload["message"] = message
+        if schedule is not None:
+            payload["schedule"] = schedule
+        body = _mgr(_manager_base(), "/api/task-edit", payload)
+        return str(json.loads(body).get("result", body))
     except Exception as e:
         return f"Fehler: {e!r}"
 
@@ -328,6 +616,38 @@ def t_memory_recall(key=None):
     inst = os.environ.get("FC_INSTANCE", "default")
     try:
         return _mgr_get(_manager_base(), f"/api/memory/{inst}" + (f"/{key}" if key else ""))
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_playbook_add(rule):
+    """Eine dauerhafte Regel/ein Vorgehen festhalten (Playbook). Wird kuenftig
+    IMMER eingeblendet und befolgt."""
+    try:
+        d = json.loads(_mgr(_manager_base(), "/api/playbook-add", {"text": rule}))
+        if d.get("added"):
+            return "Regel gemerkt."
+        return "Regel gibt es schon." if d.get("note") == "exists" else "Nicht gemerkt."
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_playbooks():
+    """Alle festen Regeln (Playbooks) mit IDs anzeigen."""
+    try:
+        pbs = json.loads(_mgr_get(_manager_base(), "/api/playbooks")).get("playbooks", [])
+        if not pbs:
+            return "keine Playbooks"
+        return "\n".join(f"{p['id']}: {p['text']}" for p in pbs)
+    except Exception as e:
+        return f"Fehler: {e!r}"
+
+
+def t_playbook_forget(id):
+    """Eine Regel per ID entfernen (ID aus playbooks)."""
+    try:
+        d = json.loads(_mgr(_manager_base(), "/api/playbook-remove", {"id": str(id)}))
+        return f"Regel {id} entfernt." if d.get("removed") else f"Keine Regel {id}."
     except Exception as e:
         return f"Fehler: {e!r}"
 
@@ -439,6 +759,47 @@ BUILTIN = {
                      "target": {"type": "string", "description": "Instanzname (faehig) oder 'ephemeral'"},
                      "schedule": {"type": "string", "description": "optional: every Nm|Nh|Nd, daily HH:MM, hourly"},
                      "wait": {"type": "boolean", "description": "auf Ergebnis warten (Standard false)"}}, ["task"]),
+    "mission_start": (t_mission_start,
+                      "Mehrstufigen Auftrag als Mission anlegen (Ziel + Schritte). Fuer alles, "
+                      "was mehrere Tasks/Tage braucht — der Fortschritt ueberlebt Neustarts.",
+                      {"goal": {"type": "string", "description": "Ziel der Mission"},
+                       "steps": {"type": "array", "items": {"type": "string"},
+                                 "description": "geplante Schritte in Reihenfolge"}},
+                      ["goal", "steps"]),
+    "missions": (t_missions, "Offene Missionen mit Schritten/Status auflisten.", {}, []),
+    "mission_update": (t_mission_update,
+                       "Missionsschritt fortschreiben: status setzen (doing/done/failed), "
+                       "Ergebnis + task_id des angestossenen Tasks vermerken, add_step haengt "
+                       "einen Schritt an.",
+                       {"id": {"type": "string", "description": "Mission-ID"},
+                        "step": {"type": "integer", "description": "Schrittnummer"},
+                        "status": {"type": "string", "description": "open|doing|done|failed"},
+                        "result": {"type": "string", "description": "kurzes Ergebnis"},
+                        "task_id": {"type": "string", "description": "ID des create_task-Tasks"},
+                        "add_step": {"type": "string", "description": "neuen Schritt anhaengen"},
+                        "note": {"type": "string", "description": "nur Log-Notiz"}}, ["id"]),
+    "mission_finish": (t_mission_finish,
+                       "Mission abschliessen; failed=true bei Scheitern. Kurzes Fazit angeben.",
+                       {"id": {"type": "string"}, "summary": {"type": "string"},
+                        "failed": {"type": "boolean"}}, ["id", "summary"]),
+    "notify": (t_notify,
+               "Push-Benachrichtigung an die Geraete des Nutzers (App-Systemnotification + "
+               "Web-Manager-Glocke). Fuer wichtige Ereignisse/Ergebnisse, wenn er nicht im "
+               "Chat sitzt. Anders als send_signal ist das der App/Web-Kanal, klingelt nicht "
+               "in Signal.",
+               {"title": {"type": "string", "description": "Kurzer Titel"},
+                "message": {"type": "string", "description": "Text der Benachrichtigung"}},
+               ["title"]),
+    "send_signal": (t_send_signal,
+                    "Dem Nutzer eine Signal-Nachricht schicken — fuer Ergebnisse, Funde "
+                    "oder Rueckfragen, wenn er gerade nicht im Chat sitzt. NICHT fuer die "
+                    "normale Antwort im laufenden Gespraech verwenden (die kommt ohnehin "
+                    "an) und nicht ungefragt wiederholt: eine Nachricht klingelt auf einem "
+                    "Telefon. Empfaenger nur aus der erlaubten Liste; 'to' leer lassen "
+                    "heisst: an den Standardempfaenger.",
+                    {"text": {"type": "string", "description": "Nachrichtentext"},
+                     "to": {"type": "string", "description": "optional: Nummer im Format +49…"}},
+                    ["text"]),
     "read_inbox": (t_read_inbox,
                   "Neue Nutzer-Nachrichten (Signal/App/Web) seit dem letzten Lauf lesen — "
                   "Posteingang des Orchestrators. Jede Nachricht kommt nur einmal (Wasserzeichen); "
@@ -454,6 +815,20 @@ BUILTIN = {
                      "um zu pruefen, ob etwas schon erledigt/geplant ist (keine Dubletten).",
                      {"query": {"type": "string", "description": "Suchbegriff (leer = letzte)"},
                       "limit": {"type": "integer", "description": "max. Treffer (Standard 10)"}}, []),
+    "list_tasks": (t_list_tasks,
+                   "LAUFENDE/geplante Aufgaben mit IDs auflisten — zum gezielten Loeschen. "
+                   "(recall_tasks ist dagegen die History erledigter Laeufe.)", {}, []),
+    "delete_task": (t_delete_task,
+                    "Eine laufende/geplante Aufgabe per ID loeschen. Die ID zuerst mit "
+                    "list_tasks holen. Endgueltig.",
+                    {"id": {"type": "string", "description": "Task-ID aus list_tasks"}}, ["id"]),
+    "edit_task": (t_edit_task,
+                  "Nachricht und/oder Zeitplan einer Aufgabe aendern (ID aus list_tasks). "
+                  "schedule z. B. 'every 2h', 'daily 08:00', 'hourly'; leer = einmalig.",
+                  {"id": {"type": "string", "description": "Task-ID aus list_tasks"},
+                   "message": {"type": "string", "description": "neuer Text (leer = unveraendert)"},
+                   "schedule": {"type": "string", "description": "neuer Zeitplan (leer = einmalig/unveraendert)"}},
+                  ["id"]),
     "list_skills": (t_list_skills, "Verfügbare Experten-Skills auflisten (name: Beschreibung). Vor Fachaufgaben prüfen, ob ein passender Skill existiert.",
                     {}, []),
     "load_skill": (t_load_skill, "Einen Experten-Skill (Wissens-Dokument) in den Kontext laden und befolgen.",
@@ -462,6 +837,14 @@ BUILTIN = {
                      {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"]),
     "memory_recall": (t_memory_recall, "Gemerkten Wert abrufen; ohne key alle Einträge.",
                       {"key": {"type": "string"}}, []),
+    "playbook_add": (t_playbook_add,
+                     "Eine dauerhafte Regel/ein Vorgehen festhalten — gilt kuenftig IMMER. "
+                     "Nutze das, wenn der Nutzer dir sagt WIE etwas zu tun ist, eine "
+                     "dauerhafte Vorliebe nennt oder dich korrigiert.",
+                     {"rule": {"type": "string", "description": "die Regel als kurzer, konkreter Satz"}}, ["rule"]),
+    "playbooks": (t_playbooks, "Alle festen Regeln (Playbooks) mit IDs anzeigen.", {}, []),
+    "playbook_forget": (t_playbook_forget, "Eine Regel per ID entfernen (ID aus playbooks).",
+                        {"id": {"type": "string", "description": "Playbook-ID"}}, ["id"]),
     "remote_ls": (t_remote_ls,
                   "Den vom Nutzer freigegebenen Ordner auflisten (liegt auf SEINEM Rechner, "
                   "per P2P angebunden). Pfade sind relativ zur Wurzel der Freigabe.",
@@ -501,8 +884,17 @@ BUILTIN = {
 _TOOL_ALLOW = {t.strip() for t in os.environ.get("AGENT_TOOLS", "").split(",") if t.strip()}
 
 
+# Task-Verwaltung nur, wo der Manager TASK_ADMIN gesetzt hat (Orchestrator).
+_TASK_ADMIN_TOOLS = {"list_tasks", "delete_task", "edit_task",
+                     "mission_start", "missions", "mission_update", "mission_finish"}
+
+
 def tool_enabled(name):
+    if name == "offload_read":
+        return True   # Systemhilfe: muss immer verfuegbar sein, sonst haengt eine Referenz in der Luft
     if name == "spawn_subagent" and os.environ.get("NO_SPAWN"):
+        return False
+    if name in _TASK_ADMIN_TOOLS and not os.environ.get("TASK_ADMIN"):
         return False
     return (not _TOOL_ALLOW) or name in _TOOL_ALLOW
 
@@ -561,6 +953,44 @@ class MCP:
         return "\n".join(parts) or json.dumps(r)[:MAX_TOOL_OUT]
 
 
+class HubMCP:
+    """MCP ueber den Manager statt als eigener Prozess in der VM.
+
+    Der Serverprozess laeuft im MCP-Hub am Host; hier geht nur noch JSON-RPC
+    ueber /api/mcp hinaus. Damit braucht der Gast weder die Tokens (die setzt
+    der Manager ein) noch LAN-Zugang (die Verbindung zum Zielsystem oeffnet
+    der Hub). Gleiche Schnittstelle wie MCP: tools() und call()."""
+
+    def __init__(self, name):
+        self.name = name
+        self._id = 0
+        self._rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                 "clientInfo": {"name": "or-agent", "version": "1"}})
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+
+    def _send(self, payload):
+        body = json.dumps({"server": self.name, "payload": payload})
+        req = urllib.request.Request(_manager_base() + "/api/mcp", data=body.encode(),
+                                     headers={"Content-Type": "application/json"})
+        return json.loads(urllib.request.urlopen(req, timeout=120).read() or b"{}")
+
+    def _rpc(self, method, params):
+        self._id += 1
+        out = self._send({"jsonrpc": "2.0", "id": self._id,
+                          "method": method, "params": params})
+        if out.get("error"):
+            raise RuntimeError(str(out["error"])[:300])
+        return out.get("result", {})
+
+    def tools(self):
+        return self._rpc("tools/list", {}).get("tools", [])
+
+    def call(self, tool, args):
+        r = self._rpc("tools/call", {"name": tool, "arguments": args})
+        parts = [c.get("text", "") for c in r.get("content", []) if c.get("type") == "text"]
+        return "\n".join(parts) or json.dumps(r)[:MAX_TOOL_OUT]
+
+
 _mcp = {}      # server-name -> MCP
 _mcp_tools = {}  # exposed-tool-name -> (server-name, mcp-tool-name)
 
@@ -599,7 +1029,14 @@ def init_mcp():
             continue
         env = spec.get("env") if isinstance(spec, dict) else None
         try:
-            srv = MCP(name, argv, env={str(k): str(v) for k, v in (env or {}).items()})
+            # Hub zuerst: der Prozess laeuft am Host, der Gast braucht weder
+            # argv noch env noch Secrets. Der Eigenprozess bleibt Rueckfall
+            # fuer Manager ohne /api/mcp (aelterer Stand).
+            try:
+                srv = HubMCP(name)
+            except Exception as hub_err:
+                log(f"MCP '{name}': Hub nicht erreichbar ({hub_err!r:.120}), starte lokal")
+                srv = MCP(name, argv, env={str(k): str(v) for k, v in (env or {}).items()})
             _mcp[name] = srv
             for t in srv.tools():
                 fq = f"{name}__{t['name']}"[:64]
@@ -648,18 +1085,22 @@ def audit(name, args, ok=True):
 
 
 def exec_tool(name, args):
-    ok = True
+    # Hook/Intervention: Denylist + optionale HITL-Freigabe VOR der Ausfuehrung.
+    allow, reason = _hook_before_tool(name, args)
+    if not allow:
+        audit(name, args, ok=False)
+        return f"Tool '{name}' nicht ausgefuehrt: {reason}"
     try:
         if name in BUILTIN:
             if not tool_enabled(name):
                 audit(name, args, ok=False)
                 return f"Tool '{name}' ist fuer diese Instanz nicht freigegeben."
             audit(name, args)
-            return str(BUILTIN[name][0](**args))[:MAX_TOOL_OUT]
+            return _finalize_output(name, str(BUILTIN[name][0](**args)))
         if name in _mcp_tools:
             audit(name, args)
             srv, tool = _mcp_tools[name]
-            return _mcp[srv].call(tool, args)[:MAX_TOOL_OUT]
+            return _finalize_output(name, _mcp[srv].call(tool, args))
         audit(name, args, ok=False)
         return f"unbekanntes Tool: {name}"
     except Exception as e:
@@ -688,37 +1129,405 @@ def report_usage(u):
         pass
 
 
+# ===== Harness-Muster (angelehnt an strands-agents/harness-sdk, Apache-2.0) ====
+# Vier Bausteine, alle stdlib, ohne neue Abhaengigkeit:
+#  1) Retry mit Backoff um den Modellaufruf
+#  2) Kontext ZUSAMMENFASSEN statt Wegwerfen (summarizing conversation manager)
+#  3) Grosse Tool-Ausgaben AUSLAGERN statt hart kappen (context offloader)
+#  4) ZIEL-Schleife mit Judge (goal loop) + Tool-HOOK (interventions/HITL)
+
+LLM_RETRIES = int(os.environ.get("LLM_RETRIES", "3"))
+_RETRY_CODES = {408, 409, 429, 500, 502, 503, 504}
+
+
+def _retry_sleep(attempt):
+    # 0.5s, 1s, 2s, 4s … gedeckelt auf 8s.
+    time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+
+
+# --- 2) Kontext-Zusammenfassung --------------------------------------------
+SUMMARY_TAG = "[Zusammenfassung]"
+CTX_SUMMARY = os.environ.get("CTX_SUMMARY", "1") != "0"
+CTX_PRESERVE_RECENT = int(os.environ.get("CTX_PRESERVE_RECENT", "10"))
+SUMMARIZE_PROMPT = (
+    "Du fasst einen Gespraechsverlauf zusammen. Erzeuge eine knappe, strukturierte "
+    "Zusammenfassung in Stichpunkten. Antworte NICHT konversationell und sprich den "
+    "Nutzer NICHT an. Enthalte: behandelte Themen und Fragen; wichtige Tool-Aufrufe "
+    "und deren Ergebnisse; geteilte Fakten, Daten und Code; offene Punkte; zentrale "
+    "Erkenntnisse. Schreibe in der dritten Person. Nimm nicht an, dass Tools "
+    "fehlschlugen, sofern nicht ausdruecklich angegeben.")
+
+
+def _msg_text(m):
+    c = m.get("content")
+    if isinstance(c, list):   # Vision-Content -> nur die Textteile
+        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return c or ""
+
+
+def _summarize(msgs, prior=""):
+    """Eine Nachrichtenliste (Gespraech, ohne System-Bloecke) zu einem kurzen
+    Stichpunkt-Summary verdichten. Faellt der Aufruf aus -> '' (Aufrufer macht
+    dann das alte Wegwerf-Verhalten)."""
+    lines = []
+    for m in msgs:
+        role = m.get("role")
+        txt = _msg_text(m)
+        if role == "tool":
+            lines.append(f"[Tool-Ergebnis] {txt[:1500]}")
+        elif role == "assistant":
+            tcs = m.get("tool_calls")
+            if tcs:
+                names = ", ".join(t.get("function", {}).get("name", "?") for t in tcs)
+                lines.append(f"[Assistant rief Tools: {names}] {txt[:800]}")
+            else:
+                lines.append(f"[Assistant] {txt[:1500]}")
+        elif role == "user":
+            lines.append(f"[Nutzer] {txt[:1500]}")
+    joined = "\n".join(lines)
+    if prior:
+        joined = f"Bisherige Zusammenfassung:\n{prior}\n\nNeue Nachrichten:\n{joined}"
+    msg = or_chat([{"role": "system", "content": SUMMARIZE_PROMPT},
+                   {"role": "user", "content": joined}], [])
+    out = (msg.get("content") or "").strip()
+    return "" if out.startswith("⚠") else out   # Fehlermeldung zaehlt nicht
+
+
+# --- 3) Context-Offloader ---------------------------------------------------
+OFFLOAD_DIR = os.path.join(WORKDIR, ".offload")
+OFFLOAD_MIN = int(os.environ.get("OFFLOAD_MIN", str(MAX_TOOL_OUT)))
+OFFLOAD_PREVIEW = int(os.environ.get("OFFLOAD_PREVIEW", "2000"))
+_offload_seq = 0
+
+
+def _finalize_output(name, out):
+    """Ist eine Tool-Ausgabe groesser als OFFLOAD_MIN, wird sie VOLLSTAENDIG in
+    eine Datei ausgelagert und im Kontext nur eine Vorschau + Referenz gehalten
+    (offload_read holt den Rest). So bleibt nichts verloren, ohne den Kontext zu
+    fluten. Kleiner -> unveraendert."""
+    out = out if isinstance(out, str) else str(out)
+    if len(out) <= OFFLOAD_MIN:
+        return out
+    global _offload_seq
+    _offload_seq += 1
+    oid = f"{name}-{_offload_seq}-{uuid.uuid4().hex[:6]}"
+    try:
+        os.makedirs(OFFLOAD_DIR, exist_ok=True)
+        with open(os.path.join(OFFLOAD_DIR, oid + ".txt"), "w") as fh:
+            fh.write(out)
+    except Exception:
+        return out[:MAX_TOOL_OUT]   # Auslagern misslang -> alt: hart kappen
+    preview = out[:OFFLOAD_PREVIEW]
+    return (preview + f"\n\n[… {len(out) - len(preview)} weitere Zeichen ausgelagert. "
+            f"Weiterlesen mit offload_read(id=\"{oid}\", offset={OFFLOAD_PREVIEW}). "
+            f"Gesamtlaenge {len(out)} Zeichen.]")
+
+
+def t_offload_read(id="", offset=0, length=None):
+    """Ausgelagerte Tool-Ausgabe (siehe offload-Referenz) stueckweise lesen."""
+    length = int(length) if length else MAX_TOOL_OUT
+    offset = max(0, int(offset or 0))
+    safe = os.path.basename(str(id))              # kein Pfad-Ausbruch
+    fp = os.path.join(OFFLOAD_DIR, safe + ".txt")
+    try:
+        with open(fp) as fh:
+            fh.seek(offset)
+            data = fh.read(length)
+    except FileNotFoundError:
+        return f"offload '{id}' nicht gefunden."
+    except Exception as e:
+        return f"offload-Fehler: {e!r}"
+    more = f"\n\n[… weiter mit offset={offset + len(data)} …]" if len(data) >= length else ""
+    return data + more
+
+
+# offload_read in den Werkzeugkatalog haengen (erst hier, weil t_offload_read
+# nach dem BUILTIN-Literal definiert ist).
+BUILTIN["offload_read"] = (
+    t_offload_read,
+    "Eine zuvor ausgelagerte, gekuerzte Tool-Ausgabe stueckweise nachlesen "
+    "(die offload-Referenz nennt id und offset).",
+    {"id": {"type": "string", "description": "offload-id aus der Referenz"},
+     "offset": {"type": "integer", "description": "Startposition (Zeichen)"},
+     "length": {"type": "integer", "description": "max. Zeichen (Standard 8000)"}},
+    ["id"])
+
+
+# --- 4a) Ziel-Schleife (goal loop) -----------------------------------------
+GOAL_MAX_ATTEMPTS = int(os.environ.get("GOAL_MAX_ATTEMPTS", "3"))
+_goal = (os.environ.get("AGENT_GOAL", "").strip() or None)
+JUDGE_PROMPT = (
+    "Du bist ein strenger Pruefer. Pruefe, ob die ANTWORT das ZIEL fuer die FRAGE "
+    "erfuellt. Antworte AUSSCHLIESSLICH mit JSON, kein weiterer Text: "
+    '{"meets": true|false, "feedback": "knappe Begruendung, was noch fehlt"}.')
+
+
+def _set_goal(cmd):
+    global _goal
+    rest = cmd[len("/goal"):].strip()
+    if rest in ("", "show", "status"):
+        return f"\U0001f3af Ziel: {_goal}" if _goal else \
+            "Kein Ziel gesetzt. /goal <Kriterium> setzt eines, /goal off entfernt es."
+    if rest in ("off", "clear", "none", "aus"):
+        _goal = None
+        return "\U0001f3af Ziel entfernt."
+    _goal = rest
+    return f"\U0001f3af Ziel gesetzt (max. {GOAL_MAX_ATTEMPTS} Versuche): {_goal}"
+
+
+def _judge(goal, question, answer):
+    """(meets, feedback). Judge kaputt/unparsebar -> durchlassen (True)."""
+    try:
+        m = or_chat([{"role": "system", "content": JUDGE_PROMPT},
+                     {"role": "user", "content": f"ZIEL:\n{goal}\n\nFRAGE:\n{question}\n\nANTWORT:\n{answer}"}], [])
+        raw = (m.get("content") or "").strip()
+        d = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+        return bool(d.get("meets")), str(d.get("feedback", ""))[:500]
+    except Exception:
+        return True, ""
+
+
+def _run_goal(hist, question):
+    """Antwort erzeugen und gegen _goal pruefen; bei Nichterfuellung mit der
+    Judge-Kritik nachbessern, bis max. GOAL_MAX_ATTEMPTS."""
+    answer = _tool_loop(hist)
+    for _ in range(GOAL_MAX_ATTEMPTS - 1):
+        meets, fb = _judge(_goal, question, answer)
+        if meets:
+            break
+        hist.append({"role": "system", "content":
+                     f"Deine letzte Antwort erfuellt das Ziel noch nicht: {_goal}. "
+                     f"Kritik: {fb}. Verbessere die Antwort entsprechend."})
+        answer = _tool_loop(hist)
+    return answer
+
+
+# --- 4b) Tool-Hook: harte Denylist + optionale HITL-Freigabe ----------------
+HITL = os.environ.get("HITL", "") not in ("", "0", "false", "False")
+HITL_TOOLS = set(t for t in os.environ.get(
+    "HITL_TOOLS", "bash,remote_delete,remote_write,delete_task,edit_task").split(",") if t)
+HITL_TIMEOUT = int(os.environ.get("HITL_TIMEOUT", "120"))
+# Immer aktiv, unabhaengig von HITL: offensichtlich zerstoererische bash-Muster.
+_DENY_PATTERNS = ("rm -rf /", ":(){:|:&};:", "mkfs", "dd if=", "> /dev/sd", "chmod -R 000")
+
+
+def _request_approval(name, args):
+    """Beim Manager eine Freigabe anfragen (der fragt den Nutzer per Signal) und
+    darauf pollen. Kann der Manager es nicht (alte Version/kein Signal) -> nicht
+    blockieren (True). Zeitueberschreitung/Ablehnung -> False."""
+    try:
+        d = json.loads(_mgr(_manager_base(), "/api/hitl",
+                            {"tool": name, "target": _audit_target(name, args)}, timeout=8))
+        hid = d.get("id")
+        if not hid:
+            return True
+    except Exception:
+        return True
+    deadline = time.time() + HITL_TIMEOUT
+    while time.time() < deadline:
+        time.sleep(2)
+        try:
+            st = json.loads(_mgr_get(_manager_base(), f"/api/hitl/{hid}", timeout=6)).get("status")
+        except Exception:
+            continue
+        if st == "approved":
+            return True
+        if st == "denied":
+            return False
+    return False
+
+
+def _hook_before_tool(name, args):
+    """(allow, reason). Denylist zuerst, dann optionale HITL-Freigabe."""
+    if name == "bash":
+        cmd = str(args.get("command", ""))
+        for pat in _DENY_PATTERNS:
+            if pat in cmd:
+                return False, f"durch Sicherheitsregel blockiert ({pat})"
+    if HITL and name in HITL_TOOLS:
+        if not _request_approval(name, args):
+            return False, "vom Nutzer nicht freigegeben (oder Zeitueberschreitung)"
+    return True, ""
+
+
 # --- OpenRouter chat --------------------------------------------------------
 def or_chat(messages, tools):
-    body = json.dumps({"model": OR_MODEL, "messages": messages, "tools": tools,
-                       "tool_choice": "auto",
-                       "usage": {"include": True}}).encode()
-    req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
-        "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
-        "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
-    try:
-        r = urllib.request.urlopen(req, timeout=120)
-        d = json.loads(r.read().decode())
-        report_usage(d.get("usage"))
-        return d["choices"][0]["message"]
-    except urllib.error.HTTPError as e:
-        return {"content": f"⚠️ OpenRouter HTTP {e.code}: {e.read().decode()[:300]}"}
-    except Exception as e:
-        return {"content": f"⚠️ OpenRouter-Fehler: {e!r}"}
+    _b = {"model": OR_MODEL, "messages": messages, "usage": {"include": True}}
+    if tools:                       # leere tools-Liste NICHT mitschicken (400)
+        _b["tools"] = tools
+        _b["tool_choice"] = "auto"
+    if _reasoning:
+        _b["reasoning"] = {"effort": _reasoning}
+    body = json.dumps(_b).encode()
+    last = ""
+    for attempt in range(LLM_RETRIES + 1):
+        req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
+            "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
+        try:
+            r = urllib.request.urlopen(req, timeout=120)
+            d = json.loads(r.read().decode())
+            report_usage(d.get("usage"))
+            return d["choices"][0]["message"]
+        except urllib.error.HTTPError as e:
+            last = f"⚠️ {LLM_NAME} HTTP {e.code}: {e.read().decode()[:300]}"
+            if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
+                _retry_sleep(attempt); continue
+            return {"content": last}
+        except Exception as e:
+            last = f"⚠️ {LLM_NAME}-Fehler: {e!r}"
+            if attempt < LLM_RETRIES:
+                _retry_sleep(attempt); continue
+            return {"content": last}
+    return {"content": last}
 
 
 TOOLS = []
 _history = [{"role": "system", "content": SYSTEM}]
 
+# Semantisches Langzeitgedaechtnis: statt beim ersten Turn ALLE Fakten in den
+# Prompt zu kippen (das waechst mit dem Gedaechtnis und kostet jeden Turn),
+# holt der Agent pro Frage nur die inhaltlich naechsten Notizen. Kurzzeit ist
+# _history (dieses Gespraech), Langzeit liegt semantisch im Manager.
+RECALL_TAG = "[Gedaechtnis]"
+RECALL_K = 4
+# Schwelle fuer multilingual-e5: relevante Treffer liegen ~0.82+, thematisch
+# fremde ~0.76. 0.78 trennt sauber. Tunbar, falls zu streng/locker.
+RECALL_MIN = 0.78
 
-def run(user_message):
-    if user_message.strip() == "/reset":
-        del _history[1:]
-        return "🔄 Kontext zurückgesetzt."
-    _history.append({"role": "user", "content": user_message})
+
+def _recall(user_message):
+    """Den Gedaechtnis-Block in _history durch die zu DIESER Frage passenden
+    Langzeit-Notizen ersetzen. Genau EIN solcher Block bleibt stehen, frisch je
+    Turn; /reset raeumt ihn mit weg. Faellt die Suche aus, gibt es diesen Turn
+    eben keinen Langzeit-Kontext — die Notizen bleiben gespeichert."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(RECALL_TAG))]
+    try:
+        body = _mgr(_manager_base(), "/api/memory-search",
+                    {"query": user_message, "k": RECALL_K}, timeout=8)
+        hits = [h for h in json.loads(body).get("hits", [])
+                if h.get("score", 0) >= RECALL_MIN]
+    except Exception:
+        hits = []
+    if hits:
+        block = (RECALL_TAG + " Relevante Notizen aus frueheren Sitzungen "
+                 "(nutze sie, wenn sie zur Frage passen):\n"
+                 + "\n".join(f"- {h['text']}" for h in hits))
+        _history.insert(1, {"role": "system", "content": block})
+
+
+PLAYBOOK_TAG = "[Playbooks]"
+
+
+def _inject_playbooks():
+    """Feste Regeln jeden Turn frisch einblenden — anders als _recall gelten
+    Playbooks IMMER. Genau EIN Block, /reset raeumt ihn mit weg."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(PLAYBOOK_TAG))]
+    try:
+        pbs = json.loads(_mgr_get(_manager_base(), "/api/playbooks", timeout=6)).get("playbooks", [])
+    except Exception:
+        pbs = []
+    if pbs:
+        block = (PLAYBOOK_TAG + " Deine festen Regeln — IMMER befolgen:\n"
+                 + "\n".join(f"- {p.get('text','')}" for p in pbs))
+        _history.insert(1, {"role": "system", "content": block})
+
+
+MISSION_TAG = "[Missionen]"
+
+
+def _inject_missions():
+    """Aktive Missionen jeden Turn kompakt einblenden — der Arbeitsstand
+    ueberlebt so /reset und Neustart. Nur fuer den Orchestrator (TASK_ADMIN).
+    Genau EIN Block, /reset raeumt ihn mit weg."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(MISSION_TAG))]
+    if not os.environ.get("TASK_ADMIN"):
+        return
+    try:
+        ms = json.loads(_mgr_get(_manager_base(), "/api/missions", timeout=6)).get("missions", [])
+    except Exception:
+        ms = []
+    lines = []
+    for m in ms:
+        if m.get("status") != "active":
+            continue
+        cur = next((st for st in m.get("steps", []) if st.get("status") == "doing"),
+                   None) or next((st for st in m.get("steps", []) if st.get("status") == "open"), None)
+        done = sum(1 for st in m.get("steps", []) if st.get("status") == "done")
+        lines.append(f"- {m['id']}: {m['goal'][:100]} ({done}/{len(m.get('steps', []))} Schritte) — "
+                     + (f"aktuell Schritt {cur['n']}: {cur['text'][:80]} [{cur['status']}]"
+                        if cur else "alle Schritte erledigt -> mission_finish!"))
+    if lines:
+        _history.insert(1, {"role": "system", "content":
+                            MISSION_TAG + " Deine laufenden Missionen (Fortschritt liegt im "
+                            "Manager, nutze mission_update/mission_finish):\n" + "\n".join(lines)})
+
+
+# Obergrenze fuers Gespraechs-_history. Ohne die waechst der Kontext eines
+# Dauerprozesses (Orchestrator: Heartbeat + App-Chats teilen sich EIN _history)
+# unbegrenzt, und jeder Call schickt alles erneut. Geschnitten wird nur ZWISCHEN
+# Turns (hier, vor der neuen Nutzernachricht) — nie mitten in einem Tool-Zyklus,
+# sonst haengt ein tool-Ergebnis ohne sein tool_calls in der Luft (API-Fehler).
+CTX_MAX_MSGS = int(os.environ.get("CTX_MAX_MSGS", "20"))
+
+
+def _trim_history():
+    """Bei Ueberlauf die aelteren Nachrichten ZUSAMMENFASSEN statt sie zu
+    verwerfen (summarizing conversation manager). _history[0] (System) ist
+    gepinnt; die letzten CTX_PRESERVE_RECENT Gespraechsnachrichten bleiben
+    woertlich; alles davor wird zu einem [Zusammenfassung]-Systemblock verdichtet
+    (bestehende Zusammenfassung wird eingefaltet). Transiente Bloecke
+    (Playbooks/Gedaechtnis) werden hier verworfen — _inject/_recall setzen sie
+    gleich neu. Nur ZWISCHEN Turns aufrufen, nie im Tool-Zyklus."""
+    if len(_history) <= CTX_MAX_MSGS:
+        return
+    head = _history[0]
+    prior, convo = "", []
+    for m in _history[1:]:
+        if m.get("role") == "system":
+            c = str(m.get("content", ""))
+            if c.startswith(SUMMARY_TAG):
+                prior = c[len(SUMMARY_TAG):].strip()
+            continue    # Playbook/Recall/Summary: nicht als Gespraech behandeln
+        convo.append(m)
+
+    def _boundary_keep(msgs, n):
+        """Die letzten n Nachrichten, aber an einer user-Grenze beginnend, damit
+        kein tool-Ergebnis ohne sein assistant/tool_calls verwaist."""
+        k = msgs[-n:] if n < len(msgs) else msgs[:]
+        while k and k[0].get("role") != "user":
+            k.pop(0)
+        return k
+
+    def _prefix(sm):
+        return [{"role": "system", "content": SUMMARY_TAG + " " + sm}] if sm else []
+
+    if not CTX_SUMMARY or len(convo) <= CTX_PRESERVE_RECENT:
+        # Zusammenfassen aus/zu wenig -> altes Verhalten, aber Summary behalten.
+        _history[:] = [head] + _prefix(prior) + _boundary_keep(convo, CTX_MAX_MSGS - 1)
+        return
+    recent = _boundary_keep(convo, CTX_PRESERVE_RECENT)
+    to_sum = convo[:len(convo) - len(recent)]
+    new_summary = _summarize(to_sum, prior) if to_sum else prior
+    if not new_summary:
+        # Summarizer nicht verfuegbar -> nicht mehr Kontext riskieren: wegwerfen.
+        _history[:] = [head] + _prefix(prior) + recent
+        return
+    _history[:] = [head] + _prefix(new_summary) + recent
+
+
+def _tool_loop(hist):
+    """Tool-Schleife auf einer beliebigen Nachrichtenliste. `hist` ist entweder
+    das persistente _history (Gespraech) oder eine Wegwerf-Liste (Heartbeat)."""
     for _ in range(MAX_STEPS):
-        msg = or_chat(_history, TOOLS)
-        _history.append(msg)
+        msg = or_chat(hist, TOOLS)
+        hist.append(msg)
         tcs = msg.get("tool_calls")
         if not tcs:
             return msg.get("content") or "(leere Antwort)"
@@ -730,23 +1539,70 @@ def run(user_message):
                 args = {}
             out = exec_tool(fn["name"], args)
             log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
-            _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+            hist.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
     return "(max. Tool-Schritte erreicht)"
+
+
+def run(user_message):
+    if user_message.strip() == "/reset":
+        del _history[1:]
+        return "🔄 Kontext zurückgesetzt."
+    if user_message.startswith("/reasoning"):
+        return _set_reasoning(user_message)
+    if user_message.startswith("/goal"):
+        return _set_goal(user_message)
+    # /fresh: zustandslos in einem Wegwerf-Kontext laufen — das Gespraechs-
+    # _history bleibt unangetastet (sonst wischte ein Heartbeat einen laufenden
+    # App-Chat weg, weil beide sich dasselbe _history teilen). Fuer den
+    # Orchestrator-Heartbeat: schauen, delegieren, verwerfen.
+    if user_message.startswith("/fresh"):
+        m = user_message[len("/fresh"):].strip()
+        hist = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": m}]
+        return _tool_loop(hist)
+    _trim_history()
+    _inject_playbooks()
+    _inject_missions()
+    _recall(user_message)
+    _history.append({"role": "user", "content": user_message})
+    if _goal:
+        return _run_goal(_history, user_message)
+    return _tool_loop(_history)
 
 
 def or_chat_stream(messages, tools, on_token):
     """Wie or_chat, aber streamend: ruft on_token(text) je Delta. Baut die
     (assistant-)Nachricht inkl. evtl. tool_calls aus dem Stream zusammen."""
-    body = json.dumps({"model": OR_MODEL, "messages": messages, "tools": tools,
-                       "tool_choice": "auto", "stream": True,
-                       "usage": {"include": True}}).encode()
-    req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
-        "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
-        "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
+    _b = {"model": OR_MODEL, "messages": messages, "stream": True, "usage": {"include": True}}
+    if tools:
+        _b["tools"] = tools
+        _b["tool_choice"] = "auto"
+    if _reasoning:
+        _b["reasoning"] = {"effort": _reasoning}
+    body = json.dumps(_b).encode()
     content = ""
     tcs = {}
+    reasoning_open = False
+    # Nur den Verbindungsaufbau retryen (mitten im Stream nicht sinnvoll wieder-
+    # holbar, da schon Tokens geflossen sein koennen).
+    r = None
+    for attempt in range(LLM_RETRIES + 1):
+        req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
+            "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
+        try:
+            r = urllib.request.urlopen(req, timeout=180)
+            break
+        except urllib.error.HTTPError as e:
+            m = f"⚠️ {LLM_NAME} HTTP {e.code}: {e.read().decode()[:300]}"
+            if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
+                _retry_sleep(attempt); continue
+            on_token(m); return {"role": "assistant", "content": m}
+        except Exception as e:
+            m = f"⚠️ {LLM_NAME}-Fehler: {e!r}"
+            if attempt < LLM_RETRIES:
+                _retry_sleep(attempt); continue
+            on_token(m); return {"role": "assistant", "content": m}
     try:
-        r = urllib.request.urlopen(req, timeout=180)
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -764,11 +1620,21 @@ def or_chat_stream(messages, tools, on_token):
                 delta = chunk["choices"][0]["delta"]
             except (KeyError, IndexError):
                 continue
+            rzn = delta.get("reasoning")
+            if rzn:
+                if not reasoning_open:
+                    on_token(THINK_START); reasoning_open = True
+                on_token(rzn)
             c = delta.get("content")
             if c:
+                if reasoning_open:
+                    on_token(THINK_END); reasoning_open = False
                 content += c
                 on_token(c)
-            for tc in delta.get("tool_calls") or []:
+            _tcs = delta.get("tool_calls") or []
+            if _tcs and reasoning_open:
+                on_token(THINK_END); reasoning_open = False
+            for tc in _tcs:
                 i = tc.get("index", 0)
                 slot = tcs.setdefault(i, {"id": "", "type": "function",
                                          "function": {"name": "", "arguments": ""}})
@@ -779,14 +1645,13 @@ def or_chat_stream(messages, tools, on_token):
                     slot["function"]["name"] += f["name"]
                 if f.get("arguments"):
                     slot["function"]["arguments"] += f["arguments"]
-    except urllib.error.HTTPError as e:
-        m = f"⚠️ OpenRouter HTTP {e.code}: {e.read().decode()[:300]}"
-        on_token(m)
-        return {"role": "assistant", "content": m}
+        if reasoning_open:
+            on_token(THINK_END)
     except Exception as e:
-        m = f"⚠️ OpenRouter-Fehler: {e!r}"
+        # Abbruch mitten im Stream: das bereits Gestreamte behalten, Rest melden.
+        m = f"⚠️ {LLM_NAME}-Streamabbruch: {e!r}"
         on_token(m)
-        return {"role": "assistant", "content": m}
+        content += ("\n" + m)
     msg = {"role": "assistant", "content": content or None}
     if tcs:
         msg["tool_calls"] = [tcs[i] for i in sorted(tcs)]
@@ -801,6 +1666,23 @@ def run_stream(user_message, on_token, image=None):
         del _history[1:]
         on_token("🔄 Kontext zurückgesetzt.")
         return
+    if user_message.startswith("/reasoning"):
+        on_token(_set_reasoning(user_message))
+        return
+    if user_message.startswith("/goal"):
+        on_token(_set_goal(user_message))
+        return
+    # /fresh: wie in run() zustandslos, Gespraech unangetastet. Heartbeats
+    # brauchen kein Streaming — einmal die Antwort ausgeben.
+    if user_message.startswith("/fresh"):
+        m = user_message[len("/fresh"):].strip()
+        on_token(_tool_loop([{"role": "system", "content": SYSTEM},
+                             {"role": "user", "content": m}]))
+        return
+    _trim_history()
+    _inject_playbooks()
+    _inject_missions()
+    _recall(user_message)
     if image:
         content = [
             {"type": "text", "text": user_message or "Was ist auf dem Bild?"},
@@ -809,6 +1691,11 @@ def run_stream(user_message, on_token, image=None):
     else:
         content = user_message
     _history.append({"role": "user", "content": content})
+    if _goal:
+        # Mit aktivem Ziel wird die Antwort gegen den Judge verfeinert (nicht
+        # gestreamt) und danach als Ganzes ausgegeben.
+        on_token(_run_goal(_history, user_message))
+        return
     for _ in range(MAX_STEPS):
         msg = or_chat_stream(_history, TOOLS, on_token)
         _history.append(msg)
@@ -831,4 +1718,4 @@ def init():
     global TOOLS
     os.makedirs(WORKDIR, exist_ok=True)
     TOOLS = builtin_schema() + init_mcp()
-    log(f"agent bereit: model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")
+    log(f"agent bereit: backend={LLM_BACKEND} url={OR_URL} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")

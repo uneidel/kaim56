@@ -9,12 +9,17 @@ instances/<name>.json; Netz wird pro Instanz aus 'index' abgeleitet:
 import base64
 import codecs
 import html
+import io
 import json
+import mimetypes
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
+import ssl
+import struct
 import sqlite3
 import subprocess
 import threading
@@ -23,6 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import chatui   # Chat-Oberflaeche (/chat), liegt neben dieser Datei
@@ -43,13 +49,24 @@ SETTINGS_SCHEMA = [
     {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API key"},
     {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API key"},
     {"key": "OPENAI_API_KEY", "label": "OpenAI API key"},
+    {"key": "ORCAROUTER_API_KEY", "label": "OrcaRouter API key (sk-orca-…)"},
+    {"key": "ORCAROUTER_URL", "label": "OrcaRouter base URL (blank = https://api.orcarouter.ai/v1; set only when self-hosting OrcaRouter-Lite)"},
     {"key": "SIGNAL_NUMBER", "label": "Signal bot number"},
     {"key": "ALLOWED_SENDERS", "label": "Allowed Signal number(s)"},
+    {"key": "SIGNAL_API", "label": "Signal REST API URL"},
+    {"key": "LLAMA_ENDPOINT", "label": "llama.cpp endpoint (OpenAI-compatible base URL, e.g. http://10.0.0.50:8080/v1)"},
+    {"key": "LLAMA_API_KEY", "label": "llama.cpp API key (optional, only if --api-key is set)"},
+    {"key": "TTS_VOICE", "label": "TTS voice (Piper)", "options": [
+        {"value": "", "label": "— default (de-thorsten-medium) —"},
+        {"value": "de-thorsten-medium", "label": "Deutsch · Thorsten (medium)"},
+        {"value": "de-eva_k-x_low", "label": "Deutsch · Eva K (x_low, schneller)"},
+        {"value": "en-amy-medium", "label": "English · Amy (medium)"}]},
+    {"key": "TTS_SPEED", "label": "TTS speed (0.5 slow … 2.0 fast, empty = 1.0)"},
 ]
 # Diese Werte landen NIE in instances/<name>.json und nie auf der Config-Disk
 # der microVM. Der Agent holt sie zur Laufzeit ueber den Secret-Broker
 # (/api/secret/<name>, Gast per Source-IP erkannt, Allowlist per Policy).
-SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLAMA_API_KEY", "ORCAROUTER_API_KEY"}
 # Schreibende Routen, die eine Agent-VM benutzen DARF. Alles andere ist
 # Verwaltung und gehoert dem Admin. Ohne diese Positivliste kaeme eine
 # kompromittierte VM ueber /api/instances/<n>/mounts an das Host-Dateisystem
@@ -59,8 +76,16 @@ SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
 # Positivliste statt Einzelpruefungen: eine neue Route ist dann standardmaessig
 # zu, nicht standardmaessig offen.
 VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # Sprachdienst, Loopback
+# Abo-Anmeldung des claude-Templates: das Credential des Nutzers auf dem Host.
+# Der Manager laeuft als root und darf die 0600-Datei lesen; der Gast holt sie
+# beim Boot ueber /api/claude-credentials (nur claude-Template, per Source-IP).
+CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", "/home/ulrich/.claude/.credentials.json")
 GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
-                    "/api/stt", "/api/tts")
+                    "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
+                    "/api/memory-search", "/api/task-delete", "/api/task-edit",
+                    "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
+                    "/api/notify", "/api/mission-start", "/api/mission-update",
+                    "/api/mission-finish")
 GUEST_POST_PREFIXES = ("/api/memory/",)
 # Gesetzte Geheimnisse verlassen den Manager nie im Klartext — die UI bekommt
 # diesen Marker und schickt ihn beim Speichern unveraendert zurueck, wo er
@@ -278,6 +303,511 @@ def save_settings(d):
     return "saved"
 
 
+# ---- Signal-Versand --------------------------------------------------------
+# Agenten koennen dem Nutzer von sich aus schreiben (fertige Aufgabe, Fund,
+# Rueckfrage). Der Versand laeuft ueber den Manager, nicht aus der VM:
+#
+#   * Der Empfaenger muss in ALLOWED_SENDERS stehen — also in genau der Liste,
+#     die den Bot auch steuern darf. Ein Agent kann damit NUR an Leute
+#     schreiben, die ihm ohnehin Befehle geben duerfen. Ohne diese Fessel
+#     waere das Werkzeug ein Versandapparat fuer beliebige Nummern, und ein
+#     uebernommener oder nur schlecht gelaunter Agent koennte in fremdem Namen
+#     Nachrichten verschicken.
+#   * Die Bot-Nummer und der API-Zugang bleiben im Host. Die VM sieht sie nie.
+#   * Eine Drossel begrenzt den Schaden einer Schleife.
+SIGNAL_DEFAULT_API = "https://signalapi.kat56.de"
+SIGNAL_MAX_CHARS = 3500          # signal-cli nimmt mehr, Lesbarkeit nicht
+SIGNAL_RATE = (10, 300)          # hoechstens 10 Nachrichten je 5 Minuten
+_signal_sent = []                # Zeitstempel der letzten Sendungen
+_signal_lock = threading.Lock()
+
+
+def signal_recipients():
+    """Erlaubte Empfaenger aus den Einstellungen (kommagetrennt)."""
+    raw = (load_settings().get("ALLOWED_SENDERS") or "")
+    return [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+
+
+def signal_send(text, to=None):
+    """(ok, meldung). Schickt eine Nachricht ueber die signal-cli-REST-API."""
+    s = load_settings()
+    api = (s.get("SIGNAL_API") or SIGNAL_DEFAULT_API).rstrip("/")
+    number = (s.get("SIGNAL_NUMBER") or "").strip()
+    allowed = signal_recipients()
+    if not number:
+        return False, "SIGNAL_NUMBER is not configured (Settings)"
+    if not allowed:
+        return False, "ALLOWED_SENDERS is empty — no permitted recipient"
+    to = (to or "").strip() or allowed[0]
+    if to not in allowed:
+        # Absichtlich mit Liste: der Agent soll den Fehler beheben koennen,
+        # ohne dass ein Mensch nachsieht. Geheim ist daran nichts — es sind
+        # die Nummern, die den Bot ohnehin steuern.
+        return False, f"recipient {to} not permitted; allowed: {', '.join(allowed)}"
+
+    text = (text or "").strip()
+    if not text:
+        return False, "empty message"
+    text = text[:SIGNAL_MAX_CHARS]
+
+    limit, window = SIGNAL_RATE
+    now = time.time()
+    with _signal_lock:
+        _signal_sent[:] = [t for t in _signal_sent if now - t < window]
+        if len(_signal_sent) >= limit:
+            return False, f"rate limit: max {limit} messages per {window // 60} min"
+        _signal_sent.append(now)
+
+    body = json.dumps({"message": text, "number": number, "recipients": [to]}).encode()
+    req = urllib.request.Request(f"{api}/v2/send", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=90).read()
+        return True, f"sent to {to} ({len(text)} chars)"
+    except urllib.error.HTTPError as e:
+        return False, f"signal API HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}"
+    except Exception as e:
+        return False, f"signal API unreachable: {e!r}"
+
+
+# ---- HITL: Freigabe riskanter Tool-Aufrufe per Signal ----------------------
+# Ein Agent (opt-in per HITL=1) fragt vor einem riskanten Tool hier an; wir
+# fragen den Nutzer per Signal ("ok <id>" / "nein <id>") und der Agent pollt den
+# Status. Klappt der Signal-Versand nicht (kein Empfaenger konfiguriert), geben
+# wir KEINE id zurueck -> der Agent blockiert dann nicht. In-Memory, kurzlebig.
+_hitl_lock = threading.Lock()
+_hitl = {}
+HITL_TTL = 600
+
+
+def hitl_create(instance, tool, target):
+    hid = uuid.uuid4().hex[:8]
+    now = time.time()
+    with _hitl_lock:
+        for k in [k for k, v in _hitl.items() if now - v["ts"] > HITL_TTL]:
+            _hitl.pop(k, None)
+        _hitl[hid] = {"tool": tool, "target": target, "instance": instance,
+                      "status": "pending", "ts": now}
+    msg = (f"🔒 Freigabe noetig: Agent '{instance}' will {tool}"
+           + (f" ({target})" if target else "")
+           + f".\nAntworte 'ok {hid}' zum Erlauben oder 'nein {hid}' zum Ablehnen.")
+    ok, _m = signal_send(msg)
+    if not ok:
+        with _hitl_lock:
+            _hitl.pop(hid, None)
+        return None
+    return hid
+
+
+def hitl_status(hid):
+    with _hitl_lock:
+        v = _hitl.get(hid)
+        return v["status"] if v else "unknown"
+
+
+def hitl_resolve(hid, approve):
+    with _hitl_lock:
+        v = _hitl.get(hid)
+        if not v or v["status"] != "pending":
+            return False
+        v["status"] = "approved" if approve else "denied"
+        return True
+
+
+# ---- Signal-Empfang (Long-Poll) --------------------------------------------
+# signal-cli-rest (Modus "native") kennt keine Webhooks — es POSTet nicht zu
+# uns. Also holen WIR ab: ein Long-Poll auf /v1/receive kommt in dem Moment
+# zurueck, in dem eine Nachricht eintrifft. Jede Nachricht wird genau einmal
+# geliefert (der Aufruf leert die Warteschlange). Eine erlaubte Nachricht
+# landet im gemeinsamen Chat-Store und feuert denselben orchestrator_ping, den
+# App/Web nutzen — der Orchestrator reagiert also binnen Sekunden statt erst
+# beim naechsten Heartbeat. Antworten schickt er ueber send_signal zurueck.
+def _signal_inbound(sender, text):
+    chat_log_append("orchestrator", sender, f"[Signal] {text}", "", kind="signal")
+    try:
+        orchestrator_ping()
+    except Exception:
+        pass
+
+
+SIGNAL_LOG = os.path.join(BASE, "signal-debug.log")
+# native-mode: Empfang und Versand sperren dasselbe Konto. Nach einer
+# eingegangenen Nachricht pausiert der Empfaenger kurz — ein kontentionsfreies
+# Fenster, in dem der Orchestrator seine Antwort zuegig rausschicken kann.
+# (Sauber loesen wuerde das der json-rpc-Modus des Gateways.)
+SIGNAL_REPLY_WINDOW = int(os.environ.get("SIGNAL_REPLY_WINDOW", "60"))
+
+
+def _slog(m):
+    """Diagnose in eine LESBARE Datei — das systemd-Journal ist fuer den
+    Nutzer nicht zugaenglich. Bei Bedarf einfach loeschen."""
+    try:
+        with open(SIGNAL_LOG, "a") as f:
+            f.write(f"{time.strftime('%F %T')} {m}\n")
+    except OSError:
+        pass
+
+
+def _handle_signal_envelope(env, allowed):
+    """Eine Huelle verarbeiten: erlaubte Textnachricht -> Posteingang + Trigger."""
+    e = (env.get("envelope") or {}) if isinstance(env, dict) else {}
+    dm = e.get("dataMessage") or {}
+    text = (dm.get("message") or "").strip()
+    src = e.get("sourceNumber") or e.get("source") or ""
+    uuid_ = e.get("sourceUuid") or ""
+    grp = (dm.get("groupInfo") or {}).get("groupId")
+    _slog(f"env srcNum={e.get('sourceNumber')!r} srcUuid={uuid_!r} source={e.get('source')!r} "
+          f"group={grp!r} text={text[:60]!r} typ={'data' if dm else list(e.keys())}")
+    if not text:
+        return
+    if allowed and src not in allowed and uuid_ not in allowed:
+        _slog(f"ignoriert: Absender {src or uuid_} nicht in {sorted(allowed)}")
+        return
+    # HITL-Freigabe? Erlaubter Absender antwortet "ok <id>" / "nein <id>".
+    mo = re.match(r"^(ok|ja|yes|approve|nein|no|deny|ablehnen)\s+([0-9a-f]{8})$",
+                  text.lower().strip())
+    if mo:
+        approve = mo.group(1) in ("ok", "ja", "yes", "approve")
+        done = hitl_resolve(mo.group(2), approve)
+        _slog(f"HITL {mo.group(2)} -> {'approved' if approve else 'denied'} (found={done})")
+        return
+    _slog(f"-> inject von {src or uuid_}: {text[:60]!r}")
+    _signal_inbound(src or uuid_, text)
+
+
+# --- minimaler WebSocket-Client (stdlib) fuer den json-rpc-Empfang -----------
+def _recvn(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _ws_frame(sock):
+    """Server-Frame lesen -> (opcode, payload). Server maskiert nicht."""
+    hdr = _recvn(sock, 2)
+    if hdr is None:
+        return None, b""
+    opcode = hdr[0] & 0x0F
+    masked = hdr[1] & 0x80
+    ln = hdr[1] & 0x7F
+    if ln == 126:
+        ext = _recvn(sock, 2); ln = struct.unpack(">H", ext)[0] if ext else 0
+    elif ln == 127:
+        ext = _recvn(sock, 8); ln = struct.unpack(">Q", ext)[0] if ext else 0
+    mask = _recvn(sock, 4) if masked else b""
+    data = _recvn(sock, ln) if ln else b""
+    if data is None:
+        return None, b""
+    if masked and data:
+        data = bytes(c ^ mask[i % 4] for i, c in enumerate(data))
+    return opcode, data
+
+
+def _ws_send(sock, opcode, data=b""):
+    """Client->Server-Frame, maskiert (RFC-Pflicht)."""
+    ln = len(data)
+    out = bytes([0x80 | opcode])
+    if ln < 126:
+        out += bytes([0x80 | ln])
+    elif ln < 65536:
+        out += bytes([0x80 | 126]) + struct.pack(">H", ln)
+    else:
+        out += bytes([0x80 | 127]) + struct.pack(">Q", ln)
+    m = os.urandom(4)
+    out += m + bytes(c ^ m[i % 4] for i, c in enumerate(data))
+    sock.sendall(out)
+
+
+def _ws_connect(host, path, port=443):
+    raw = socket.create_connection((host, port), timeout=30)
+    sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+    key = base64.b64encode(os.urandom(16)).decode()
+    sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+                  "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                  f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        chunk = sock.recv(1024)
+        if not chunk:
+            raise RuntimeError("handshake abgebrochen")
+        resp += chunk
+        if len(resp) > 8192:
+            break
+    if b" 101 " not in resp.split(b"\r\n", 1)[0]:
+        raise RuntimeError("kein 101: " + resp[:120].decode("latin1", "replace"))
+    return sock
+
+
+def _signal_receiver():
+    """json-rpc-Modus: der Gateway pusht Nachrichten ueber einen WebSocket
+    (Echtzeit). Empfang und Versand laufen jetzt parallel — keine Konto-Sperre,
+    keine Sende-Pause mehr noetig."""
+    _slog("receiver gestartet (json-rpc websocket)")
+    while True:
+        s = load_settings()
+        number = (s.get("SIGNAL_NUMBER") or "").strip()
+        allowed = set(signal_recipients())
+        if not number:
+            time.sleep(30)
+            continue
+        host = urllib.parse.urlparse(s.get("SIGNAL_API") or SIGNAL_DEFAULT_API).hostname or ""
+        path = f"/v1/receive/{urllib.parse.quote(number)}"
+        try:
+            sock = _ws_connect(host, path)
+            _slog("websocket verbunden")
+        except Exception as e:
+            _slog(f"ws-connect-fehler: {e!r:.150}")
+            time.sleep(10)
+            continue
+        sock.settimeout(300)          # laengere Stille -> reconnect, haelt frisch
+        try:
+            while True:
+                opcode, data = _ws_frame(sock)
+                if opcode is None:
+                    _slog("websocket zu -> reconnect"); break
+                if opcode == 0x9:                     # ping -> pong
+                    _ws_send(sock, 0xA, data); continue
+                if opcode == 0x8:                     # close
+                    _slog("websocket close"); break
+                if opcode not in (0x1, 0x2) or not data:
+                    continue
+                try:
+                    msg = json.loads(data.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                for env in (msg if isinstance(msg, list) else [msg]):
+                    _handle_signal_envelope(env, allowed)
+        except socket.timeout:
+            pass                                       # still -> reconnect
+        except Exception as e:
+            _slog(f"ws-fehler: {e!r:.150}")
+        try:
+            sock.close()
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+# ---- Security Gateway ------------------------------------------------------
+# Pro Chat ankreuzbar. Zwei Dinge, beide am Manager, nicht im Gast:
+#
+#   Text   unsichtbare Zeichen raus — Tag-Zeichen (U+E0020..E007F), Zero-Width,
+#          Bidi-Overrides, Homoglyph-Leerzeichen. Das ist der Kanal, ueber den
+#          man einem Agenten Anweisungen unterschiebt, die im Chatfenster
+#          schlicht nicht zu sehen sind. Gefiltert wird in BEIDE Richtungen:
+#          eine Antwort landet in chats.json und wird spaeter wieder gelesen.
+#   Bilder EXIF/XMP/C2PA raus, bevor das Bild den Host verlaesst. Ein Foto vom
+#          Handy traegt GPS-Koordinaten, Geraetenummer und Aufnahmezeit mit.
+#
+# Der Zustand liegt bewusst HIER und nicht im Chat-Objekt: chats.json wird
+# zwischen App und Web gemerged, und jedes zusaetzliche Feld dort hat sich
+# bisher als Bruchstelle erwiesen.
+GATEWAY_FILE = os.path.join(BASE, "gateway.json")
+_gateway_lock = threading.Lock()
+
+try:
+    from text_unicode import clean_text as _clean_unicode
+except Exception:            # Datei fehlt -> Gateway meldet sich als inaktiv
+    _clean_unicode = None
+
+
+def load_gateway():
+    try:
+        with open(GATEWAY_FILE) as fh:
+            d = json.load(fh)
+            return {"chats": d.get("chats") or {}, "stats": d.get("stats") or {}}
+    except (FileNotFoundError, ValueError):
+        return {"chats": {}, "stats": {}}
+
+
+def save_gateway(d):
+    with _gateway_lock:
+        try:
+            with open(GATEWAY_FILE, "w") as fh:
+                json.dump(d, fh)
+            return True
+        except OSError:
+            return False
+
+
+def gateway_on(chat_id):
+    """Ohne Chat-Kennung ist das Gateway aus — ein Aufrufer, der nicht sagt,
+    zu welchem Chat er gehoert, kann auch nicht angehakt worden sein."""
+    if not chat_id or _clean_unicode is None:
+        return False
+    return bool(load_gateway()["chats"].get(str(chat_id)))
+
+
+def gateway_count(chat_id, key, n):
+    """Entfernte Zeichen/Bilder mitzaehlen. Still zu filtern waere das
+    Unangenehmste: man will sehen, dass etwas drin war."""
+    if not n:
+        return
+    with _gateway_lock:
+        d = load_gateway()
+        s = d["stats"].setdefault(str(chat_id), {})
+        s[key] = s.get(key, 0) + n
+        try:
+            with open(GATEWAY_FILE, "w") as fh:
+                json.dump(d, fh)
+        except OSError:
+            pass
+
+
+def gateway_clean(text, chat_id, key):
+    """Text saeubern und zaehlen. Gibt den Text unveraendert zurueck, wenn das
+    Gateway aus ist."""
+    if not text or not gateway_on(chat_id):
+        return text
+    out, st = _clean_unicode(text)
+    gateway_count(chat_id, key, st.get("removed_count", 0) + st.get("replaced_count", 0))
+    return out
+
+
+class StreamGuard:
+    """Saeubert einen Token-Strom, ohne ihn zu stauen.
+
+    Geschnitten wird an der Wortgrenze: Unicode-Kleber (ZWJ in Emoji-Ketten,
+    Tag-Zeichen) haengt immer an einem Zeichen, nie an einem Leerzeichen. Wer
+    stur alle 4 KB schneidet, zerreisst dagegen eine Emoji-Kette und der
+    Filter sieht einen Verbinder ohne Vorzeichen — und wirft ihn weg."""
+
+    def __init__(self, chat_id, key="out"):
+        self.chat_id = chat_id
+        self.key = key
+        self.buf = ""
+        self.removed = 0
+
+    def feed(self, chunk):
+        self.buf += chunk
+        cut = max(self.buf.rfind(" "), self.buf.rfind("\n"))
+        if cut < 0:
+            return ""
+        head, self.buf = self.buf[:cut + 1], self.buf[cut + 1:]
+        return self._clean(head)
+
+    def flush(self):
+        head, self.buf = self.buf, ""
+        out = self._clean(head)
+        if self.removed:
+            gateway_count(self.chat_id, self.key, self.removed)
+            self.removed = 0
+        return out
+
+    def _clean(self, s):
+        if not s:
+            return ""
+        out, st = _clean_unicode(s)
+        self.removed += st.get("removed_count", 0) + st.get("replaced_count", 0)
+        return out
+
+
+def strip_image_meta(b64):
+    """EXIF/XMP/C2PA aus einem Base64-Bild schneiden. (bereinigt, entfernte Bloecke)
+
+    Von Hand statt mit Pillow: Pillow ist hier nicht installiert, und ein
+    Neu-Kodieren wuerde das Bild ausserdem verlustbehaftet anfassen. Hier
+    bleiben die Bilddaten Byte fuer Byte gleich, es fallen nur Metadaten weg.
+    Bei allem, was nicht sicher erkannt wird, bleibt das Bild unangetastet —
+    ein kaputtes Bild waere schlimmer als ein Zeitstempel darin."""
+    if not b64:
+        return b64, 0
+    prefix = ""
+    payload = b64
+    if b64.startswith("data:"):
+        head, _, payload = b64.partition(",")
+        prefix = head + ","
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except Exception:
+        return b64, 0
+
+    out, n = raw, 0
+    if raw[:2] == b"\xff\xd8":                       # JPEG
+        out, n = _jpeg_strip(raw)
+    elif raw[:8] == b"\x89PNG\r\n\x1a\n":            # PNG
+        out, n = _png_strip(raw)
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        out, n = _webp_strip(raw)
+    if not n:
+        return b64, 0
+    return prefix + base64.b64encode(out).decode(), n
+
+
+def _jpeg_strip(raw):
+    """APP1..APP15 raus (Exif, XMP, C2PA/JUMBF) — APP0/JFIF bleibt, das ist
+    der Bildkopf. Danach kommt SOS und der komprimierte Rest; ab dort wird
+    nichts mehr angefasst."""
+    out = bytearray(raw[:2])
+    i, n = 2, 0
+    while i + 4 <= len(raw):
+        if raw[i] != 0xFF:
+            break
+        m = raw[i + 1]
+        if m == 0xDA:                                # Start of Scan -> Rest 1:1
+            out += raw[i:]
+            return bytes(out), n
+        ln = int.from_bytes(raw[i + 2:i + 4], "big")
+        if ln < 2 or i + 2 + ln > len(raw):
+            return raw, 0                            # unerwartet -> nicht anfassen
+        if 0xE1 <= m <= 0xEF or m == 0xFE:           # APP1..APP15, COM
+            n += 1
+        else:
+            out += raw[i:i + 2 + ln]
+        i += 2 + ln
+    if i < len(raw):
+        out += raw[i:]
+    return bytes(out), n
+
+
+def _png_strip(raw):
+    """Textbloecke und eXIf raus. PNG ist in Bloecken mit Laenge und Pruefsumme
+    aufgebaut, das laesst sich sauber trennen."""
+    drop = {b"eXIf", b"tEXt", b"iTXt", b"zTXt", b"tIME", b"caBX"}
+    out = bytearray(raw[:8])
+    i, n = 8, 0
+    while i + 8 <= len(raw):
+        ln = int.from_bytes(raw[i:i + 4], "big")
+        typ = raw[i + 4:i + 8]
+        end = i + 12 + ln
+        if end > len(raw):
+            return raw, 0
+        if typ in drop:
+            n += 1
+        else:
+            out += raw[i:end]
+        i = end
+        if typ == b"IEND":
+            break
+    return bytes(out), n
+
+
+def _webp_strip(raw):
+    """EXIF/XMP-Bloecke aus dem RIFF-Container. Die Gesamtlaenge im Kopf muss
+    danach stimmen, sonst halten manche Betrachter die Datei fuer defekt."""
+    out = bytearray(raw[:12])
+    i, n = 12, 0
+    while i + 8 <= len(raw):
+        typ = raw[i:i + 4]
+        ln = int.from_bytes(raw[i + 4:i + 8], "little")
+        end = i + 8 + ln + (ln & 1)                  # Bloecke sind gerade lang
+        if end > len(raw):
+            return raw, 0
+        if typ in (b"EXIF", b"XMP "):
+            n += 1
+        else:
+            out += raw[i:end]
+        i = end
+    if not n:
+        return raw, 0
+    out[4:8] = (len(out) - 8).to_bytes(4, "little")
+    return bytes(out), n
+
+
 # ---- Chat-Verlauf (Sync mit der App) ---------------------------------------
 CHATS_FILE = os.path.join(BASE, "chats.json")
 
@@ -335,6 +865,99 @@ def wait_chats(since, timeout):
             _chats_cv.wait(min(1.0, rest))
         rev = _chats_rev
     return rev, (load_chats() if rev > since else None)
+
+
+# ---- Notifications: Push an App + Web -------------------------------------
+# Eigener Kanal neben Signal: ein Agent ruft das Tool `notify`, der Eintrag
+# landet hier und wird von App (Android-Systemnotification) und Web-Manager
+# (Glocke + optional Browser-Notification) via Long-Poll abgeholt. Global
+# (nicht pro Instanz), kurzlebig, gedeckelt.
+NOTIF_FILE = os.path.join(BASE, "notifications.json")
+_notif_lock = threading.Lock()
+NOTIF_MAX = 200
+NOTIF_RATE = (30, 300)          # max 30 in 5 min gegen Spam
+_notif_sent = []
+_notif_cv = threading.Condition()
+try:
+    _notif_rev = int(os.path.getmtime(NOTIF_FILE) * 1000)
+except OSError:
+    _notif_rev = 0
+
+
+def load_notifications():
+    try:
+        with open(NOTIF_FILE) as fh:
+            d = json.load(fh)
+            return d if isinstance(d, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _save_notifications(lst):
+    tmp = NOTIF_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(lst[-NOTIF_MAX:], fh, ensure_ascii=False)
+    os.replace(tmp, NOTIF_FILE)
+
+
+def _bump_notif_rev():
+    global _notif_rev
+    with _notif_cv:
+        _notif_rev = max(_notif_rev + 1, int(time.time() * 1000))
+        _notif_cv.notify_all()
+
+
+def notify_add(instance, title, body, link=""):
+    """link steuert, wohin ein Klick auf die Notification fuehrt:
+    'missions' | 'tasks' | 'chat:<instanz>' | '' (nichts)."""
+    title = (title or "").strip()[:120]
+    body = (body or "").strip()[:1000]
+    if not title and not body:
+        return None, "empty"
+    now = time.time()
+    with _notif_lock:
+        limit, window = NOTIF_RATE
+        _notif_sent[:] = [t for t in _notif_sent if now - t < window]
+        if len(_notif_sent) >= limit:
+            return None, f"rate limit: max {limit} per {window // 60} min"
+        _notif_sent.append(now)
+        nid = uuid.uuid4().hex[:10]
+        lst = load_notifications()
+        lst.append({"id": nid, "ts": int(now), "title": title or "(ohne Titel)",
+                    "body": body, "instance": instance or "", "read": False,
+                    "link": str(link or "")[:80]})
+        _save_notifications(lst)
+    _bump_notif_rev()
+    return nid, "ok"
+
+
+def notif_mark_read(nid=None, mark_all=False):
+    with _notif_lock:
+        lst = load_notifications()
+        n = 0
+        for it in lst:
+            if mark_all or it.get("id") == nid:
+                if not it.get("read"):
+                    it["read"] = True
+                    n += 1
+        if n:
+            _save_notifications(lst)
+    if n:
+        _bump_notif_rev()
+    return n
+
+
+def wait_notifs(since, timeout):
+    """(rev, notifications|None) — analog zu wait_chats."""
+    deadline = time.time() + max(0.0, timeout)
+    with _notif_cv:
+        while _notif_rev <= since:
+            rest = deadline - time.time()
+            if rest <= 0:
+                break
+            _notif_cv.wait(min(1.0, rest))
+        rev = _notif_rev
+    return rev, (load_notifications() if rev > since else None)
 
 
 def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
@@ -453,6 +1076,14 @@ def _hist_conn():
         ts INTEGER, instance TEXT, model TEXT,
         prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_usage_inst_ts ON llm_usage(instance, ts)")
+    # Semantisches Langzeitgedaechtnis: je Erinnerung Text + Embedding-Vektor
+    # (als JSON). Die Suche laedt die Vektoren einer Instanz und rechnet Cosinus
+    # im Speicher — bei persoenlicher Groessenordnung (Hunderte) reicht das ohne
+    # Vektor-DB. Vektoren sind normalisiert, Cosinus = Skalarprodukt.
+    c.execute("""CREATE TABLE IF NOT EXISTS semantic_memory(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER, instance TEXT, mkey TEXT, text TEXT, vec TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_sem_inst ON semantic_memory(instance)")
     return c
 
 
@@ -490,6 +1121,24 @@ def usage_summary():
         v.setdefault("today", dict(empty))
         v.setdefault("total", dict(empty))
     return out
+
+
+def usage_for(instance, since=0):
+    """Verbrauch EINER Instanz seit `since` (epoch). Fuers Activity-Panel:
+    Tokens rein/raus, Kosten und Anzahl LLM-Aufrufe im gewaehlten Zeitfenster.
+    Tokens fallen pro LLM-Turn an (nicht pro Tool-Aufruf) — darum eine Summe,
+    keine Zuordnung zu einzelnen Audit-Zeilen."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*), SUM(prompt_tokens), SUM(completion_tokens), SUM(cost) "
+                "FROM llm_usage WHERE instance=? AND ts>=?",
+                (instance, int(since or 0))).fetchone()
+        calls, pt, ct, cost = row or (0, 0, 0, 0)
+        return {"calls": calls or 0, "in": pt or 0, "out": ct or 0,
+                "cost": round(cost or 0.0, 4)}
+    except Exception:
+        return {"calls": 0, "in": 0, "out": 0, "cost": 0.0}
 
 
 def history_add(target, task, result, ok, schedule="", origin=""):
@@ -671,10 +1320,45 @@ def _run_task_now(instance, message):
 # gefeuert. Feuert nur, wenn der Posteingang wirklich Neues hat (peek).
 ORCH_INSTANCE = "orchestrator"
 ORCH_HEARTBEAT_MSG = (
+    "/fresh "   # zustandslos: eigener Wegwerf-Kontext, kein Aufblaehen, kein
+                # Wegwischen eines laufenden App-Chats (geteiltes _history).
     "Heartbeat (Sofort-Trigger): 1) read_inbox — neue Nutzer-Nachrichten. "
     "2) Fuer jede mit Handlungsbedarf: recall_tasks (keine Dubletten), dann "
     "list_agents und create_task an die FAEHIGE Instanz (z. B. hass fuer "
-    "HomeAssistant) oder ephemeral. Kurz halten. Nichts zu tun? Melde: nichts zu tun.")
+    "HomeAssistant) oder ephemeral. 3) Nachrichten, die mit [Signal] beginnen, "
+    "kamen per Signal: schicke die Antwort bzw. Bestaetigung mit send_signal "
+    "zurueck (kurz) — OHNE Nummer/Empfaenger anzugeben, sie geht automatisch an "
+    "den Nutzer; erfinde KEINE Nummer. 4) missions pruefen: haengt ein Schritt auf "
+    "doing, obwohl sein Task laengst fertig ist (recall_tasks)? Dann mission_update "
+    "und den naechsten Schritt anstossen. Kurz halten. Nichts zu tun? Melde: nichts zu tun.")
+MISSION_ADVANCE_MSG = (
+    "/fresh Missions-Fortschritt (Sofort-Trigger nach Task-Abschluss): Der Task "
+    "'{task_id}' zu Mission '{mid}' ({goal}) ist fertig. 1) recall_tasks nach dem "
+    "Ergebnis dieses Tasks. 2) mission_update: Schritt {step} auf done/failed "
+    "setzen, Ergebnis knapp eintragen. 3) Den NAECHSTEN offenen Schritt anstossen "
+    "(create_task an die faehige Instanz oder ephemeral, task-id per "
+    "mission_update am Schritt vermerken). 4) Kein offener Schritt mehr? "
+    "mission_finish mit kurzem Fazit. Blockiert? notify an den Nutzer. Kurz halten.")
+
+
+def _mission_advance_fire(task_id):
+    """Nach Task-Abschluss: gehoert der Task zu einem Missionsschritt, den
+    Orchestrator sofort einen Fortschritts-Vorstoss machen lassen (statt auf
+    den naechsten Heartbeat zu warten). Best-effort im Hintergrund-Thread."""
+    inst, m, st = mission_for_task(task_id)
+    if not m or inst != ORCH_INSTANCE:
+        return
+    msg = MISSION_ADVANCE_MSG.format(task_id=task_id, mid=m["id"],
+                                     goal=m["goal"][:80], step=st["n"])
+
+    def go():
+        try:
+            _run_named(ORCH_INSTANCE, msg)
+        except Exception as e:
+            print("mission-advance:", repr(e), flush=True)
+    threading.Thread(target=go, daemon=True).start()
+
+
 _orch_lock = threading.Lock()
 _orch_timer = [None]
 _orch_running = [False]
@@ -717,6 +1401,9 @@ def _orch_fire():
             orchestrator_ping()
 
 
+_mi_sweep_ts = [0.0]
+
+
 def _task_worker():
     """Verarbeitet fällige/anstehende Tasks sequentiell im Hintergrund."""
     while True:
@@ -757,12 +1444,26 @@ def _task_worker():
                     pass
                 history_add(t.get("instance", ""), t.get("message", ""), res, ok,
                             t.get("schedule", ""), origin="worker")
+                # Missions-Sofort-Trigger: wartet ein Missionsschritt auf diesen
+                # Task, macht der Orchestrator direkt den naechsten Vorstoss.
+                try:
+                    _mission_advance_fire(t["id"])
+                except Exception:
+                    pass
                 ran = True
                 break
         except Exception as e:
             print("task-worker:", repr(e), flush=True)
         if not ran:
             time.sleep(5)
+            # TTL-Sweep im Leerlauf, hoechstens einmal pro Stunde.
+            now = time.time()
+            if now - _mi_sweep_ts[0] > 3600:
+                _mi_sweep_ts[0] = now
+                try:
+                    mission_ttl_sweep()
+                except Exception:
+                    pass
 
 
 def load_templates():
@@ -789,18 +1490,31 @@ AGENT_TOOLS_CATALOG = [
     {"name": "read_file", "desc": "Datei lesen"},
     {"name": "write_file", "desc": "Datei schreiben"},
     {"name": "list_dir", "desc": "Verzeichnis auflisten"},
+    {"name": "offload_read", "desc": "Ausgelagerte (gekuerzte) Tool-Ausgabe nachlesen"},
     {"name": "http_fetch", "desc": "URL abrufen (HTTP)"},
     {"name": "read_pdf", "desc": "PDF-Text extrahieren (Datei oder URL)"},
     {"name": "web_search", "desc": "Websuche (DuckDuckGo) — braucht Internet"},
     {"name": "spawn_subagent", "desc": "Ephemeren Subagenten starten"},
     {"name": "create_task", "desc": "Aufgabe einreihen (faehige Instanz oder ephemer)"},
     {"name": "read_inbox", "desc": "Neue Nutzer-Nachrichten (Signal/App/Web) lesen"},
+    {"name": "list_tasks", "desc": "Laufende/geplante Aufgaben mit IDs auflisten"},
+    {"name": "delete_task", "desc": "Eine laufende/geplante Aufgabe per ID loeschen"},
+    {"name": "edit_task", "desc": "Nachricht/Zeitplan einer Aufgabe per ID aendern"},
+    {"name": "mission_start", "desc": "Mission anlegen: Ziel + Schritte (nur Orchestrator)"},
+    {"name": "missions", "desc": "Offene Missionen mit Status auflisten (nur Orchestrator)"},
+    {"name": "mission_update", "desc": "Missionsschritt fortschreiben (nur Orchestrator)"},
+    {"name": "mission_finish", "desc": "Mission abschliessen (nur Orchestrator)"},
+    {"name": "send_signal", "desc": "Signal-Nachricht an den Nutzer senden (nur erlaubte Nummern)"},
+    {"name": "notify", "desc": "Push-Benachrichtigung an App + Web-Manager (Titel + Text)"},
     {"name": "list_agents", "desc": "Verfuegbare Agenten + Faehigkeiten (Routing)"},
     {"name": "recall_tasks", "desc": "Fruehere Aufgaben/Ergebnisse abfragen (Stammwissen)"},
     {"name": "list_skills", "desc": "Verfügbare Skills auflisten"},
     {"name": "load_skill", "desc": "Skill in den Kontext laden"},
     {"name": "memory_store", "desc": "Wert dauerhaft merken"},
     {"name": "memory_recall", "desc": "Gemerkten Wert abrufen"},
+    {"name": "playbook_add", "desc": "Dauerhafte Regel/Playbook festhalten (gilt immer)"},
+    {"name": "playbooks", "desc": "Playbooks (feste Regeln) auflisten"},
+    {"name": "playbook_forget", "desc": "Playbook per ID entfernen"},
     {"name": "remote_ls", "desc": "katfs-Freigabe auflisten"},
     {"name": "remote_read", "desc": "katfs-Datei lesen"},
     {"name": "remote_write", "desc": "katfs-Datei schreiben"},
@@ -863,6 +1577,51 @@ def set_instance_tools(name, tools):
         json.dump(inst, fh, indent=2)
     running = " (applies after stop/start)" if is_running(inst) else ""
     return f"tools for '{name}' saved{running}"
+
+
+# Reihenfolge = Anzeige-Logik in render()/list_agents: der erste vorhandene
+# Schluessel ist das Modell der Instanz.
+MODEL_KEYS = ("OPENROUTER_MODEL", "ORCAROUTER_MODEL", "ANTHROPIC_MODEL", "PI_MODEL", "PRIME_MODEL", "LLAMA_MODEL")
+# Fuer den Provider-Wechsel per set_model("provider:model"): Providername -> Key.
+PROVIDER_MODEL_KEY = {"openrouter": "OPENROUTER_MODEL", "orcarouter": "ORCAROUTER_MODEL",
+                      "anthropic": "ANTHROPIC_MODEL", "pi": "PI_MODEL",
+                      "prime": "PRIME_MODEL", "llama": "LLAMA_MODEL"}
+
+
+def set_model(name, model):
+    """Modell einer bestehenden Instanz wechseln. Setzt genau den Schluessel,
+    den die Instanz bereits nutzt (kein neuer wird erfunden — sonst wuesste
+    niemand, welcher Provider gemeint ist). Wirkt beim naechsten Start
+    (env-basiert), wie die Werkzeug-Allowlist."""
+    inst = next((i for i in load_instances() if i["name"] == name), None)
+    if not inst:
+        return "unknown"
+    model = str(model or "").strip()
+    if not model:
+        return "error: no model given"
+    cfg = inst.setdefault("config", {})
+    # Provider-Wechsel: "orcarouter:tencent/hy3" stellt zusaetzlich das Backend
+    # um (setzt dessen MODEL_KEY, entfernt die anderen). Ohne Praefix bleibt es
+    # beim vorhandenen Provider — nur das Modell wechselt. Der Doppelpunkt-Test
+    # greift NUR bei bekanntem Providernamen, damit ":free"-Modellvarianten
+    # (z. B. "mistralai/...:free") nicht faelschlich als Provider gelesen werden.
+    if ":" in model and model.split(":", 1)[0] in PROVIDER_MODEL_KEY:
+        prov, mdl = model.split(":", 1)
+        key = PROVIDER_MODEL_KEY[prov]
+        for k in MODEL_KEYS:
+            cfg.pop(k, None)
+        cfg[key] = mdl.strip()
+        model = mdl.strip()
+    else:
+        key = next((k for k in MODEL_KEYS if k in cfg), None)
+        if key is None:
+            return (f"error: instance '{name}' has no model setting "
+                    f"({'/'.join(MODEL_KEYS)})")
+        cfg[key] = model
+    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
+        json.dump(inst, fh, indent=2)
+    running = " (applies after stop/start)" if is_running(inst) else ""
+    return f"model for '{name}' set to {model}{running}"
 
 
 def set_internet(name, on):
@@ -951,23 +1710,127 @@ def setup_tap(inst):
     apply_internet(inst, inst.get("internet", True))
 
 
+# Gaeste durften bisher mit internet=on ueberallhin — auch ins ganze LAN.
+# Home Assistant und Portainer waren damit von JEDER VM erreichbar, ob ihr der
+# MCP zugewiesen war oder nicht (die Tokens schuetzt der Broker, die Tuer
+# stand trotzdem offen). Jetzt: Internet ja, LAN nein — ausser den Endpunkten
+# der MCPs, die in MCP_SERVERS der Instanz stehen, und dem DNS der Gaeste.
+# DNS fuer die Gaeste (landet via guest-init in resolv.conf). Site-spezifisch —
+# auf fremden Installationen per Env setzen; 1.1.1.1 funktioniert ueberall.
+GUEST_DNS = os.environ.get("GUEST_DNS", "10.0.0.245")
+_PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
+def _mcp_endpoints(inst):
+    """LAN-Ziele (ip, port), die diese Instanz laut MCP_SERVERS braucht.
+    Aus dem Katalog gelesen, nicht aus der Instanz — dort stehen nur Namen.
+    Nur IP-Literale: ein Hostname im Katalog, der ins LAN aufloest, wuerde
+    hier NICHT freigeschaltet (bewusst; dann lieber die IP eintragen)."""
+    names = {x for x in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if x}
+    if not names:
+        return []
+    out = []
+    for m in load_mcps():
+        if m.get("name") not in names:
+            continue
+        for scheme, host, port in re.findall(
+                r"(https?)://(\d{1,3}(?:\.\d{1,3}){3})(?::(\d+))?", json.dumps(m)):
+            try:
+                import ipaddress
+                if not ipaddress.ip_address(host).is_private:
+                    continue          # oeffentliche Ziele deckt die Internet-Regel
+            except ValueError:
+                continue
+            out.append((host, int(port or (443 if scheme == "https" else 80))))
+    return sorted(set(out))
+
+
+def _llama_endpoint(inst):
+    """(ip, port) des llama.cpp-Servers, falls die Instanz ihn nutzt UND er im
+    privaten Netz liegt — dann muss das Gating ihn durchlassen. Ein Endpoint
+    auf dem Host (ueber das Gateway erreichbar) oder im Internet braucht keine
+    Sonderregel."""
+    ep = (inst.get("config", {}).get("LLAMA_ENDPOINT") or "").strip()
+    if not ep:
+        return None
+    m = re.search(r"(https?)://(\d{1,3}(?:\.\d{1,3}){3})(?::(\d+))?", ep)
+    if not m:
+        return None
+    import ipaddress
+    scheme, host, port = m.group(1), m.group(2), m.group(3)
+    try:
+        if not ipaddress.ip_address(host).is_private:
+            return None
+    except ValueError:
+        return None
+    return (host, int(port or (443 if scheme == "https" else 80)))
+
+
+def _fc_chain(inst):
+    return "FC-" + re.sub(r"[^a-zA-Z0-9_.-]", "", inst["name"])[:24]
+
+
 def apply_internet(inst, allow):
     """Egress-Regeln der Instanz setzen/entfernen. `allow=False` heisst: die VM
     darf ihr eigenes /30 nicht verlassen — kein LAN, kein Internet. Der
     Manager-Broker am Gateway (8700) bleibt erreichbar (host-lokal, INPUT).
-    Damit auch der LLM-Endpunkt: ein Agent ohne Internet kann NICHT denken."""
+    Damit auch der LLM-Endpunkt: ein Agent ohne Internet kann NICHT denken.
+
+    Bei allow=True bekommt die Instanz eine eigene FORWARD-Kette:
+      1. ihre MCP-Endpunkte (tcp, gezielt)     -> ACCEPT
+      2. der Gast-DNS (53)                     -> ACCEPT
+      3. private Netze                         -> REJECT (nicht DROP: der
+         Agent soll sofort scheitern, nicht 30 s in einen Timeout laufen)
+      4. alles ausserhalb des Pools (Internet) -> ACCEPT
+    Der Rueckweg bleibt die generische Regel: Antworten sind durch NAT ohnehin
+    nur fuer Verbindungen moeglich, die der Gast selbst geoeffnet hat."""
     n = net_of(inst)
-    egress = (["-i", n["tap"], "!", "-d", POOL], ["-o", n["tap"], "!", "-s", POOL])
-    for spec in egress:
-        have = sh("iptables", "-C", "FORWARD", *spec, "-j", "ACCEPT", check=False).returncode == 0
-        if allow and not have:
-            sh("iptables", "-I", "FORWARD", "1", *spec, "-j", "ACCEPT", check=False)
-        elif not allow and have:
-            sh("iptables", "-D", "FORWARD", *spec, "-j", "ACCEPT", check=False)
+    chain = _fc_chain(inst)
+
+    # Altbestand abraeumen, idempotent: Sprungregel, Kette, alte Direktregel.
+    sh("iptables", "-D", "FORWARD", "-i", n["tap"], "-j", chain, check=False)
+    sh("iptables", "-F", chain, check=False)
+    sh("iptables", "-X", chain, check=False)
+    while sh("iptables", "-C", "FORWARD", "-i", n["tap"], "!", "-d", POOL,
+             "-j", "ACCEPT", check=False).returncode == 0:
+        sh("iptables", "-D", "FORWARD", "-i", n["tap"], "!", "-d", POOL,
+           "-j", "ACCEPT", check=False)
+
+    back = ["-o", n["tap"], "!", "-s", POOL]
+    have_back = sh("iptables", "-C", "FORWARD", *back, "-j", "ACCEPT", check=False).returncode == 0
+    if not allow:
+        if have_back:
+            sh("iptables", "-D", "FORWARD", *back, "-j", "ACCEPT", check=False)
+        return
+
+    sh("iptables", "-N", chain, check=False)
+    allow = list(_mcp_endpoints(inst))
+    lp = _llama_endpoint(inst)
+    if lp:
+        allow.append(lp)
+    for ip, port in allow:
+        sh("iptables", "-A", chain, "-d", ip, "-p", "tcp", "--dport", str(port),
+           "-j", "ACCEPT", check=False)
+    for proto in ("udp", "tcp"):
+        sh("iptables", "-A", chain, "-d", GUEST_DNS, "-p", proto, "--dport", "53",
+           "-j", "ACCEPT", check=False)
+    for net in _PRIVATE_NETS:
+        sh("iptables", "-A", chain, "-d", net, "-j", "REJECT", check=False)
+    sh("iptables", "-A", chain, "!", "-d", POOL, "-j", "ACCEPT", check=False)
+    sh("iptables", "-I", "FORWARD", "1", "-i", n["tap"], "-j", chain, check=False)
+    if not have_back:
+        sh("iptables", "-I", "FORWARD", "1", *back, "-j", "ACCEPT", check=False)
 
 
 def teardown_tap(inst):
-    sh("ip", "link", "del", net_of(inst)["tap"], check=False)
+    # Regeln zeigen auf den Tap-NAMEN und ueberleben das Loeschen des Geraets —
+    # ohne Aufraeumen sammeln sich tote Ketten an.
+    n = net_of(inst)
+    chain = _fc_chain(inst)
+    sh("iptables", "-D", "FORWARD", "-i", n["tap"], "-j", chain, check=False)
+    sh("iptables", "-F", chain, check=False)
+    sh("iptables", "-X", chain, check=False)
+    sh("ip", "link", "del", n["tap"], check=False)
 
 
 # ---- host-ordner (NFS bind-mounts) -----------------------------------------
@@ -1118,6 +1981,8 @@ def make_config_disk(inst):
     # claude/fabric gefunden werden (guest-init sourced die Config-Disk).
     cfg.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
     cfg["FC_INSTANCE"] = inst["name"]   # fuer den Host-Ordner-Reconciler im Gast
+    if inst["name"] == ORCH_INSTANCE:   # nur der Orchestrator darf Tasks verwalten
+        cfg["TASK_ADMIN"] = "1"
     d = os.path.join(RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "config.env"), "w") as f:
@@ -1131,12 +1996,103 @@ def make_config_disk(inst):
     return img
 
 
+# ---- Overlay-Rootfs ---------------------------------------------------------
+# Fuer Images in OVERLAY_ROOTFS bootet die VM mit der GETEILTEN Basis read-only
+# (Firecracker blockt Schreibzugriffe auf Host-Ebene -> kein Journal-Konflikt)
+# plus einem kleinen rw-Upper-Image je Instanz; der Gast-init legt daraus per
+# overlayfs+pivot_root die Wurzel zusammen. Vorteil: keine 2-GB-Kopie je Start,
+# und mit inst["persist_disk"]=true ueberlebt die Schreibschicht (Installationen!)
+# Stop/Start. Andere Images laufen unveraendert ueber private_rootfs().
+OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/pi-rootfs.ext4",
+                  "instances/prime-rootfs.ext4", "instances/claude-rootfs.ext4"}
+UPPER_SIZE_MB = 1024          # Wegwerf-Schicht je Start
+UPPER_PERSIST_SIZE_MB = 4096  # persistente Schicht (apt/pip brauchen Luft); sparse
+
+
+def upper_path(inst):
+    if inst.get("persist_disk"):
+        return os.path.join(INST_DIR, f"{inst['name']}-upper.ext4")
+    return os.path.join(RUN_DIR, f"{inst['name']}.upper.ext4")
+
+
+def make_upper(inst):
+    """Leeres (oder bei persist: vorhandenes) Upper-Image liefern."""
+    p = upper_path(inst)
+    if inst.get("persist_disk") and os.path.exists(p):
+        return p
+    size = UPPER_PERSIST_SIZE_MB if inst.get("persist_disk") else UPPER_SIZE_MB
+    tmp = p + ".new"
+    with open(tmp, "wb") as fh:          # sparse, ohne externes truncate
+        fh.truncate(size * 1024 * 1024)
+    mkfs = shutil.which("mkfs.ext4") or "/sbin/mkfs.ext4"
+    sh(mkfs, "-F", "-q", "-L", "fcupper", tmp)
+    os.replace(tmp, p)
+    return p
+
+
+def reset_upper(name):
+    """Persistente Schreibschicht loeschen (Factory-Reset). Nur im Stillstand."""
+    inst = next((i for i in load_instances() if i["name"] == name), None)
+    if not inst:
+        return "unknown"
+    if is_running(inst):
+        return "error: instance is running — stop it first"
+    n = 0
+    for p in (os.path.join(INST_DIR, f"{name}-upper.ext4"),
+              os.path.join(RUN_DIR, f"{name}.upper.ext4")):
+        try:
+            os.remove(p); n += 1
+        except OSError:
+            pass
+    return f"disk reset ({n} layer(s) removed)" if n else "nothing to reset"
+
+
+def set_persist_disk(name, on):
+    inst = next((i for i in load_instances() if i["name"] == name), None)
+    if not inst:
+        return "unknown"
+    if inst.get("rootfs") not in OVERLAY_ROOTFS:
+        return "error: this template's rootfs has no overlay support (yet)"
+    inst["persist_disk"] = bool(on)
+    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
+        json.dump(inst, fh, indent=2)
+    running = " (applies after stop/start)" if is_running(inst) else ""
+    return f"persistent disk for '{name}' {'ON' if on else 'off'}{running}"
+
+
+def private_rootfs(inst):
+    """Frische Rootfs-Kopie fuer genau diese VM anlegen und deren Pfad liefern.
+
+    Alle Instanzen eines Templates zeigten auf DASSELBE ext4-Image, beschreibbar.
+    Zwei gleichzeitig laufende VMs teilen sich dann ein Journal — das ging so
+    lange gut, wie kaum geschrieben wurde, und endete am 15.08. mit 'error
+    loading journal' beim Boot. Deshalb: je Start eine eigene Kopie (sparse,
+    ~sekundenschnell). Nebeneffekt, und zwar der gewollte: ein Neustart bootet
+    immer das aktuelle Template-Image, Rootfs-Updates greifen wie bisher mit
+    Stop/Start. Zustand, der bleiben soll, liegt ohnehin nicht hier, sondern
+    zentral (memory.json, chats.json, katfs)."""
+    src = os.path.join(BASE, inst["rootfs"])
+    dst = os.path.join(RUN_DIR, f"{inst['name']}.rootfs.ext4")
+    tmp = dst + ".new"
+    # --sparse=always: das 2-GB-Image traegt ~550 MB; die Kopie soll ebenso
+    # wenig belegen. Erst .new, dann umbenennen — eine halbe Kopie darf nie
+    # als Rootfs starten.
+    sh("cp", "--sparse=always", src, tmp)
+    os.replace(tmp, dst)
+    return dst
+
+
 def gen_config(inst):
     n = net_of(inst)
     boot = (f"console=ttyS0 reboot=k panic=1 pci=off "
             f"ip={n['guest']}::{n['host']}:{n['mask']}::eth0:off init=/init")
-    drives = [{"drive_id": "rootfs", "path_on_host": os.path.join(BASE, inst["rootfs"]),
-               "is_root_device": True, "is_read_only": False}]
+    overlay = inst.get("rootfs") in OVERLAY_ROOTFS
+    if overlay:
+        drives = [{"drive_id": "rootfs", "path_on_host": os.path.join(BASE, inst["rootfs"]),
+                   "is_root_device": True, "is_read_only": True}]
+    else:
+        drives = [{"drive_id": "rootfs", "path_on_host": private_rootfs(inst),
+                   "is_root_device": True, "is_read_only": False}]
     cfg_disk = os.path.join(RUN_DIR, f"{inst['name']}.config.ext4")
     if os.path.exists(cfg_disk):
         drives.append({"drive_id": "config", "path_on_host": cfg_disk,
@@ -1144,6 +2100,12 @@ def gen_config(inst):
     for j, d in enumerate(inst.get("extra_drives", [])):
         drives.append({"drive_id": f"data{j}", "path_on_host": d["path"],
                        "is_root_device": False, "is_read_only": d.get("readonly", False)})
+    if overlay:
+        # Letztes Drive = Upper; Geraetename ergibt sich aus der Position
+        # (virtio-blk: vda, vdb, ...). Der Gast liest ihn aus /proc/cmdline.
+        drives.append({"drive_id": "upper", "path_on_host": make_upper(inst),
+                       "is_root_device": False, "is_read_only": False})
+        boot += f" fc_upper=/dev/vd{chr(ord('a') + len(drives) - 1)}"
     return {
         "boot-source": {"kernel_image_path": KERNEL, "boot_args": boot},
         "drives": drives,
@@ -1184,6 +2146,14 @@ def stop(inst):
         os.remove(pf)
     teardown_tap(inst)
     teardown_mounts(inst)
+    mcp_hub_kill(inst["name"])
+    # Die private Rootfs-Kopie ist nach dem Stop wertlos (der naechste Start
+    # zieht eine frische) — nur Plattenplatz, also weg damit.
+    for f in (f"{inst['name']}.rootfs.ext4", f"{inst['name']}.upper.ext4"):
+        try:
+            os.remove(os.path.join(RUN_DIR, f))
+        except OSError:
+            pass
     return "stopped"
 
 
@@ -1314,6 +2284,311 @@ def mem_store(instance, key, value):
 def mem_recall(instance, key=None):
     m = load_memory().get(instance, {})
     return m if key is None else m.get(key, "")
+
+
+# ---- Playbooks: dauerhafte Regeln, die IMMER gelten (nicht nur bei Bezug wie
+# das semantische Gedaechtnis). Der Agent fuellt sie selbst aus dem Gespraech
+# und bekommt sie jeden Turn in den Prompt eingeblendet. Je Instanz getrennt.
+PLAYBOOKS_FILE = os.path.join(BASE, "playbooks.json")
+_pb_lock = threading.Lock()
+PB_MAX = 40
+
+
+def load_playbooks():
+    try:
+        with open(PLAYBOOKS_FILE) as fh:
+            d = json.load(fh)
+            return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_playbooks(d):
+    try:
+        tmp = PLAYBOOKS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(d, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, PLAYBOOKS_FILE)
+    except OSError:
+        pass
+
+
+def pb_list(instance):
+    return load_playbooks().get(instance, [])
+
+
+def pb_add(instance, text):
+    text = (text or "").strip()
+    if not instance or not text:
+        return None
+    with _pb_lock:
+        d = load_playbooks()
+        lst = d.setdefault(instance, [])
+        low = text.lower()
+        if any(x.get("text", "").lower() == low for x in lst):
+            return "exists"
+        pid = uuid.uuid4().hex[:6]
+        lst.append({"id": pid, "text": text, "ts": int(time.time())})
+        d[instance] = lst[-PB_MAX:]
+        _save_playbooks(d)
+    return pid
+
+
+def pb_remove(instance, pid):
+    with _pb_lock:
+        d = load_playbooks()
+        lst = d.get(instance, [])
+        n = len(lst)
+        d[instance] = [x for x in lst if x.get("id") != str(pid)]
+        _save_playbooks(d)
+        return n - len(d[instance])
+
+
+# ---- Missionen: Plan-/Fortschritts-Speicher fuer mehrstufige Auftraege ------
+# Der Orchestrator plant eine Mission (Ziel + Schritte), arbeitet sie Schritt
+# fuer Schritt ueber create_task ab und haelt den Fortschritt HIER fest — so
+# ueberlebt der Arbeitsstand /reset, VM-Neustart und den zustandslosen
+# Heartbeat. Ein fertiger Task, der zu einem Missionsschritt gehoert, triggert
+# sofort den naechsten Vorstoss (siehe _task_worker).
+MISSIONS_FILE = os.path.join(BASE, "missions.json")
+_mi_lock = threading.Lock()
+MISSION_MAX_ACTIVE = 5
+MISSION_MAX_STEPS = 20
+MISSION_MAX_LOG = 30
+MISSION_TTL_DAYS = 7           # ohne Aktivitaet -> paused + Hinweis
+
+
+def load_missions():
+    try:
+        with open(MISSIONS_FILE) as fh:
+            d = json.load(fh)
+            return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_missions(d):
+    tmp = MISSIONS_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(d, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, MISSIONS_FILE)
+
+
+def _mi_log(m, text):
+    m.setdefault("log", []).append(
+        f"[{time.strftime('%m-%d %H:%M')}] {str(text)[:200]}")
+    m["log"] = m["log"][-MISSION_MAX_LOG:]
+    m["updated"] = int(time.time())
+
+
+def mission_list(instance):
+    return load_missions().get(instance, [])
+
+
+def mission_start(instance, goal, steps):
+    goal = (goal or "").strip()[:300]
+    if not goal:
+        return None, "goal missing"
+    steps = [str(x).strip()[:200] for x in (steps or []) if str(x).strip()][:MISSION_MAX_STEPS]
+    if not steps:
+        return None, "steps missing"
+    with _mi_lock:
+        d = load_missions()
+        lst = d.setdefault(instance, [])
+        if sum(1 for m in lst if m.get("status") == "active") >= MISSION_MAX_ACTIVE:
+            return None, f"max {MISSION_MAX_ACTIVE} active missions"
+        mid = "m-" + uuid.uuid4().hex[:6]
+        m = {"id": mid, "goal": goal, "status": "active",
+             "created": int(time.time()), "updated": int(time.time()),
+             "steps": [{"n": i + 1, "text": t, "status": "open"}
+                       for i, t in enumerate(steps)],
+             "log": []}
+        _mi_log(m, f"Mission gestartet: {goal}")
+        lst.append(m)
+        _save_missions(d)
+    return mid, "ok"
+
+
+def mission_update(instance, mid, step=None, status=None, result="",
+                   task_id="", add_step="", note=""):
+    """Einen Schritt fortschreiben (status: doing|done|failed|open), optional
+    einen neuen Schritt anhaengen oder nur eine Log-Notiz setzen."""
+    with _mi_lock:
+        d = load_missions()
+        m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
+        if not m:
+            return "unknown mission"
+        if m.get("status") not in ("active", "paused"):
+            return f"mission is {m.get('status')}"
+        if add_step:
+            if len(m["steps"]) >= MISSION_MAX_STEPS:
+                return f"max {MISSION_MAX_STEPS} steps"
+            m["steps"].append({"n": len(m["steps"]) + 1,
+                               "text": str(add_step).strip()[:200], "status": "open"})
+            _mi_log(m, f"Schritt ergaenzt: {add_step}")
+        if step is not None:
+            st = next((x for x in m["steps"] if x.get("n") == int(step)), None)
+            if not st:
+                return f"unknown step {step}"
+            if status in ("open", "doing", "done", "failed"):
+                st["status"] = status
+            if result:
+                st["result"] = str(result)[:500]
+            if task_id:
+                st["task_id"] = str(task_id)[:40]
+            _mi_log(m, f"Schritt {step} -> {status or '?'}"
+                       + (f": {str(result)[:80]}" if result else ""))
+        elif note:
+            _mi_log(m, note)
+        _save_missions(d)
+        return "ok"
+
+
+def mission_finish(instance, mid, summary="", failed=False):
+    with _mi_lock:
+        d = load_missions()
+        m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
+        if not m:
+            return "unknown mission"
+        m["status"] = "failed" if failed else "done"
+        m["summary"] = str(summary)[:600]
+        _mi_log(m, ("Fehlgeschlagen: " if failed else "Abgeschlossen: ") + str(summary)[:150])
+        _save_missions(d)
+    # Abschluss als dauerhafte Notiz ins Langzeitgedaechtnis + Push an den Nutzer.
+    try:
+        if summary:
+            sem_store(instance, f"Mission '{m['goal']}' "
+                      + ("fehlgeschlagen" if failed else "abgeschlossen")
+                      + f": {summary}", key="mission-" + str(mid))
+    except Exception:
+        pass
+    try:
+        notify_add(instance, ("Mission fehlgeschlagen" if failed else "Mission abgeschlossen"),
+                   f"{m['goal']}\n{summary}"[:900], link="missions")
+    except Exception:
+        pass
+    return "ok"
+
+
+def mission_admin(instance, mid, action):
+    """UI-Aktionen: pause | resume | abort."""
+    with _mi_lock:
+        d = load_missions()
+        m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
+        if not m:
+            return "unknown mission"
+        if action == "pause" and m.get("status") == "active":
+            m["status"] = "paused"; _mi_log(m, "Pausiert (UI)")
+        elif action == "resume" and m.get("status") == "paused":
+            m["status"] = "active"; _mi_log(m, "Fortgesetzt (UI)")
+        elif action == "abort" and m.get("status") in ("active", "paused"):
+            m["status"] = "failed"; m["summary"] = "abgebrochen (UI)"
+            _mi_log(m, "Abgebrochen (UI)")
+        else:
+            return f"cannot {action} ({m.get('status')})"
+        _save_missions(d)
+        return "ok"
+
+
+def mission_ttl_sweep():
+    """Inaktive Missionen pausieren statt still weiterlaufen zu lassen."""
+    cutoff = int(time.time()) - MISSION_TTL_DAYS * 86400
+    with _mi_lock:
+        d = load_missions()
+        hit = []
+        for inst, lst in d.items():
+            for m in lst:
+                if m.get("status") == "active" and m.get("updated", 0) < cutoff:
+                    m["status"] = "paused"
+                    _mi_log(m, f"Auto-pausiert ({MISSION_TTL_DAYS} Tage inaktiv)")
+                    hit.append((inst, m["goal"]))
+        if hit:
+            _save_missions(d)
+    for inst, goal in hit:
+        try:
+            notify_add(inst, "Mission pausiert", f"{goal} — {MISSION_TTL_DAYS} Tage keine Aktivitaet.", link="missions")
+        except Exception:
+            pass
+
+
+def mission_for_task(task_id):
+    """(instance, mission, step) der Mission, deren Schritt auf diesen Task
+    wartet — fuer den Sofort-Trigger nach Task-Abschluss."""
+    for inst, lst in load_missions().items():
+        for m in lst:
+            if m.get("status") != "active":
+                continue
+            for st in m.get("steps", []):
+                if st.get("task_id") == str(task_id) and st.get("status") in ("doing", "open"):
+                    return inst, m, st
+    return None, None, None
+
+
+# ---- Semantisches Langzeitgedaechtnis --------------------------------------
+EMBED_URL = f"http://127.0.0.1:{os.environ.get('EMBED_PORT', '8772')}"
+
+
+def _embed(texts, kind):
+    """Texte -> Vektoren ueber den Embedding-Dienst. None, wenn er nicht
+    erreichbar ist (dann faellt der Aufrufer auf das flache Gedaechtnis
+    zurueck, statt zu scheitern)."""
+    try:
+        body = json.dumps({"texts": texts, "kind": kind}).encode()
+        req = urllib.request.Request(EMBED_URL + "/embed", data=body,
+                                     headers={"Content-Type": "application/json"})
+        r = urllib.request.urlopen(req, timeout=30)
+        return json.loads(r.read()).get("vectors")
+    except Exception:
+        return None
+
+
+def sem_store(instance, text, key=""):
+    """Eine Erinnerung einbetten und ablegen. Gleicher (instance,key) wird
+    ersetzt statt verdoppelt — so aktualisiert der Agent Bestehendes."""
+    text = (text or "").strip()
+    if not instance or not text:
+        return False
+    # Den key mit einbetten und mit ablegen: ist der value knapp ("Watzmann"),
+    # traegt "lieblingsberg: Watzmann" wenigstens etwas Kontext in Vektor UND
+    # in den spaeter angezeigten Treffer.
+    full = f"{key}: {text}" if key else text
+    vecs = _embed([full], "passage")
+    if not vecs:
+        return False
+    c = _hist_conn()
+    with c:
+        if key:
+            c.execute("DELETE FROM semantic_memory WHERE instance=? AND mkey=?",
+                      (instance, key))
+        c.execute("INSERT INTO semantic_memory(ts,instance,mkey,text,vec) VALUES(?,?,?,?,?)",
+                  (int(time.time()), instance, key or "", full, json.dumps(vecs[0])))
+    c.close()
+    return True
+
+
+def sem_search(instance, query, k=5):
+    """Die k inhaltlich naechsten Erinnerungen einer Instanz. Cosinus im
+    Speicher; die Vektoren sind normalisiert, also genuegt das Skalarprodukt."""
+    query = (query or "").strip()
+    if not instance or not query:
+        return []
+    qv = _embed([query], "query")
+    if not qv:
+        return []
+    q = qv[0]
+    c = _hist_conn()
+    rows = c.execute("SELECT text, vec FROM semantic_memory WHERE instance=?",
+                     (instance,)).fetchall()
+    c.close()
+    scored = []
+    for text, vec in rows:
+        try:
+            v = json.loads(vec)
+            scored.append((sum(a * b for a, b in zip(q, v)), text))
+        except (ValueError, TypeError):
+            continue
+    scored.sort(reverse=True)
+    return [{"score": round(s, 3), "text": t} for s, t in scored[:max(1, int(k))]]
 
 
 # ---- Secrets-Broker (on-demand, Allowlist pro Template/Instanz) ------------
@@ -1458,6 +2733,54 @@ def mcp_required_secrets(names):
         blob = json.dumps([m.get("args", []), m.get("env", {})])
         need |= set(re.findall(r"\$\{([A-Z0-9_]+)\}", blob))
     return need
+
+
+MCP_HUB = f"http://127.0.0.1:{os.environ.get('MCP_HUB_PORT', '8771')}"
+
+
+def mcp_hub_call(inst, server, payload):
+    """JSON-RPC eines Gastes an 'seinen' MCP-Server im Hub durchreichen.
+
+    Autorisierung HIER, nicht im Hub: der Server muss in MCP_SERVERS der
+    Instanz stehen. argv/env baut der Manager aus Katalog + Policy-Secrets —
+    beides verlaesst den Host nie; die VM schickt nur Servernamen und Payload."""
+    names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
+    if server not in names:
+        return 403, {"error": f"server '{server}' not assigned to this instance"}
+    blob = build_mcp_config([server], allowed=allowed_secret_keys(inst))
+    spec = (json.loads(blob).get("mcpServers") or {}).get(server) if blob else None
+    if not spec or not spec.get("command"):
+        return 500, {"error": f"no catalog entry for '{server}'"}
+    body = json.dumps({
+        "key": f"{inst['name']}:{server}",
+        "argv": [spec["command"], *spec.get("args", [])],
+        "env": spec.get("env") or {},
+        "payload": payload,
+    }).encode()
+    req = urllib.request.Request(MCP_HUB + "/rpc", data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req, timeout=120)
+        return 200, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except Exception:
+            return e.code, {"error": f"hub HTTP {e.code}"}
+    except Exception as e:
+        return 502, {"error": f"mcp hub unreachable: {e!r}"}
+
+
+def mcp_hub_kill(inst_name):
+    """Prozesse dieser Instanz im Hub beenden (beim Stop). Bester Versuch —
+    ein toter Hub darf keinen Instanz-Stop verhindern."""
+    try:
+        req = urllib.request.Request(MCP_HUB + "/kill",
+                                     data=json.dumps({"prefix": inst_name + ":"}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
 
 
 def build_mcp_config(names, allowed=None):
@@ -1614,6 +2937,52 @@ def katfs_proxy_fs(op, share, path, recursive=False, body=None):
         return r.status, r.headers.get("Content-Type", "application/octet-stream"), r.read()
 
 
+# Grenzen fuer den "alles herunterladen"-ZIP: der Knoten liest jede Datei ganz
+# in den Speicher, darum ein Deckel gegen versehentliche Riesen-Freigaben.
+KATFS_ZIP_MAX_FILES = 2000
+KATFS_ZIP_MAX_BYTES = 512 * 1024 * 1024   # 512 MB gesamt
+
+
+def katfs_zip(share, root):
+    """Den Teilbaum ab `root` einer Freigabe rekursiv einsammeln und als ZIP
+    zurueckgeben. Laeuft ueber dieselben ls/read-Proxyaufrufe wie der Browser,
+    d.h. nur, solange die Freigabe im Browser-Tab offen ist. Wirft bei zu
+    grossen Baeumen, bevor er den Speicher sprengt."""
+    root = (root or ".").strip() or "."
+    buf = io.BytesIO()
+    stats = {"files": 0, "bytes": 0}
+    base = "" if root in (".", "") else root.rstrip("/")
+
+    def walk(rel):
+        st, _ct, data = katfs_proxy_fs("ls", share, rel or ".")
+        if st != 200:
+            raise RuntimeError(f"list {rel or '.'} -> {st}")
+        for e in (json.loads(data or b"{}").get("entries") or []):
+            name = e.get("name", "")
+            if not name or name in (".", ".."):
+                continue
+            child = f"{rel}/{name}" if rel and rel != "." else name
+            if e.get("dir"):
+                walk(child)
+                continue
+            stats["files"] += 1
+            if stats["files"] > KATFS_ZIP_MAX_FILES:
+                raise RuntimeError(f"too many files (>{KATFS_ZIP_MAX_FILES})")
+            fst, _fct, fdata = katfs_proxy_fs("read", share, child)
+            if fst != 200:
+                continue   # unlesbare Einzeldatei ueberspringen, Rest liefern
+            stats["bytes"] += len(fdata)
+            if stats["bytes"] > KATFS_ZIP_MAX_BYTES:
+                raise RuntimeError("archive too large (>512 MB)")
+            # Pfad im Archiv relativ zum gewaehlten Ordner.
+            arc = child[len(base) + 1:] if base and child.startswith(base + "/") else child
+            zf.writestr(arc, fdata)
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        walk(base if base else ".")
+    return buf.getvalue(), stats
+
+
 def katfs_status():
     out = {"up": False, "connected": False, "share": "", "node_id": "",
            "port": KATFS_PORT, "error": "", "shares": []}
@@ -1768,6 +3137,23 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .brand .mark{flex:none;display:block}
 .brand b{font-family:var(--font-heading);font-weight:600;font-size:19px;letter-spacing:.01em}
 .brand span{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.nbell{position:relative;flex:none;margin-left:14px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:1px solid var(--color-divider);border-radius:10px;background:var(--color-surface);color:var(--color-neutral-700);cursor:pointer}
+.nbell:hover{border-color:var(--color-accent);color:var(--color-accent)}
+.nbadge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--color-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center}
+.npanel{position:absolute;top:58px;right:16px;width:340px;max-width:calc(100vw - 32px);max-height:60vh;overflow:auto;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);z-index:60}
+.nhead{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--color-divider);position:sticky;top:0;background:var(--color-surface)}
+.nitem{padding:10px 14px;border-bottom:1px solid var(--color-divider)}
+.nitem.unread{background:var(--color-neutral-100)}
+.nitem[data-link]:hover{background:var(--color-neutral-200)}
+.nitem .nt{font-weight:600;font-size:13.5px;display:flex;gap:8px;align-items:baseline}
+.nitem .nb{font-size:13px;color:var(--color-neutral-700);margin-top:2px;white-space:pre-wrap;word-break:break-word}
+.nitem .nm{font-size:11px;color:var(--color-neutral-500);margin-top:4px}
+.actwin{display:inline-flex;border:1px solid var(--color-divider);border-radius:9px;overflow:hidden}
+.actwin button{border:0;background:var(--color-surface);color:var(--color-neutral-700);font-size:12px;padding:5px 12px;cursor:pointer;border-right:1px solid var(--color-divider)}
+.actwin button:last-child{border-right:0}
+.actwin button:hover{color:var(--color-accent)}
+.actwin button.on{background:var(--color-accent);color:#fff}
+.seckey{-webkit-text-security:disc}
 .tabs{display:flex;gap:4px;align-self:stretch;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
 .tabs a{display:flex;align-items:center;padding:0 14px;font-size:13.5px;letter-spacing:.03em;
@@ -1799,6 +3185,25 @@ footer{border-top:1px solid var(--color-divider)}
 .foot-in{max-width:1160px;margin:0 auto;padding:14px 28px;display:flex;gap:24px;
   flex-wrap:wrap;font-size:12px}
 .screen{display:none}.screen.on{display:block}
+.fbrow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:1px solid var(--color-divider);font-size:13.5px}
+.fbrow:hover{background:var(--color-neutral-100)}
+.fbrow.dir{cursor:pointer}
+.fbico{width:1.2em;flex:none;text-align:center}
+.fbn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fbsharerow{cursor:pointer;border-radius:8px;padding:4px 8px;transition:background .12s ease}
+.fbsharerow:hover{background:var(--color-neutral-100)}
+.fbsharerow.sel{background:var(--color-neutral-100);box-shadow:inset 3px 0 0 var(--color-accent)}
+.fbsz{color:var(--color-neutral-500);font-size:12px;font-variant-numeric:tabular-nums}
+.fbact{font-size:12px;padding:2px 8px}
+/* Architektur-Diagramm. Die Regeln stehen HIER und nicht als <style> im SVG:
+   ein style-Element in Inline-SVG beendet beim HTML-Parsen den SVG-Kontext,
+   und alles danach faellt unsichtbar aus dem Bild (Chrome; jsdom verzeiht es). */
+#archsvg .bx{fill:var(--color-surface);stroke:var(--color-divider)}
+#archsvg .bx2{fill:none;stroke:var(--color-accent)}
+#archsvg .tt{fill:var(--color-text);font-size:13px;font-weight:600}
+#archsvg .ss{fill:var(--color-neutral-600);font-size:11px}
+#archsvg .ln{stroke:var(--color-neutral-500);stroke-width:1.2;marker-end:url(#arw);fill:none}
+#archsvg .lb{fill:var(--color-neutral-600);font-size:10px}
 .stack{display:flex;flex-direction:column;gap:18px}
 .mrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
 /* — dialog — */
@@ -1864,13 +3269,23 @@ footer{border-top:1px solid var(--color-divider)}
     <a href="#skills">Skills</a>
     <a href="#mcp">MCP servers</a>
     <a href="#tasks">Tasks</a>
+    <a href="#missions">Missions</a>
     <a href="#policy">Policy</a>
     <a href="#models">Models</a>
     <a href="#sharing">Sharing</a>
     <a href="#secrets">Secrets</a>
     <a href="#settings">Settings</a>
     <a href="#changelog">Changelog</a>
+    <a href="#architecture">Architecture</a>
   </nav>
+  <button class=nbell id=nbell onclick=notifToggle() title="Benachrichtigungen" aria-label=Benachrichtigungen>
+    <svg width=19 height=19 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.7 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+    <span class=nbadge id=nbadge hidden>0</span>
+  </button>
+  <div class=npanel id=npanel hidden>
+    <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifReadAll()>Alle gelesen</button></div>
+    <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
+  </div>
 </div></header>
 <main>
 
@@ -2038,6 +3453,17 @@ footer{border-top:1px solid var(--color-divider)}
   </div>
 </section>
 
+<section class="screen" id=s-missions>
+  <div class=sec-head>
+    <div><h6>Multi-step work</h6><h3>Missions</h3></div>
+    <span class="note text-muted">Mehrstufige Auftraege des Orchestrators — Plan + Fortschritt ueberleben Neustart und Kontext-Reset · ein fertiger Task triggert sofort den naechsten Schritt</span>
+  </div>
+  <div id=missions class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <span class=text-muted style="font-size:13px">…</span>
+  </div>
+  <p class=text-muted style="font-size:12.5px;margin-top:14px">Missionen legt der Orchestrator selbst an, wenn ein Auftrag mehrere Schritte braucht — z. B. per Chat: „… — als Mission".</p>
+</section>
+
 <section class="screen" id=s-sharing>
   <div class=sec-head>
     <div><h6>Browser → Agent</h6><h3>katfs sharing</h3></div>
@@ -2080,6 +3506,22 @@ footer{border-top:1px solid var(--color-divider)}
       that one is a real live mount (NFS) inside the guest and survives without a browser tab.</p>
     </div>
   </div>
+
+  <div class=sec-head style="margin-top:32px">
+    <div><h6>Shared folder</h6><h3>File browser</h3></div>
+    <span class="note text-muted">Browse the folder currently shared from a browser tab · read-only view</span>
+  </div>
+  <div class="panel blueprint">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div id=fbbar style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-secondary" id=fbup onclick=fbUp()>↑ up</button>
+      <span id=fbpath class=mono style="font-size:12.5px;color:var(--color-neutral-600)">/</span>
+      <span id=fbshare class=text-muted style="font-size:12px"></span>
+      <button class="btn btn-ghost" id=fbdl style="margin-left:auto;font-size:12px" onclick=fbZip() disabled>&#8595; Download all</button>
+      <button class="btn btn-ghost" style="font-size:12px" onclick="fbGo(FB.path)">Refresh</button>
+    </div>
+    <div id=fblist><span class=text-muted style="font-size:13px">…</span></div>
+  </div>
 </section>
 
 <section class="screen" id=s-secrets>
@@ -2118,11 +3560,287 @@ footer{border-top:1px solid var(--color-divider)}
   </div>
 </section>
 
+
+<section class="screen" id=s-architecture>
+  <div class=sec-head>
+    <div><h6>System</h6><h3>Architecture</h3></div>
+    <span class="note text-muted">every box below runs on this host, except the phone, the user PC and the external services</span>
+  </div>
+
+  <div class="panel blueprint" style="padding:18px">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:auto;display:block;font-family:inherit">
+      <defs><marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M0 0 L8 4 L0 8 z" fill="var(--color-neutral-500)"/></marker></defs>
+
+      <rect class="bx" x="40" y="16" width="230" height="56"/>
+      <text class="tt" x="155" y="38" text-anchor="middle">KatAgent app (Android)</text>
+      <text class="ss" x="155" y="56" text-anchor="middle">chat sync &#183; voice &#183; assistant key</text>
+      <rect class="bx" x="330" y="16" width="230" height="56"/>
+      <text class="tt" x="445" y="38" text-anchor="middle">Browser</text>
+      <text class="ss" x="445" y="56" text-anchor="middle">admin UI / &#183; chat UI /chat</text>
+      <rect class="bx" x="660" y="16" width="260" height="56"/>
+      <text class="tt" x="790" y="38" text-anchor="middle">Signal (phone)</text>
+      <text class="ss" x="790" y="56" text-anchor="middle">chat with katbot</text>
+
+      <rect class="bx" x="185" y="124" width="230" height="52"/>
+      <text class="tt" x="300" y="145" text-anchor="middle">Traefik &#183; TLS + basicAuth</text>
+      <text class="ss" x="300" y="162" text-anchor="middle">agents.kat56.de</text>
+      <rect class="bx" x="660" y="124" width="260" height="52"/>
+      <text class="tt" x="790" y="145" text-anchor="middle">signal-cli REST</text>
+      <text class="ss" x="790" y="162" text-anchor="middle">signalapi.kat56.de</text>
+
+      <path class="ln" d="M155 72 L282 124"/>
+      <path class="ln" d="M445 72 L318 124"/>
+      <path class="ln" d="M790 72 L790 124"/>
+      <path class="ln" d="M300 176 L300 224"/>
+
+      <rect class="bx2" x="40" y="224" width="560" height="186"/>
+      <text class="tt" x="60" y="248">manager.py &#183; :8700 (root, systemd)</text>
+      <text class="ss" x="60" y="274">&#183; REST APIs + admin UI + chat UI</text>
+      <text class="ss" x="60" y="294">&#183; chat sync: long-poll, shared store</text>
+      <text class="ss" x="60" y="314">&#183; secret broker (guest by source IP)</text>
+      <text class="ss" x="60" y="334">&#183; security gateway (unicode + image meta)</text>
+      <text class="ss" x="60" y="354">&#183; task scheduler + orchestrator ping</text>
+      <text class="ss" x="330" y="274">&#183; voice :8770 &#183; mcp-hub :8771 &#183; embed :8772</text>
+      <text class="ss" x="330" y="294">&#183; signal send (allowlist + rate limit)</text>
+      <text class="ss" x="330" y="314">&#183; usage &#183; audit &#183; memory</text>
+      <text class="ss" x="330" y="334">&#183; katfs proxy &#8594; :8790</text>
+      <text class="ss" x="330" y="354">&#183; guest POST allowlist (403 default)</text>
+      <text class="ss" x="330" y="374">&#183; per-instance model / tools / mounts</text>
+
+      <rect class="bx" x="660" y="224" width="260" height="56"/>
+      <text class="tt" x="790" y="246" text-anchor="middle">voice service (Docker)</text>
+      <text class="ss" x="790" y="264" text-anchor="middle">127.0.0.1:8770 &#183; Parakeet STT &#183; Piper TTS</text>
+      <rect class="bx" x="660" y="312" width="260" height="56"/>
+      <text class="tt" x="790" y="334" text-anchor="middle">katfs node &#183; :8790</text>
+      <text class="ss" x="790" y="352" text-anchor="middle">P2P share &#8596; user PC</text>
+
+      <path class="ln" d="M600 252 L660 252"/>
+      <path class="ln" d="M600 340 L660 340"/>
+      <path class="ln" d="M620 232 L680 180"/><text class="lb" x="665" y="205">/v2/send</text>
+
+      <rect class="bx" x="40" y="444" width="560" height="44"/>
+      <text class="ss" x="320" y="470" text-anchor="middle">chats.json &#183; memory.json &#183; history.db &#183; gateway.json &#183; settings.json &#183; instances/*.json &#183; audit/*.jsonl</text>
+      <path class="ln" d="M320 410 L320 444"/>
+
+      <rect class="bx" x="40" y="532" width="560" height="124"/>
+      <text class="tt" x="60" y="556">Firecracker microVMs &#8212; one per agent</text>
+      <text class="ss" x="60" y="580">&#183; tap fcN &#183; 172.30.N.2/30 &#183; NAT egress via host uplink</text>
+      <text class="ss" x="60" y="600">&#183; private rootfs copy per start (sparse, removed on stop)</text>
+      <text class="ss" x="60" y="620">&#183; guest: agent.py tool loop &#183; web_bridge :8080 &#183; webterm :7682</text>
+      <text class="ss" x="60" y="640">&#183; MCP via manager &#8594; hub (no LAN, no tokens in guest)</text>
+      <path class="ln" d="M320 488 L320 532"/>
+      <path class="ln" d="M340 532 L340 488"/>
+      <text class="lb" x="352" y="514">/i/&#8249;name&#8250; proxy &#183; broker &#183; tool calls</text>
+
+      <rect class="bx" x="660" y="532" width="260" height="124"/>
+      <text class="tt" x="790" y="556" text-anchor="middle">external</text>
+      <text class="ss" x="790" y="580" text-anchor="middle">OpenRouter / Anthropic APIs</text>
+      <text class="ss" x="790" y="600" text-anchor="middle">Home Assistant (MCP &#183; SSE)</text>
+      <text class="ss" x="790" y="620" text-anchor="middle">Portainer (MCP, read-only)</text>
+      <text class="ss" x="790" y="640" text-anchor="middle">user PC (katfs P2P)</text>
+      <rect class="bx" x="660" y="400" width="260" height="56"/>
+      <text class="tt" x="790" y="422" text-anchor="middle">mcp-hub (Docker)</text>
+      <text class="ss" x="790" y="440" text-anchor="middle">127.0.0.1:8771 &#183; mcp-remote &#183; mcp-portainer</text>
+      <path class="ln" d="M600 380 L660 424"/>
+      <path class="ln" d="M790 456 L790 532"/>
+      <path class="ln" d="M600 588 L660 588"/><text class="lb" x="606" y="580">NAT</text>
+    </svg>
+  </div>
+
+  <div class=sec-head style="margin-top:44px">
+    <div><h6>Reference</h6><h3>Components</h3></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px">
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>manager.py &#8212; the core</span>
+  <p class=card-body>Single-file Python service (stdlib only), runs as root under systemd
+  (<code>firecracker-manager</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
+  the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
+  per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up
+  tap devices and NAT, builds per-instance config disks, proxies requests into the guests
+  (<code>/i/&#8249;name&#8250;/&#8230;</code>), and is the only component that guests can talk to.
+  Guest requests are identified by source IP; writes from guests are limited to an explicit
+  allowlist &#8212; everything else returns 403.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Firecracker microVMs</span>
+  <p class=card-body>One VM per agent instance. Each gets a tap device <code>fc&#8249;N&#8250;</code> with a
+  /30 subnet (host 172.30.N.1, guest 172.30.N.2) and NAT egress over the host uplink; internet
+  can be switched off per instance. On every start the VM receives a fresh private copy of its
+  template rootfs (sparse, ~550&#8201;MB real), deleted again on stop &#8212; VMs are stateless by design,
+  durable state lives centrally. A small read-only config disk carries the non-secret instance
+  settings into the guest.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Agent runtime (agent.py)</span>
+  <p class=card-body>Tool-calling loop against an OpenAI-compatible backend inside each VM
+  (templates: openrouter, <b>orcarouter</b>, pi, prime; the claude template runs Claude Code headless
+  instead). The same agent code drives OpenRouter, <b>OrcaRouter</b> (gateway,
+  <code>api.orcarouter.ai</code> or self-hosted OrcaRouter-Lite) and a local llama.cpp &#8212; the
+  backend is picked by which env is set (<code>ORCAROUTER_MODEL</code> / <code>LLAMA_ENDPOINT</code>,
+  else OpenRouter); the key comes from the Settings tab via the secret broker. Built-in tools: bash, files,
+  http_fetch, web_search, read_pdf, spawn_subagent, create_task, read_inbox, list_agents,
+  recall_tasks, skills, memory, katfs remote files, secrets, send_signal. The system prompt
+  (persona &#8594; <code>AGENT_SYSTEM</code>) always gets a standing memory instruction appended; on the
+  first turn after a boot the agent injects its stored facts from <code>memory.json</code> into the
+  prompt. Conversation context lives in VM RAM and dies with a restart &#8212; that is deliberate.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Harness patterns (context, goals, guardrails)</span>
+  <p class=card-body>Ported from strands-agents/harness-sdk (Apache-2.0) into the stdlib agent, no new deps.
+  <b>Summarizing context:</b> on overflow the oldest turns are folded into a pinned
+  <code>[Zusammenfassung]</code> block instead of being dropped &#8212; last ~10 turns stay verbatim.
+  <b>Context offloader:</b> tool output over <code>OFFLOAD_MIN</code> is written to <code>.offload/</code>
+  whole; the model sees a preview + reference and pages the rest via <code>offload_read</code>.
+  <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
+  3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; risky
+  tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
+  <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
+  <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
+  <code>./run-tests.sh</code>. Drei Stufen, die fehlende Umgebung sauber ueberspringen &#8212;
+  <b>OFFLINE</b> importiert Agent und Manager direkt und prueft die Kernlogik (Backend-Wahl,
+  Summarizing, Offloader, Hook-Denylist, Goal, Provider-Switch, HITL-Store, katfs-ZIP-Walk);
+  <b>HTTP</b> faehrt gegen den laufenden Manager (<code>/api/agents</code> backend+model,
+  <code>/api/hitl</code>, katfs-status); <b>LIVE</b> macht einen kostenlosen <code>/goal</code>-Roundtrip
+  zur Orchestrator-VM. Laeuft bei jeder Aenderung mit, zusammen mit Changelog und diesem Tab.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Templates &amp; rootfs images</span>
+  <p class=card-body>Four templates (claude, openrouter, pi, prime), each with a Docker-built
+  ext4 image under <code>instances/*.ext4</code>. Rebuilding an image and restarting an instance is
+  the update path &#8212; the per-start copy guarantees every boot runs the current image. The
+  openrouter image carries node (npx MCP servers), python, mcp-remote, mcp-portainer and
+  poppler; the agent code itself is ~68&#8201;KB.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Secret broker &amp; policy</span>
+  <p class=card-body>API keys and tokens never land in instance configs or on the config disk.
+  Guests fetch secrets at runtime from <code>/api/secret/&#8249;name&#8250;</code>; the manager identifies the
+  instance by source IP and checks a per-instance/template allowlist
+  (<code>secret-policy.json</code>). Sources: the 0600 secret store and the manager settings. MCP
+  configs are assembled server-side the same way (<code>/api/mcp-config</code>).</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Security gateway</span>
+  <p class=card-body>Per-chat toggle (shield icon in app and web). Strips invisible Unicode
+  &#8212; tag characters U+E0020&#8211;E007F, zero-width, bidi overrides, homoglyph spaces &#8212; from chat
+  text in <em>both</em> directions, and EXIF/XMP/C2PA metadata from uploaded JPEG/PNG/WEBP,
+  byte-surgically, before anything reaches the guest. Streams are cut at word boundaries so
+  emoji ZWJ chains survive. State and counters live in <code>gateway.json</code>, filtering happens in
+  the manager &#8212; a guest cannot switch it off. Removed characters are counted visibly.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Chat sync</span>
+  <p class=card-body>One shared store (<code>chats.json</code>) for app, web and Signal turns.
+  Clients long-poll <code>/api/chats?since=&#8249;rev&#8250;&amp;wait=&#8249;s&#8250;</code>; every write bumps a
+  monotonic revision and wakes all waiters, so a message typed on the phone appears in the
+  browser in sub-second time without polling. The store is display history &#8212; it is not fed
+  back into the model.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tasks &amp; orchestrator</span>
+  <p class=card-body>Task queue with schedules (<code>every Nh</code>, <code>daily HH:MM</code>, &#8230;), editable in
+  the Tasks tab. Tasks run on a capable instance or an ephemeral VM; results land in the shared
+  chat history and in <code>history.db</code> (<code>task_runs</code>), queryable by agents via
+  <code>recall_tasks</code>. New user messages ping the orchestrator instance, which routes work via
+  <code>create_task</code> instead of doing it itself. Only the orchestrator (env <code>TASK_ADMIN</code>)
+  gets the <code>list_tasks</code>/<code>delete_task</code>/<code>edit_task</code> tools, so it can prune or
+  reschedule the queue itself; the matching <code>/api/task-delete</code> and <code>/api/task-edit</code> routes
+  are gated to that instance. <code>llm_usage</code> in the same DB feeds the per-instance spend counter and the Activity panel&#8217;s per-window usage (<code>/api/usage/&#8249;name&#8250;?since=</code>): tokens are summed per time window, not attributed to single audit lines (a turn triggers 0..N tool calls).</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Voice</span>
+  <p class=card-body>Docker container bound to 127.0.0.1:8770, reachable only through the
+  manager (<code>/api/stt</code>, <code>/api/tts</code>). STT: Parakeet TDT v3 int8 (RTF &#8776;0.08 on this CPU),
+  TTS: Piper (RTF &#8776;0.07) with three voices baked in (de-thorsten, de-eva_k, en-amy) &#8212;
+  voice and speed are picked in the Settings tab and injected by the manager into every
+  <code>/api/tts</code> call, so clients keep sending only the text. The app records AAC, the service
+  converts via ffmpeg. Speech-to-send, tap-bubble-to-stop and barge-in live in the app; the
+  long-press assistant key starts listening immediately.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
+  <p class=card-body>Two directions, both through the signal-cli REST API
+  (<code>signalapi.kat56.de</code>, run in <code>json-rpc</code> mode). Inbound: the manager holds a
+  stdlib WebSocket to <code>/v1/receive</code>; a message from an allow-listed sender is handed straight to
+  the orchestrator (prefixed <code>/fresh</code> so each trigger starts on a clean context) and the turn lands
+  in the shared chat history. json-rpc mode fixed the native-mode lock where a long receive blocked sending.
+  Outbound: agents call <code>send_signal</code>, the manager checks the recipient against
+  <code>ALLOWED_SENDERS</code> (only people who may command the bot can be written to), rate-limits
+  10 per 5 minutes, audits every call. Bot number and API stay on the host.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Notifications</span>
+  <p class=card-body>Push-Kanal neben Signal: das Agent-Tool <code>notify(title, message)</code> schreibt
+  ueber <code>/api/notify</code> in einen kleinen Store (<code>notifications.json</code>, rev + Long-Poll
+  wie der Chat-Store, gedeckelt, rate-limited). Abgeholt wird per <code>/api/notifications?since=&amp;wait=</code>:
+  der <b>Web-Manager</b> zeigt eine Glocke mit Unread-Badge + Dropdown und kann eine Browser-Notification
+  ausloesen; die <b>App</b> pollt denselben Endpunkt und hebt eine Android-Systemnotification. Jede Notification traegt ein <code>link</code>-Ziel
+  (missions / tasks / chat:&#8249;instanz&#8250;) — ein Klick (Web-Glocke) bzw. Tipp (Android) fuehrt direkt
+  zur Aktion. Anders als <code>send_signal</code> klingelt das auf App/Web, nicht in Signal.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>KatAgent app</span>
+  <p class=card-body>Android/Compose client. Talks only to the manager: chat via
+  <code>/i/&#8249;name&#8250;/api/chat[/stream]</code>, sync via long-poll, voice via <code>/api/stt|tts</code>,
+  gateway toggle via <code>/api/gateway</code>. Registers as the digital assistant (long-press power)
+  and starts recording on invocation; silence auto-sends (adaptive threshold, 1.8&#8201;s hang).
+  Local Gemma mode works offline on-device.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>katfs</span>
+  <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
+  Agents reach it through manager-proxied tools (<code>remote_ls/read/write/delete</code>); the share
+  page under Sharing manages it. Several browser tabs can serve at once &#8212; each is one share
+  (id, name, device); the built-in file browser lists them, a click scopes the tree to one share,
+  and <b>Download all</b> streams the current folder recursively as a ZIP (<code>/api/katfs/zip</code>).
+  Gives agents a controlled window into user files without mounting anything into a VM.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Memory &#8212; short &amp; long term</span>
+  <p class=card-body><b>Short term</b> is the conversation itself &#8212; the agent&#8217;s <code>_history</code> in VM RAM; <code>/reset</code> clears it, a restart too. <b>Long term is semantic:</b> <code>memory_store</code> embeds each note (multilingual-e5 on the CPU, <code>embed</code> container behind the manager) and stores text+vector in <code>history.db</code>. Every turn the agent embeds the user&#8217;s message and the manager returns the meaning-nearest notes (cosine), injected as a fresh <code>[Gedaechtnis]</code> block &#8212; only what fits the question, not the whole store. No LLM and no graph DB needed, so it runs on this host today; degrades to no recall (never an error) if the embedder is down. A richer knowledge-graph memory (Graphiti/Cognee) stays a possible upgrade.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Playbooks &#8212; rules the agent learns</span>
+  <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Missions &#8212; multi-step autonomy</span>
+  <p class=card-body>Plan + progress store for multi-step assignments, persisted on the host
+  (<code>missions.json</code>) so the working state survives resets and restarts. The orchestrator
+  plans (<code>mission_start</code>: goal + steps), delegates each step via <code>create_task</code>
+  and records the task-id; when that task finishes, the worker <b>immediately</b> re-triggers the
+  orchestrator to advance (event-driven, heartbeat only as fallback). Active missions are injected
+  every turn as a <code>[Missionen]</code> block. Guardrails: max 5 active / 20 steps, 7-day TTL
+  auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
+  tab (web) / screen (app) with progress, current step and pause/abort.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Reasoning &amp; thinking</span>
+  <p class=card-body>Per-agent runtime toggle via the slash command <code>/reasoning [low|medium|high|off]</code> (sets OpenRouter&#8217;s reasoning parameter; off by default, <code>OPENROUTER_REASONING</code> for a persistent default). The model&#8217;s thinking is streamed separately (marker-wrapped in the token stream, kept OUT of the conversation context so it never bloats follow-ups) and rendered in web and app as a collapsible &#8220;Denken&#8221; block; copy and speak take only the answer. Costs extra tokens, so it is a toggle, not always-on.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Storage (all under firecracker/)</span>
+  <p class=card-body><code>instances/*.json</code> instance configs &#183; <code>chats.json</code> shared chat store &#183; <code>notifications.json</code> push-Benachrichtigungen &#183;
+  <code>memory.json</code> per-agent key-value memory &#183; <code>playbooks.json</code> per-agent standing rules &#183;
+  <code>history.db</code> task runs + LLM usage + semantic memory (vectors) &#183; <code>gateway.json</code> security-gateway state &#183;
+  <code>settings.json</code> shared settings, 0600 &#183; <code>secret-policy.json</code> secret allowlists &#183;
+  <code>personas.json</code>, <code>skills/</code>, <code>mcp-catalog.json</code> catalogs &#183;
+  <code>audit/*.jsonl</code> per-instance tool audit trail &#183; <code>run/</code> pidfiles, sockets, logs,
+  config disks and throwaway overlay uppers &#183; <code>instances/&#8249;n&#8250;-upper.ext4</code> persistent
+  write layers (per-instance opt-in).</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>MCP servers &#8212; hub on the host</span>
+  <p class=card-body>Catalog in <code>mcp-catalog.json</code> (homeassistant via <code>mcp-remote</code>/SSE,
+  portainer via <code>mcp-portainer</code>, read-only). The server processes run in the
+  <code>mcp-hub</code> container on the host (127.0.0.1:8771), one per (instance, server). Guests speak
+  plain JSON-RPC to the manager (<code>/api/mcp</code>); the manager authorizes by source IP against the
+  instance&#8217;s <code>MCP_SERVERS</code>, injects the secrets host-side and forwards to the hub &#8212;
+  tokens and LAN never reach a VM. Every <code>tools/call</code> lands in the audit trail. A server is
+  active only when listed in <code>MCP_SERVERS</code>; the hub respawns dead processes and replays
+  their initialization.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Web UIs</span>
+  <p class=card-body>Two pages, both served by the manager, both in the Industry design system:
+  this admin UI (embedded in <code>manager.py</code>, hash-routed tabs) and the chat UI
+  (<code>chatui.py</code> under <code>/chat</code>: streaming, images, voice, gateway toggle, per-browser
+  history in localStorage). No CDN, no build step &#8212; one file each.</p></div>
+
+  </div>
+</section>
+
 <section class="screen" id=s-settings style="max-width:640px">
   <div style="margin-bottom:18px"><h6 style="color:var(--color-accent);margin:0 0 2px">Shared, persisted</h6><h3 style="margin:0">Settings</h3></div>
   <p class=text-muted style="font-size:13px;margin-bottom:22px">Values apply to all new instances; empty template fields are pre-filled from here.</p>
   <div class="panel blueprint">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class="banner blueprint" style="margin:0 0 16px;padding:9px 14px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span id=voicestat class=text-muted style="font-size:12.5px">Voice: …</span></div>
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
   </div>
@@ -2168,11 +3886,33 @@ footer{border-top:1px solid var(--color-divider)}
   </div>
 </div>
 
+<div id=modeldlg class=dialog-backdrop style="display:none">
+  <div class="dialog blueprint" style="width:min(560px,100%)">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class=dialog-title>Model — <span id=modeldlgname class=mono style="font-size:16px"></span></div>
+    <div class=dialog-body>The new model takes effect after the next stop/start of the instance.</div>
+    <div id=modeldlgbox></div>
+    <div class=dialog-actions>
+      <button class="btn btn-secondary" onclick=modelDlgClose()>Cancel</button>
+      <button class="btn btn-primary" onclick=saveModel()>Save</button>
+    </div>
+  </div>
+</div>
+
 <div id=actdlg class=dialog-backdrop style="display:none">
   <div class="dialog blueprint" style="width:min(720px,100%)">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <div class=dialog-title>Activity — <span id=actname class=mono style="font-size:16px"></span></div>
     <div class=dialog-body>Tools and targets called most recently (URLs/paths/queries). No secret values, no file contents.</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 10px">
+      <div class=actwin id=actwin>
+        <button data-w=3600 onclick="actWindow(3600)">1h</button>
+        <button data-w=86400 onclick="actWindow(86400)">24h</button>
+        <button data-w=604800 onclick="actWindow(604800)">7d</button>
+        <button data-w=0 class=on onclick="actWindow(0)">Alle</button>
+      </div>
+      <span id=actsum class=text-muted style="font-size:12px;margin-left:auto"></span>
+    </div>
     <div style="max-height:56vh;overflow:auto;border:1px solid var(--color-divider)">
       <table class=table><tbody id=actrows></tbody></table>
     </div>
@@ -2251,26 +3991,89 @@ function savePolTools(name){
     body:JSON.stringify({tools})}).then(r=>r.json()).then(d=>{
       const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);if(el)el.textContent=(d.msg||'saved')+' ✓';});
 }
-let ACT_CUR='';
+let ACT_CUR='', ACT_EVENTS=[], ACT_WIN=0;
 async function openActivity(name){
   ACT_CUR=name;
   document.getElementById('actname').textContent=name;
   document.getElementById('actdlg').style.display='grid';
-  let ev=[];
-  try{ev=(await (await fetch('/api/audit/'+encodeURIComponent(name))).json()).events||[];}catch(e){}
-  const icon={http_fetch:'🌐',web_search:'🔎'};
+  document.getElementById('actrows').innerHTML='<tr><td class=text-muted style="padding:12px">…</td></tr>';
+  try{ACT_EVENTS=(await (await fetch('/api/audit/'+encodeURIComponent(name))).json()).events||[];}catch(e){ACT_EVENTS=[];}
+  actRender();
+}
+function actWindow(sec){
+  ACT_WIN=sec;
+  document.querySelectorAll('#actwin button').forEach(b=>b.classList.toggle('on',(+b.dataset.w)===sec));
+  actRender();
+}
+function actRender(){
+  const cut = ACT_WIN ? (Date.now()/1000 - ACT_WIN) : 0;
+  const ev = ACT_EVENTS.filter(e=>(e.ts||0) >= cut);
   document.getElementById('actrows').innerHTML=ev.map(e=>{
     const d=new Date((e.ts||0)*1000).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
     return `<tr><td class=text-muted style="white-space:nowrap;font-size:12px">${d}</td>`+
       `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">denied</span>':''}</td>`+
       `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}</td></tr>`;
-  }).join('')||'<tr><td class=text-muted style="padding:12px">no calls logged yet</td></tr>';
+  }).join('')||'<tr><td class=text-muted style="padding:12px">nichts im gewählten Zeitraum</td></tr>';
+  actUsage(cut, ev.length);
+}
+async function actUsage(cut, nEv){
+  const el=document.getElementById('actsum'); if(!el)return;
+  el.textContent='…';
+  try{
+    const u=await (await fetch('/api/usage/'+encodeURIComponent(ACT_CUR)+'?since='+Math.floor(cut))).json();
+    const k=n=>n>=1000?(n/1000).toFixed(n>=100000?0:1)+'k':(''+n);
+    el.textContent=`${nEv} Aktionen · ${u.calls} LLM-Aufrufe · ${k(u.in)}→${k(u.out)} Tokens · $${(u.cost||0).toFixed(4)}`;
+  }catch(e){el.textContent=`${nEv} Aktionen`;}
 }
 function actClose(){document.getElementById('actdlg').style.display='none'}
 
 /* — Tasks: geplante Arbeit pro Instanz (Backend: /api/tasks, Worker im Manager) — */
 function fmtTs(t){if(!t)return '—';const d=new Date(t*1000);
   return d.toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+async function loadMissions(){
+  const el=document.getElementById('missions'); if(!el)return;
+  let d={}; try{d=await (await fetch('/api/missions')).json()}catch(e){}
+  const all=d.by_instance?Object.entries(d.by_instance).flatMap(([i,l])=>l.map(m=>({...m,_inst:i})))
+            :(d.missions||[]).map(m=>({...m,_inst:'orchestrator'}));
+  const open=all.filter(m=>m.status==='active'||m.status==='paused');
+  const closed=all.filter(m=>m.status==='done'||m.status==='failed').slice(-3);
+  const cor='<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
+  const bar=m=>{const t=(m.steps||[]).length||1,dn=(m.steps||[]).filter(s=>s.status==='done').length;
+    return `<div style="display:flex;align-items:center;gap:8px;min-width:130px">
+      <div style="flex:1;height:5px;background:var(--color-neutral-200)"><div style="width:${Math.round(dn/t*100)}%;height:100%;background:var(--color-accent)"></div></div>
+      <span class=text-muted style="font-size:11.5px;white-space:nowrap">${dn}/${t}</span></div>`};
+  const row=m=>{
+    const cur=(m.steps||[]).find(s=>s.status==='doing')||(m.steps||[]).find(s=>s.status==='open');
+    const st={active:'tag-accent',paused:'tag-neutral',done:'tag-accent-2',failed:'tag-neutral'}[m.status]||'tag-neutral';
+    const log=(m.log||[]).slice(-1)[0]||'';
+    return `<div style="padding:12px 4px;border-bottom:1px solid var(--color-divider)">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class=mono style="font-size:11px;color:var(--color-neutral-500)">${escT(m.id)}</span>
+        <b style="font-size:14.5px">${escT(m.goal)}</b>
+        <span class="tag ${st}">${m.status}</span>
+        ${bar(m)}
+        <span style="margin-left:auto;display:flex;gap:6px">
+          ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause')">Pause</button>`:''}
+          ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume')">Weiter</button>`:''}
+          ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort')">Abbrechen</button>`:''}
+        </span>
+      </div>
+      ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">aktueller Schritt ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
+      ${m.summary?`<div class=text-muted style="font-size:12.5px;margin-top:4px">Fazit: ${escT(m.summary)}</div>`:''}
+      ${log?`<div class=text-muted style="font-size:11.5px;margin-top:3px;opacity:.75">${escT(log)}</div>`:''}
+    </div>`};
+  document.getElementById('missions').innerHTML=cor+
+    (open.length||closed.length
+      ? open.map(row).join('')
+        + (closed.length?`<div class=text-muted style="margin:14px 0 4px;font-size:10px;letter-spacing:.1em;text-transform:uppercase">Zuletzt abgeschlossen</div>${closed.map(row).join('')}`:'')
+      : '<span class=text-muted style="font-size:13px">Keine Missionen. Der Orchestrator legt sie bei mehrstufigen Auftraegen selbst an (mission_start) — z. B. per Chat: „… — als Mission".</span>');
+}
+async function missionAct(id,action){
+  if(action==='abort'&&!confirm('Mission '+id+' abbrechen?'))return;
+  await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,action})}).catch(()=>{});
+  loadMissions();
+}
 async function loadTasks(){
   let tasks=[],insts=[];
   try{
@@ -2364,7 +4167,7 @@ async function refreshUsage(){
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','mcp','tasks','policy','models','sharing','secrets','settings','changelog'];
+const TABS=['instances','personas','skills','mcp','tasks','missions','policy','models','sharing','secrets','settings','changelog','architecture'];
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
@@ -2372,7 +4175,7 @@ function showTab(t){
     if(a.getAttribute('href')==='#'+t)a.setAttribute('aria-current','page');
     else a.removeAttribute('aria-current');});
 }
-window.addEventListener('hashchange',()=>showTab(location.hash.slice(1)));
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();});
 
 function renderPersonas(){
   document.getElementById('personas').innerHTML=PERSONAS.map(p=>
@@ -2424,12 +4227,27 @@ function saveSkill(){
 async function delSkill(n){if(confirm('Delete skill '+n+'?')){await fetch('/api/skills/'+encodeURIComponent(n)+'/delete',{method:'POST'});location.reload()}}
 
 function renderSettings(){
-  document.getElementById('settings').innerHTML=SETTINGS_SCHEMA.map(s=>
-    `<div class=field><label>${escT(s.label)}</label><input class=input data-s="${esc(s.key)}" value="${esc(SETTINGS[s.key])}" `+
-    `type="${s.key.indexOf('KEY')>=0?'password':'text'}" autocomplete=off></div>`).join('');
+  // Key-Felder werden per CSS maskiert (-webkit-text-security) statt mit
+  // type=password: ein echtes Passwortfeld laesst Chromes Passwort-Manager
+  // beim Wegnavigieren "Save password?" anbieten — mit der katfs node-id als
+  // vermeintlichem Nutzernamen. autocomplete=off ignoriert Chrome dabei.
+  document.getElementById('settings').innerHTML=SETTINGS_SCHEMA.map(s=>{
+    if(s.options)return `<div class=field><label>${escT(s.label)}</label><select class=input data-s="${esc(s.key)}">`+
+      s.options.map(o=>`<option value="${esc(o.value)}"${(SETTINGS[s.key]||'')===o.value?' selected':''}>${escT(o.label)}</option>`).join('')+`</select></div>`;
+    return `<div class=field><label>${escT(s.label)}</label><input class="input${s.key.indexOf('KEY')>=0?' seckey':''}" data-s="${esc(s.key)}" value="${esc(SETTINGS[s.key])}" `+
+    `type=text autocomplete=off spellcheck=false></div>`;}).join('');
+  voiceHealth();
+}
+async function voiceHealth(){
+  const el=document.getElementById('voicestat'); if(!el)return;
+  try{
+    const d=await (await fetch('/api/voice-health')).json();
+    el.innerHTML=`<span class="tag ${d.ready?'tag-accent':'tag-neutral'}">${d.ready?'● up':'○ loading'}</span> `+
+      `STT <code>${escT(d.asr||'?')}</code> · TTS-Stimmen: ${(d.voices||[]).map(v=>'<code>'+escT(v)+'</code>').join(' ')}`;
+  }catch(e){el.innerHTML='<span class="tag tag-neutral">○ voice service not reachable</span>';}
 }
 function saveSettings(){
-  const d={};document.querySelectorAll('#settings input').forEach(i=>d[i.dataset.s]=i.value);
+  const d={};document.querySelectorAll('#settings input,#settings select').forEach(i=>d[i.dataset.s]=i.value);
   fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
     .then(()=>{Object.assign(SETTINGS,d);document.getElementById('setmsg').textContent='saved ✓';renderParams()});
 }
@@ -2459,13 +4277,20 @@ function loadModels(sel,force){
   const cur=sel.value; sel.disabled=true;
   let q='?'; if(force)q+='refresh=1&'; if(sel.dataset.tools)q+='tools=1&'; if(sel.dataset.relevant)q+='relevant=1';
   fetch('/api/openrouter-models'+q).then(r=>r.json()).then(ms=>{
-    sel.innerHTML=(ms.length?ms:[{id:cur,label:cur+' (list n/a)'}]).map(m=>
-      `<option value="${m.id}"${m.id===cur?' selected':''}>${m.label}</option>`).join('')
+    // Der Fetch (Upstream openrouter.ai) kann Sekunden dauern. In der Zeit kann
+    // der Nutzer laengst etwas ANDERES gewaehlt haben — oder das Select wurde
+    // durch einen Template-Wechsel ersetzt. Darum: den Wert JETZT lesen (nicht
+    // den vom Fetch-Start) und abgehaengte Selects gar nicht mehr anfassen.
+    // Sonst springt das Dropdown scheinbar grundlos auf den Anfangswert zurueck.
+    if(!sel.isConnected){return}
+    const now=sel.value||cur;
+    sel.innerHTML=(ms.length?ms:[{id:now,label:now+' (list n/a)'}]).map(m=>
+      `<option value="${m.id}"${m.id===now?' selected':''}>${m.label}</option>`).join('')
       +`<option value="${OR_CUSTOM}">— other model id… —</option>`;
     // Ein Wert ausserhalb der Auswahl darf nicht still auf den ersten Eintrag
     // kippen — er bleibt als eigene Option stehen.
-    if(cur&&!ms.some(m=>m.id===cur))
-      sel.insertAdjacentHTML('afterbegin',`<option value="${esc(cur)}" selected>${escT(cur)} (not in the shortlist)</option>`);
+    if(now&&!ms.some(m=>m.id===now))
+      sel.insertAdjacentHTML('afterbegin',`<option value="${esc(now)}" selected>${escT(now)} (not in the shortlist)</option>`);
     sel.disabled=false;
   }).catch(()=>{sel.disabled=false});
 }
@@ -2512,7 +4337,7 @@ function addMount(m,target){document.getElementById(target||'mounts').insertAdja
 
 /* — folder picker: browses the host through /api/browse (directories only) — */
 let PK={cb:null};
-const PK_QUICK=['/home/ulrich','/mnt','/srv','/media','/opt','/'];
+const PK_QUICK=['__HOME__','/mnt','/srv','/media','/opt','/'];
 function pkOpen(start,cb){
   PK.cb=cb;
   document.getElementById('pkquick').innerHTML=PK_QUICK.map(p=>
@@ -2615,6 +4440,38 @@ async function saveMounts(){
   const r=await fetch(`/api/instances/${MDLG}/mounts`,{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({mounts})});
   const d=await r.json(); mdlgClose();
+  alert(d.msg||'ok');location.reload();
+}
+
+/* — Modellwechsel fuer bestehende Instanzen: derselbe Picker wie beim Anlegen
+     (fieldFor rendert je nach Template die OpenRouter-Liste bzw. die kuratierten
+     Optionen), vorbelegt mit dem aktuellen Modell der Instanz. */
+let MODELDLG='';
+async function editModel(name){
+  const list=await (await fetch('/api/instances')).json();
+  const inst=list.find(i=>i.name===name)||{};
+  const cfg=inst.config||{};
+  const key=['OPENROUTER_MODEL','ORCAROUTER_MODEL','ANTHROPIC_MODEL','PI_MODEL','PRIME_MODEL','LLAMA_MODEL'].find(k=>k in cfg);
+  if(!key)return alert('This instance has no model setting.');
+  const tpl=TEMPLATES.find(t=>t.template===inst.template)||{params:[]};
+  const p=(tpl.params||[]).find(x=>x.key===key)||{key:key};
+  MODELDLG=name;
+  document.getElementById('modeldlgname').textContent=name;
+  // fieldFor nimmt p.default als Vorbelegung — Kopie mit dem aktuellen Modell.
+  document.getElementById('modeldlgbox').innerHTML=
+    fieldFor(Object.assign({},p,{default:cfg[key]||''}));
+  document.getElementById('modeldlg').style.display='grid';
+  const sel=document.querySelector('#modeldlgbox select[data-or]');
+  if(sel)loadModels(sel,0);
+}
+function modelDlgClose(){document.getElementById('modeldlg').style.display='none'}
+async function saveModel(){
+  const el=document.querySelector('#modeldlgbox [data-k]');
+  const model=(el?el.value:'').trim();
+  if(!model||model===OR_CUSTOM)return alert('Model id?');
+  const r=await fetch(`/api/instances/${MODELDLG}/model`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({model})});
+  const d=await r.json(); modelDlgClose();
   alert(d.msg||'ok');location.reload();
 }
 
@@ -2730,17 +4587,23 @@ async function loadKatfs(){
   let d;
   try{d=await (await fetch('/api/katfs/status')).json()}
   catch(e){d={up:false,error:'manager unreachable'}}
+  // Datei-Browser: die zuletzt gewaehlte Freigabe behalten, solange sie noch
+  // verbunden ist; sonst die erste. So sind die Status-Zeilen gleich korrekt
+  // hervorgehoben. Klick auf eine Zeile wechselt spaeter (fbPick).
+  const ids=(d.shares||[]).map(x=>x.id);
+  if(!FB.share || !ids.includes(FB.share)) FB.share = ids[0] || '';
   const tag=(on,yes,no)=>`<span class="tag ${on?'tag-accent':'tag-neutral'}">${on?yes:no}</span>`;
   el.innerHTML=
     `<div class=kv><b>Host node</b>${tag(d.up,'● up on :'+(d.port||8790),'○ down')}`+
     (d.up?'':`<span class=text-muted style="font-size:12px">${escT(d.error||'')}</span>`)+`</div>`+
     `<div class=kv><b>Browser shares</b>${tag(d.connected,'● '+(d.count||1)+' active','○ nobody sharing')}</div>`+
     (d.shares||[]).map(s=>
-      `<div class=kv><b>&nbsp;</b><span><span class=mono>${escT(s.id)}</span> · `+
+      `<div class="kv fbsharerow${FB.share===s.id?' sel':''}" onclick="fbPick('${esc(s.id)}')" title="Browse this share"><b>&nbsp;</b><span><span class=mono>${escT(s.id)}</span> · `+
       `<b style="font-family:var(--font-body);font-size:13.5px;text-transform:none;letter-spacing:0;min-width:0">${escT(s.name||'?')}</b>`+
       (s.device?` <span class=text-muted>${escT(s.device)}</span>`:'')+
-      (s.readonly?' <span class="tag tag-neutral">read-only</span>':'')+`</span></div>`).join('');
-  KATFS_SHARES=d.shares||[];
+      (s.readonly?' <span class="tag tag-neutral">read-only</span>':'')+
+      (FB.share===s.id?' <span class="tag tag-accent">browsing &#9662;</span>':'')+`</span></div>`).join('');
+  KATFS_SHARES=d.shares||[]; window.KATFS_SHARES=KATFS_SHARES;
   renderShareOptions();
   KATFS_ID=d.node_id||'';
   const inp=document.getElementById('katfskey');
@@ -2750,6 +4613,51 @@ async function loadKatfs(){
     ? '<span class="tag tag-accent">● '+(d.count||1)+' share'+((d.count||1)>1?'s':'')+' active</span> reachable via <code>remote_ls</code> / <code>remote_read</code> / <code>remote_write</code>.'
     : (d.up ? '<span class="tag tag-neutral">○ nobody sharing</span> node is up; open <a href="#sharing">Sharing</a> to hand it a folder.'
             : '<span class="tag tag-neutral">○ node down</span> the katfs node on this host is not answering.');
+  fbGo(d.connected ? FB.path : '.');
+  if(!d.connected){ document.getElementById('fblist').innerHTML=
+    '<span class=text-muted style="font-size:13px">No folder shared right now — click “Share a folder…” above, pick a folder in the new tab, then Refresh.</span>'; }
+}
+
+/* ── katfs file browser ────────────────────────────────────────────────── */
+const FB={path:'.',share:''};
+function fbSize(n){n=+n||0;return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(1)+' GB';}
+function fbQ(p){const q='path='+encodeURIComponent(p);return FB.share?q+'&share='+encodeURIComponent(FB.share):q;}
+function fbUp(){if(FB.path==='.'||FB.path==='')return;const i=FB.path.lastIndexOf('/');fbGo(i<0?'.':FB.path.slice(0,i));}
+/* Auf eine Freigabe im Status-Panel klicken -> diese im Browser oeffnen. */
+function fbPick(id){ FB.share=id; FB.path='.'; renderShareSel(); fbGo('.'); }
+/* Aktive Freigabe im Status-Panel hervorheben, ohne alles neu zu laden. */
+function renderShareSel(){
+  document.querySelectorAll('.fbsharerow').forEach(r=>{
+    const on=r.getAttribute('onclick')===("fbPick('"+FB.share+"')");
+    r.classList.toggle('sel',on);
+  });
+}
+/* Aktuellen Ordner der gewaehlten Freigabe als ZIP herunterladen. */
+function fbZip(){ window.location.href='/api/katfs/zip?'+fbQ(FB.path); }
+async function fbGo(p){
+  FB.path=p||'.';
+  document.getElementById('fbpath').textContent='/'+(FB.path==='.'?'':FB.path);
+  document.getElementById('fbup').disabled=(FB.path==='.'||FB.path==='');
+  const sh=(window.KATFS_SHARES||[]).find(x=>x.id===FB.share);
+  const shl=document.getElementById('fbshare');
+  if(shl) shl.textContent = FB.share ? ('· '+((sh&&sh.name)||FB.share)) : '· (single share)';
+  const dl=document.getElementById('fbdl'); if(dl) dl.disabled=false;
+  const el=document.getElementById('fblist');
+  el.innerHTML='<span class=text-muted style="font-size:13px">loading…</span>';
+  let d;
+  try{d=await (await fetch('/api/katfs/browse?'+fbQ(FB.path))).json();}
+  catch(e){el.innerHTML='<span class=text-muted style="font-size:13px">not reachable</span>';return;}
+  if(d.error){el.innerHTML='<span class=text-muted style="font-size:13px">'+escT(d.error)+'</span>';return;}
+  const ents=(d.entries||[]).slice().sort((a,b)=>((b.dir?1:0)-(a.dir?1:0))||String(a.name).localeCompare(b.name));
+  if(!ents.length){el.innerHTML='<span class=text-muted style="font-size:13px">(empty folder)</span>';return;}
+  el.innerHTML=ents.map(e=>{
+    const child=(FB.path==='.'||FB.path===''?'':FB.path+'/')+e.name;
+    if(e.dir) return `<div class="fbrow dir" onclick="fbGo('${esc(child)}')"><span class=fbico>📁</span><span class=fbn>${escT(e.name)}</span><span class=fbsz></span></div>`;
+    return `<div class=fbrow><span class=fbico>📄</span><span class=fbn>${escT(e.name)}</span>`+
+      `<span class=fbsz>${fbSize(e.size)}</span>`+
+      `<a class="btn btn-ghost fbact" target=_blank rel=noopener href="/api/katfs/file?${fbQ(child)}">view</a>`+
+      `<a class="btn btn-ghost fbact" href="/api/katfs/file?dl=1&${fbQ(child)}">download</a></div>`;
+  }).join('');
 }
 /* Der Key ist die node-id des Knotens; iroh parst sie als EndpointId — ein
    Ticket akzeptiert die WASM-Bruecke (noch) nicht, daher der harte Hinweis. */
@@ -2803,6 +4711,17 @@ function copyKey(){
   else{inp.select();try{document.execCommand('copy');done()}catch(e){h.textContent='select + copy manually'}}
 }
 async function act(n,a){await fetch(`/api/instances/${n}/${a}`,{method:'POST'});location.reload()}
+async function togglePersist(n,on){
+  const r=await fetch(`/api/instances/${n}/persist`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({on})});
+  const d=await r.json(); if(String(d.msg||'').startsWith('error'))alert(d.msg);
+  location.reload();
+}
+function diskReset(n){
+  if(confirm('Persistente Schreibschicht von '+n+' loeschen? (Installationen weg, Basis-Image bleibt)'))
+    fetch(`/api/instances/${n}/diskreset`,{method:'POST'}).then(r=>r.json()).then(d=>alert(d.msg||'ok'));
+  return false;
+}
 async function toggleNet(n,on){
   await fetch(`/api/instances/${n}/internet`,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({on})});location.reload();
@@ -2837,7 +4756,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
+  renderSettings();renderParams();loadMissions();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
   refreshUsage();
   // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
   // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
@@ -2847,6 +4766,7 @@ window.onload=()=>{
     if(document.hidden)return;
     const t=location.hash.slice(1)||'instances';
     if(t==='tasks'&&!TK_EDIT)loadTasks();
+    else if(t==='missions')loadMissions();
     else if(t==='policy')loadPolicy();
     else if(t==='instances')refreshUsage();
   },15000);
@@ -2872,6 +4792,68 @@ window.onload=()=>{
     else mdlgClose();
   });
 };
+
+/* ── Benachrichtigungen (Glocke + Long-Poll + Browser-Notification) ─────── */
+let NOTIF_REV=0, NOTIF_START=Math.floor(Date.now()/1000), NOTIF_SEEN=new Set(), NOTIF_LIST=[];
+function nEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function notifBadge(u){const b=document.getElementById('nbadge');if(!b)return;if(u>0){b.textContent=u>99?'99+':u;b.hidden=false;}else b.hidden=true;}
+function notifRender(list){
+  if(list)NOTIF_LIST=list;
+  const el=document.getElementById('nlist');if(!el)return;
+  if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">Keine Benachrichtigungen.</span>';return;}
+  el.innerHTML=NOTIF_LIST.slice().reverse().map(n=>{
+    const t=new Date((n.ts||0)*1000).toLocaleString();
+    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'Zu den Missionen':n.link==='tasks'?'Zu den Tasks':'Zum Chat'}"`:'';
+    return `<div class="nitem ${n.read?'':'unread'}"${lk}><div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
+      (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
+      `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div></div>`;
+  }).join('');
+  el.querySelectorAll('[data-link]').forEach(x=>x.onclick=()=>notifClick(x.dataset.link));
+}
+function notifClick(link){
+  document.getElementById('npanel').hidden=true;
+  if(link==='missions'){location.hash='#missions';loadMissions();}
+  else if(link==='tasks'){location.hash='#tasks';}
+  else if(link&&link.startsWith('chat:'))
+    window.open('/chat?i='+encodeURIComponent(link.slice(5)),'_blank');
+}
+function notifDesktop(list){
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  for(const n of (list||[])){
+    if(NOTIF_SEEN.has(n.id))continue;NOTIF_SEEN.add(n.id);
+    if((n.ts||0)>=NOTIF_START && !n.read){try{new Notification(n.title||'kAIm56',{body:n.body||'',tag:n.id});}catch(e){}}
+  }
+}
+async function notifPoll(){
+  for(;;){
+    try{
+      const r=await fetch('/api/notifications?since='+NOTIF_REV+'&wait=25');
+      const d=await r.json();
+      if(d.rev)NOTIF_REV=d.rev;
+      if(d.notifications){notifRender(d.notifications);notifDesktop(d.notifications);}
+      if(typeof d.unread==='number')notifBadge(d.unread);
+    }catch(e){await new Promise(res=>setTimeout(res,3000));}
+  }
+}
+function notifMarkAll(){
+  fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
+    .then(()=>{NOTIF_LIST.forEach(n=>n.read=true);notifRender();notifBadge(0);}).catch(()=>{});
+}
+function notifReadAll(){notifMarkAll();}
+function notifToggle(){
+  const p=document.getElementById('npanel');if(!p)return;
+  const show=p.hidden;p.hidden=!show;
+  if(show){
+    notifRender();
+    if('Notification' in window && Notification.permission==='default')Notification.requestPermission();
+    notifMarkAll();               // Oeffnen quittiert als gelesen
+  }
+}
+document.addEventListener('click',e=>{
+  const p=document.getElementById('npanel'),b=document.getElementById('nbell');
+  if(p&&!p.hidden&&!p.contains(e.target)&&b&&!b.contains(e.target))p.hidden=true;
+});
+notifPoll();
 </script></body></html>"""
 
 # ---- Marke ------------------------------------------------------------------
@@ -2940,14 +4922,17 @@ def render():
         name = inst["name"]
         transport = (inst.get("config") or {}).get("TRANSPORT", "signal")
         cfgm = inst.get("config") or {}
-        model = cfgm.get("OPENROUTER_MODEL") or cfgm.get("PI_MODEL") or cfgm.get("PRIME_MODEL") or ""
+        model = next((cfgm[k] for k in MODEL_KEYS if cfgm.get(k)), "")
         sub = " · ".join(x for x in (inst.get("template", ""), transport) if x)
         _chip = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor '
                  'stroke-width=1.6 stroke-linecap=round stroke-linejoin=round style="vertical-align:-1px">'
                  '<rect x=6 y=6 width=12 height=12 rx=1/><path d="M9 2v2M15 2v2M9 20v2M15 20v2'
                  'M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>')
-        model_line = (f"<span class='mono' style='font-size:12px;color:var(--color-accent-700);"
-                      f"display:inline-flex;align-items:center;gap:5px'>{_chip}{h(model)}</span>"
+        # Chip ist klickbar: oeffnet den Modellwechsel-Dialog (editModel im PAGE-JS).
+        model_line = (f"<button class='mono' style=\"font-size:12px;color:var(--color-accent-700);"
+                      f"display:inline-flex;align-items:center;gap:5px;background:none;border:none;"
+                      f"padding:0;cursor:pointer;text-align:left\" title=\"Change model\" "
+                      f"onclick=\"editModel('{name}')\">{_chip}{h(model)}</button>"
                       if model else "")
         u = usage.get(name) or {}
         ut, ud = u.get("total") or {}, u.get("today") or {}
@@ -2971,6 +4956,16 @@ def render():
                 f"{'🌐 internet on' if net else '🚫 offline'}</button>")
         ttag = (f"<span class='tag tag-neutral' title='{h(tools_cfg)}'>🔧 {len(tools_cfg.split(','))} Tools</span>"
                 if tools_cfg else "")
+        ptag = ""
+        if inst.get("rootfs") in OVERLAY_ROOTFS:
+            pers = bool(inst.get("persist_disk"))
+            ptag = (f"<button class='tag {'tag-accent' if pers else 'tag-neutral'}' "
+                    f"style='border:none;cursor:pointer' "
+                    f"title='Persistente Disk: Installationen ueberleben Stop/Start"
+                    f"{' — Rechtsklick: Disk zuruecksetzen' if pers else ''}' "
+                    f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
+                    f"oncontextmenu=\"return diskReset('{name}')\">"
+                    f"{'💾 persistent' if pers else '↺ frisch je Start'}</button>")
         btn = ""
         if run:
             btn += (f"<a href=\"/i/{name}/term/\" target=_blank class=\"btn btn-secondary btn-sm\""
@@ -3000,7 +4995,7 @@ def render():
                  f"{usage_line}"
                  f"<span class='text-muted' style='font-size:12px'>{h(inst.get('description',''))}</span>"
                  f"{mtxt}</div></td>"
-                 f"<td data-label=Status><div style='display:flex;flex-direction:column;gap:4px;align-items:flex-start'>{st}{ntag}{ttag}</div></td>"
+                 f"<td data-label=Status><div style='display:flex;flex-direction:column;gap:4px;align-items:flex-start'>{st}{ntag} {ptag} {ttag}</div></td>"
                  f"<td data-label='vCPU / RAM' style='font-variant-numeric:tabular-nums'>"
                  f"{inst.get('vcpus',2)} / {inst.get('mem_mib',1024)} MiB</td>"
                  f"<td data-label='Guest IP' class=mono>{n['guest']}</td>"
@@ -3018,6 +5013,8 @@ def render():
                 .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
                 .replace("__SKILLS__", json.dumps(load_skills(), ensure_ascii=False))
                 .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
+                .replace("__HOME__", os.path.expanduser(
+                    "~" + (os.environ.get("SUDO_USER") or "")))
                 )
 
 
@@ -3144,10 +5141,25 @@ class H(BaseHTTPRequestHandler):
             return emit(f"⚠️ Keine Web-Instanz '{name}'.")
         if not wait_web(inst):
             return emit(f"⚠️ Instanz '{name}' startet nicht (Port {WEB_GUEST_PORT}).")
+
+        chat_id = body.get("chat")
+        msg, img = body.get("message", ""), body.get("image")
+        if gateway_on(chat_id):
+            msg = gateway_clean(msg, chat_id, "in")
+            if img:
+                img, k = strip_image_meta(img)
+                gateway_count(chat_id, "img", k)
+            guard = StreamGuard(chat_id)
+            raw_emit, emit = emit, lambda t: raw_emit(guard.feed(t))
+        else:
+            guard = None
         try:
-            guest_stream(inst, body.get("message", ""), body.get("image"), emit)
+            guest_stream(inst, msg, img, emit)
         except Exception as e:
             emit(f"\n⚠️ {e!r}")
+        finally:
+            if guard:
+                raw_emit(guard.flush())
 
     def _term_route(self, name, tail):
         """Route /i/<name>/term[/...] to the guest webterm (:7682). WS-aware."""
@@ -3173,6 +5185,18 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"terminal connect failed: {e!r}".encode())
             return
+        # Das Connect-Timeout bleibt sonst als READ-Timeout auf dem Socket —
+        # nach 10 s Leerlauf riss recv() den Tunnel ab ("connection closed").
+        # Ein Terminal darf beliebig lange still sein: Timeouts runter, dafuer
+        # TCP-Keepalive, damit halbtote Verbindungen trotzdem sterben.
+        up.settimeout(None)
+        down_sock = self.connection
+        try:
+            down_sock.settimeout(None)
+            for sk in (up, down_sock):
+                sk.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError:
+            pass
         # Replay the client's upgrade request verbatim to the guest webterm.
         req = f"GET {path} HTTP/1.1\r\n"
         for k, v in self.headers.items():
@@ -3256,24 +5280,85 @@ class H(BaseHTTPRequestHandler):
         data = None
         if method == "POST":
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
+        # Die App chattet nicht ueber /api/chat/<inst>, sondern hier durch —
+        # das Gateway muss also an beiden Eingaengen sitzen, nicht nur am
+        # bequemeren.
+        guard = None
+        if method == "POST" and tail.split("?", 1)[0] in ("api/chat", "api/chat/stream"):
+            try:
+                b = json.loads(data or b"{}")
+            except (ValueError, TypeError):
+                b = None
+            if isinstance(b, dict):
+                chat_id = b.pop("chat", None)      # kennt der Gast nicht, bleibt hier
+                if gateway_on(chat_id):
+                    b["message"] = gateway_clean(b.get("message", ""), chat_id, "in")
+                    if b.get("image"):
+                        b["image"], k = strip_image_meta(b["image"])
+                        gateway_count(chat_id, "img", k)
+                    guard = StreamGuard(chat_id)
+                if chat_id is not None:
+                    data = json.dumps(b).encode()
+
         req = urllib.request.Request(url, data=data, method=method)
         if self.headers.get("Content-Type"):
             req.add_header("Content-Type", self.headers["Content-Type"])
         try:
             r = urllib.request.urlopen(req, timeout=620)
+            # Bridges ohne Streaming (das claude-Template) antworten mit
+            # {"reply": …} und Content-Type application/json — auch auf
+            # /api/chat/stream. Die App liest den Body aber als rohen Text und
+            # zeigt sonst das nackte JSON samt \uXXXX. Also hier auspacken und
+            # als text/plain weiterreichen, wie es guest_stream fuer den
+            # Web-Chat laengst tut. Der Content-Type steht VOR dem Senden fest.
+            chat_path = tail.split("?", 1)[0] in ("api/chat", "api/chat/stream")
+            is_json = "json" in (r.headers.get("Content-Type") or "").lower()
+            if chat_path and is_json:
+                body = r.read()
+                try:
+                    reply = json.loads(body).get("reply", body.decode("utf-8", "replace"))
+                except (ValueError, AttributeError):
+                    reply = body.decode("utf-8", "replace")
+                if guard is not None:
+                    reply = gateway_clean(reply, guard.chat_id, "out")
+                out = reply.encode("utf-8")
+                self.send_response(r.status)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+                return
             self.send_response(r.status)
             self.send_header("Content-Type", r.headers.get("Content-Type", "text/html; charset=utf-8"))
             self.end_headers()
             # Chunk-weise durchreichen + flushen -> Token-Streaming vom Agenten.
+            # Mit Gateway laeuft dazwischen ein Dekodierer: 4-KB-Schnitte fallen
+            # sonst mitten in ein Mehrbyte-Zeichen.
+            dec = codecs.getincrementaldecoder("utf-8")() if guard is not None else None
             while True:
                 chunk = r.read(4096)
                 if not chunk:
                     break
+                if guard is not None:
+                    chunk = guard.feed(dec.decode(chunk)).encode("utf-8")
+                    if not chunk:
+                        continue
                 try:
                     self.wfile.write(chunk)
                     self.wfile.flush()
                 except Exception:
                     break
+            if guard is not None:
+                # Erst den Dekodierer leeren, dann den Puffer — umgekehrt kaeme
+                # das letzte Zeichen ungefiltert durch.
+                rest = (guard.feed(dec.decode(b"", True)) + guard.flush()).encode("utf-8")
+                if rest:
+                    try:
+                        self.wfile.write(rest)
+                        self.wfile.flush()
+                    except Exception:
+                        pass
             return
         except urllib.error.HTTPError as e:
             body, status, rct = e.read(), e.code, e.headers.get("Content-Type", "text/plain")
@@ -3321,6 +5406,34 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b)
             return
+        if self.path == "/api/claude-credentials":
+            # Abo-Anmeldung fuer das claude-Template: der Gast holt beim Boot
+            # das LEBENDE Credential des Hosts (folgt also dem naechsten /login
+            # des Nutzers). Nur der claudeAiOauth-Block — die mcpOAuth-Tokens
+            # (Atlassian usw.) gehen die VM nichts an. Streng gegated: nur ein
+            # echter Gast, dessen Instanz das claude-Template faehrt.
+            inst = instance_by_ip(self.client_address[0])
+            ok = inst is not None and (inst.get("template") == "claude")
+            if not ok:
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"claude template guests only"}')
+                return
+            try:
+                with open(CLAUDE_CRED_SRC) as fh:
+                    full = json.load(fh)
+                out = json.dumps({"claudeAiOauth": full["claudeAiOauth"]}).encode()
+                code = 200
+            except (OSError, ValueError, KeyError):
+                out = b'{"error":"no host credential (run claude /login on the host)"}'
+                code = 503
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
         if self.path.startswith("/api/secret/"):
             name = self.path.split("/api/secret/", 1)[1]
             inst = instance_by_ip(self.client_address[0])
@@ -3352,11 +5465,19 @@ class H(BaseHTTPRequestHandler):
                 if i["name"].startswith(("task-", "sub-")):
                     continue
                 cfg = i.get("config") or {}
+                mkey = next((k for k in MODEL_KEYS if cfg.get(k)), "")
+                # Backend aus dem gesetzten Model-Key ableiten (NICHT aus dem
+                # Template — das bleibt z. B. "openrouter", auch wenn per
+                # set_model auf orcarouter/llama gewechselt wurde).
+                backend = {v: k for k, v in PROVIDER_MODEL_KEY.items()}.get(
+                    mkey, i.get("template", ""))
+                if cfg.get("LLAMA_ENDPOINT"):
+                    backend = "llama"
                 roster.append({
                     "name": i["name"], "template": i.get("template", ""),
+                    "backend": backend,
                     "running": is_running(i),
-                    "model": cfg.get("OPENROUTER_MODEL") or cfg.get("PI_MODEL")
-                             or cfg.get("PRIME_MODEL") or "",
+                    "model": cfg.get(mkey, "") if mkey else "",
                     "mcps": [n for n in (cfg.get("MCP_SERVERS", "") or "").split(",") if n],
                 })
             self.send_response(200)
@@ -3374,6 +5495,45 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
+        # LAUFENDE Aufgaben (nicht die History) — fuer list_tasks/delete_task des
+        # Agenten. Gast-offen; Tasks tragen keine Secrets.
+        if self.path.startswith("/api/missions"):
+            # Gast: nur die eigenen (Orchestrator). Admin: ?instance= oder alle.
+            g = instance_by_ip(self.client_address[0])
+            if g is not None and g.get("name") != ORCH_INSTANCE:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
+            if g is not None:
+                data = {"missions": mission_list(g["name"])}
+            else:
+                q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                inst = q.get("instance", [""])[0]
+                data = {"missions": mission_list(inst)} if inst else                     {"by_instance": load_missions()}
+            body = json.dumps(data, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        if self.path.startswith("/api/playbooks"):
+            g = instance_by_ip(self.client_address[0])
+            inst = g["name"] if g else urllib.parse.parse_qs(
+                self.path.split("?", 1)[1] if "?" in self.path else "").get("instance", [""])[0]
+            body = json.dumps({"playbooks": pb_list(inst)}, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        if self.path.startswith("/api/tasks-open"):
+            _g = instance_by_ip(self.client_address[0])
+            if _g is not None and _g.get("name") != ORCH_INSTANCE:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
+            rows = [{"id": t.get("id"), "instance": t.get("instance"),
+                     "schedule": t.get("schedule", ""), "status": t.get("status", ""),
+                     "next_run": t.get("next_run", 0),
+                     "message": str(t.get("message", ""))[:200]} for t in load_tasks()]
+            body = json.dumps({"tasks": rows}, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         # Abfragbare Aufgaben-History (Stammwissen). Fuer Gaeste (recall_tasks)
         # UND Admin/UI offen — enthaelt operatives Wissen, keine Secrets.
         if self.path.startswith("/api/history"):
@@ -3385,6 +5545,20 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
         # Admin-only: konsolidierte Policy je Instanz + Audit-Log lesen.
+        if self.path.startswith("/api/usage/"):
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            q = urllib.parse.parse_qs(self.path.partition("?")[2])
+            nm = re.sub(r"[^a-zA-Z0-9_-]", "", self.path.split("/api/usage/", 1)[1].split("?")[0])
+            try:
+                since = int(q.get("since", ["0"])[0] or 0)
+            except ValueError:
+                since = 0
+            out = json.dumps(usage_for(nm, since)).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
         if self.path == "/api/policy" or self.path.startswith("/api/audit/"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
@@ -3393,7 +5567,7 @@ class H(BaseHTTPRequestHandler):
                 data = {"instances": [effective_policy(i) for i in load_instances()]}
             else:
                 nm = re.sub(r"[^a-zA-Z0-9_-]", "", self.path.split("/api/audit/", 1)[1].split("?")[0])
-                data = {"instance": nm, "events": audit_read(nm)}
+                data = {"instance": nm, "events": audit_read(nm, limit=1000)}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -3439,7 +5613,12 @@ class H(BaseHTTPRequestHandler):
                 return
             names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
             allowed = allowed_secret_keys(inst)
-            blob = build_mcp_config(names, allowed=allowed) if names else ""
+            # allowed=set(): seit dem MCP-Hub laufen die Serverprozesse am
+            # Host — der Gast braucht nur noch die NAMEN. Secrets bleiben als
+            # ${PLATZHALTER} stehen und verlassen den Manager nicht mehr.
+            # (Der lokale Rueckfall im Gast startet damit ohne Zugangsdaten
+            # und scheitert am Ziel — sichtbar im Log, nicht still.)
+            blob = build_mcp_config(names, allowed=set()) if names else ""
             missing = sorted(mcp_required_secrets(names) - allowed)
             data = json.loads(blob) if blob else {"mcpServers": {}}
             if missing:
@@ -3450,6 +5629,74 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode())
             return
         # Admin-only (Gäste per Source-IP gesperrt): Ordner-Browser + katfs-Status.
+        if self.path.startswith("/api/katfs/zip"):
+            # "Alles herunterladen": den aktuellen Ordner einer Freigabe als ZIP.
+            # Admin-only wie der Browser darunter.
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            root = q.get("path", ["."])[0]
+            share = q.get("share", [""])[0]
+            try:
+                data, stats = katfs_zip(share, root)
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+                self.send_response(502); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body))); self.end_headers()
+                self.wfile.write(body); return
+            leaf = os.path.basename(root.rstrip("/")) if root not in (".", "") else "katfs"
+            fn = (leaf or "katfs") + ".zip"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{fn}"')
+            self.send_header("X-Katfs-Files", str(stats.get("files", 0)))
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
+        if self.path.startswith("/api/katfs/browse") or self.path.startswith("/api/katfs/file"):
+            # Datei-Browser im Sharing-Tab. Admin-only (Gaeste per Source-IP
+            # gesperrt); der Knoten adressiert die aktuell verbundene Freigabe.
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            path = q.get("path", ["."])[0]
+            share = q.get("share", [""])[0]
+            op = "ls" if "/browse" in self.path else "read"
+            try:
+                st, ct, data = katfs_proxy_fs(op, share, path)
+            except urllib.error.HTTPError as e:
+                st, ct, data = e.code, "application/json", e.read()
+            except Exception as e:
+                st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
+            if op == "read" and st == 200:
+                # Bilder/Text sollen im neuen Tab anzeigbar sein, sonst Download.
+                ct = mimetypes.guess_type(path)[0] or "application/octet-stream"
+                disp = "attachment" if q.get("dl", [""])[0] == "1" else "inline"
+                fn = os.path.basename(path) or "file"
+                self.send_response(200)
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Disposition", f'{disp}; filename="{fn}"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers(); self.wfile.write(data); return
+            self.send_response(st); self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data))); self.end_headers()
+            self.wfile.write(data); return
+        if self.path.startswith("/api/voice-health"):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{VOICE_PORT}/health", timeout=5) as r:
+                    out = r.read()
+            except Exception as e:
+                out = json.dumps({"ready": False, "error": str(e)}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path.startswith("/api/hitl/"):
+            hid = self.path[len("/api/hitl/"):].split("?", 1)[0].strip()
+            out = json.dumps({"status": hitl_status(hid)}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
         if self.path.startswith("/api/browse") or self.path.startswith("/api/katfs/status"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403)
@@ -3503,7 +5750,8 @@ class H(BaseHTTPRequestHandler):
         # Nur fuer die Admin-UI: Gaeste haben hier nichts zu suchen. /api/settings
         # trug bis eben die API-Keys im Klartext aus — an Broker und Policy vorbei.
         _p = self.path.split("?", 1)[0]
-        if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks", "/api/usage"):
+        if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks", "/api/usage",
+                  "/api/gateway", "/api/notifications"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
@@ -3529,11 +5777,33 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = json.dumps(load_chats()).encode()
             ct = "application/json"
+        elif _p == "/api/notifications":
+            q = urllib.parse.parse_qs(self.path.partition("?")[2])
+            if "since" in q or "wait" in q:
+                try:
+                    since = int(q.get("since", ["0"])[0] or 0)
+                    wait = min(30.0, max(0.0, float(q.get("wait", ["25"])[0] or 0)))
+                except ValueError:
+                    since, wait = 0, 0.0
+                rev, notifs = wait_notifs(since, wait)
+                lst = notifs if notifs is not None else []
+                unread = sum(1 for n in load_notifications() if not n.get("read"))
+                body = json.dumps({"rev": rev, "notifications": notifs, "unread": unread}).encode()
+            else:
+                lst = load_notifications()
+                body = json.dumps({"notifications": lst,
+                                   "unread": sum(1 for n in lst if not n.get("read"))}).encode()
+            ct = "application/json"
         elif self.path == "/api/tasks":
             body = json.dumps(load_tasks()).encode()
             ct = "application/json"
         elif _p == "/api/usage":
             body = json.dumps(usage_summary()).encode()
+            ct = "application/json"
+        elif _p == "/api/gateway":
+            g = load_gateway()
+            g["available"] = _clean_unicode is not None
+            body = json.dumps(g).encode()
             ct = "application/json"
         elif self.path == "/api/personas":
             body = json.dumps(load_personas(), ensure_ascii=False).encode()
@@ -3571,6 +5841,10 @@ class H(BaseHTTPRequestHandler):
             ct = "text/html; charset=utf-8"
         self.send_response(200)
         self.send_header("Content-Type", ct)
+        if ct.startswith("text/html"):
+            # Nie cachen: eine veraltete Manager-Seite nach einem Update erzeugt
+            # Geister-Fehler (alte JS-Logik gegen neue API).
+            self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -3592,6 +5866,19 @@ class H(BaseHTTPRequestHandler):
         if _pp in ("/api/stt", "/api/tts"):
             ln = int(self.headers.get("Content-Length", 0) or 0)
             payload = self.rfile.read(ln) if ln else b""
+            if _pp == "/api/tts":
+                # Stimme/Tempo aus den geteilten Settings einmischen — App und
+                # Web schicken nur {"text"}; explizite Client-Werte gewinnen.
+                try:
+                    b = json.loads(payload or b"{}")
+                    st = load_settings()
+                    if st.get("TTS_VOICE") and not b.get("voice"):
+                        b["voice"] = st["TTS_VOICE"]
+                    if st.get("TTS_SPEED") and not b.get("speed"):
+                        b["speed"] = float(str(st["TTS_SPEED"]).replace(",", "."))
+                    payload = json.dumps(b).encode()
+                except (ValueError, TypeError):
+                    pass
             try:
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{VOICE_PORT}{_pp[len('/api'):]}",
@@ -3625,6 +5912,189 @@ class H(BaseHTTPRequestHandler):
                           body.get("prompt_tokens"), body.get("completion_tokens"),
                           body.get("cost"))
             self.send_response(204); self.end_headers(); return
+        if self.path == "/api/mcp":
+            # MCP-Aufruf eines Gastes -> Hub. Nur echte Gaeste: die Instanz
+            # kommt aus der Quell-IP; der Admin kann zum Testen "instance"
+            # im Body mitgeben.
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            inst = instance_by_ip(self.client_address[0])
+            if inst is None and b.get("instance"):
+                inst = next((i for i in load_instances()
+                             if i["name"] == b["instance"]), None)
+            if inst is None:
+                st, out = 403, {"error": "unknown caller"}
+            else:
+                st, out = mcp_hub_call(inst, str(b.get("server") or ""),
+                                       b.get("payload") or {})
+                m = (b.get("payload") or {}).get("method", "")
+                if m == "tools/call":
+                    try:
+                        audit_append(inst["name"], "mcp:" + str(b.get("server")),
+                                     ((b.get("payload") or {}).get("params") or {}).get("name", ""),
+                                     st == 200 and "error" not in out)
+                    except Exception:
+                        pass
+            body = json.dumps(out).encode()
+            self.send_response(st)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body); return
+        if self.path in ("/api/task-edit", "/api/task-delete"):
+            _g = instance_by_ip(self.client_address[0])
+            if _g is not None and _g.get("name") != ORCH_INSTANCE:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
+        if self.path == "/api/task-edit":
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            msg = update_task(str(b.get("id") or ""), b.get("message"), b.get("schedule"))
+            out = json.dumps({"result": msg}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path == "/api/task-delete":
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            tid = str(b.get("id") or "")
+            before = load_tasks()
+            after = [x for x in before if x.get("id") != tid]
+            gone = len(before) - len(after)
+            if gone:
+                save_tasks(after)
+            out = json.dumps({"deleted": gone, "id": tid}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path in ("/api/playbook-add", "/api/playbook-remove"):
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            g = instance_by_ip(self.client_address[0])
+            inst = g["name"] if g else (b.get("instance") or "")
+            if self.path.endswith("add"):
+                r = pb_add(inst, b.get("text") or b.get("rule") or "")
+                out = {"id": r, "added": bool(r and r != "exists"), "note": r}
+            else:
+                out = {"removed": pb_remove(inst, b.get("id") or "")}
+            data = json.dumps(out).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data))); self.end_headers()
+            self.wfile.write(data); return
+        if self.path == "/api/memory-search":
+            # Semantische Suche im Langzeitgedaechtnis. Wie /api/memory ist die
+            # Instanz die des Gastes (Quell-IP); der Admin darf "instance" im
+            # Body angeben (zum Testen).
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            guest = instance_by_ip(self.client_address[0])
+            target = guest["name"] if guest else (b.get("instance") or "")
+            hits = sem_search(target, b.get("query", ""), b.get("k", 5)) if target else []
+            out = json.dumps({"hits": hits}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers(); self.wfile.write(out); return
+        if self.path in ("/api/mission-start", "/api/mission-update",
+                         "/api/mission-finish"):
+            # Missions-Schreibzugriff: nur der Orchestrator (Gast) oder Admin.
+            g = instance_by_ip(self.client_address[0])
+            if g is not None and g.get("name") != ORCH_INSTANCE:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
+            inst = g["name"] if g else ORCH_INSTANCE
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            if self.path.endswith("start"):
+                mid, note = mission_start(inst, b.get("goal", ""), b.get("steps") or [])
+                out = {"id": mid, "note": note}
+            elif self.path.endswith("update"):
+                out = {"msg": mission_update(inst, b.get("id", ""),
+                                             step=b.get("step"), status=b.get("status"),
+                                             result=b.get("result", ""),
+                                             task_id=b.get("task_id", ""),
+                                             add_step=b.get("add_step", ""),
+                                             note=b.get("note", ""))}
+            else:
+                out = {"msg": mission_finish(inst, b.get("id", ""),
+                                             summary=b.get("summary", ""),
+                                             failed=bool(b.get("failed")))}
+            body = json.dumps(out, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        if self.path.startswith("/api/mission-admin"):
+            # UI: pause/resume/abort — Admin only (Gaeste geblockt).
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            out = {"msg": mission_admin(b.get("instance") or ORCH_INSTANCE,
+                                        b.get("id", ""), b.get("action", ""))}
+            body = json.dumps(out).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        if self.path == "/api/notify":
+            # Agent schickt eine Push-Benachrichtigung an App + Web. Instanz per IP.
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            inst = instance_by_ip(self.client_address[0])
+            _nm = inst["name"] if inst else "admin"
+            nid, note = notify_add(_nm, body.get("title", ""),
+                                   body.get("body") or body.get("message", ""),
+                                   link=("chat:" + _nm) if inst else "")
+            try:
+                audit_append(inst["name"] if inst else "admin", "notify",
+                             (body.get("title") or "")[:60], bool(nid))
+            except Exception:
+                pass
+            out = json.dumps({"id": nid, "note": note}).encode()
+            self.send_response(200 if nid else 429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path == "/api/notifications/read":
+            # App/Web quittieren gelesene Benachrichtigungen (Admin, kein Gast).
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            n = notif_mark_read(body.get("id"), bool(body.get("all")))
+            out = json.dumps({"marked": n}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path == "/api/hitl":
+            # Agent bittet um Freigabe eines riskanten Tools. Instanz per IP.
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            inst = instance_by_ip(self.client_address[0])
+            hid = hitl_create(inst["name"] if inst else "admin",
+                              str(body.get("tool", ""))[:40], str(body.get("target", ""))[:200])
+            out = json.dumps({"id": hid}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        if self.path == "/api/signal":
+            # Signal-Versand fuer Agenten. Der Empfaenger wird gegen
+            # ALLOWED_SENDERS geprueft, die Bot-Nummer kommt aus den
+            # Einstellungen — die VM kennt beides nicht.
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            ok, note = signal_send(body.get("text") or body.get("message"), body.get("to"))
+            inst = instance_by_ip(self.client_address[0])
+            try:
+                audit_append(inst["name"] if inst else "admin", "send_signal",
+                             (body.get("to") or "default"), ok)
+            except Exception:
+                pass
+            out = json.dumps({"ok": ok, "note": note}).encode()
+            self.send_response(200 if ok else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers(); self.wfile.write(out); return
         if self.path == "/api/audit":
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)
@@ -3726,6 +6196,25 @@ class H(BaseHTTPRequestHandler):
                 ln = int(self.headers.get("Content-Length", 0))
                 b = json.loads(self.rfile.read(ln) or b"{}")
                 msg = save_security(b.get("issues") or [])
+            elif parts == ["api", "gateway"]:
+                # {"chat": "<id>", "on": true} — Gaeste haben hier nichts zu
+                # suchen, sonst haengt eine VM ihren eigenen Filter ab.
+                if instance_by_ip(self.client_address[0]) is not None:
+                    msg = "forbidden (admin only)"
+                else:
+                    ln = int(self.headers.get("Content-Length", 0) or 0)
+                    b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+                    cid = str(b.get("chat") or "")
+                    if not cid:
+                        msg = "chat missing"
+                    else:
+                        d = load_gateway()
+                        if b.get("on"):
+                            d["chats"][cid] = True
+                        else:
+                            d["chats"].pop(cid, None)
+                        save_gateway(d)
+                        msg = f"gateway {'on' if b.get('on') else 'off'} for {cid}"
             elif parts == ["api", "models"]:
                 ln = int(self.headers.get("Content-Length", 0))
                 b = json.loads(self.rfile.read(ln) or b"{}")
@@ -3789,7 +6278,12 @@ class H(BaseHTTPRequestHandler):
                 b = json.loads(self.rfile.read(ln) or b"{}")
                 guest = instance_by_ip(self.client_address[0])
                 target = guest["name"] if guest else parts[2]
-                msg = mem_store(target, b.get("key", ""), b.get("value", ""))
+                key, value = b.get("key", ""), b.get("value", "")
+                msg = mem_store(target, key, value)
+                # Dasselbe zusaetzlich semantisch ablegen. Faellt der Embedder
+                # aus, bleibt das flache Gedaechtnis oben trotzdem geschrieben.
+                sem = sem_store(target, value, key)
+                msg += " (+semantic)" if sem else " (semantic off)"
             elif parts == ["api", "create"]:
                 ln = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(ln) or b"{}")
@@ -3821,6 +6315,18 @@ class H(BaseHTTPRequestHandler):
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")
                     msg = set_instance_tools(name, body.get("tools") or [])
+                elif action == "persist":
+                    ln = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(ln) or b"{}")
+                    msg = set_persist_disk(name, bool(body.get("on")))
+                elif action == "diskreset":
+                    msg = reset_upper(name)
+                elif action == "model":
+                    # Nicht in GUEST_POST_PATHS — Gast-VMs kommen hier nie an
+                    # (Positivliste am Anfang von do_POST blockt sie mit 403).
+                    ln = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(ln) or b"{}")
+                    msg = set_model(name, body.get("model", ""))
                 else:
                     inst = next((i for i in load_instances() if i["name"] == name), None)
                     if inst:
@@ -3900,4 +6406,5 @@ if __name__ == "__main__":
     migrate_secrets_out_of_instances()
     migrate_mcp_config_out_of_instances()
     threading.Thread(target=_task_worker, daemon=True).start()
+    threading.Thread(target=_signal_receiver, daemon=True).start()
     ThreadingHTTPServer(LISTEN, H).serve_forever()

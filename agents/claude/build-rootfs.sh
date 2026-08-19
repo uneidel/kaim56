@@ -3,12 +3,17 @@
 # Keine Downloads (firecracker/vmlinux liegen schon in ../../firecracker/bin).
 # Bewusst OHNE 'set -e' -> zeigt jeden Schritt/Fehler statt still abzubrechen.
 cd "$(dirname "$0")"
-INST=/home/ulrich/firecracker/instances/claude-rootfs.ext4
+INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/claude-rootfs.ext4
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
 
-echo "== [1] bridge.py + web_bridge.py kopieren =="
-cp ../claude-signal-bridge/bridge.py ./bridge.py || fail "bridge.py kopieren"
-cp ../agent-web/web_bridge.py ./web_bridge.py || fail "web_bridge.py kopieren"
+echo "== [1] bridge.py + web_bridge.py bereitstellen =="
+# Die Quellen lagen frueher in Nachbarordnern; heute sind die hiesigen Dateien
+# der Stand. Nur kopieren, wenn es die alten Quellen noch gibt — sonst die
+# lokalen nehmen (und nur meckern, wenn auch die fehlen).
+[ -f ../claude-signal-bridge/bridge.py ] && cp ../claude-signal-bridge/bridge.py ./bridge.py
+[ -f ../agent-web/web_bridge.py ] && cp ../agent-web/web_bridge.py ./web_bridge.py
+[ -f ./bridge.py ] || fail "bridge.py fehlt"
+[ -f ./web_bridge.py ] || fail "web_bridge.py fehlt"
 
 echo "== [2] docker build (kann dauern: node + claude-code) =="
 docker build -f Dockerfile.rootfs -t claude-fc-rootfs . || fail "docker build"

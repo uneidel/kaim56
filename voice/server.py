@@ -66,13 +66,40 @@ def to_wav16k(raw):
     return dst
 
 
-def speak(text):
+def list_voices():
+    """Verfuegbare Piper-Stimmen: alle *.onnx im Piper-Verzeichnis."""
+    d = os.path.dirname(VOICE)
+    try:
+        return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".onnx"))
+    except OSError:
+        return [os.path.basename(VOICE)[:-5]]
+
+
+def _voice_path(name):
+    """Stimmen-Namen path-sicher aufloesen; unbekannt/leer -> Default."""
+    if not name:
+        return VOICE
+    base = os.path.basename(str(name))
+    if not base.endswith(".onnx"):
+        base += ".onnx"
+    p = os.path.join(os.path.dirname(VOICE), base)
+    return p if os.path.exists(p) else VOICE
+
+
+def speak(text, voice="", speed=1.0):
     """Piper laeuft als Prozess je Anfrage — bei 0,07 Echtzeitfaktor ist der
-    Start teurer als die Synthese, aber das haelt den Dienst zustandslos."""
+    Start teurer als die Synthese, aber das haelt den Dienst zustandslos.
+    speed >1 = schneller (Piper: length_scale = 1/speed), geklemmt 0.5–2.0."""
+    try:
+        speed = min(2.0, max(0.5, float(speed or 1.0)))
+    except (TypeError, ValueError):
+        speed = 1.0
     out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     out.close()
-    p = subprocess.run([PIPER, "--model", VOICE, "--output_file", out.name],
-                       input=text.encode(), capture_output=True)
+    cmd = [PIPER, "--model", _voice_path(voice), "--output_file", out.name]
+    if abs(speed - 1.0) > 0.01:
+        cmd += ["--length_scale", f"{1.0 / speed:.3f}"]
+    p = subprocess.run(cmd, input=text.encode(), capture_output=True)
     if p.returncode != 0:
         os.unlink(out.name)
         raise RuntimeError(p.stderr.decode()[:300])
@@ -95,8 +122,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
-            return self._json(200, {"ready": _asr is not None, "voice": os.path.basename(VOICE),
-                                    "asr": ASR_NAME})
+            return self._json(200, {"ready": _asr is not None,
+                                    "voice": os.path.basename(VOICE)[:-5],
+                                    "voices": list_voices(), "asr": ASR_NAME})
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -128,7 +156,8 @@ class H(BaseHTTPRequestHandler):
 
         if self.path.startswith("/tts"):
             try:
-                text = (json.loads(raw or b"{}").get("text") or "").strip()[:MAX_TEXT]
+                b = json.loads(raw or b"{}")
+                text = (b.get("text") or "").strip()[:MAX_TEXT]
             except json.JSONDecodeError:
                 return self._json(400, {"error": "bad json"})
             if not text:
@@ -136,7 +165,7 @@ class H(BaseHTTPRequestHandler):
             out = None
             try:
                 t0 = time.time()
-                out = speak(text)
+                out = speak(text, b.get("voice", ""), b.get("speed", 1.0))
                 data = open(out, "rb").read()
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")

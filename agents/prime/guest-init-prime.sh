@@ -1,6 +1,42 @@
 #!/bin/sh
 # PID 1 der Pi-microVM. Laeuft den Agenten als node (uid 1000). pi_bridge.py
 # waehlt den Transport (signal|web) selbst anhand TRANSPORT.
+#
+# --- Overlay-Wurzel (Basis read-only + Upper je Instanz) ----------------------
+# Der Manager haengt die geteilte Basis ro an und gibt per Bootarg fc_upper=
+# das rw-Upper-Geraet mit. Hier: Upper mounten, overlayfs zusammensetzen,
+# pivot_root, dieses Skript im neuen Root neu ausfuehren. Der Marker
+# /.fc-overlay existiert nur IM Overlay (liegt im Upper) und verhindert die
+# Endlos-Rekursion. Schlaegt irgendetwas fehl, bootet die VM auf der ro-Basis
+# weiter (degradiert, aber erreichbar) statt gar nicht.
+mount -t proc proc /proc 2>/dev/null
+if [ ! -f /.fc-overlay ]; then
+  UP=$(sed -n 's/.*fc_upper=\([^ ]*\).*/\1/p' /proc/cmdline)
+  if [ -n "$UP" ]; then
+    mount -t devtmpfs devtmpfs /dev 2>/dev/null
+    # Wurzel ist read-only -> als Mountpoint MUSS ein Verzeichnis dienen,
+    # das im Image existiert (/mnt); mkdir auf / schluege fehl.
+    # -o sync: stop() zieht der VM den Stecker (SIGTERM an Firecracker) —
+    # ohne sync laegen die letzten Schreibungen noch im Page-Cache und waeren
+    # weg (beobachtet: 0-Byte-Datei). Synchron ist bei unserer Schreiblast ok.
+    if mount -o sync "$UP" /mnt 2>/dev/null; then
+      mkdir -p /mnt/upper /mnt/work /mnt/root
+      if mount -t overlay overlay \
+           -o lowerdir=/,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; then
+        touch /mnt/root/.fc-overlay
+        mkdir -p /mnt/root/oldroot
+        cd /mnt/root
+        pivot_root . oldroot && exec chroot . /init
+        echo "[init] WARN: pivot_root fehlgeschlagen — weiter ohne Overlay"
+        cd /
+      else
+        echo "[init] WARN: overlay-Mount fehlgeschlagen — weiter ohne Overlay"
+      fi
+    else
+      echo "[init] WARN: Upper $UP nicht mountbar — weiter ohne Overlay"
+    fi
+  fi
+fi
 mount -t proc     proc     /proc  2>/dev/null
 mount -t sysfs    sysfs    /sys   2>/dev/null
 mount -t devtmpfs devtmpfs /dev   2>/dev/null

@@ -4,7 +4,7 @@
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Bitte mit sudo ausführen: sudo $0"; exit 1; }
 
-AGENT_DIR=/home/ulrich/agent
+AGENT_DIR="${AGENT_DIR:-$HOME/agent}"
 POOL=172.30.0.0/16
 UID_MAP=1000; GID_MAP=1000        # Gast-Writes erscheinen als dieser User (ulrich)
 

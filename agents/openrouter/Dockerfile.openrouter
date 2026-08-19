@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # stdio<->SSE-Bruecke fuer entfernte MCP-Server (z. B. Home Assistant MCP).
 RUN npm install -g mcp-remote && npm cache clean --force
 
-# Offizieller Portainer-MCP-Server (Python-Paket, read-only-faehig via env).
-RUN pip install --no-cache-dir --break-system-packages mcp-portainer
+# mcp-portainer ist BEWUSST nicht mehr hier: die MCP-Prozesse laufen im
+# MCP-Hub am Host (siehe /home/ulrich/mcp-hub), der Gast spricht nur noch
+# JSON-RPC ueber den Manager. mcp-remote bleibt als Rueckfall fuer Manager
+# ohne /api/mcp.
 
 COPY agent.py                 /app/agent.py
 COPY run_agent.py             /app/run_agent.py

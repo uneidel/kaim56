@@ -11,7 +11,15 @@ RUN mkdir -p /opt/piper && cd /opt/piper && \
     curl -sL -o de-thorsten-medium.onnx \
       https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx && \
     curl -sL -o de-thorsten-medium.onnx.json \
-      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json && \
+    curl -sL -o de-eva_k-x_low.onnx \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx && \
+    curl -sL -o de-eva_k-x_low.onnx.json \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx.json && \
+    curl -sL -o en-amy-medium.onnx \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx && \
+    curl -sL -o en-amy-medium.onnx.json \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
 ENV LD_LIBRARY_PATH=/opt/piper
 COPY server.py /opt/voice/server.py
 EXPOSE 8770

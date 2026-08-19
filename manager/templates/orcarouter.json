@@ -1,0 +1,41 @@
+{
+  "template": "orcarouter",
+  "description": "OrcaRouter agent (OpenAI-compatible gateway, tool calling)",
+  "rootfs": "instances/openrouter-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport",
+      "type": "select",
+      "options": ["signal", "web"],
+      "default": "signal"
+    },
+    {
+      "key": "SIGNAL_NUMBER",
+      "label": "Signal number (bot)",
+      "default": ""
+    },
+    {
+      "key": "ALLOWED_SENDERS",
+      "label": "Allowed number(s)",
+      "default": ""
+    },
+    {
+      "key": "ORCAROUTER_MODEL",
+      "label": "Model (e.g. openai/gpt-4o, anthropic/claude-3.5-sonnet)",
+      "default": "openai/gpt-4o"
+    },
+    {
+      "key": "ORCAROUTER_URL",
+      "label": "OrcaRouter base URL (blank = from Settings / https://api.orcarouter.ai/v1)",
+      "default": ""
+    },
+    {
+      "key": "MCP_CONFIG",
+      "label": "MCP servers JSON (optional)",
+      "default": ""
+    }
+  ]
+}

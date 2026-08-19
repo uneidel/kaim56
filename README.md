@@ -70,3 +70,25 @@ WASM-Bridge für die Browser-Freigabe. Protokoll: `katfs/PROTOCOL.md`.
 ## Änderungen
 
 `manager/CHANGELOG.md` führt die Historie der Plattform.
+
+
+## Installation auf einer frischen Maschine
+
+Voraussetzungen: Linux x86_64 **mit KVM** (`/dev/kvm`), Docker, Python ≥ 3.9, systemd.
+
+```bash
+# aus einem Klon:
+./install.sh --check          # nur Voraussetzungen pruefen
+VMLINUX_URL=<Release-Asset-URL> ./install.sh --with-voice
+
+# oder klassisch (sobald das Repo public ist):
+curl -fsSL https://raw.githubusercontent.com/<user>/kaim56/main/install.sh | sh
+```
+
+Der Installer legt das Laufzeit-Layout unter `$KAIM56_BASE` (Default `$HOME`) an,
+laedt das Firecracker-Binary (v1.16.1) von GitHub, bezieht den Gast-Kernel
+(`VMLINUX_URL` — als Release-Asset veroeffentlichen), baut das openrouter-Rootfs
+plus Embedding-/MCP-Hub-Container (`--with-voice`, `--with-agents` optional),
+richtet den systemd-Dienst mit generiertem Passwort ein und laeuft die
+Offline-Testsuite als Smoke-Test. Idempotent — erneut ausfuehren = Update.
+Danach: Web-UI Port 8700 → Settings-Tab → API-Key eintragen.

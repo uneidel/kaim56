@@ -1,5 +1,491 @@
 # Changelog
 
+## 2026-08-19 (Fix: Tool-Katalog-Drift + Drift-Wache)
+- Die vier Missions-Tools und `offload_read` fehlten im Manager-Werkzeugkatalog
+    (`AGENT_TOOLS_CATALOG`) — dadurch tauchten sie nicht im Create-Instance-
+    Formular auf und eine Tool-Allowlist haette sie stumm blockiert. Ergaenzt.
+- **Neuer Drift-Test** (`test_tool_catalog_matches_agent`): Agent-BUILTIN und
+    Manager-Katalog muessen deckungsgleich sein — ein kuenftig vergessener
+    Katalog-Eintrag (oder Geister-Eintrag ohne Tool) laesst die Suite rot werden.
+
+
+## 2026-08-19 (Fix: Browser-Terminal brach nach ~10 s Leerlauf ab)
+- Der WS-Tunnel des Terminals oeffnete den Guest-Socket mit
+    `create_connection(timeout=10)` — das Connect-Timeout blieb als READ-
+    Timeout auf dem Socket, nach 10 s Stille riss `recv()` den Tunnel ab
+    („connection closed"). Fix: Timeout nach dem Connect auf None, dazu
+    TCP-Keepalive auf beiden Seiten (halbtote Verbindungen sterben trotzdem).
+    Verifiziert: 16 s idle am offenen WS ueberstanden.
+
+
+## 2026-08-19 (Overlay fuer pi/prime/claude nachgezogen)
+- Der Overlay-Boot-Block (fc_upper -> /mnt sync-Mount -> overlayfs ->
+    pivot_root, mit ro-Basis-Fallback) ist jetzt auch in den Gast-inits von
+    **pi, prime und claude**; alle drei Images neu gebacken und per
+    Wegwerf-Testinstanz verifiziert (Bridge bootet, kein Overlay-WARN).
+- `OVERLAY_ROOTFS` umfasst damit alle vier Images — **jede** Instanz bootet
+    von der geteilten ro-Basis + eigenem Upper, und der Persist-Schalter
+    („💾 persistent") steht ueberall zur Verfuegung. private_rootfs() bleibt
+    nur noch als Fallback fuer unbekannte Images.
+- Diskgewinn je laufender Instanz: pi ~3 GB, prime ~4 GB, claude ~3 GB
+    Kopie entfallen (jetzt ~35 MB Upper).
+
+
+## 2026-08-19 (Overlay-Rootfs + persistente Disk pro Instanz)
+- **Overlay-Boot** fuer das openrouter-Rootfs: die Basis haengt READ-ONLY an
+    allen Instanzen (Firecracker blockt Schreibzugriffe -> der Journal-Sharing-
+    Bug vom 15.08. ist strukturell weg), dazu je Instanz ein kleines rw-Upper-
+    Image; der Gast-init baut overlayfs + pivot_root. KEINE 2-GB-Kopie je Start
+    mehr. Faellt der Overlay-Aufbau aus, bootet die VM degradiert auf der
+    ro-Basis weiter (Fallback, nie Boot-Verweigerung).
+- **Persistente Disk, pro Instanz waehlbar (Default aus):** Tag in der
+    Instanz-Tabelle („frisch je Start" / „persistent"). An = die Schreibschicht
+    (4 GB sparse, instances/<n>-upper.ext4) ueberlebt Stop/Start — apt/pip/npm-
+    Installationen bleiben. Rechtsklick = Factory-Reset der Schicht.
+    Routen: /api/instances/<n>/persist + /diskreset.
+- **Gelernt & gefixt:** (1) ro-Wurzel braucht existierenden Mountpoint (/mnt
+    statt mkdir /ov). (2) stop() ist ein Stromstecker (SIGTERM an Firecracker)
+    — ohne sync-Mount verlor der Upper die letzten Schreibungen (0-Byte-Datei
+    im debugfs-Beweis); Upper mountet jetzt mit -o sync.
+- **E2E bewiesen:** Datei schreiben -> Stop/Start -> Inhalt „UEBERLEBT-
+    NEUSTART" noch da. Kernel-Check vorab: alle Container-/Overlay-Features
+    im Gast-Kernel aktiv (Docker/podman IN der VM damit moeglich; podman
+    waere der naechste Schritt). orchestrator+hass laufen auf Overlay
+    (tools=35, tencent/hy3). 42 Tests gruen. Andere Templates (claude/pi/
+    prime/llama) unveraendert auf dem alten Kopier-Pfad.
+
+
+## 2026-08-19 (Settings-Pane fuer TTS/STT)
+- **Voice-Sektion im Settings-Tab**: Statuszeile (Dienst up? STT-Modell,
+    verfuegbare TTS-Stimmen via neuem `GET /api/voice-health`) + zwei neue
+    Einstellungen: **TTS-Stimme** (Auswahl) und **TTS-Tempo** (0.5–2.0).
+- **Voice-Dienst erweitert**: `/tts` akzeptiert `voice` + `speed`
+    (Piper `--length_scale`, geklemmt), `/health` listet die Stimmen.
+    Zwei neue Stimmen eingebacken: `de-eva_k-x_low` (dt., weiblich) und
+    `en-amy-medium` (engl.) neben `de-thorsten-medium`.
+- **Injektion im Manager-Proxy**: App und Web schicken weiter nur `{"text"}` —
+    der Manager mischt Stimme/Tempo aus den Settings in den `/api/tts`-Body
+    (explizite Client-Werte gewinnen). Kein Client-Update noetig.
+- Settings-UI kann jetzt Auswahl-Felder (options im SETTINGS_SCHEMA).
+- STT (Parakeet v3) hat nichts sinnvoll Einstellbares (Sprache automatisch) —
+    darum nur Status-Anzeige.
+
+
+## 2026-08-19 (Missions eigener Tab/Screen + klickbare Notifications)
+- **Missions separat**: eigener Tab „Missions" im Web-Manager (statt im
+    Tasks-Tab; abgeschlossene direkt sichtbar) und eigener Screen „Missionen"
+    in der App 5.7 (Drawer-Eintrag mit Flaggen-Icon).
+- **Notifications fuehren zur Aktion**: Notification-Eintraege tragen jetzt
+    ein `link`-Feld (missions | tasks | chat:<instanz>). Web: Klick im
+    Glocken-Dropdown springt zum Tab bzw. oeffnet den Chat der Instanz
+    (Pfeil-Indikator). App: Tipp auf die System-Notification oeffnet die App
+    direkt am Ziel (PendingIntent + notifLink-Extra, Muster wie Assist-Intent).
+    Quellen: Agent-notify -> chat:<instanz>, Missions-Abschluss/TTL -> missions.
+
+
+## 2026-08-19 (Missionen — Plan-/Fortschritts-Speicher fuer mehrstufige Auftraege)
+- **Missionen**: Der Orchestrator legt fuer mehrstufige Auftraege selbst einen
+    Plan an (`mission_start`: Ziel + Schritte), arbeitet ihn per `create_task`
+    ab und haelt den Fortschritt im Manager (`missions.json`) — der Arbeitsstand
+    ueberlebt /reset, VM-Neustart und den zustandslosen Heartbeat (Injektion als
+    `[Missionen]`-Block je Turn).
+- **Sofort-Trigger**: Ist ein Task fertig, auf den ein Missionsschritt wartet
+    (task_id am Schritt), stoesst der Task-Worker den Orchestrator direkt zum
+    naechsten Vorstoss an (`_mission_advance_fire`) — kein Warten auf den
+    Heartbeat; der prueft nur noch als Fallback haengende Schritte.
+- **Leitplanken**: max. 5 aktive Missionen / 20 Schritte / Log gekappt;
+    TTL-Sweep pausiert 7 Tage inaktive Missionen + Notification; Abschluss ->
+    Fazit ins semantische Gedaechtnis + Push (`notify`).
+- **Tools** (nur Orchestrator, TASK_ADMIN): `mission_start/missions/
+    mission_update/mission_finish`. Routen `/api/missions`, `/api/mission-*`
+    (Gast source-IP-gated), `/api/mission-admin` (UI: Pause/Weiter/Abbrechen).
+- **UI**: Missions-Panel im Tasks-Tab (Web: Fortschrittsbalken, aktueller
+    Schritt, Log, Pause/Abbruch) und in der **App 5.6** (Tasks-Screen:
+    Missions-Karten, aufklappbar mit allen Schritten + Aktionen).
+- **Live verifiziert**: 2-Schritt-Mission lief in ~40 s vollautonom durch —
+    Task fertig -> Trigger -> Schritt done -> naechster Task -> Trigger ->
+    mission_finish + Abschluss-Notification. 39 Tests gruen (Lifecycle, Caps,
+    mission_for_task, HTTP).
+
+
+## 2026-08-19 (Chat-UI im Industry-Design verschoenert)
+- Chat-Oberflaeche (/chat) sauber auf das Design-System **Industry**
+    (claude.ai/design, Projekt-styles.css als Quelle) gezogen:
+  - **Blueprint-Objekte**: Composer und Welcome-Panel mit Haarlinie +
+    Registrierungs-Ecken (Ecken faerben sich beim Fokus akzentblau).
+  - **Typografie**: Barlow Condensed fuer Headline, Buttons, Chips,
+    Agent-Select; Kicker-Labels (MICROVM AGENT, CHATS) in Uppercase.
+  - **Token-Rampen** statt Ad-hoc-Werte (accent-100…800, color-mix-Divider);
+    Dark Mode aus denselben Rampen abgeleitet.
+  - **Feinschliff**: Agent-Chips als tag-accent, aktiver Chat mit Akzent-
+    Inset-Balken, Bubbles mit Haarlinie + Elevation, running-Dot mit Glow,
+    gestylte Scrollbars, ::selection, Denken-Block als Uppercase-Summary.
+  - Verifiziert per Headless-Chrome-Screenshots (hell/dunkel/Konversation).
+    JS-Logik unveraendert; Backup chatui.py.bak-design-*.
+
+
+## 2026-08-19 (Fix: "Save password?"-Popup beim Chat-Wechsel)
+- Chrome bot beim Navigieren zu /chat an, ein "Passwort fuer kat56.de" zu
+    speichern — mit der katfs node-id als vermeintlichem Nutzernamen und dem
+    Maskierungs-Marker `__unchanged__` als Passwort. Ursache: die API-Key-Felder
+    im Settings-Tab waren `type=password`; Chromes Passwort-Manager paart so ein
+    Feld mit dem naechsten Textfeld (katfs-Key) zu einem "Login" und ignoriert
+    `autocomplete=off`. Fix: Maskierung per CSS (`-webkit-text-security:disc`,
+    Klasse `seckey`) statt Passwort-Semantik — kein Popup mehr, Werte bleiben
+    verdeckt; echte Keys verlassen den Manager ohnehin nie (Marker statt Wert).
+
+
+## 2026-08-19 (Fix: Dropdown-Reset im New-Instance-Formular)
+- Gemeldet als "Template-Dropdown springt beim Transport-Wechsel zurueck".
+    Instrumentierter Headless-Chrome-Test (CDP, Setter-Falle auf #tpl, 35 s mit
+    allen Intervallen): das Template-Select selbst wird nie zurueckgesetzt.
+    Gefunden wurde stattdessen ein **Async-Race in loadModels**: der Fetch der
+    OpenRouter-Modellliste (Upstream, Sekunden bei kaltem Cache) merkte sich den
+    Wert vom Fetch-START und baute das Modell-Dropdown beim Eintreffen damit neu
+    — eine inzwischen getroffene Auswahl sprang sichtbar auf den Anfangswert
+    zurueck (zeitlich zufaellig mit dem Transport-Klick). Fix: Wert beim RESOLVE
+    lesen, abgehaengte Selects nicht mehr anfassen.
+- **Cache-Control: no-store** fuer die Manager-Seite: veraltete Seiten nach
+    Updates erzeugten Geister-Fehler (alte JS-Logik gegen neue API).
+
+
+## 2026-08-19 (Fix: Modell-Dialog fuer orcarouter/llama)
+- Klick auf das Modell einer orcarouter-Instanz meldete "This instance has no
+    model setting": die Key-Liste im Modell-Dialog (editModel) kannte nur
+    OPENROUTER/ANTHROPIC/PI/PRIME. `ORCAROUTER_MODEL` und `LLAMA_MODEL`
+    ergaenzt — der Dialog oeffnet jetzt mit dem aktuellen Modell als Freitext.
+
+
+## 2026-08-19 (Activity-Panel: Zeitfilter + Verbrauch)
+- **Zeitfilter** im Activity-Dialog (1h / 24h / 7d / Alle) — filtert die
+    Audit-Aktionen clientseitig nach `ts` (Fetch-Limit 1000).
+- **Verbrauchs-Summe fuer den Zeitraum** in derselben Kopfzeile: Aktionen,
+    LLM-Aufrufe, Tokens (rein->raus) und Kosten aus `llm_usage` via neuem
+    `GET /api/usage/<name>?since=` + Helper `usage_for`. Bewusst als SUMME,
+    nicht pro Audit-Zeile: Tokens fallen pro LLM-Turn an, nicht pro Tool-Aufruf
+    (ein Turn loest 0..N Tool-Aufrufe aus) — eine Zuordnung waere erfunden.
+
+
+## 2026-08-19 (App 5.5 — VAD-Fix Sprachaufnahme)
+- **Aufnahme brach mitten im Reden nach ~4 s ab.** Ursache: das Grundrauschen
+    wurde als MAXIMUM der ersten 400 ms gemessen — redete man sofort los, floss
+    Sprache in den "Floor" und die Schwelle `floor*3` wurde unerreichbar, jede
+    weitere Messung galt als Stille. Fixes: Floor als MINIMUM ueber ~0,6 s
+    (gedeckelt), absolute Marge statt Faktor, und **Hysterese** — sobald geredet
+    wird, haelt eine viel niedrigere Schwelle die Aufnahme am Leben, sodass die
+    Amplituden-Taeler zwischen Woertern nicht als Stille zaehlen. `VAD_HANG`
+    1800->2200 ms. Max. Aufnahmedauer unveraendert `VAD_MAX = 120 s` (Notbremse).
+
+
+## 2026-08-19 (Notifications)
+- **Notification-Kanal App + Web + Tool.** Neuer Push-Kanal neben Signal:
+  - **Agent-Tool `notify(title, message)`** -> `POST /api/notify` (Gast, per
+    Source-IP; rate-limit 30/5min, Audit). Im Werkzeugkatalog.
+  - **Manager-Store** `notifications.json` (rev + Long-Poll wie chats, Cap 200):
+    `GET /api/notifications?since=&wait=` (Admin, mit `unread`),
+    `POST /api/notifications/read` (`{id}`|`{all:true}`).
+  - **Web-Manager:** Glocke in der Topbar mit Unread-Badge + Dropdown, Long-Poll,
+    optional Browser-Notification (Permission on Klick); Oeffnen quittiert.
+  - **App (5.4):** eigener Poll-Loop -> Android-Systemnotification (Channel
+    `kaim56_agent`, nutzt die bestehende POST_NOTIFICATIONS-Permission) fuer neue,
+    ungelesene Eintraege ab App-Start. `ManagerSync.pollNotifications/markNotifRead`.
+  - E2E verifiziert: Orchestrator ruft `notify` -> landet im Store (`tools=31`).
+
+
+## 2026-08-18 (Playbooks, Reasoning-Anzeige, Task-Verwaltung, Signal-Empfang, katfs)
+- **Harness-Muster uebernommen** (angelehnt an strands-agents/harness-sdk,
+  Apache-2.0; portiert, keine neue Dependency — der Agent bleibt stdlib-only):
+  - **Summarizing Context:** `_trim_history` wirft alte Nachrichten nicht mehr
+    weg, sondern fasst die aeltesten zu einem `[Zusammenfassung]`-Block zusammen
+    (System gepinnt, letzte `CTX_PRESERVE_RECENT`=10 woertlich, bestehende
+    Zusammenfassung wird eingefaltet). Gegen Token-Runaway UND Kontextverlust.
+  - **Context-Offloader:** Tool-Ausgaben > `OFFLOAD_MIN` werden komplett in
+    `.offload/` ausgelagert; im Kontext bleibt Vorschau + Referenz, der Rest ist
+    per neuem Tool `offload_read(id, offset)` nachladbar. Statt hartem Cut.
+  - **Goal-Loop:** `/goal <Kriterium>` setzt ein Ziel; ein Judge prueft die
+    Antwort und laesst bis `GOAL_MAX_ATTEMPTS`=3 nachbessern. `/goal off` aus.
+  - **Tool-Hook + HITL:** harte Denylist (rm -rf /, Forkbomb, mkfs …) immer aktiv;
+    optionale Freigabe riskanter Tools per Signal (opt-in `HITL=1`,
+    `HITL_TOOLS`) — Manager fragt „ok <id>/nein <id>", Agent pollt
+    `/api/hitl`/`/api/hitl/<id>`. Kein Signal-Empfaenger -> blockiert nicht.
+  - **Aktiviert:** rootfs neu gebacken, orchestrator + hass neu gestartet
+    (`tools=30`, offload_read live). **App 5.2:** `/goal` im Slash-Picker.
+  - **Retry mit Backoff** um jeden Modellaufruf (429/5xx, 0.5→8s), leere
+    tools-Liste wird nicht mehr mitgeschickt (verhinderte 400 beim Summarizer/Judge).
+- **E2E-Testsuite** (`tests/e2e.py`, `./run-tests.sh`) — stdlib-unittest, keine
+  Dependency. Drei Stufen: OFFLINE (Agent-/Manager-Funktionen per Import —
+  Backend-Wahl, Summarizing, Offloader, Hook-Denylist, Goal, leere-Tools-Fix,
+  Provider-Switch inkl. ":free"-Fallstrick, HITL-Store, katfs-ZIP-Walk),
+  HTTP (gegen den laufenden Manager: /api/agents backend+model, /api/hitl,
+  katfs-status, Template-Registrierung), LIVE (kostenloser /goal-Roundtrip
+  zur Orchestrator-VM). Fehlende Stufen werden sauber uebersprungen. 30 Tests.
+  Laeuft ab jetzt bei jeder Aenderung mit (wie Changelog/Architecture).
+- **Fix Modell-Selbstauskunft:** `/api/agents` kannte nur OPENROUTER/PI/PRIME
+  als Modell-Key und meldete das *Template* als Provider — ein orcarouter-
+  Agent erschien so als "openrouter, ohne Modell". Jetzt: alle MODEL_KEYS +
+  echtes `backend`-Feld. Zusaetzlich kennt der Agent sein eigenes Backend/
+  Modell aus dem SYSTEM-Prompt (nennt es direkt statt via list_agents).
+- **Provider-Wechsel per set_model** ("orcarouter:tencent/hy3" stellt Backend UND
+  Modell um, entfernt die anderen MODEL_KEYS). **Orchestrator produktiv auf
+  OrcaRouter `tencent/hy3` umgestellt** (backend=orcarouter verifiziert, Tool-
+  Calling + Key-Broker ok).
+- **OrcaRouter als zweites LLM-Backend neben OpenRouter.** OpenAI-kompatibles
+  Gateway (`https://api.orcarouter.ai/v1`, Key-Format `sk-orca-…`; oder
+  selbstgehostet via OrcaRouter-Lite). Derselbe Agent-Code wie OpenRouter —
+  gewaehlt wird per Env: ist `ORCAROUTER_MODEL` (bzw. `ORCAROUTER_URL`)
+  gesetzt, spricht der Agent OrcaRouter an, sonst OpenRouter. Neu: Template
+  `orcarouter.json` (gleiches rootfs), Settings-Felder `ORCAROUTER_API_KEY`
+  (Secret, 0600, ueber den Broker) + `ORCAROUTER_URL`, `ORCAROUTER_MODEL` in
+  MODEL_KEYS, Secret-Policy-Eintrag. **Key setzen: Settings-Tab.**
+- **Playbooks — feste Regeln, die der Orchestrator selbst lernt.** Anders als
+  das semantische Gedaechtnis (bedeutungsbasiert eingeblendet) gelten Playbooks
+  IMMER. Sagt der Nutzer WIE etwas zu tun ist / korrigiert den Ansatz, legt der
+  Agent das per `playbook_add` ab; alle Regeln werden jeden Turn in den Prompt
+  gehoben. Werkzeuge `playbook_add`/`playbooks`/`playbook_forget`, Speicher
+  `playbooks.json` (je Instanz, Cap 40), Gast-Routen. Belegt: Regel „Aktienkurse
+  per http_fetch von Yahoo" → /reset → vage Frage → korrekt beantwortet, ohne
+  die Quelle erneut zu nennen.
+- **Reasoning steuerbar + sichtbar.** Slash `/reasoning [low|medium|high|off]`
+  schaltet den OpenRouter-reasoning-Parameter live (Default aus, per Env
+  `OPENROUTER_REASONING` als Dauer-Default). Das Denken wird getrennt gestreamt
+  (Marker im Token-Strom, aus dem Kontext rausgehalten) und in Web und App als
+  aufklappbarer „Denken"-Block gezeigt. Kopieren/Vorlesen nehmen nur die Antwort.
+- **Task-Verwaltung fuer den Orchestrator.** `list_tasks`/`delete_task`/
+  `edit_task` (auflisten mit IDs, loeschen, Nachricht/Zeitplan aendern). Nur der
+  Orchestrator bekommt sie — ueber ein Flag `TASK_ADMIN`, das der Manager gezielt
+  injiziert; gated im Menue UND an der Route (403 „orchestrator only").
+- **Signal: Empfang + json-rpc.** Gateway von `native` auf `json-rpc` umgestellt
+  (Empfang und Versand koennen jetzt gleichzeitig — im native-Modus sperrte ein
+  Long-Poll das Konto und blockierte den Versand). Empfaenger im Manager auf
+  einen stdlib-WebSocket-Client umgebaut (Echtzeit-Push). Neue Signal-Nachricht
+  → Orchestrator sofort getriggert, Antwort per send_signal zurueck.
+- **katfs Datei-Browser** im Sharing-Tab (Ordner durchklicken, ansehen,
+  herunterladen; read-only, Admin-Routen). Jetzt mit **Freigabe-Auswahl**: bei
+  mehreren aktiven Browser-Freigaben eine im Status-Panel anklicken → der Baum
+  darunter wechselt auf genau diese Freigabe (adressiert per `share`-Id). Neu
+  ausserdem **„Download all"** — der aktuelle Ordner wird rekursiv eingesammelt
+  und als ZIP geliefert (Route `/api/katfs/zip`, Helper `katfs_zip`, Deckel
+  2000 Dateien / 512 MB). Der eigenstaendige **CLI-Share**
+  (`dist/katfs-share`) existierte bereits — teilt einen Ordner ohne Browser.
+  Knoten-Pfade/Bind per Env konfigurierbar; portables Standalone-Buendel unter
+  `katfs-standalone/` vorbereitet.
+- **App 4.9–5.1:** Text in Blasen markier-/kopierbar (SelectionContainer),
+  Slash-Befehl-Auswahl ueber der Eingabezeile (tippt man „/"), Denken-Anzeige.
+- **MSFT-Task repariert:** die taegliche Aufgabe scheiterte, weil das Modell
+  `http_fetch` nicht nutzte und faelschlich „kann keine Seiten lesen" sagte.
+  Jetzt konkrete Anweisung mit fester Yahoo-URL + Feld — liefert einen echten
+  Kurs.
+
+## 2026-08-17 (Orchestrator-Token-Runaway behoben)
+- **Ursache:** Der Heartbeat lief `every 1m` (1.440 Laeufe/Tag), und der
+  Orchestrator setzte seinen Gespraechskontext nie zurueck — Heartbeat und
+  App-Chats teilen sich EIN `_history`, das monoton wuchs. Jeder Call schickte
+  das ganze angesammelte Transkript erneut: im Schnitt 73k Input-Token, groesster
+  Call 183k, bei ~5 Token Output. Summe: 249 Mio Token, ~14 USD.
+- **Fix 1 — Takt:** Heartbeat von `every 1m` auf `every 30m` (Faktor 30).
+- **Fix 2 — zustandslos:** Heartbeats laufen jetzt mit `/fresh` in einem
+  WEGWERF-Kontext (`_tool_loop` auf einer lokalen Liste), das Gespraechs-
+  `_history` bleibt unangetastet. Ein harter Reset schied aus, weil er einen
+  laufenden App-Chat weggewischt haette (geteiltes `_history`). Beides
+  umgestellt: der geplante Task UND der Sofort-Trigger (`ORCH_HEARTBEAT_MSG`).
+- **Fix 3 — Deckel:** allgemeiner gleitender Kontext-Deckel (`CTX_MAX_MSGS=20`,
+  nur an sauberen Turn-Grenzen geschnitten, nie mitten im Tool-Zyklus) — bindet
+  die Kosten auch fuer lange direkte Chats.
+- Belegt: 42+8=50 → /fresh-Heartbeat ("nichts zu tun") → "voriges Ergebnis mal
+  zwei" = 100 (Kontext ueberlebt den Heartbeat, der laeuft trotzdem zustandslos).
+- Gedaechtnis-Anweisung entschaerft: sie stellte den Orchestrator zu meta
+  ("mein Gedaechtnis wird nach jeder Interaktion zurueckgesetzt" — irrefuehrend,
+  die Kurzzeit funktioniert). Jetzt: innerhalb eines Gespraechs normal erinnern
+  und nicht ungefragt die Gedaechtnis-Mechanik erklaeren; still mit
+  memory_store nur das Dauerhafte ablegen. Belegt: "merk dir Testwort Alpha" →
+  bestaetigt ohne Vortrag; "wie war mein Testwort?" → "Alpha".
+
+## 2026-08-16 (Semantisches Gedaechtnis: Kurzzeit + Langzeit)
+- **Kurzzeit** bleibt das laufende Gespraech (`_history` im VM-RAM, `/reset`
+  leert es). **Langzeit** ist jetzt **semantisch** statt flaches key/value:
+  `memory_store` bettet jede Notiz ein (Modell multilingual-e5 auf der CPU,
+  neuer `embed`-Container hinter dem Manager auf :8772) und legt Text+Vektor in
+  `history.db` ab. Bei jeder Frage bettet der Agent die Nutzernachricht ein,
+  der Manager liefert die **bedeutungsnaechsten** Notizen (Cosinus), die als
+  frischer `[Gedaechtnis]`-Block in den Prompt kommen — nur was zur Frage
+  passt, nicht der ganze Speicher.
+- **Kein LLM, keine Graph-DB noetig** — Embeddings laufen gut auf dem i5, also
+  ohne Warten auf die llama-Box und ohne Neo4j & Co. (Graphiti/Cognee bleiben
+  ein moeglicher spaeterer Ausbau.) Faellt der Embedder aus, gibt es diesen
+  Turn keinen Langzeit-Kontext statt eines Fehlers; die Notizen bleiben
+  gespeichert.
+- Manager: Tabelle `semantic_memory`, `sem_store`/`sem_search`, Gast-Route
+  `POST /api/memory-search`; `memory_store` schreibt zusaetzlich semantisch.
+  Agent: Injektion pro Turn statt Voll-Dump beim ersten Turn; Anweisung, den
+  value als vollstaendigen Satz zu merken (sonst taugt der abgerufene Fetzen
+  nichts — "… ist der Watzmann", nicht bloss "Watzmann").
+- Ende-zu-Ende belegt: Fakt merken → /reset (Kurzzeit weg) → mit anderen Worten
+  fragen → korrekt erinnert (Score 0.856, rein aus dem Langzeitspeicher).
+
+## 2026-08-16 (Slash-Befehle durchreichen — App 4.8 + claude-Bridge)
+- Die App fing bisher JEDEN /-Befehl ab und wies Unbekanntes als "Unbekannter
+  Befehl" zurueck — die eigenen Befehle der Agenten waren so unerreichbar.
+  Jetzt behaelt die App nur ihre eigenen (`/task`, `/agents`, `/help`), faengt
+  `/login` mit einem Hinweis ab (nicht noetig, der Agent ist ueber den Host
+  angemeldet) und **reicht alles andere an den Agenten durch**.
+- Damit greift `/reset` (neuer Kontext ohne VM-Neustart) sofort fuer die
+  OpenRouter/llama-Agenten (koennen es laengst) — und neu auch fuer das
+  claude-Template: `/reset` in die Web-Bridge nachgeruestet (leert die
+  Claude-Code-Sitzung). Belegt: Codewort setzen → /reset → Agent kennt es
+  nicht mehr; claudy antwortet "Neue Unterhaltung", orchestrator "Kontext
+  zurueckgesetzt".
+- `/help` der App nennt jetzt, dass andere /-Befehle an den Agenten gehen.
+
+## 2026-08-16 (Verhaltensleitplanken aus Anthropics System-Prompts)
+- Sinngemaess das Modell-agnostische aus Anthropics veroeffentlichten
+  System-Prompts in den Basis-Prompt der OpenRouter/llama-Agenten uebernommen
+  (`agent.py`, gilt fuer jedes Modell und auch fuer Personas):
+  - **Nicht halluzinieren:** bei Unsicherheit offen sagen und mit web_search/
+    http_fetch pruefen statt raten; keine erfundenen Quellen/Zitate/Links.
+  - **Erst Werkzeuge, dann "geht nicht":** bevor der Agent Unvermoegen oder
+    fehlenden Zugriff behauptet, prueft er, ob ein Tool dafuer da ist — selbst
+    handeln vor Nachfragen.
+  - **Unklare Anfragen:** sinnvolle Annahme treffen und loslegen, nur bei
+    echtem Blocker zurueckfragen; begonnene Aufgaben zu Ende fuehren.
+  - **Ton:** sachlich, keine Schmeichelei/uebertriebenen Entschuldigungen,
+    freundlich begruendeter Widerspruch statt Nachgeben, keine leeren
+    Fuellwoerter ("ehrlich gesagt", "tatsaechlich").
+  - **Form:** knapp und in Fliesstext; Listen/Fettung/Ueberschriften nur bei
+    echtem Bedarf oder auf Wunsch; keine Spekulation ueber fremde Absichten.
+- Nicht angefasst: die Coding-Agenten claude/pi/prime — die haben eigene, gut
+  abgestimmte Prompts. Belegt an einer Halluzinationsprobe (fiktive Praemisse
+  wird benannt, nicht bestaetigt).
+
+## 2026-08-16 (Selbst gehostetes LLM via llama.cpp)
+- **Settings-Tab:** neue Felder `LLAMA_ENDPOINT` (OpenAI-kompatible Basis-URL,
+  z. B. `http://10.0.0.50:8080/v1`) und `LLAMA_API_KEY` (optional, nur wenn
+  der Server mit `--api-key` laeuft). Der Key ist ein Secret (maskiert, ueber
+  den Broker, nie in die Instanz-Config).
+- **Neues Template `llama`** (nutzt das vorhandene openrouter-Rootfs — llama.cpp
+  ist OpenAI-kompatibel, gleicher Agent-Code). Der Endpoint wird aus den
+  Settings vorbefuellt, der Modellname ist ein Freitextfeld (was der Server
+  bedient). Modell-Chip und Modellwechsel funktionieren (`LLAMA_MODEL` in
+  MODEL_KEYS).
+- **Agent:** ist `LLAMA_ENDPOINT` gesetzt, spricht er den lokalen Server statt
+  OpenRouter an — gleiche Tool-Schleife, andere Basis-URL/Modell/Key.
+  URL-Normalisierung akzeptiert `host:8080`, `…/v1` und `…/v1/chat/completions`.
+  Fehlt der Key, laeuft er ohne Auth (fuer llama.cpp ohne `--api-key` der
+  Normalfall, kein Fehler). Fehlermeldungen und Startlog nennen jetzt das
+  aktive Backend.
+- **LAN-Gating:** liegt der llama-Server auf einer privaten LAN-IP, gibt der
+  Manager genau dieses Ziel in der FORWARD-Kette der Instanz frei — wie die
+  MCP-Endpunkte. Ende-zu-Ende gegen einen OpenAI-kompatiblen Stub belegt
+  (Settings → Vorbefuellung → Agent → Backend → SSE-Streaming, App- und
+  Web-Pfad).
+
+## 2026-08-15 (claudy: Abo-Anmeldung + rohes JSON im Chat behoben)
+- **"Not logged in":** Das claude-Template laesst intern Claude Code laufen und
+  hatte keine Anmeldung. Neue Gast-Route `GET /api/claude-credentials` (nur
+  claude-Template, per Source-IP): der Gast holt beim Boot den **lebenden**
+  `claudeAiOauth`-Block vom Host — folgt damit automatisch dem naechsten
+  `/login` des Nutzers; der kurzlebige accessToken wird pro Sitzung von Claude
+  Code selbst erneuert (Refresh-Token 20 Tage stabil). Nur der Abo-Block wird
+  ausgeliefert, nicht die mcpOAuth-Tokens des Nutzers; die Host-Datei bleibt
+  unangetastet. Fuer Nicht-Gaeste 403.
+- **Rohes `{"reply": …}` im App-Chat:** Die claude-Bridge kann kein Streaming
+  und antwortet mit JSON — die App zeigte das nackt samt `\u00b7`. Der
+  Manager-Proxy packt jetzt bei JSON-Antworten auf `api/chat[/stream]` das
+  `reply` aus und reicht es als text/plain weiter (wie es der Web-Chat laengst
+  tat). Belegt: App-Pfad und Web-Pfad liefern sauberen Text, claudy antwortet
+  angemeldet ("Ja, ich bin angemeldet und einsatzbereit").
+
+## 2026-08-15 (MCP-Hub am Host + LAN-Gating fuer die Gaeste)
+- **Fund vorab:** mit `internet=on` durfte jede VM ins ganze LAN — Home
+  Assistant und Portainer waren von jedem Agenten erreichbar, ob ihm der MCP
+  zugewiesen war oder nicht. Jetzt je Instanz eine eigene FORWARD-Kette:
+  MCP-Endpunkte der zugewiesenen Server (aus dem Katalog) → ACCEPT, Gast-DNS
+  (10.0.0.245:53) → ACCEPT, private Netze → **REJECT** (sofortiges
+  Scheitern statt 30-s-Timeout), Internet → ACCEPT. In vier Richtungen
+  belegt (orchestrator↛HA, orchestrator→Internet, hass→HA, hass↛Portainer).
+- **MCP-Hub** (`mcp-hub/`, Docker, 127.0.0.1:8771): die MCP-Serverprozesse
+  laufen jetzt EINMAL je (Instanz, Server) am Host statt in jeder VM. Gaeste
+  sprechen nur noch JSON-RPC ueber `POST /api/mcp`; der Manager autorisiert
+  per Quell-IP gegen `MCP_SERVERS`, setzt die Secrets host-seitig ein und
+  reicht an den Hub durch. **Tokens und LAN erreichen die VM nicht mehr**;
+  `/api/mcp-config` liefert Secrets nur noch als Platzhalter aus. Jeder
+  `tools/call` steht im Audit (Gast- und Manager-Seite). Der Hub startet tote
+  Prozesse neu und wiederholt deren Initialisierung; beim Instanz-Stop werden
+  ihre Prozesse beendet.
+- Gast-Image: `mcp-portainer` entfernt (−104 MB); `mcp-remote` bleibt als
+  Rueckfall fuer Manager ohne `/api/mcp`. Ende-zu-Ende belegt: hass fragt
+  ueber den Hub den Live-Zustand ab ("Ein Licht ist gerade eingeschaltet"),
+  orchestrator bekommt fuer nicht zugewiesene Server eine Ablehnung.
+
+## 2026-08-15 (Architektur-Tab + eine SVG-Parserfalle)
+- Neuer Tab **Architecture** neben dem Changelog: Diagramm (SVG, folgt dem
+  hellen/dunklen Thema) plus 15 Referenzkarten zu allen Komponenten samt
+  Sicherheitsgrenzen.
+- Zwei Fallen dabei, beide erst im echten Chromium sichtbar (jsdom verzeiht
+  sie): ein `<style>`-Element **im** Inline-SVG beendet beim HTML-Parsen den
+  SVG-Kontext — alles danach faellt unsichtbar heraus; und bei unzitierten
+  Attributen frisst `height=56/>` den Schraegstrich mit in den Wert
+  (`height="56/"` → Element malt nichts). Regeln ins Seiten-CSS, Attribute
+  zitiert, per Headless-Screenshot verifiziert.
+
+## 2026-08-15 (Gedaechtnis: Anweisung + Injektion; ein ext4-Vorfall mit Folgen)
+- **Jeder Systemprompt** (auch Personas) bekommt in agent.py eine stehende
+  Gedaechtnis-Anweisung angehaengt: Wichtiges sofort per `memory_store` merken,
+  Bestehendes aktualisieren, kein Protokoll fuehren. Beim **ersten Turn nach
+  einem Neustart** injiziert der Agent seine gemerkten Fakten selbst in den
+  Prompt (nicht beim Boot — da steht das Gast-Netz u. U. noch nicht).
+  Ende-zu-Ende belegt: merken → VM-Neustart → korrekt erinnert.
+- **Vorfall beim Verifizieren:** `EXT4 error loading journal` beim Boot.
+  Ursache: alle Instanzen eines Templates teilten sich **dieselbe**
+  beschreibbare Rootfs-Datei — zwei laufende VMs, ein Journal. Behoben: jede VM
+  bekommt beim Start eine **eigene frische Kopie** (sparse, ~550 MB, beim Stop
+  geloescht); Master-Image mit e2fsck repariert. Nebeneffekt: ein Neustart
+  bootet garantiert das aktuelle Template-Image.
+
+## 2026-08-15 (Modellwechsel fuer bestehende Instanzen)
+- Der Modell-Chip in der Instanzzeile ist jetzt ein Knopf: Dialog mit demselben
+  Picker wie beim Anlegen (OpenRouter-Shortlist, ⟳, Freitext). Neue Route
+  `POST /api/instances/<n>/model` + `set_model()`; wirksam nach Stop/Start.
+  Fuer Gast-VMs automatisch gesperrt (nicht in der POST-Positivliste).
+
+## 2026-08-15 (Signal-Versand fuer Agenten)
+- Neues Werkzeug **send_signal**: Agenten koennen dem Nutzer schreiben
+  (fertige Aufgabe, Fund, Rueckfrage). Versand laeuft im **Manager**
+  (`/api/signal` → signal-cli REST); Bot-Nummer und API bleiben im Host.
+- **Fessel:** Empfaenger muessen in `ALLOWED_SENDERS` stehen — ein Agent kann
+  nur an Leute schreiben, die ihm ohnehin Befehle geben duerfen. Dazu Drossel
+  (10 je 5 min, Ablehnungen zaehlen nicht) und Audit-Eintrag je Aufruf.
+  `SIGNAL_API` neu in den Settings.
+
+## 2026-08-15 (Security Gateway, je Chat zuschaltbar)
+- Schild-Symbol in App und Web, Zustand am Manager (`gateway.json`), Filterung
+  ebenfalls — eine Gast-VM kann ihn nicht abschalten. Entfernt in **beide**
+  Richtungen unsichtbare Unicode-Zeichen (Tag-Zeichen U+E0020–E007F,
+  Zero-Width, Bidi-Overrides, Homoglyph-Leerzeichen) und aus Uploads
+  EXIF/XMP/C2PA (JPEG/PNG/WEBP, byte-chirurgisch, Bilddaten unangetastet).
+- Der Strom-Filter schneidet an Wortgrenzen — Emoji-ZWJ-Ketten ueberleben,
+  ein ueber Chunks verteilter Schmuggelbefehl nicht (Test: 67 Zeichen
+  entfernt, Modell beantwortet die sichtbare Frage). Entferntes wird sichtbar
+  gezaehlt. Grundlage: `text_unicode.py` aus watermarks-remover (MIT),
+  **nur** die Unicode-Schicht — die Wasserzeichen-/C2PA-Entfernung des
+  Projekts bleibt bewusst draussen (SECURITY-GATEWAY.md).
+- Ohne `chat`-Feld im Request bleibt alles beim Alten — aeltere Clients laufen
+  unveraendert.
+
+## 2026-08-15 (KatAgent 4.3–4.7: freihaendige Sprache, Assistent, Kleinigkeiten)
+- **4.3:** Sprechpausen-Erkennung — Aufnahme endet von selbst (Schwellwert aus
+  dem Raumgeraeusch der ersten Zehntel, Stopp erst nachdem gesprochen wurde);
+  Blase antippen stoppt die Ausgabe (waehrenddessen ist die ganze Blase die
+  Stopptaste), neue Spracheingabe bricht sie ab (Generationszaehler gegen
+  nachtraeglich eintreffende Synthese).
+- **4.4:** Gateway-Schalter in der Kopfzeile, Zaehler in der Sync-Zeile.
+- **4.5:** Versionsnummer neben dem Namen im Schubladenkopf (aus dem
+  installierten Paket, nicht BuildConfig).
+- **4.6:** App meldet sich als **digitaler Assistent** (ASSIST/VOICE_COMMAND,
+  singleTask): langer Druck auf die Ein-Aus-Taste startet sofort die Aufnahme.
+  Bewusst nicht ueber dem Sperrbildschirm. Zuweisung unter Einstellungen →
+  Standard-Apps → Digitaler Assistent.
+- **4.7:** Nachlaufzeit vor dem Senden 1,2 → 1,8 s.
+
 ## 2026-08-15 (Sprache Stufe 2: die App hoert und spricht — KatAgent 4.2)
 - Mikrofonknopf in der Eingabezeile: aufnehmen (AAC/M4A, 16 kHz mono), zum
   Manager schicken, erkannten Text **freihaendig direkt abschicken**. Neue

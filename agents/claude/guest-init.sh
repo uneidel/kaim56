@@ -1,5 +1,41 @@
 #!/bin/sh
 # PID 1 der Claude-microVM. Liest Instanz-Config von der Config-Disk (vdb).
+#
+# --- Overlay-Wurzel (Basis read-only + Upper je Instanz) ----------------------
+# Der Manager haengt die geteilte Basis ro an und gibt per Bootarg fc_upper=
+# das rw-Upper-Geraet mit. Hier: Upper mounten, overlayfs zusammensetzen,
+# pivot_root, dieses Skript im neuen Root neu ausfuehren. Der Marker
+# /.fc-overlay existiert nur IM Overlay (liegt im Upper) und verhindert die
+# Endlos-Rekursion. Schlaegt irgendetwas fehl, bootet die VM auf der ro-Basis
+# weiter (degradiert, aber erreichbar) statt gar nicht.
+mount -t proc proc /proc 2>/dev/null
+if [ ! -f /.fc-overlay ]; then
+  UP=$(sed -n 's/.*fc_upper=\([^ ]*\).*/\1/p' /proc/cmdline)
+  if [ -n "$UP" ]; then
+    mount -t devtmpfs devtmpfs /dev 2>/dev/null
+    # Wurzel ist read-only -> als Mountpoint MUSS ein Verzeichnis dienen,
+    # das im Image existiert (/mnt); mkdir auf / schluege fehl.
+    # -o sync: stop() zieht der VM den Stecker (SIGTERM an Firecracker) —
+    # ohne sync laegen die letzten Schreibungen noch im Page-Cache und waeren
+    # weg (beobachtet: 0-Byte-Datei). Synchron ist bei unserer Schreiblast ok.
+    if mount -o sync "$UP" /mnt 2>/dev/null; then
+      mkdir -p /mnt/upper /mnt/work /mnt/root
+      if mount -t overlay overlay \
+           -o lowerdir=/,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; then
+        touch /mnt/root/.fc-overlay
+        mkdir -p /mnt/root/oldroot
+        cd /mnt/root
+        pivot_root . oldroot && exec chroot . /init
+        echo "[init] WARN: pivot_root fehlgeschlagen — weiter ohne Overlay"
+        cd /
+      else
+        echo "[init] WARN: overlay-Mount fehlgeschlagen — weiter ohne Overlay"
+      fi
+    else
+      echo "[init] WARN: Upper $UP nicht mountbar — weiter ohne Overlay"
+    fi
+  fi
+fi
 mount -t proc     proc     /proc  2>/dev/null
 mount -t sysfs    sysfs    /sys   2>/dev/null
 mount -t devtmpfs devtmpfs /dev   2>/dev/null
@@ -51,6 +87,34 @@ fc_reconcile() {
 if [ -n "$FC_INSTANCE" ] && [ -n "$GW" ]; then
   fc_reconcile
   ( while true; do sleep 5; fc_reconcile; done ) &
+fi
+
+# Abo-Anmeldung (Claude Max/Pro): das lebende Credential des Hosts beim Boot
+# holen, damit `claude -p` als Abo laeuft statt "Not logged in" zu melden.
+# Kommt ueber den Manager (nur claude-Template, per Source-IP); die kurzlebige
+# accessToken-Erneuerung macht Claude Code dann pro Sitzung selbst.
+if [ -n "$GW" ]; then
+  mkdir -p /home/node/.claude
+  # Kein curl im Image -> python3 (ist ohnehin da). Schreibt die Datei nur,
+  # wenn wirklich der claudeAiOauth-Block kam, nie eine Fehlermeldung.
+  if python3 - "$GW" <<'PY'
+import json, sys, urllib.request
+gw = sys.argv[1]
+try:
+    d = json.load(urllib.request.urlopen(f"http://{gw}:8700/api/claude-credentials", timeout=10))
+    if "claudeAiOauth" not in d:
+        raise ValueError("no oauth block")
+    open("/home/node/.claude/.credentials.json", "w").write(json.dumps(d))
+except Exception as e:
+    print("[init] claude-cred:", e); sys.exit(1)
+PY
+  then
+    chown -R node:node /home/node/.claude
+    chmod 600 /home/node/.claude/.credentials.json
+    echo "[init] Claude-Abo-Anmeldung geladen"
+  else
+    echo "[init] WARN: keine Claude-Anmeldung vom Manager (claude -p meldet 'Not logged in')"
+  fi
 fi
 
 # Agent laeuft als node (uid 1000) — claude-code erlaubt Aktionen nicht als root

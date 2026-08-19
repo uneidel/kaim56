@@ -21,6 +21,11 @@ _session = None
 
 def run_claude(msg):
     global _session
+    # /reset leert die Claude-Code-Sitzung (neuer Kontext) — dasselbe, was der
+    # OpenRouter-Agent kann. Die App reicht /reset jetzt durch.
+    if msg.strip() == "/reset":
+        _session = None
+        return "🔄 Neue Unterhaltung."
     cmd = ["claude", "-p", msg, "--output-format", "json"]
     if _session:
         cmd += ["--resume", _session]

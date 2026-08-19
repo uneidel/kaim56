@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 # mkfs.ext4 liegt in /usr/sbin — das steht in der PATH einer normalen
 # Nutzer-Shell nicht drin, und root braucht es fuer ein Datei-Image nicht.
 export PATH="$PATH:/usr/sbin:/sbin"
-INST=/home/ulrich/firecracker/instances/openrouter-rootfs.ext4
+INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/openrouter-rootfs.ext4
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
 
 echo "== [1] docker build =="
@@ -29,14 +29,14 @@ echo "== [4] als Instanz-Rootfs ablegen =="
 # als Blockgeraet offen, mischen sich altes und neues Image und der Gast faellt
 # beim naechsten Boot in einen ext4-Checksum-Panic. Erst danebenlegen, dann
 # atomar umhaengen — eine laufende VM behaelt ihren alten Inode bis zum Stop.
-for pid in /home/ulrich/firecracker/run/*.pid; do
+for pid in "${FC_DIR:-/home/ulrich/firecracker}"/run/*.pid; do
   [ -e "$pid" ] || continue
   p=$(cat "$pid" 2>/dev/null)
   # /proc statt kill -0: firecracker laeuft als root, ein Signal-Test aus einer
   # Nutzer-Shell schlaegt dort fehl und die Warnung bliebe stumm.
   if [ -n "$p" ] && [ -d "/proc/$p" ]; then
     n=$(basename "$pid" .pid)
-    grep -q "openrouter-rootfs" "/home/ulrich/firecracker/instances/$n.json" 2>/dev/null &&
+    grep -q "openrouter-rootfs" ""${FC_DIR:-/home/ulrich/firecracker}"/instances/$n.json" 2>/dev/null &&
       echo "⚠️  Instanz '$n' laeuft auf diesem Rootfs — sie sieht das neue Image erst nach Stop/Start."
   fi
 done

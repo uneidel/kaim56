@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Baut das Prime-Agent-Rootfs (primeintellect.ai) -> instances/prime-rootfs.ext4.
 cd "$(dirname "$0")"
-INST=/home/ulrich/firecracker/instances/prime-rootfs.ext4
+INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/prime-rootfs.ext4
 export PATH="$PATH:/usr/sbin:/sbin"  # mkfs.ext4 liegt in /usr/sbin
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
 
