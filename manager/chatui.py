@@ -182,6 +182,18 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
 .slrow code{flex:none;color:var(--accent)}
 .slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* ---- Aeste (Tree-Chat) ---- */
+#branchbar{display:flex;align-items:center;gap:10px;padding:7px 12px;
+  background:var(--accent-100);border:1px solid var(--accent-400)}
+.bb-label{flex:1;font-size:.8rem;color:var(--accent-700)}
+.bb-btn{font-family:var(--font-heading);font-weight:600;font-size:.8rem;cursor:pointer;
+  background:var(--accent);color:var(--accent-contrast);border:1px solid var(--accent);padding:4px 12px}
+details.ast{margin:0 0 22px;border-left:2px solid var(--accent-400);padding-left:14px}
+details.ast>summary{cursor:pointer;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-700);margin-bottom:12px;user-select:none;list-style-position:inside}
+details.ast .row{margin-bottom:18px}
+#branchBtn.on{color:var(--accent-700);border-color:var(--accent-400);background:var(--accent-100)}
+
 /* ---- Composer ---- */
 #comp{flex:none;padding:10px 14px 18px;background:var(--bg)}
 #box{max-width:760px;margin:0 auto;background:var(--panel);border:1px solid var(--border);
@@ -239,11 +251,16 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   <div id=log><div class=wrap id=msgs></div></div>
 
   <div id=comp>
+    <div id=branchbar style="max-width:760px;margin:0 auto 6px;display:none">
+      <span class=bb-label>⑂ Nebenast aktiv (Tiefe <span id=bdepth>1</span>) — Antworten laufen im geerbten Kontext</span>
+      <button class=bb-btn onclick=backBranch()>↩ zurück zum Hauptthema</button>
+    </div>
     <div id=slashhint style="max-width:760px;margin:0 auto 6px;display:none"></div>
     <div id=box class=blueprint><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision-capable agents only)" onclick="document.getElementById('file').click()"></button>
+        <button class=icon id=branchBtn title="Nebenast öffnen: Rückfrage stellen, ohne das Hauptthema zu verschmutzen (↩ bringt dich zurück)" onclick=openBranch()>⑂</button>
         <button class=icon id=micBtn title="Sprechen (nochmal tippen = fertig)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*" hidden onchange=addImage(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
@@ -284,11 +301,11 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(convs.slice(0,200)))
 function toShared(list){return list.map(c=>({
   id:String(c.id), title:c.title||'', mode:'server', instance:c.agent||'',
   updatedAt:c.ts||0,
-  messages:(c.msgs||[]).filter(m=>!m.busy).map(m=>({user:m.role==='user', text:m.content||'', image:m.image}))
+  messages:(c.msgs||[]).filter(m=>!m.busy).map(m=>({user:m.role==='user', text:m.content||'', image:m.image, branch:m.branch||0}))
 }));}
 function fromShared(list){return (list||[]).map(c=>({
   id:String(c.id), agent:c.instance||'', title:c.title||'', ts:c.updatedAt||0,
-  msgs:(c.messages||[]).map(m=>({role:m.user?'user':'assistant', content:m.text||'', image:m.image}))
+  msgs:(c.messages||[]).map(m=>({role:m.user?'user':'assistant', content:m.text||'', image:m.image, branch:m.branch||0}))
 }));}
 let _pushT=null;
 function pushShared(delay){
@@ -399,11 +416,12 @@ function drawConvs(){
     `<button class=x title="Delete" onclick="delChat(event,'${c.id}')">✕</button></div>`).join('')
     ||'<div class=side-foot style="border:none">No chats yet.</div>';
 }
-function newChat(){cur=null;draw();drawConvs();$('t').focus()}
+function newChat(){cur=null;draw();drawConvs();branchUi();$('t').focus()}
 function openChat(id){cur=convs.find(c=>c.id===id)||null;
   if(innerWidth<820)$('side').classList.add('hidden');
   if(cur){agent=cur.agent;$('agent').value=agent;refreshState()}
-  draw();drawConvs()}
+  if(cur&&cur.abranch===undefined)cur.abranch=(cur.msgs.length?(cur.msgs[cur.msgs.length-1].branch||0):0);
+  draw();drawConvs();branchUi()}
 function delChat(e,id){e.stopPropagation();
   convs=convs.filter(c=>c.id!==id);if(cur&&cur.id===id)cur=null;save();draw();drawConvs()}
 
@@ -421,7 +439,7 @@ function draw(){
         .map(s=>`<button onclick="suggest(this)">${esc(s)}</button>`).join('')+`</div></div></div>`;
     return;
   }
-  m.innerHTML=cur.msgs.map((x,i)=>{
+  const row=(x,i)=>{
     const pic=x.image?`<img src="data:image/jpeg;base64,${x.image}" alt="">`:'';
     if(x.role==='user')
       return `<div class="row me"><div class=body>${pic}${esc(x.content).replace(/\n/g,'<br>')}</div></div>`;
@@ -429,7 +447,20 @@ function draw(){
     const tools=x.busy?'':`<div class=tools><button onclick="copyMsg(this,${i})">Copy</button>`+
       `<button onclick="speakMsg(${i})">Vorlesen</button></div>`;
     return `<div class=row><div class=av>${IC.bot}</div><div class=body>${botHtml(x.content,false)}${busy}${tools}</div></div>`;
-  }).join('');
+  };
+  /* Aeste: zusammenhaengende Nachrichten mit branch>0 werden zu einem
+     einklappbaren Block — offen nur, solange der Ast noch aktiv ist. */
+  let html='',i=0;
+  while(i<cur.msgs.length){
+    const b=cur.msgs[i].branch||0;
+    if(!b){html+=row(cur.msgs[i],i);i++;continue}
+    const start=i;let n=0;
+    let seg='';
+    while(i<cur.msgs.length&&(cur.msgs[i].branch||0)>0){seg+=row(cur.msgs[i],i);i++;n++}
+    const live=(i>=cur.msgs.length)&&(cur.abranch||0)>0;
+    html+=`<details class=ast ${live?'open':''}><summary>⑂ Nebenast · ${n} Nachrichten</summary>${seg}</details>`;
+  }
+  m.innerHTML=html;
   scroll();
 }
 function splitThink(s){
@@ -582,6 +613,29 @@ async function speakText(text){
 }
 function speakMsg(i){ if(cur&&cur.msgs[i])speakText(splitThink(cur.msgs[i].content).ans); }
 
+/* ---------- Aeste (Tree-Chat) ---------- */
+function branchUi(){
+  const d=(cur&&cur.abranch)||0;
+  $('branchbar').style.display=d>0?'flex':'none';
+  $('bdepth').textContent=d;
+  $('branchBtn').classList.toggle('on',d>0);
+}
+function openBranch(){
+  if(ctrl||!agent)return;
+  const t=$('t').value.trim();
+  const d=((cur&&cur.abranch)||0)+1;
+  /* send() legt bei Bedarf selbst einen neuen Chat an — im Callback existiert cur. */
+  sendRaw('/branch'+(t?' '+t:''),d,d,()=>{
+    cur.abranch=d;branchUi();
+    if(t){$('t').value='';autogrow()}
+  });
+}
+function backBranch(){
+  if(ctrl||!cur||!(cur.abranch>0))return;
+  const d=cur.abranch;
+  sendRaw('/back',d,Math.max(0,d-1),()=>{cur.abranch=Math.max(0,d-1);branchUi()});
+}
+
 /* ---------- Steering: dem laufenden Agenten reinrufen ---------- */
 async function steer(text){
   $('t').value='';autogrow();
@@ -624,22 +678,28 @@ function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min
 $('t').addEventListener('input',()=>{autogrow();slashHint();});
 $('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
 
+let RAW=null;   /* {text,u,r,cb} — von sendRaw() gesetzt (Ast-Kommandos) */
+function sendRaw(text,u,r,cb){ if(ctrl)return; RAW={text,u,r,cb}; send(); }
 async function send(fromButton){
   if(ctrl){
     const t=$('t').value.trim();
     if(!fromButton&&t){ return steer(t); }   /* Enter mit Text: reinrufen */
     ctrl.abort();return;                      /* Button (■) bricht ab */
   }
-  const text=$('t').value.trim();
+  const raw=RAW; RAW=null;
+  const text=raw?raw.text:$('t').value.trim();
   if(!text&&!img)return;
   if(!agent)return alert('No instance with TRANSPORT=web available.');
   if(!cur){cur={id:String(Date.now()),agent:agent,title:(text||'Image').slice(0,42),ts:Date.now(),msgs:[]};
     convs.unshift(cur)}
-  cur.msgs.push({role:'user',content:text,image:img||undefined});
-  const reply={role:'assistant',content:'',busy:true};
+  const tagU=raw?raw.u:((cur.abranch||0));
+  const tagR=raw?raw.r:((cur.abranch||0));
+  cur.msgs.push({role:'user',content:text,image:img||undefined,branch:tagU||undefined});
+  const reply={role:'assistant',content:'',busy:true,branch:tagR||undefined};
   cur.msgs.push(reply);
+  if(raw&&raw.cb)raw.cb();
   const payload={message:text,chat:cur.id}; if(img)payload.image=img;
-  img=null;drawThumb();$('t').value='';autogrow();
+  img=null;drawThumb();if(!raw){$('t').value='';autogrow();}
   cur.ts=Date.now();save();draw();drawConvs();
   ctrl=new AbortController();
   $('send').textContent='■';$('send').classList.add('stop');
@@ -660,7 +720,8 @@ async function send(fromButton){
     if(!reply.content)reply.content='_(empty reply)_';
     if(VOICE_IN){ VOICE_IN=false; speakText(splitThink(reply.content).ans); }
     $('send').textContent='➤';$('send').classList.remove('stop');
-    save();draw();refreshState();gwLoad();
+    if(text.trim&&String(text).trim()==='/reset'&&cur)cur.abranch=0;
+    save();draw();refreshState();gwLoad();branchUi();
   }
 }
 

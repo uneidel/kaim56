@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-19 (Tree-Chat + Key-Injection-Gateway AKTIV)
+- **Tree-Chat (Aeste)**: Rueckfragen verschmutzen das Hauptthema nicht mehr.
+    `/branch [thema]` oeffnet einen Nebenast (voller geerbter Kontext,
+    verschachtelbar); `/back` schliesst ihn: der Ast wird zu EINER
+    `[Randnotiz]`-Zeile verdichtet (oder mit `/back drop` spurlos verworfen),
+    der Kontext steht wieder auf dem Verzweigungspunkt. Web-Chat: ⑂-Button,
+    Ruecksprung-Leiste, Ast-Nachrichten eingerueckt + einklappbar; Ast-Tiefe
+    synct in den Shared-Store. Trim pausiert bei offenem Ast. E2E bewiesen:
+    Hauptthema intakt, Ast nur als Randnotiz.
+- **Key-Injection-Gateway (OneCLI-Muster), gebaut vom Fable-Subagenten und
+    AKTIVIERT**: LLM-Keys verlassen den Host nicht mehr. Agenten senden Chat-
+    Completions an den Manager (`/api/llm/<backend>/chat/completions`), der
+    injiziert Authorization beim Weiterleiten (echtes SSE-Streaming, Fehler
+    transparent). Schalter `LLM_KEY_PROXY` in den Settings (an); Agent-Boot
+    zeigt `url=http://172.30.x.1:8700/api/llm/...`. `/model`-Wechsel bleibt
+    proxy-faehig; llama weiterhin direkt. Der Secret-Broker bleibt fuer
+    andere Secrets bestehen.
+- Tests: 53 gruen (Tree-Chat open/close/drop, Proxy-URL/kein Bearer, Route).
+
+
 ## 2026-08-19 (Oracle-Tool + Playbooks-Panel)
 - **oracle** (pi.dev-Idee "second opinion before acting"): Zweitmeinung vor
     riskanten Aktionen — eigener LLM-Aufruf ohne Tools, challenged die

@@ -64,6 +64,12 @@ elif ORCA_MODEL or ORCA_URL:
     LLM_KEY_SECRET = "ORCAROUTER_API_KEY"
     OR_URL = _openai_chat_url(ORCA_URL or "https://api.orcarouter.ai/v1")
     OR_MODEL = ORCA_MODEL or os.environ.get("OPENROUTER_MODEL") or "openai/gpt-4o"
+# Key-Injection-Proxy (OneCLI-Muster): bei KEY_PROXY=1 (Config-Disk) gehen die
+# Chat-Requests an den Manager, der den Backend-Key beim Weiterleiten injiziert
+# — der Key erreicht die VM nie. Die Ziel-URL entsteht bewusst LAZY in
+# _llm_url(): _manager_base() ist hier noch nicht definiert, und /model kann
+# das Backend zur Laufzeit wechseln. llama.cpp bleibt direkt (lokal erreichbar,
+# Key optional — da gibt es nichts zu verstecken).
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
@@ -159,7 +165,7 @@ def _set_model(cmd):
     global OR_MODEL, OR_URL, LLM_NAME, LLM_KEY_SECRET, LLM_BACKEND, OR_KEY
     rest = cmd[len("/model"):].strip()
     if not rest or rest in ("show", "status"):
-        return f"🧠 Modell: {OR_MODEL} ueber {LLM_NAME} ({OR_URL})"
+        return f"🧠 Modell: {OR_MODEL} ueber {LLM_NAME} ({_llm_url()})"
     if ":" in rest and rest.split(":", 1)[0] in _MODEL_BACKENDS:
         prov, mdl = rest.split(":", 1)
         name, url, secret = _MODEL_BACKENDS[prov]
@@ -350,6 +356,11 @@ def ensure_or_key():
     optional — fehlt er, laeuft der Agent ohne Auth (leerer Bearer), das ist
     fuer einen Server ohne --api-key der Normalfall und kein Fehler."""
     global OR_KEY
+    if _llm_proxy_active():
+        # Proxy-Modus: der Manager injiziert den Key beim Weiterleiten — die
+        # VM braucht (und bekommt) keinen. Ein Broker-Abruf hier waere genau
+        # das Leck, das der Proxy verhindern soll.
+        return ""
     if OR_KEY:
         return OR_KEY
     try:
@@ -362,6 +373,33 @@ def ensure_or_key():
         if LLM_BACKEND != "llama":
             print(f"{LLM_KEY_SECRET} nicht vom Manager zu bekommen: {e!r}", flush=True)
     return OR_KEY
+
+
+def _llm_proxy_active():
+    """Key-Injection-Proxy an? Nur fuer die Router-Backends — llama.cpp ist
+    lokal und hat keinen schuetzenswerten Cloud-Key, das bleibt direkt."""
+    return bool(os.environ.get("KEY_PROXY")) and LLM_BACKEND in ("openrouter",
+                                                                 "orcarouter")
+
+
+def _llm_url():
+    """Ziel-URL fuer Chat-Requests, je Aufruf frisch: im Proxy-Modus der
+    Manager-Pfad (der injiziert den Key), sonst die direkte Backend-URL.
+    Lazy statt beim Import, weil /model das Backend zur Laufzeit wechselt."""
+    if _llm_proxy_active():
+        return f"{_manager_base()}/api/llm/{LLM_BACKEND}/chat/completions"
+    return OR_URL
+
+
+def _llm_headers():
+    """Request-Header fuer Chat-Requests. Im Proxy-Modus OHNE Authorization —
+    den setzt der Manager beim Weiterleiten; ein Bearer aus der VM waere
+    bestenfalls ein Dummy und suggeriert nur, hier laege ein Key."""
+    h = {"Content-Type": "application/json",
+         "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"}
+    if not _llm_proxy_active():
+        h["Authorization"] = f"Bearer {ensure_or_key()}"
+    return h
 
 
 def t_spawn_subagent(task, model=None):
@@ -1434,9 +1472,8 @@ def or_chat(messages, tools, model=None):
     body = json.dumps(_b).encode()
     last = ""
     for attempt in range(LLM_RETRIES + 1):
-        req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
-            "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
-            "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
+        req = urllib.request.Request(_llm_url(), data=body, method="POST",
+                                     headers=_llm_headers())
         try:
             r = urllib.request.urlopen(req, timeout=120)
             d = json.loads(r.read().decode())
@@ -1514,7 +1551,7 @@ def _inject_playbooks():
 # Wiederkehrende Auftraege als Kommando (pi.dev-Idee "prompt templates").
 # Expansion passiert HIER im Agenten — funktioniert damit in Web, App und
 # Signal gleichermassen. "/daily bitte kurz" -> Template-Text + " bitte kurz".
-_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps")
+_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps", "/branch", "/back")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
 
@@ -1590,6 +1627,8 @@ def _trim_history():
     gleich neu. Nur ZWISCHEN Turns aufrufen, nie im Tool-Zyklus."""
     if len(_history) <= CTX_MAX_MSGS:
         return
+    if _branch_depth() > 0:
+        return          # offener Nebenast: nicht trimmen, Marker muss stehen bleiben
     head = _history[0]
     prior, convo = "", []
     for m in _history[1:]:
@@ -1656,6 +1695,63 @@ def _drain_steer(hist, on_token=None):
     return bool(msgs)
 
 
+# --- Aeste (Tree-Chat): Nebenfrage im geerbten Kontext, sauberer Ruecksprung --
+# /branch oeffnet einen Ast: ein Marker merkt sich den Punkt. /back schliesst
+# den innersten Ast: alles nach dem Marker wird zu EINER Randnotiz verdichtet
+# (bzw. mit "drop" spurlos verworfen) — das Hauptthema bleibt unverschmutzt,
+# aber informiert. Verschachtelt moeglich (Stack ueber Marker im Verlauf).
+BRANCH_MARK = "[Ast]"
+NOTE_TAG = "[Randnotiz]"
+
+
+def _branch_depth():
+    return sum(1 for m in _history
+               if m.get("role") == "system"
+               and str(m.get("content", "")).startswith(BRANCH_MARK))
+
+
+def _branch_open(cmd):
+    thema = cmd[len("/branch"):].strip()
+    _history.append({"role": "system", "content":
+                     BRANCH_MARK + (f" Nebenast: {thema}" if thema else " Nebenast") +
+                     " — der Nutzer stellt eine Rueckfrage abseits des Hauptthemas."})
+    return f"⑂ Nebenast geoeffnet (Tiefe {_branch_depth()})." +         (f" Thema: {thema}" if thema else "")
+
+
+def _branch_close(cmd):
+    drop = cmd[len("/back"):].strip().lower() in ("drop", "verwerfen")
+    idx = None
+    for i in range(len(_history) - 1, 0, -1):
+        m = _history[i]
+        if m.get("role") == "system" and str(m.get("content", "")).startswith(BRANCH_MARK):
+            idx = i
+            break
+    if idx is None:
+        return "Kein offener Nebenast."
+    segment = _history[idx + 1:]
+    note = ""
+    if not drop and segment:
+        try:
+            lines = []
+            for m in segment:
+                c = _msg_text(m)
+                if m.get("role") in ("user", "assistant") and c:
+                    lines.append(("Nutzer: " if m["role"] == "user" else "Agent: ") + c[:300])
+            r = or_chat([{"role": "system", "content":
+                          "Fasse diesen Nebenast eines Gespraechs in EINER Zeile (max. 140 "
+                          "Zeichen) zusammen: Kernfrage und Ergebnis. Nur die Zeile."},
+                         {"role": "user", "content": "\n".join(lines)[:6000]}], [])
+            note = (r.get("content") or "").strip().splitlines()[0][:160]
+        except Exception:
+            note = ""
+    del _history[idx:]
+    if note:
+        _history.append({"role": "system", "content": f"{NOTE_TAG} Nebenast geklaert: {note}"})
+    left = _branch_depth()
+    return ("↩ Zurueck im " + ("Hauptthema" if left == 0 else f"Ast Tiefe {left}") +
+            ("." if drop or not note else f" — Randnotiz: {note}"))
+
+
 def _tool_loop(hist):
     """Tool-Schleife auf einer beliebigen Nachrichtenliste. `hist` ist entweder
     das persistente _history (Gespraech) oder eine Wegwerf-Liste (Heartbeat)."""
@@ -1694,6 +1790,10 @@ def run(user_message):
         return _set_model(user_message)
     if user_message.startswith("/steps"):
         return _set_steps(user_message)
+    if user_message.startswith("/branch"):
+        return _branch_open(user_message)
+    if user_message.startswith("/back"):
+        return _branch_close(user_message)
     # /fresh: zustandslos in einem Wegwerf-Kontext laufen — das Gespraechs-
     # _history bleibt unangetastet (sonst wischte ein Heartbeat einen laufenden
     # App-Chat weg, weil beide sich dasselbe _history teilen). Fuer den
@@ -1733,9 +1833,8 @@ def or_chat_stream(messages, tools, on_token):
     # holbar, da schon Tokens geflossen sein koennen).
     r = None
     for attempt in range(LLM_RETRIES + 1):
-        req = urllib.request.Request(OR_URL, data=body, method="POST", headers={
-            "Authorization": f"Bearer {ensure_or_key()}", "Content-Type": "application/json",
-            "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"})
+        req = urllib.request.Request(_llm_url(), data=body, method="POST",
+                                     headers=_llm_headers())
         try:
             r = urllib.request.urlopen(req, timeout=180)
             break
@@ -1826,6 +1925,12 @@ def run_stream(user_message, on_token, image=None):
     if user_message.startswith("/steps"):
         on_token(_set_steps(user_message))
         return
+    if user_message.startswith("/branch"):
+        on_token(_branch_open(user_message))
+        return
+    if user_message.startswith("/back"):
+        on_token(_branch_close(user_message))
+        return
     # /fresh: wie in run() zustandslos, Gespraech unangetastet. Heartbeats
     # brauchen kein Streaming — einmal die Antwort ausgeben.
     if user_message.startswith("/fresh"):
@@ -1912,4 +2017,4 @@ def init():
     os.makedirs(WORKDIR, exist_ok=True)
     load_plugins()
     TOOLS = builtin_schema() + init_mcp()
-    log(f"agent bereit: backend={LLM_BACKEND} url={OR_URL} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")
+    log(f"agent bereit: backend={LLM_BACKEND} url={_llm_url()} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")

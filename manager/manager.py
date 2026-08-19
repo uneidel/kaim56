@@ -56,6 +56,9 @@ SETTINGS_SCHEMA = [
     {"key": "SIGNAL_API", "label": "Signal REST API URL"},
     {"key": "LLAMA_ENDPOINT", "label": "llama.cpp endpoint (OpenAI-compatible base URL, e.g. http://10.0.0.50:8080/v1)"},
     {"key": "LLAMA_API_KEY", "label": "llama.cpp API key (optional, only if --api-key is set)"},
+    {"key": "LLM_KEY_PROXY", "label": "LLM key injection proxy (1 = Keys bleiben auf dem Host, VMs proxern über den Manager)", "options": [
+        {"value": "", "label": "— aus (Agent holt Key via Broker) —"},
+        {"value": "1", "label": "an — Keys verlassen den Host nie"}]},
     {"key": "TTS_VOICE", "label": "TTS voice (Piper)", "options": [
         {"value": "", "label": "— default (de-thorsten-medium) —"},
         {"value": "de-thorsten-medium", "label": "Deutsch · Thorsten (medium)"},
@@ -86,7 +89,17 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish")
-GUEST_POST_PREFIXES = ("/api/memory/",)
+GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
+# Credential-Injection-Gateway (OneCLI-Muster): der Agent schickt seine
+# Chat-Requests an /api/llm/<backend>/chat/completions statt direkt zum
+# Router; der Manager haengt beim Weiterleiten den Authorization-Header aus
+# den Settings an. So verlassen die LLM-Keys den Host NIE: eine kompromittierte
+# VM kann hoechstens ueber den Manager Modelle rufen (sichtbar, drosselbar),
+# aber keinen Key exfiltrieren und ausserhalb des Systems weiterbenutzen.
+LLM_PROXY_UPSTREAMS = {
+    "openrouter": ("https://openrouter.ai/api/v1/chat/completions", "OPENROUTER_API_KEY"),
+    "orcarouter": ("https://api.orcarouter.ai/v1/chat/completions", "ORCAROUTER_API_KEY"),
+}
 # Gesetzte Geheimnisse verlassen den Manager nie im Klartext — die UI bekommt
 # diesen Marker und schickt ihn beim Speichern unveraendert zurueck, wo er
 # verworfen wird. Ein echter leerer Wert loescht den Eintrag weiterhin.
@@ -1984,6 +1997,12 @@ def make_config_disk(inst):
     cfg["FC_INSTANCE"] = inst["name"]   # fuer den Host-Ordner-Reconciler im Gast
     if inst["name"] == ORCH_INSTANCE:   # nur der Orchestrator darf Tasks verwalten
         cfg["TASK_ADMIN"] = "1"
+    # Key-Injection-Proxy aktiv? Dann schickt der Agent Chat-Requests an den
+    # Manager statt direkt zum Router — die VM sieht so nie einen LLM-Key
+    # (auch nicht per Secret-Broker). Der Schalter liegt in den geteilten
+    # Settings, damit ALLE Instanzen konsistent umgestellt werden.
+    if load_settings().get("LLM_KEY_PROXY") == "1":
+        cfg["KEY_PROXY"] = "1"
     d = os.path.join(RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
     # Tool-Plugins (firecracker/plugins/*.py) mit auf die Disk — der Agent laedt
@@ -3764,7 +3783,7 @@ footer{border-top:1px solid var(--color-divider)}
   instead). The same agent code drives OpenRouter, <b>OrcaRouter</b> (gateway,
   <code>api.orcarouter.ai</code> or self-hosted OrcaRouter-Lite) and a local llama.cpp &#8212; the
   backend is picked by which env is set (<code>ORCAROUTER_MODEL</code> / <code>LLAMA_ENDPOINT</code>,
-  else OpenRouter); the key comes from the Settings tab via the secret broker. Built-in tools: bash, files,
+  else OpenRouter); the key comes from the Settings tab — with <code>LLM_KEY_PROXY</code> on (default here), LLM keys never enter a VM at all: agents call <code>/api/llm/&#8249;backend&#8250;</code> on the manager, which injects the Authorization header on egress (OneCLI pattern); the broker remains for other secrets. Built-in tools: bash, files,
   http_fetch, web_search, read_pdf, spawn_subagent, create_task, read_inbox, list_agents,
   recall_tasks, skills, memory, katfs remote files, secrets, send_signal. The system prompt
   (persona &#8594; <code>AGENT_SYSTEM</code>) always gets a standing memory instruction appended; on the
@@ -3780,7 +3799,7 @@ footer{border-top:1px solid var(--color-divider)}
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
   3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; risky
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
-  <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (one .py per tool in <code>plugins/</code>) ride the config disk into the VM and register at agent start.</p></div>
+  <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (one .py per tool in <code>plugins/</code>) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
@@ -5997,6 +6016,92 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _llm_proxy(self, _pp):
+        """POST /api/llm/<backend>/chat/completions — Credential-Injection-
+        Gateway. Der Body geht unveraendert zum Router; der Manager injiziert
+        den Authorization-Header aus den Settings, damit der Key die VM nie
+        erreicht. Streams (SSE) werden zeilenweise durchgereicht, Upstream-
+        Fehler transparent (Status + Body). Bewusst KEINE Logs von Key oder
+        Body — genau die sollen den Host ja nicht verlassen bzw. nirgends
+        liegenbleiben."""
+        parts = _pp.strip("/").split("/")      # api/llm/<backend>/chat/completions
+        backend = parts[2] if len(parts) > 2 else ""
+        if backend not in LLM_PROXY_UPSTREAMS or parts[3:] != ["chat", "completions"]:
+            out = b'{"error":"unknown llm proxy path"}'
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers(); self.wfile.write(out); return
+        url, keyname = LLM_PROXY_UPSTREAMS[backend]
+        st = load_settings()
+        # Selbstgehostetes OrcaRouter-Lite: die geteilte Basis-URL gilt auch
+        # fuer den Proxy — sonst liefe der Umweg ploetzlich gegen die Cloud,
+        # waehrend der Direktmodus den eigenen Server spricht.
+        if backend == "orcarouter" and (st.get("ORCAROUTER_URL") or "").strip():
+            u = st["ORCAROUTER_URL"].strip().rstrip("/")
+            if not u.endswith("/chat/completions"):
+                u += "/chat/completions" if u.endswith("/v1") else "/v1/chat/completions"
+            url = u
+        key = (st.get(keyname) or "").strip()
+        if not key:
+            out = json.dumps({"error": f"{keyname} not configured on host"}).encode()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers(); self.wfile.write(out); return
+        ln = int(self.headers.get("Content-Length", 0) or 0)
+        payload = self.rfile.read(ln) if ln else b""
+        try:
+            want_stream = bool(json.loads(payload or b"{}").get("stream"))
+        except (ValueError, AttributeError):
+            want_stream = False
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+            "HTTP-Referer": "https://agents.kat56.de",
+            "X-Title": "kat56-agent"})
+        try:
+            r = urllib.request.urlopen(req, timeout=600)
+        except urllib.error.HTTPError as e:
+            # Upstream-Fehler 1:1 durchreichen: der Agent hat eigene Retry-
+            # Logik fuer 429/5xx und zeigt 4xx-Bodies als Fehlermeldung an.
+            data = e.read()
+            self.send_response(e.code)
+            self.send_header("Content-Type", e.headers.get("Content-Type", "application/json"))
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
+        except Exception as e:
+            data = json.dumps({"error": f"llm upstream unreachable: {e!r}"}).encode()
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
+        with r:
+            self.send_response(r.status)
+            self.send_header("Content-Type", r.headers.get("Content-Type", "application/json"))
+            if want_stream:
+                # SSE zeilenweise weiterschreiben und flushen — Voll-Puffern
+                # wuerde das Token-Streaming im Agenten toeten. readline()
+                # blockiert nur bis zur naechsten Event-Zeile, nie bis zum
+                # Stream-Ende. Ohne Content-Length endet die Antwort mit dem
+                # Verbindungsschluss (HTTP/1.0), urllib im Gast liest bis EOF.
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                try:
+                    while True:
+                        chunk = r.readline()
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass               # Client weg -> Upstream schliesst via with
+            else:
+                data = r.read()
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
     def do_POST(self):
         if not self._auth():
             return
@@ -6008,6 +6113,11 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"error":"forbidden"}')
             return
+        if _pp.startswith("/api/llm/"):
+            # LLM-Key-Injection: eigener Zweig ganz vorn, weil die Antwort
+            # gestreamt sein kann und nicht ins JSON-Schema der uebrigen
+            # Routen passt.
+            return self._llm_proxy(_pp)
         # Sprache: der Dienst lauscht auf dem Loopback und ist von aussen nicht
         # erreichbar. Der Manager ist die einzige Tuer — er kennt den Anrufer
         # bereits (Basic-Auth bzw. Quell-IP) und reicht Roh-Audio bzw. WAV

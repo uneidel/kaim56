@@ -246,6 +246,49 @@ class AgentLogic(unittest.TestCase):
             a.BUILTIN.pop("echoplug", None)
             a.PLUGIN_TOOLS.discard("echoplug")
 
+    # --- Tree-Chat: /branch + /back -------------------------------------------
+    def test_branch_and_back(self):
+        a = self.a
+        old_hist = list(a._history)
+        old_chat = a.or_chat
+        try:
+            a._history[:] = [{"role": "system", "content": "s"},
+                             {"role": "user", "content": "Hauptthema"}]
+            a.or_chat = lambda msgs, tools, model=None: {"role": "assistant",
+                                                         "content": "Essenz der Rueckfrage"}
+            out = a._branch_open("/branch piper")
+            self.assertIn("Tiefe 1", out)
+            self.assertEqual(a._branch_depth(), 1)
+            a._history.append({"role": "user", "content": "Rueckfrage?"})
+            a._history.append({"role": "assistant", "content": "Antwort im Ast"})
+            out = a._branch_close("/back")
+            self.assertEqual(a._branch_depth(), 0)
+            self.assertIn("Hauptthema", out)
+            # Ast-Inhalt weg, Randnotiz da, Ursprung intakt
+            joined = " | ".join(str(m.get("content")) for m in a._history)
+            self.assertNotIn("Antwort im Ast", joined)
+            self.assertIn(a.NOTE_TAG, joined)
+            self.assertIn("Hauptthema", joined)
+            # /back ohne Ast
+            self.assertIn("Kein offener", a._branch_close("/back"))
+        finally:
+            a.or_chat = old_chat
+            a._history[:] = old_hist
+
+    def test_branch_drop(self):
+        a = self.a
+        old_hist = list(a._history)
+        try:
+            a._history[:] = [{"role": "system", "content": "s"}]
+            a._branch_open("/branch x")
+            a._history.append({"role": "user", "content": "geheim"})
+            a._branch_close("/back drop")
+            joined = " | ".join(str(m.get("content")) for m in a._history)
+            self.assertNotIn("geheim", joined)
+            self.assertNotIn(a.NOTE_TAG, joined)   # spurlos
+        finally:
+            a._history[:] = old_hist
+
     # --- Goal-Kommando ------------------------------------------------------
     def test_goal_set_show_off(self):
         try:
@@ -323,6 +366,59 @@ class AgentLogic(unittest.TestCase):
             self.assertEqual(captured["body"]["tool_choice"], "auto")
         finally:
             a.urllib.request.urlopen = orig
+
+    # --- Key-Injection-Proxy (Keys verlassen den Host nie) -------------------
+    def test_key_proxy_url_and_no_bearer(self):
+        """Mit KEY_PROXY=1 zeigt _llm_url() auf den Manager-Proxy-Pfad und
+        or_chat schickt KEINEN Authorization-Bearer mit — sonst laege der Key
+        doch wieder im Gast-Request und der ganze Umweg waere witzlos."""
+        a = self.a
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "ok"}}], "usage": {}}).encode()
+
+        def fake_urlopen(req, timeout=0):
+            captured["url"] = req.full_url
+            captured["headers"] = {k.lower(): v for k, v in req.header_items()}
+            return FakeResp()
+
+        orig_open, orig_base = a.urllib.request.urlopen, a._manager_base
+        old = (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET,
+               a.LLM_BACKEND, a.OR_KEY)
+        os.environ["KEY_PROXY"] = "1"
+        a.OR_KEY = "sk-super-geheim"          # darf NIE im Request auftauchen
+        a.LLM_BACKEND = "openrouter"
+        try:
+            a.urllib.request.urlopen = fake_urlopen
+            a._manager_base = lambda: "http://172.30.0.1:8700"
+            self.assertEqual(
+                a._llm_url(),
+                "http://172.30.0.1:8700/api/llm/openrouter/chat/completions")
+            a.or_chat([{"role": "user", "content": "hi"}], [])
+            self.assertEqual(
+                captured["url"],
+                "http://172.30.0.1:8700/api/llm/openrouter/chat/completions")
+            self.assertNotIn("authorization", captured["headers"])
+            self.assertNotIn("sk-super-geheim", json.dumps(captured["headers"]))
+            # /model-Wechsel muss im Proxy-Modus die PROXY-URL wechseln
+            a._set_model("/model orcarouter:tencent/hy3")
+            self.assertEqual(
+                a._llm_url(),
+                "http://172.30.0.1:8700/api/llm/orcarouter/chat/completions")
+        finally:
+            os.environ.pop("KEY_PROXY", None)
+            a.urllib.request.urlopen, a._manager_base = orig_open, orig_base
+            (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET,
+             a.LLM_BACKEND, a.OR_KEY) = old
+
+    def test_key_proxy_off_keeps_direct_url(self):
+        """Ohne KEY_PROXY bleibt alles beim Alten: direkte Backend-URL."""
+        a = self.a
+        os.environ.pop("KEY_PROXY", None)
+        self.assertEqual(a._llm_url(), a.OR_URL)
 
 
 # ===========================================================================
@@ -440,6 +536,18 @@ class ManagerFunctions(unittest.TestCase):
         m = self.m
         for k in m.PROVIDER_MODEL_KEY.values():
             self.assertIn(k, m.MODEL_KEYS)
+
+    def test_llm_proxy_route_registered(self):
+        """Injection-Gateway: der Pfad muss in der Gast-Positivliste stehen
+        (sonst 403 fuer die VM), die Upstreams muessen zu den Secret-Namen
+        passen und der Settings-Schalter muss im Schema auftauchen."""
+        m = self.m
+        self.assertIn("/api/llm/", m.GUEST_POST_PREFIXES)
+        self.assertEqual(set(m.LLM_PROXY_UPSTREAMS), {"openrouter", "orcarouter"})
+        for url, keyname in m.LLM_PROXY_UPSTREAMS.values():
+            self.assertTrue(url.endswith("/chat/completions"), url)
+            self.assertIn(keyname, m.SECRET_PARAMS)
+        self.assertIn("LLM_KEY_PROXY", [s["key"] for s in m.SETTINGS_SCHEMA])
 
     def test_overlay_upper_lifecycle(self):
         m = self.m
