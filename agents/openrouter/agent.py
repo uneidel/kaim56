@@ -477,6 +477,26 @@ def t_mission_finish(id, summary, failed=False):
         return f"Fehler: {e!r}"
 
 
+ORACLE_MODEL = os.environ.get("ORACLE_MODEL", "").strip()   # leer = aktuelles Modell
+ORACLE_PROMPT = (
+    "Du bist ein skeptischer Berater (Oracle): Zweitmeinung VOR einer Handlung. "
+    "Du handelst NIE selbst. Hinterfrage die Annahmen: Passt die Aktion zum "
+    "eigentlichen Auftrag? Ist das Ziel eindeutig identifiziert (ID + Inhalt, "
+    "nicht nur Uhrzeit/Name)? Was waere der Schaden, wenn die Annahme falsch "
+    "ist? Antworte knapp: erst 'EINWAND:' mit dem staerksten Gegenargument "
+    "(oder 'KEIN EINWAND'), dann max. 3 Zeilen Begruendung/Empfehlung.")
+
+
+def t_oracle(plan, kontext=""):
+    """Zweitmeinung vor einer Handlung (pi.dev-Idee 'oracle'): challenge der
+    Annahmen, ohne selbst zu handeln. Extra LLM-Aufruf ohne Tools; via
+    ORACLE_MODEL optional ein staerkeres Modell."""
+    msgs = [{"role": "system", "content": ORACLE_PROMPT},
+            {"role": "user", "content": f"GEPLANTE AKTION:\n{plan}\n\nKONTEXT:\n{kontext or '(keiner)'}"}]
+    r = or_chat(msgs, [], model=ORACLE_MODEL or None)
+    return (r.get("content") or "").strip() or "(Oracle ohne Antwort — im Zweifel NICHT handeln)"
+
+
 def t_notify(title, message=""):
     """Eine Push-Benachrichtigung an die Geraete des Nutzers schicken (App als
     Android-Systemnotification, Web-Manager als Glocke). Fuer wichtige
@@ -827,6 +847,14 @@ BUILTIN = {
                        "Mission abschliessen; failed=true bei Scheitern. Kurzes Fazit angeben.",
                        {"id": {"type": "string"}, "summary": {"type": "string"},
                         "failed": {"type": "boolean"}}, ["id", "summary"]),
+    "oracle": (t_oracle,
+               "Zweitmeinung VOR einer riskanten/irreversiblen Aktion: challenged deine "
+               "Annahmen, handelt nie selbst. plan = was du vorhast und warum; kontext = "
+               "relevante Fakten (IDs, Wortlaute, Nutzerauftrag). Bei 'EINWAND' nicht "
+               "handeln, sondern aufloesen oder rueckfragen.",
+               {"plan": {"type": "string", "description": "geplante Aktion + Begruendung"},
+                "kontext": {"type": "string", "description": "Fakten: IDs, Wortlaute, Auftrag"}},
+               ["plan"]),
     "notify": (t_notify,
                "Push-Benachrichtigung an die Geraete des Nutzers (App-Systemnotification + "
                "Web-Manager-Glocke). Fuer wichtige Ereignisse/Ergebnisse, wenn er nicht im "
@@ -1396,8 +1424,8 @@ def _hook_before_tool(name, args):
 
 
 # --- OpenRouter chat --------------------------------------------------------
-def or_chat(messages, tools):
-    _b = {"model": OR_MODEL, "messages": messages, "usage": {"include": True}}
+def or_chat(messages, tools, model=None):
+    _b = {"model": model or OR_MODEL, "messages": messages, "usage": {"include": True}}
     if tools:                       # leere tools-Liste NICHT mitschicken (400)
         _b["tools"] = tools
         _b["tool_choice"] = "auto"

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-19 (Oracle-Tool + Playbooks-Panel)
+- **oracle** (pi.dev-Idee "second opinion before acting"): Zweitmeinung vor
+    riskanten Aktionen — eigener LLM-Aufruf ohne Tools, challenged die
+    Annahmen, handelt nie selbst; via ORACLE_MODEL optional staerkeres Modell.
+    Playbook zwingt den Orchestrator, es vor delete_task & Co. zu nutzen; bei
+    "EINWAND" wird nicht gehandelt. Live mit dem realen MSFT-Loesch-Fehlszenario
+    verifiziert: Oracle erhob den korrekten Einwand, Agent verweigerte + fragte nach.
+- **Playbooks-Panel** im Personas-Tab: Regeln je Agent einsehen, ergaenzen,
+    entfernen (bisher nur per Chat/API moeglich).
+
+
 ## 2026-08-19 (Installer END-TO-END verifiziert — QEMU-Rig mit nested KVM)
 - Test-Rig: QEMU-VM (Debian 12 Cloud, seed.iso statt SMBIOS — der war der
     Haenger), nested KVM bestaetigt (/dev/kvm in der VM).

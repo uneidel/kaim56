@@ -1506,6 +1506,7 @@ AGENT_TOOLS_CATALOG = [
     {"name": "mission_finish", "desc": "Mission abschliessen (nur Orchestrator)"},
     {"name": "send_signal", "desc": "Signal-Nachricht an den Nutzer senden (nur erlaubte Nummern)"},
     {"name": "notify", "desc": "Push-Benachrichtigung an App + Web-Manager (Titel + Text)"},
+    {"name": "oracle", "desc": "Zweitmeinung vor riskanten Aktionen (challenged Annahmen, handelt nie)"},
     {"name": "list_agents", "desc": "Verfuegbare Agenten + Faehigkeiten (Routing)"},
     {"name": "recall_tasks", "desc": "Fruehere Aufgaben/Ergebnisse abfragen (Stammwissen)"},
     {"name": "list_skills", "desc": "Verfügbare Skills auflisten"},
@@ -3429,6 +3430,19 @@ footer{border-top:1px solid var(--color-divider)}
     </div>
     <div class=panel-foot><span id=prmsg class=msg></span><button class="btn btn-primary" onclick=savePrompt()>Save template</button></div>
   </div>
+
+  <div class=sec-head style="margin-top:36px">
+    <div><h6>Gelernte Regeln</h6><h3 style="font-size:22px">Playbooks</h3></div>
+    <span class="note text-muted">Feste Regeln je Agent — gelten JEDEN Turn. Der Agent lernt sie selbst aus Korrekturen (playbook_add); hier einsehen, ergaenzen, entfernen.</span>
+  </div>
+  <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class=field style="max-width:280px;margin-bottom:12px"><label>Agent</label>
+      <select class=input id=pbinst onchange=loadPlaybooks()></select></div>
+    <div id=pblist><span class=text-muted style="font-size:13px">…</span></div>
+    <div class="field span2" style="margin-top:14px"><label>Neue Regel</label>
+      <textarea class=input id=pbtext style="min-height:56px" placeholder="Aktienkurse immer per http_fetch von query1.finance.yahoo.com holen …"></textarea></div>
+    <div class=panel-foot><span id=pbmsg class=msg></span><button class="btn btn-primary" onclick=addPlaybook()>Add rule</button></div>
+  </div>
 </section>
 
 <section class="screen" id=s-skills>
@@ -4249,6 +4263,36 @@ function showTab(t){
 }
 window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();});
 
+async function loadPlaybooks(){
+  const sel=document.getElementById('pbinst');
+  if(!sel.options.length){
+    try{const insts=await (await fetch('/api/instances')).json();
+      sel.innerHTML=insts.map(i=>`<option${i.name==='orchestrator'?' selected':''}>${escT(i.name)}</option>`).join('');
+    }catch(e){}
+  }
+  const inst=sel.value||'orchestrator';
+  let pbs=[]; try{pbs=(await (await fetch('/api/playbooks?instance='+encodeURIComponent(inst))).json()).playbooks||[]}catch(e){}
+  document.getElementById('pblist').innerHTML=pbs.length?pbs.map(p=>
+    `<div style="display:flex;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--color-divider)">`+
+    `<span class=mono style="flex:none;font-size:11px;color:var(--color-neutral-500)">${escT(p.id||'')}</span>`+
+    `<span style="flex:1;font-size:13px">${escT(p.text||'')}</span>`+
+    `<button class="btn btn-ghost btn-sm" onclick="delPlaybook('${esc(inst)}','${esc(p.id)}')">✕</button></div>`).join('')
+    :'<span class=text-muted style="font-size:13px">Keine Regeln fuer diesen Agenten.</span>';
+}
+async function addPlaybook(){
+  const inst=document.getElementById('pbinst').value,text=document.getElementById('pbtext').value.trim();
+  if(!text)return;
+  const d=await (await fetch('/api/playbook-add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({instance:inst,text})})).json();
+  document.getElementById('pbmsg').textContent=d.added?'added ✓':(d.note||'?');
+  if(d.added)document.getElementById('pbtext').value='';
+  loadPlaybooks();
+}
+async function delPlaybook(inst,id){
+  await fetch('/api/playbook-remove',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({instance:inst,id})});
+  loadPlaybooks();
+}
 let PROMPTS=[];
 async function loadPrompts(){
   try{PROMPTS=(await (await fetch('/api/prompts')).json()).prompts||[]}catch(e){PROMPTS=[]}
@@ -4856,7 +4900,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadPrompts();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
+  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
   refreshUsage();
   // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
   // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
