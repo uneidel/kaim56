@@ -171,6 +171,22 @@ def _set_model(cmd):
     return f"🧠 Modell jetzt: {OR_MODEL} ueber {LLM_NAME} (bis zum Neustart)"
 
 
+def _set_steps(cmd):
+    """/steps [n] — max. Tool-Schritte pro Turn zur Laufzeit aendern (bis zum
+    Neustart; dauerhaft: AGENT_MAX_STEPS in der Instanz-Config). Lange
+    Recherchen brauchen mehr als die Standard-12, sonst enden sie mit
+    '(max. Tool-Schritte erreicht)'."""
+    global MAX_STEPS
+    rest = cmd[len("/steps"):].strip()
+    if not rest:
+        return f"🔢 max. Tool-Schritte je Turn: {MAX_STEPS}"
+    try:
+        MAX_STEPS = min(60, max(1, int(rest)))
+    except ValueError:
+        return "Nutzung: /steps [1-60]"
+    return f"🔢 max. Tool-Schritte jetzt: {MAX_STEPS} (bis zum Neustart)"
+
+
 # Default aus Env (OPENROUTER_REASONING), zur Laufzeit per /reasoning umschaltbar.
 _reasoning = (os.environ.get("OPENROUTER_REASONING", "").strip().lower() or None)
 if _reasoning not in (None, "low", "medium", "high"):
@@ -1470,7 +1486,7 @@ def _inject_playbooks():
 # Wiederkehrende Auftraege als Kommando (pi.dev-Idee "prompt templates").
 # Expansion passiert HIER im Agenten — funktioniert damit in Web, App und
 # Signal gleichermassen. "/daily bitte kurz" -> Template-Text + " bitte kurz".
-_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model")
+_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
 
@@ -1648,6 +1664,8 @@ def run(user_message):
         return _set_goal(user_message)
     if user_message.startswith("/model"):
         return _set_model(user_message)
+    if user_message.startswith("/steps"):
+        return _set_steps(user_message)
     # /fresh: zustandslos in einem Wegwerf-Kontext laufen — das Gespraechs-
     # _history bleibt unangetastet (sonst wischte ein Heartbeat einen laufenden
     # App-Chat weg, weil beide sich dasselbe _history teilen). Fuer den
@@ -1776,6 +1794,9 @@ def run_stream(user_message, on_token, image=None):
         return
     if user_message.startswith("/model"):
         on_token(_set_model(user_message))
+        return
+    if user_message.startswith("/steps"):
+        on_token(_set_steps(user_message))
         return
     # /fresh: wie in run() zustandslos, Gespraech unangetastet. Heartbeats
     # brauchen kein Streaming — einmal die Antwort ausgeben.

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-08-19 (Installer END-TO-END verifiziert — QEMU-Rig mit nested KVM)
+- Test-Rig: QEMU-VM (Debian 12 Cloud, seed.iso statt SMBIOS — der war der
+    Haenger), nested KVM bestaetigt (/dev/kvm in der VM).
+- **install.sh lief auf der frischen Maschine komplett durch**: Preflight,
+    Layout, Firecracker-Download, rootfs-Build via Docker IN der VM,
+    embed+mcp-hub-Container, systemd-Dienst mit generiertem Passwort.
+- **Finaler Beweis: eine Firecracker-microVM bootete INNERHALB der Test-VM**
+    (Overlay-Boot inkl. Upper, web-bridge antwortet 200). Einzige erwartete
+    Abweichung: NFS-WARN (kein NFS im Rig) — degradiert korrekt weiter.
+- Ein Installer-Bug gefunden+gefixt: Smoke-Test scheiterte an 401, weil er
+    ohne das frisch generierte Passwort curlte — 401 zaehlt jetzt als „lebt".
+
+
+## 2026-08-19 (Fix: „Denken" klappte beim Streamen immer wieder auf)
+- paint() ersetzt beim Streamen die letzte Nachricht je Token komplett — und
+    setzte das details-Element dabei stets wieder auf `open`. Jetzt wird der
+    vom Nutzer gewaehlte Auf/Zu-Zustand vor dem Repaint gemerkt und danach
+    wiederhergestellt; zugeklappt bleibt zugeklappt.
+
+
+## 2026-08-19 (/steps + jobresearcher-Fix + Config-Route)
+- **/steps [n]** — max. Tool-Schritte je Turn zur Laufzeit aendern (1-60,
+    bis Neustart; dauerhaft via AGENT_MAX_STEPS). Grund: Recherche-Laeufe des
+    jobresearcher endeten mit "(max. Tool-Schritte erreicht)" bei Standard-12.
+- **Neue Admin-Route** POST /api/instances/<n>/config {key,value} — einzelnen
+    Config-Wert setzen/loeschen (Secrets ausgeschlossen). Damit jobresearcher
+    dauerhaft auf AGENT_MAX_STEPS=30; Duplikat-Task (daily 08:00) geloescht.
+- /steps in Web-Slash-Hint und App-Picker (App-Eintrag kommt mit naechstem APK).
+
+
 ## 2026-08-19 (pi.dev-Ideen uebernommen: /model, Steering, Prompts, Plugins)
 - **/model** — Modell (und Backend) mitten in der Session wechseln, ohne
     Neustart, Kontext bleibt: `/model orcarouter:anthropic/claude-sonnet-4.6`,

@@ -6435,6 +6435,27 @@ class H(BaseHTTPRequestHandler):
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")
                     msg = set_instance_tools(name, body.get("tools") or [])
+                elif action == "config":
+                    # Einzelnen Config-Schluessel setzen/loeschen (Admin; Secrets
+                    # bleiben draussen — die gehen nur ueber den Broker).
+                    ln = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(ln) or b"{}")
+                    key = str(body.get("key", "")).strip()
+                    val = body.get("value", "")
+                    inst2 = next((i for i in load_instances() if i["name"] == name), None)
+                    if not inst2:
+                        msg = "unknown"
+                    elif not re.fullmatch(r"[A-Z][A-Z0-9_]{1,40}", key) or key in NEVER_PERSIST:
+                        msg = f"error: key '{key}' nicht erlaubt"
+                    else:
+                        cfg2 = inst2.setdefault("config", {})
+                        if val in ("", None):
+                            cfg2.pop(key, None)
+                        else:
+                            cfg2[key] = str(val)
+                        with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
+                            json.dump(inst2, fh, indent=2)
+                        msg = f"{key} " + ("removed" if val in ("", None) else f"= {val}") +                               (" (applies after stop/start)" if is_running(inst2) else "")
                 elif action == "persist":
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")

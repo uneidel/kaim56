@@ -162,7 +162,11 @@ sudo systemctl enable --now firecracker-manager
 # ── [7] Smoke-Test ───────────────────────────────────────────────────────────
 say "[7/7] Smoke-Test"
 sleep 3
-curl -fsS -o /dev/null "http://127.0.0.1:8700/" && echo "  Manager antwortet ✓" || fail "Manager antwortet nicht — journalctl -u firecracker-manager"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8700/" || echo 000)
+case "$CODE" in
+  200|401) echo "  Manager antwortet (HTTP $CODE) ✓";;   # 401 = laeuft, Auth aktiv
+  *) fail "Manager antwortet nicht (HTTP $CODE) — journalctl -u firecracker-manager";;
+esac
 FC_DIR="$FC_DIR" AGENT_PATH="$BASE/openrouter-agent/agent.py" \
   python3 "$FC_DIR/tests/e2e.py" AgentLogic ManagerFunctions 2>&1 | tail -2 || true
 

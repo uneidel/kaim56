@@ -457,7 +457,12 @@ function paint(){                      /* Streaming: nur den letzten Block updat
     const b=rows.length?rows[rows.length-1].querySelector('.body'):null;
     if(!b)return draw();
     const stick=atBottom();
+    /* Klappt der Nutzer "Denken" waehrend des Streams zu, darf der naechste
+       Repaint das nicht wieder aufreissen: Zustand merken und wiederherstellen. */
+    const d0=b.querySelector('details.think');
+    const keepOpen=d0?d0.open:null;
     b.innerHTML=botHtml(cur.msgs[cur.msgs.length-1].content,true);
+    if(keepOpen!==null){const d1=b.querySelector('details.think');if(d1)d1.open=keepOpen;}
     if(stick)scroll();
   });
 }
@@ -593,6 +598,7 @@ async function steer(text){
 const SLASH_BUILTIN=[
   ['/model','Modell wechseln (z. B. /model orcarouter:anthropic/claude-sonnet-4.6)'],
   ['/reasoning','Reasoning umschalten (low·medium·high·off)'],
+  ['/steps','Max. Tool-Schritte je Turn (z. B. /steps 30)'],
   ['/goal','Ziel setzen — Antworten werden gegen einen Judge verfeinert'],
   ['/reset','Kontext zuruecksetzen'],
 ];
