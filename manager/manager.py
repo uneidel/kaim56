@@ -2003,8 +2003,7 @@ def make_config_disk(inst):
 # overlayfs+pivot_root die Wurzel zusammen. Vorteil: keine 2-GB-Kopie je Start,
 # und mit inst["persist_disk"]=true ueberlebt die Schreibschicht (Installationen!)
 # Stop/Start. Andere Images laufen unveraendert ueber private_rootfs().
-OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/pi-rootfs.ext4",
-                  "instances/prime-rootfs.ext4", "instances/claude-rootfs.ext4"}
+OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/claude-rootfs.ext4"}
 UPPER_SIZE_MB = 1024          # Wegwerf-Schicht je Start
 UPPER_PERSIST_SIZE_MB = 4096  # persistente Schicht (apt/pip brauchen Luft); sparse
 

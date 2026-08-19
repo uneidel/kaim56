@@ -76,7 +76,7 @@ rsync -a "$SRC/manager/manager.py" "$SRC/manager/chatui.py" "$SRC/manager/webter
          "$SRC/manager/secret-policy.json" "$SRC/manager/run-tests.sh" "$FC_DIR/" 2>/dev/null || true
 rsync -a "$SRC/manager/templates/" "$FC_DIR/templates/"
 rsync -a "$SRC/manager/tests/" "$FC_DIR/tests/" 2>/dev/null || true
-for pair in "openrouter:openrouter-agent" "pi:pi-agent" "prime:prime-agent" "claude:claude-signal-firecracker"; do
+for pair in "openrouter:openrouter-agent" "claude:claude-signal-firecracker"; do
   from="${pair%%:*}"; to="${pair##*:}"
   [ -d "$SRC/agents/$from" ] && rsync -a --exclude '__pycache__' "$SRC/agents/$from/" "$BASE/$to/"
 done
@@ -118,8 +118,6 @@ if [ "$NO_BUILD" = "0" ]; then
       docker run -d --restart unless-stopped --name kaim56-voice -p 127.0.0.1:8770:8770 kaim56-voice )
   fi
   if [ "$WITH_AGENTS" = "1" ]; then
-    ( cd "$BASE/pi-agent"    && FC_DIR="$FC_DIR" bash build-pi-rootfs.sh )
-    ( cd "$BASE/prime-agent" && FC_DIR="$FC_DIR" bash build-prime-rootfs.sh )
     ( cd "$BASE/claude-signal-firecracker" && FC_DIR="$FC_DIR" PATH="$PATH:/sbin:/usr/sbin" bash build-rootfs.sh )
   fi
 else
