@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-19 (manager.py -> Paket-Aufteilung, Runde 1)
+- Strangler-Fig-Refactoring begonnen (Best-Practice: Scheibe fuer Scheibe,
+    Fassade, Tests als Netz): **manager.py von 6.705 auf ~2.470 Zeilen**.
+    Neues Paket `mgr/`: ui.py (die komplette Web-Oberflaeche, 1.934 Z.),
+    missions.py, notify.py, rules.py (Playbooks+Prompts), katfs.py.
+- Muster: manager.py bleibt systemd-Einstieg und Fassade (Re-Exports);
+    mgr-Module importieren NIE aus manager — Querbezuege (notify_add,
+    sem_store) werden per configure()/Injektion gesetzt. Test-Patchziele auf
+    die Submodule umgezogen; Suite unveraendert 53 gruen, Dienst lief nach
+    jeder Scheibe. install.sh kopiert mgr/ mit.
+- Naechste Scheiben (geplant): net (tap/NAT/NFS), vm (lifecycle/overlay),
+    tasks (+worker), signal (+HITL), store (sqlite), http (Handler-Split).
+
+
 ## 2026-08-19 (Tree-Chat + Key-Injection-Gateway AKTIV)
 - **Tree-Chat (Aeste)**: Rueckfragen verschmutzen das Hauptthema nicht mehr.
     `/branch [thema]` oeffnet einen Nebenast (voller geerbter Kontext,

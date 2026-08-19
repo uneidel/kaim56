@@ -75,6 +75,7 @@ rsync -a "$SRC/manager/manager.py" "$SRC/manager/chatui.py" "$SRC/manager/webter
          "$SRC/manager/mcp-catalog.json" "$SRC/manager/personas.json" \
          "$SRC/manager/secret-policy.json" "$SRC/manager/run-tests.sh" "$FC_DIR/" 2>/dev/null || true
 rsync -a "$SRC/manager/templates/" "$FC_DIR/templates/"
+rsync -a "$SRC/manager/mgr/" "$FC_DIR/mgr/"
 rsync -a "$SRC/manager/tests/" "$FC_DIR/tests/" 2>/dev/null || true
 for pair in "openrouter:openrouter-agent" "claude:claude-signal-firecracker"; do
   from="${pair%%:*}"; to="${pair##*:}"

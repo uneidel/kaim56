@@ -502,9 +502,10 @@ class ManagerFunctions(unittest.TestCase):
                 return 200, "application/octet-stream", files[path]
             raise AssertionError(op)
 
-        old = m.katfs_proxy_fs
+        import mgr.katfs as kmod
+        old = kmod.katfs_proxy_fs
         try:
-            m.katfs_proxy_fs = fake_proxy
+            kmod.katfs_proxy_fs = fake_proxy
             data, stats = m.katfs_zip("share1", ".")
             zf = zipfile.ZipFile(io.BytesIO(data))
             names = sorted(zf.namelist())
@@ -512,7 +513,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(zf.read("sub/b.txt"), b"BBB")
             self.assertEqual(stats["files"], 2)
         finally:
-            m.katfs_proxy_fs = old
+            kmod.katfs_proxy_fs = old
 
     def test_tool_catalog_matches_agent(self):
         """Drift-Wache: jedes Tool im Agenten (BUILTIN) muss im Manager-Katalog
@@ -593,11 +594,12 @@ class ManagerFunctions(unittest.TestCase):
     def test_mission_lifecycle(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-mi-")
-        old_file = m.MISSIONS_FILE
-        old_notify = m.notify_add
+        import mgr.missions as mmod
+        old_file = mmod.MISSIONS_FILE
+        old_notify = mmod.notify_add
         try:
-            m.MISSIONS_FILE = os.path.join(tmp, "missions.json")
-            m.notify_add = lambda *a, **k: ("x", "ok")     # kein echter Push im Test
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.notify_add = lambda *a, **k: ("x", "ok")   # kein echter Push im Test
             mid, note = m.mission_start("orchestrator", "Testziel", ["s1", "s2"])
             self.assertTrue(mid)
             self.assertEqual(m.mission_start("orchestrator", "", [])[0], None)
@@ -615,20 +617,21 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(done["status"], "done")
             self.assertIn("cannot", m.mission_admin("orchestrator", mid, "abort"))
         finally:
-            m.MISSIONS_FILE = old_file
-            m.notify_add = old_notify
+            mmod.MISSIONS_FILE = old_file
+            mmod.notify_add = old_notify
 
     def test_mission_caps(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-mi2-")
-        old_file = m.MISSIONS_FILE
+        import mgr.missions as mmod
+        old_file = mmod.MISSIONS_FILE
         try:
-            m.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
             for i in range(m.MISSION_MAX_ACTIVE):
                 self.assertTrue(m.mission_start("o", f"g{i}", ["s"])[0])
             self.assertIsNone(m.mission_start("o", "zuviel", ["s"])[0])
         finally:
-            m.MISSIONS_FILE = old_file
+            mmod.MISSIONS_FILE = old_file
 
     def test_usage_for_shape(self):
         m = self.m
@@ -641,9 +644,10 @@ class ManagerFunctions(unittest.TestCase):
     def test_prompt_store(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-pr-")
-        old = m.PROMPTS_FILE
+        import mgr.rules as rmod
+        old = rmod.PROMPTS_FILE
         try:
-            m.PROMPTS_FILE = os.path.join(tmp, "prompts.json")
+            rmod.PROMPTS_FILE = os.path.join(tmp, "prompts.json")
             self.assertEqual(m.prompt_upsert("Daily!", "Text"), "saved")   # Name normalisiert
             self.assertEqual(m.load_prompts()[0]["name"], "daily")
             self.assertEqual(m.prompt_upsert("daily", "Neu"), "saved")     # Update
@@ -652,15 +656,16 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m.prompt_delete("daily"), "deleted")
             self.assertEqual(m.prompt_delete("daily"), "unknown")
         finally:
-            m.PROMPTS_FILE = old
+            rmod.PROMPTS_FILE = old
 
     def test_notify_store(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-notif-")
-        old_file, old_sent = m.NOTIF_FILE, list(m._notif_sent)
+        import mgr.notify as nmod
+        old_file, old_sent = nmod.NOTIF_FILE, list(nmod._notif_sent)
         try:
-            m.NOTIF_FILE = os.path.join(tmp, "notifications.json")
-            m._notif_sent.clear()
+            nmod.NOTIF_FILE = os.path.join(tmp, "notifications.json")
+            nmod._notif_sent.clear()
             nid, note = m.notify_add("orchestrator", "Titel", "Text")
             self.assertTrue(nid)
             lst = m.load_notifications()
@@ -671,8 +676,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(m.load_notifications()[0]["read"])
             self.assertIsNone(m.notify_add("x", "", "")[0])   # leer -> nichts
         finally:
-            m.NOTIF_FILE = old_file
-            m._notif_sent[:] = old_sent
+            nmod.NOTIF_FILE = old_file
+            nmod._notif_sent[:] = old_sent
 
 
 # ===========================================================================
