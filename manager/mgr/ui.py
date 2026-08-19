@@ -674,7 +674,7 @@ footer{border-top:1px solid var(--color-divider)}
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px">
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>manager.py &#8212; the core</span>
-  <p class=card-body>Single-file Python service (stdlib only), runs as root under systemd
+  <p class=card-body>Split into an <code>mgr/</code> package (ui, store, signal, missions, notify, rules, mcp, katfs, gateway); manager.py stays the systemd entry, facade and composition root (VM lifecycle, networking, secrets, the HTTP handler). mgr modules never import back (no cycles); cross-refs are injected. Single-file Python service (stdlib only), runs as root under systemd
   (<code>firecracker-manager</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
   the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
   per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up

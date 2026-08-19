@@ -1,19 +1,22 @@
 # Changelog
 
-## 2026-08-19 (manager.py -> Paket-Aufteilung, Runde 1)
-- Strangler-Fig-Refactoring begonnen (Best-Practice: Scheibe fuer Scheibe,
-    Fassade, Tests als Netz): **manager.py von 6.705 auf ~2.470 Zeilen**.
-    Neues Paket `mgr/`: ui.py (die komplette Web-Oberflaeche, 1.934 Z.),
-    missions.py, notify.py, rules.py (Playbooks+Prompts), katfs.py.
-- Muster: manager.py bleibt systemd-Einstieg und Fassade (Re-Exports);
-    mgr-Module importieren NIE aus manager — Querbezuege (notify_add,
-    sem_store) werden per configure()/Injektion gesetzt. Test-Patchziele auf
-    die Submodule umgezogen; Suite unveraendert 53 gruen, Dienst lief nach
-    jeder Scheibe. install.sh kopiert mgr/ mit.
-- Naechste Scheiben (geplant): net (tap/NAT/NFS), vm (lifecycle/overlay),
-    tasks (+worker), signal (+HITL), store (sqlite), http (Handler-Split).
-
-
+## 2026-08-19 (manager.py -> Paket mgr/ — Refactoring abgeschlossen)
+- Strangler-Fig-Refactoring durch: **manager.py von 6.705 auf ~1.400 Zeilen
+    Kernlogik** (3.388 gesamt inkl. HTTP-Handler + main). Neun Module unter
+    `mgr/`: ui (Weboberflaeche), store (SQLite History/Usage/Semantik + Memory +
+    Task-Datei), signal (Versand/HITL/Empfang), missions, notify, rules
+    (Playbooks+Prompts), mcp, katfs, gateway.
+- Muster konsequent: manager.py bleibt systemd-Einstieg + Fassade (Re-Exports)
+    und Kompositions-Schicht (VM-Lifecycle, Networking, Secrets/instance_by_ip,
+    der HTTP-Handler `class H` und main verdrahten die Module — bleiben bewusst
+    hier). mgr-Module importieren NIE aus manager (Zyklen-Check sauber);
+    Querbezuege (notify_add, sem_store, load_settings, chat_log_append,
+    orchestrator_ping, load_instances) per configure()/Injektion.
+- Nach JEDER Scheibe: Import-Check, 53 Tests gruen, Dienst neu gestartet und
+    live geprueft (Signal-Empfaenger verbunden, katfs/gateway/hitl antworten).
+    install.sh kopiert mgr/ mit. Vier Stolperer unterwegs sauber gefixt
+    (Import-Reihenfolge, verirrte Injektionszeilen, zu grosser Schnitt, fehlender
+    uuid-Import) — genau wofuer das Test-Netz da ist.
 ## 2026-08-19 (Tree-Chat + Key-Injection-Gateway AKTIV)
 - **Tree-Chat (Aeste)**: Rueckfragen verschmutzen das Hauptthema nicht mehr.
     `/branch [thema]` oeffnet einen Nebenast (voller geerbter Kontext,

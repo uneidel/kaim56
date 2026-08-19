@@ -465,9 +465,10 @@ class ManagerFunctions(unittest.TestCase):
 
     def test_hitl_lifecycle(self):
         m = self.m
-        old_send = m.signal_send
+        import mgr.signal as sigmod
+        old_send = sigmod.signal_send
         try:
-            m.signal_send = lambda text, to=None: (True, "sent")
+            sigmod.signal_send = lambda text, to=None: (True, "sent")
             hid = m.hitl_create("orchestrator", "bash", "rm foo")
             self.assertIsNotNone(hid)
             self.assertEqual(m.hitl_status(hid), "pending")
@@ -476,18 +477,19 @@ class ManagerFunctions(unittest.TestCase):
             self.assertFalse(m.hitl_resolve(hid, True))     # nicht doppelt aufloesbar
             self.assertEqual(m.hitl_status("unbekannt"), "unknown")
         finally:
-            m.signal_send = old_send
+            sigmod.signal_send = old_send
 
     def test_hitl_no_signal_no_block(self):
         """Kann der Signal-Versand nicht (kein Empfaenger), gibt hitl_create None
         zurueck -> der Agent blockiert dann nicht."""
         m = self.m
-        old_send = m.signal_send
+        import mgr.signal as sigmod
+        old_send = sigmod.signal_send
         try:
-            m.signal_send = lambda text, to=None: (False, "no recipient")
+            sigmod.signal_send = lambda text, to=None: (False, "no recipient")
             self.assertIsNone(m.hitl_create("x", "bash", "y"))
         finally:
-            m.signal_send = old_send
+            sigmod.signal_send = old_send
 
     def test_katfs_zip_recursive(self):
         m = self.m
