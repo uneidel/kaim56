@@ -3797,7 +3797,7 @@ footer{border-top:1px solid var(--color-divider)}
   <b>Context offloader:</b> tool output over <code>OFFLOAD_MIN</code> is written to <code>.offload/</code>
   whole; the model sees a preview + reference and pages the rest via <code>offload_read</code>.
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
-  3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; risky
+  3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; the <b>oracle</b> tool gives a second opinion before destructive actions (challenges assumptions, never acts — playbook-enforced for the orchestrator); risky
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
   <code>/api/hitl</code>). <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (one .py per tool in <code>plugins/</code>) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
@@ -3811,14 +3811,14 @@ footer{border-top:1px solid var(--color-divider)}
   zur Orchestrator-VM. Laeuft bei jeder Aenderung mit, zusammen mit Changelog und diesem Tab.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Templates &amp; rootfs images</span>
-  <p class=card-body>Four templates (claude, openrouter, pi, prime), each with a Docker-built
+  <p class=card-body><b>Install anywhere:</b> <code>install.sh</code> in the repo deploys the whole stack on a fresh KVM machine (preflight, layout, Firecracker download, builds, systemd) — verified end-to-end in a nested-KVM QEMU rig. Four templates (claude, openrouter, pi, prime), each with a Docker-built
   ext4 image under <code>instances/*.ext4</code>. Rebuilding an image and restarting an instance is
   the update path &#8212; the per-start copy guarantees every boot runs the current image. The
   openrouter image carries node (npx MCP servers), python, mcp-remote, mcp-portainer and
   poppler; the agent code itself is ~68&#8201;KB.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Secret broker &amp; policy</span>
-  <p class=card-body>API keys and tokens never land in instance configs or on the config disk.
+  <p class=card-body><b>LLM keys go one step further:</b> with <code>LLM_KEY_PROXY</code> they never enter a VM — the manager injects them on egress (<code>/api/llm/&#8249;backend&#8250;</code>). API keys and tokens never land in instance configs or on the config disk.
   Guests fetch secrets at runtime from <code>/api/secret/&#8249;name&#8250;</code>; the manager identifies the
   instance by source IP and checks a per-instance/template allowlist
   (<code>secret-policy.json</code>). Sources: the 0600 secret store and the manager settings. MCP
@@ -3896,7 +3896,7 @@ footer{border-top:1px solid var(--color-divider)}
   <p class=card-body><b>Short term</b> is the conversation itself &#8212; the agent&#8217;s <code>_history</code> in VM RAM; <code>/reset</code> clears it, a restart too. <b>Long term is semantic:</b> <code>memory_store</code> embeds each note (multilingual-e5 on the CPU, <code>embed</code> container behind the manager) and stores text+vector in <code>history.db</code>. Every turn the agent embeds the user&#8217;s message and the manager returns the meaning-nearest notes (cosine), injected as a fresh <code>[Gedaechtnis]</code> block &#8212; only what fits the question, not the whole store. No LLM and no graph DB needed, so it runs on this host today; degrades to no recall (never an error) if the embedder is down. A richer knowledge-graph memory (Graphiti/Cognee) stays a possible upgrade.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Playbooks &#8212; rules the agent learns</span>
-  <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
+  <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Missions &#8212; multi-step autonomy</span>
   <p class=card-body>Plan + progress store for multi-step assignments, persisted on the host
