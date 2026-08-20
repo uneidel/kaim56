@@ -181,6 +181,9 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
 .slrow:hover{background:var(--panel-2)}
 .slrow code{flex:none;color:var(--accent)}
 .slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slrow.slsel{background:var(--panel-2);box-shadow:inset 3px 0 0 var(--accent)}
+.sltag{flex:none;margin-left:auto;font-size:.68rem;font-style:normal;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:0 6px;line-height:1.5}
+#slashhint{max-height:220px;overflow-y:auto;border-radius:10px}
 
 /* ---- Aeste (Tree-Chat) ---- */
 #branchbar{display:flex;align-items:center;gap:10px;padding:7px 12px;
@@ -660,23 +663,44 @@ let SLASH_PROMPTS=[],_spTs=0;
 async function slashPrompts(){
   if(Date.now()-_spTs>30000){_spTs=Date.now();
     try{SLASH_PROMPTS=((await (await fetch('/api/prompts')).json()).prompts||[])
-      .map(p=>['/'+p.name,p.text.slice(0,70)]);}catch(e){}}
+      .map(p=>['/'+p.name,p.text.slice(0,70),'tpl']);}catch(e){}}
   return SLASH_PROMPTS;
+}
+let SL_HITS=[],SL_SEL=-1;
+function slOpen(){return $('slashhint').style.display==='block'&&SL_HITS.length>0}
+function slClose(){$('slashhint').style.display='none';SL_HITS=[];SL_SEL=-1}
+function slRender(){
+  $('slashhint').innerHTML=SL_HITS.map((h,i)=>
+    `<div class="slrow${i===SL_SEL?' slsel':''}" onmousedown="event.preventDefault()" `+
+    `onclick="pickSlash('${esc(h[0])}')"><code>${esc(h[0])}</code>`+
+    `<span>${esc(h[1])}</span>${h[2]==='tpl'?`<em class=sltag>template</em>`:``}</div>`).join('');
+}
+function slMove(d){
+  if(!SL_HITS.length)return;
+  SL_SEL=(SL_SEL+d+SL_HITS.length)%SL_HITS.length; slRender();
+  const rows=$('slashhint').children; if(rows[SL_SEL])rows[SL_SEL].scrollIntoView({block:'nearest'});
 }
 async function slashHint(){
   const el=$('slashhint'),v=$('t').value;
-  if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){el.style.display='none';return}
+  if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){slClose();return}
   const all=SLASH_BUILTIN.concat(await slashPrompts());
-  const hits=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,5);
-  if(!hits.length){el.style.display='none';return}
-  el.innerHTML=hits.map(h=>`<div class=slrow onclick="pickSlash('${esc(h[0])}')">`+
-    `<code>${escT(h[0])}</code><span>${escT(h[1])}</span></div>`).join('');
-  el.style.display='block';
+  SL_HITS=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,8);
+  if(!SL_HITS.length){slClose();return}
+  SL_SEL=0; slRender(); el.style.display='block';
 }
-function pickSlash(c){$('t').value=c+' ';$('t').focus();$('slashhint').style.display='none';autogrow()}
+function pickSlash(c){$('t').value=c+' ';$('t').focus();slClose();autogrow()}
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
 $('t').addEventListener('input',()=>{autogrow();slashHint();});
-$('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
+$('t').addEventListener('keydown',e=>{
+  if(slOpen()){
+    if(e.key==='ArrowDown'){e.preventDefault();slMove(1);return;}
+    if(e.key==='ArrowUp'){e.preventDefault();slMove(-1);return;}
+    if(e.key==='Escape'){e.preventDefault();slClose();return;}
+    if((e.key==='Enter'||e.key==='Tab')&&!e.shiftKey&&!e.isComposing&&SL_SEL>=0){
+      e.preventDefault();pickSlash(SL_HITS[SL_SEL][0]);return;}
+  }
+  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send();}
+});
 
 let RAW=null;   /* {text,u,r,cb} — von sendRaw() gesetzt (Ast-Kommandos) */
 function sendRaw(text,u,r,cb){ if(ctrl)return; RAW={text,u,r,cb}; send(); }
