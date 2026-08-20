@@ -8,6 +8,7 @@
 Tools: bash, read_file, write_file, list_dir, http_fetch  + optional MCP-Server
 (stdio), zur Laufzeit vom Manager geholt. Transports: signal | web (via TRANSPORT). Stdlib only.
 """
+import itertools
 import json
 import os
 import socket
@@ -186,19 +187,31 @@ def _set_model(cmd):
 
 
 def _set_steps(cmd):
-    """/steps [n] — max. Tool-Schritte pro Turn zur Laufzeit aendern (bis zum
-    Neustart; dauerhaft: AGENT_MAX_STEPS in der Instanz-Config). Lange
-    Recherchen brauchen mehr als die Standard-12, sonst enden sie mit
-    '(max. Tool-Schritte erreicht)'."""
+    """/steps [n|unlimited] — max. Tool-Schritte pro Turn zur Laufzeit aendern
+    (bis zum Neustart; dauerhaft: AGENT_MAX_STEPS in der Instanz-Config).
+    '/steps 30' = bis zu 30 Runden, '/steps unlimited' = unbegrenzt (dann
+    begrenzen nur noch die Guardrails: Token-Budget + Rate-Limit am Key-Proxy)."""
     global MAX_STEPS
-    rest = cmd[len("/steps"):].strip()
+    rest = cmd[len("/steps"):].strip().lower()
     if not rest:
-        return f"🔢 max. Tool-Schritte je Turn: {MAX_STEPS}"
+        cur = "unlimited" if MAX_STEPS <= 0 else MAX_STEPS
+        return (f"🔢 max. Tool-Schritte je Turn: {cur}"
+                "  ·  /steps <1..x> oder /steps unlimited")
+    if rest in ("unlimited", "unbegrenzt", "inf", "infinite", "\u221e", "0", "none", "off"):
+        MAX_STEPS = 0
+        return ("🔢 max. Tool-Schritte jetzt: unlimited (bis zum Neustart) "
+                "\u2014 nur Guardrails begrenzen noch")
     try:
-        MAX_STEPS = min(60, max(1, int(rest)))
+        MAX_STEPS = max(1, int(rest))
     except ValueError:
-        return "Nutzung: /steps [1-60]"
+        return "Nutzung: /steps <1..x> oder /steps unlimited"
     return f"🔢 max. Tool-Schritte jetzt: {MAX_STEPS} (bis zum Neustart)"
+
+
+def _step_iter():
+    """Iterator fuer die Tool-Runden: begrenzt (range) oder unbegrenzt
+    (itertools.count) bei MAX_STEPS<=0. Liest MAX_STEPS bei jedem Aufruf frisch."""
+    return itertools.count() if MAX_STEPS <= 0 else range(MAX_STEPS)
 
 
 # Default aus Env (OPENROUTER_REASONING), zur Laufzeit per /reasoning umschaltbar.
@@ -1763,7 +1776,7 @@ def _branch_close(cmd):
 def _tool_loop(hist):
     """Tool-Schleife auf einer beliebigen Nachrichtenliste. `hist` ist entweder
     das persistente _history (Gespraech) oder eine Wegwerf-Liste (Heartbeat)."""
-    for _ in range(MAX_STEPS):
+    for _ in _step_iter():
         _drain_steer(hist)
         msg = or_chat(hist, TOOLS)
         hist.append(msg)
@@ -1965,7 +1978,7 @@ def run_stream(user_message, on_token, image=None):
             # gestreamt) und danach als Ganzes ausgegeben.
             on_token(_run_goal(_history, user_message))
             return
-        for _ in range(MAX_STEPS):
+        for _ in _step_iter():
             _drain_steer(_history, on_token)
             msg = or_chat_stream(_history, TOOLS, on_token)
             _history.append(msg)

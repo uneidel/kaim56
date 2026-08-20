@@ -652,7 +652,7 @@ async function steer(text){
 const SLASH_BUILTIN=[
   ['/model','Modell wechseln (z. B. /model orcarouter:anthropic/claude-sonnet-4.6)'],
   ['/reasoning','Reasoning umschalten (low·medium·high·off)'],
-  ['/steps','Max. Tool-Schritte je Turn (z. B. /steps 30)'],
+  ['/steps','Max. Tool-Schritte je Turn: /steps 30 oder /steps unlimited'],
   ['/goal','Ziel setzen — Antworten werden gegen einen Judge verfeinert'],
   ['/reset','Kontext zuruecksetzen'],
 ];

@@ -97,6 +97,20 @@ class AgentLogic(unittest.TestCase):
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
         cls.a.report_usage = lambda *a, **k: None   # kein Netz zum Manager
 
+    def test_steps_unlimited(self):
+        """/steps akzeptiert Zahl 1..x und 'unlimited' (0 = unbegrenzt)."""
+        import itertools
+        a = self.a; saved = a.MAX_STEPS
+        try:
+            a._set_steps("/steps 5"); self.assertEqual(a.MAX_STEPS, 5)
+            self.assertEqual(list(a._step_iter()), [0, 1, 2, 3, 4])
+            a._set_steps("/steps 999"); self.assertEqual(a.MAX_STEPS, 999)   # kein 60-Cap mehr
+            r = a._set_steps("/steps unlimited")
+            self.assertLessEqual(a.MAX_STEPS, 0); self.assertIn("unlimited", r)
+            self.assertIsInstance(a._step_iter(), itertools.count)           # unbegrenzt
+        finally:
+            a.MAX_STEPS = saved
+
     def test_tool_heartbeat_keeps_stream_alive(self):
         """Waehrend eines langsamen Tools muss der Stream ein sichtbares Tool-
         Status-Token (🔧) und periodische Heartbeats (·) senden, sonst kappt ein

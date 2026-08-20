@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- /steps now takes any count 1..x (60-cap removed) plus `/steps unlimited` (0 = unbounded rounds; only the guardrails — token budget + rate-limit — then apply). Web-chat + app slash-command help updated.
 - Fix: streamed chat could break mid-sentence with slow/local models — during tool execution no bytes flowed and an idle proxy/client timeout (Traefik 180s) cut the connection. Agent now streams a visible tool-status (🔧) plus a heartbeat (·, HEARTBEAT_SEC=30) while tools run, keeping the stream alive.
 - Externalised all site-specific values (domains, LAN IPs, uplink NIC, guest DNS) into gitignored `site.json` + `mcp-catalog.json`; source now uses neutral placeholders (example.com / 1.1.1.1 / eth0). Repo HEAD is free of internal infrastructure.
 - Leak-filter now also masks HuggingFace tokens (hf_…).

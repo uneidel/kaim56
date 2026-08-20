@@ -1,5 +1,5 @@
 // kAIm56 KatAgent — Android client for the kAIm56 agent platform
-// Copyright (C) 2026 the kAIm56 authors
+// Copyright (C) 2026 Ulrich Neidel
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
@@ -222,7 +222,7 @@ private val SLASH_CMDS = listOf(
     SlashCmd("/reasoning", "Reasoning umschalten (low · medium · high · off)", arg = true),
     SlashCmd("/goal", "Ziel setzen; Antwort wird gegen einen Judge verfeinert (off = aus)", arg = true),
     SlashCmd("/model", "Modell wechseln (z. B. orcarouter:anthropic/claude-sonnet-4.6)", arg = true),
-    SlashCmd("/steps", "Max. Tool-Schritte je Turn (z. B. 30)", arg = true),
+    SlashCmd("/steps", "Max. Tool-Schritte je Turn: 30 oder unlimited", arg = true),
     SlashCmd("/reset", "Gesprächskontext zurücksetzen"),
     SlashCmd("/agents", "Agenten-Verwaltung öffnen"),
     SlashCmd("/help", "Befehle anzeigen"),
