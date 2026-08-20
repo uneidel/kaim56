@@ -27,7 +27,7 @@ _DEFAULT_MCPS = [
     {"name": "homeassistant",
      "description": "Home Assistant (Lesen/Assist via MCP)",
      "command": "mcp-remote",
-     "args": ["http://10.0.0.54:8123/mcp_server/sse", "--header",
+     "args": ["http://10.0.0.10:8123/mcp_server/sse", "--header",
               "Authorization: Bearer ${HA_TOKEN}", "--transport", "sse-only", "--allow-http"]},
 ]
 

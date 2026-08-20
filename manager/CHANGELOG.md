@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Externalised all site-specific values (domains, LAN IPs, uplink NIC, guest DNS) into gitignored `site.json` + `mcp-catalog.json`; source now uses neutral placeholders (example.com / 1.1.1.1 / eth0). Repo HEAD is free of internal infrastructure.
 - Leak-filter now also masks HuggingFace tokens (hf_…).
 - Scrubbed phone-number defaults from templates/agent configs (now empty); merged the two page footers into a single row.
 - Die Topbar-Nav war ueberladen (Glocke + „Missions" draengten Changelog und
@@ -47,7 +48,7 @@
 
 ## 2026-08-20 (App 5.9: Fehlermeldungen verfallen + Lizenz-Header)
 - Status-/Fehlermeldungen in der App klebten dauerhaft (z. B. DNS-Fehler
-    „Unable to resolve agents.kat56.de", wenn das Handy nicht im Heimnetz/VPN
+    „Unable to resolve agents.example.com", wenn das Handy nicht im Heimnetz/VPN
     ist). Jetzt: Fehler verfallen nach 8 s, Hinweise nach 4 s, und ein
     erfolgreicher Task-Load raeumt einen frueheren Fehler sofort weg.
 - AGPL/SPDX-Header in allen Kotlin-Quellen der App (Lizenz-Nachzug).
@@ -316,7 +317,7 @@
 
 
 ## 2026-08-19 (Fix: "Save password?"-Popup beim Chat-Wechsel)
-- Chrome bot beim Navigieren zu /chat an, ein "Passwort fuer kat56.de" zu
+- Chrome bot beim Navigieren zu /chat an, ein "Passwort fuer example.com" zu
     speichern — mit der katfs node-id als vermeintlichem Nutzernamen und dem
     Maskierungs-Marker `__unchanged__` als Passwort. Ursache: die API-Key-Felder
     im Settings-Tab waren `type=password`; Chromes Passwort-Manager paart so ein
@@ -590,7 +591,7 @@
   Assistant und Portainer waren von jedem Agenten erreichbar, ob ihm der MCP
   zugewiesen war oder nicht. Jetzt je Instanz eine eigene FORWARD-Kette:
   MCP-Endpunkte der zugewiesenen Server (aus dem Katalog) → ACCEPT, Gast-DNS
-  (10.0.0.245:53) → ACCEPT, private Netze → **REJECT** (sofortiges
+  (1.1.1.1:53) → ACCEPT, private Netze → **REJECT** (sofortiges
   Scheitern statt 30-s-Timeout), Internet → ACCEPT. In vier Richtungen
   belegt (orchestrator↛HA, orchestrator→Internet, hass→HA, hass↛Portainer).
 - **MCP-Hub** (`mcp-hub/`, Docker, 127.0.0.1:8771): die MCP-Serverprozesse
@@ -732,7 +733,7 @@
   `h()` (html.escape) davor; mit praeparierter Instanz nachgewiesen: 0 rohe,
   4 entschaerfte Vorkommen.
 - **Offen (Konfiguration, kein Code):** `MANAGER_PASS` ist leer, `_auth()` laesst
-  dann jeden durch. Der Schutz haengt allein an Traefik — wer 10.0.0.240:8700
+  dann jeden durch. Der Schutz haengt allein an Traefik — wer 10.0.0.10:8700
   direkt erreicht, ist Admin. Siehe Hinweis unten.
 
 ## 2026-08-14 (Veraltete Ansichten: Tasks, Policy und Verbrauch ziehen nach)
@@ -827,7 +828,7 @@
 - **Befund:** seit dem Reboot um 03:07 erreichte keine microVM mehr DNS oder LLM
   (`gaierror -3`), auch der Orchestrator-Heartbeat lief ins Leere. Ursache war
   nicht die VM, sondern die NAT-Regel des Hosts: die Unit setzte
-  `Environment=HOSTIF=enp0s31f6`, der Uplink heisst aber `eno2`. MASQUERADE auf
+  `Environment=HOSTIF=eth0`, der Uplink heisst aber `eth0`. MASQUERADE auf
   ein nicht existierendes Interface trifft nichts — die Pakete der Gaeste gingen
   unmaskiert raus und kamen nie zurueck. Kein Log, keine Fehlermeldung.
 - **Fix:** `manager.py` verlaesst sich nicht mehr blind auf den Namen. Ein
@@ -837,7 +838,7 @@
 - Verifiziert: nach Manager- und Instanz-Neustart antwortet der Orchestrator in
   1,6 s ("pong") statt nach 20 s DNS-Timeout.
 - Hinweis: die installierte Unit unter `/etc/systemd/system/` traegt weiterhin
-  `HOSTIF=enp0s31f6` (root-only). Dank der Erkennung ist das folgenlos, sollte
+  `HOSTIF=eth0` (root-only). Dank der Erkennung ist das folgenlos, sollte
   aber bei Gelegenheit aufgeraeumt werden.
 
 ## 2026-08-14 (Chats live zwischen App und Web)
@@ -870,7 +871,7 @@
   colour (`currentColor` for the navy) so it carries in light and dark theme;
   the teal stays the accent.
 - The topbar no longer prints the hostname next to the wordmark (that was
-  `location.host`, i.e. `agents.kat56.de` — never a hardcoded string). Header is
+  `location.host`, i.e. `agents.example.com` — never a hardcoded string). Header is
   now mark + name only.
 - Unchanged on purpose: the `firecracker-manager.service` unit, the `~/firecracker`
   directory and the Firecracker binary path — those are the hypervisor, not the brand.

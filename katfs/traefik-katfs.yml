@@ -3,17 +3,17 @@
 http:
   routers:
     rtr-katfs:
-      rule: "Host(`katfs.kat56.de`)"
+      rule: "Host(`katfs.example.com`)"
       entryPoints: ["websecure"]
       middlewares: ["agents-auth@file"]     # gleiche Basic-Auth wie agents (admin / AGENTS_PASS)
       service: "srv-katfs"
       tls:
         certResolver: "desec"
         domains:
-          - main: "kat56.de"
-            sans: ["*.kat56.de"]
+          - main: "example.com"
+            sans: ["*.example.com"]
   services:
     srv-katfs:
       loadBalancer:
         servers:
-          - url: "http://10.0.0.240:8790"
+          - url: "http://10.0.0.10:8790"

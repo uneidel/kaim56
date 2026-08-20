@@ -400,7 +400,7 @@ def _llm_headers():
     den setzt der Manager beim Weiterleiten; ein Bearer aus der VM waere
     bestenfalls ein Dummy und suggeriert nur, hier laege ein Key."""
     h = {"Content-Type": "application/json",
-         "HTTP-Referer": "https://agents.kat56.de", "X-Title": "kat56-agent"}
+         "HTTP-Referer": "https://agents.example.com", "X-Title": "kaim56-agent"}
     if not _llm_proxy_active():
         h["Authorization"] = f"Bearer {ensure_or_key()}"
     return h

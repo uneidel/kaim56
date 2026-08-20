@@ -50,7 +50,7 @@ def configure(base, settings_fn=None, chat_log_fn=None, ping_fn=None):
 #     Nachrichten verschicken.
 #   * Die Bot-Nummer und der API-Zugang bleiben im Host. Die VM sieht sie nie.
 #   * Eine Drossel begrenzt den Schaden einer Schleife.
-SIGNAL_DEFAULT_API = "https://signalapi.kat56.de"
+SIGNAL_DEFAULT_API = "https://signal-api.example.com"
 SIGNAL_MAX_CHARS = 3500          # signal-cli nimmt mehr, Lesbarkeit nicht
 SIGNAL_RATE = (10, 300)          # hoechstens 10 Nachrichten je 5 Minuten
 _signal_sent = []                # Zeitstempel der letzten Sendungen

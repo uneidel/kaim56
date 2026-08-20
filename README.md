@@ -78,6 +78,10 @@ None of this is an accident — see `.gitignore`:
 - **Secrets**: `manager/settings.json` (API keys), `app/keystore/` (the app's signing
   key), `katfs/node/secret.key` (iroh identity), `manager/traefik-agents.yml`
   (basicAuth hash → provided as a sample in `examples/`)
+- **Site config**: `manager/site.json` (this host's public domain, DNS, uplink NIC)
+  and `manager/mcp-catalog.json` (real LAN endpoints of your MCP servers) — both
+  shipped as templates in `examples/`. Source defaults are neutral placeholders
+  (`example.com`, `1.1.1.1`, `eth0`), so the repo carries no internal addresses.
 - **Runtime data**: chat history, tasks, memory, history DB, audit log, `run/`
 - **Images**: `*.ext4` (rootfs, multi-GB) and `vmlinux` — built, not versioned
 - **Releases**: `*.apk` belong in the release area, not in history
@@ -86,16 +90,19 @@ Included, on the other hand, are `personas.json`, `skills.json`, `mcp-catalog.js
 and `secret-policy.json` — that is configuration or authored content, and the MCP
 entries reference secrets only as `${NAME}` placeholders.
 
-> Note: template and agent defaults ship **empty** phone-number fields (fill in your
-> own Signal bot / allowed senders at instance creation). Internal hostnames/IPs
-> still appear in configs, and earlier git history contains real phone numbers —
-> so treat this repo as **private** until the history is scrubbed.
+> Note: `HEAD` carries no secrets and no internal addresses — phone-number fields
+> ship **empty** and every host/IP/NIC lives in the gitignored `site.json` /
+> `mcp-catalog.json`. Only the earlier **git history** still contains real phone
+> numbers and addresses, so treat this repo as **private** until the history is
+> squashed or scrubbed (a single-commit publish avoids it entirely).
 
 ## Running the manager
 
 ```bash
 cd manager
 cp ../examples/settings.example.json settings.json   # add API keys (chmod 600)
+cp ../examples/site.example.json     site.json       # your domain / DNS / uplink NIC
+cp ../examples/mcp-catalog.example.json mcp-catalog.json  # optional: your MCP endpoints
 sudo python3 manager.py                              # or via firecracker-manager.service
 ```
 

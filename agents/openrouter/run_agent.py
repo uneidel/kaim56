@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import agent
 
 TRANSPORT = os.environ.get("TRANSPORT", "signal")
-SIGNAL_API = os.environ.get("SIGNAL_API", "https://signalapi.kat56.de").rstrip("/")
+SIGNAL_API = os.environ.get("SIGNAL_API", "https://signal-api.example.com").rstrip("/")
 SIGNAL_VERIFY = os.environ.get("SIGNAL_VERIFY", "true").strip().lower() not in ("0", "false", "no", "off")
 SIGNAL_NUMBER = os.environ.get("SIGNAL_NUMBER", "")
 ALLOWED_SENDERS = [s.strip() for s in os.environ.get("ALLOWED_SENDERS", "").split(",") if s.strip()]

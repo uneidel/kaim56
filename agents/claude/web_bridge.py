@@ -2,7 +2,7 @@
 """Web-Transport-Bridge: kleine Chat-UI + /api/chat, agent-aware (claude|fabric).
 
 Laeuft in der microVM auf 0.0.0.0:WEB_PORT. Wird NUR ueber den Manager-Proxy
-(agents.kat56.de/i/<name>/) erreicht, daher keine eigene Auth. Stdlib only.
+(agents.example.com/i/<name>/) erreicht, daher keine eigene Auth. Stdlib only.
 """
 import json
 import os

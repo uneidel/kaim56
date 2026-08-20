@@ -7,7 +7,7 @@ class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("katagent", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = sp.getString("serverUrl", "https://agents.kat56.de") ?: ""
+        get() = sp.getString("serverUrl", "https://agents.example.com") ?: ""
         set(v) = sp.edit().putString("serverUrl", v).apply()
 
     var instance: String

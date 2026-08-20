@@ -122,9 +122,24 @@ SETTINGS_KEEP = "__unchanged__"
 # Werte holt der Agent zur Laufzeit ueber /api/mcp-config.
 NEVER_PERSIST = SECRET_PARAMS | {"MCP_CONFIG"}
 
+# ---- Standort-Config (site.json): nicht-geheime, host-spezifische Werte ----
+# Domains/IPs/Interface dieser Installation an EINEM Ort, per .gitignore drau
+# ssen. Fehlt die Datei, greifen oeffentliche Defaults (example.com / 1.1.1.1
+# / eth0) — das Repo bleibt so frei von interner Infrastruktur.
+SITE_FILE = os.path.join(BASE, "site.json")
+def load_site():
+    try:
+        with open(SITE_FILE) as fh:
+            return json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return {}
+SITE = load_site()
+PUBLIC_HOST = SITE.get("PUBLIC_HOST") or "example.com"
+SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"
+
 POOL = "172.30.0.0/16"
 def _uplink_iface():
-    """Interface der Default-Route ("… dev eno2 …")."""
+    """Interface der Default-Route ("… dev eth0 …")."""
     try:
         out = subprocess.run(["ip", "-o", "route", "show", "default"],
                              capture_output=True, text=True, timeout=5).stdout.split()
@@ -140,14 +155,14 @@ def _pick_hostif():
     dann weder DNS noch LLM, und nichts protokolliert einen Fehler. Deshalb
     zaehlt ein gesetzter Name nur, wenn es das Interface wirklich gibt;
     sonst gewinnt die Default-Route."""
-    want = os.environ.get("HOSTIF", "")
+    want = os.environ.get("HOSTIF") or SITE.get("HOSTIF") or ""
     if want and os.path.exists(f"/sys/class/net/{want}"):
         return want
     auto = _uplink_iface()
     if want and auto:
         print(f"[net] HOSTIF={want} existiert nicht — nutze {auto} (Default-Route)",
               flush=True)
-    return auto or want or "eno2"
+    return auto or want or "eth0"
 
 
 HOSTIF = _pick_hostif()
@@ -1063,7 +1078,7 @@ def setup_tap(inst):
 # der MCPs, die in MCP_SERVERS der Instanz stehen, und dem DNS der Gaeste.
 # DNS fuer die Gaeste (landet via guest-init in resolv.conf). Site-spezifisch —
 # auf fremden Installationen per Env setzen; 1.1.1.1 funktioniert ueberall.
-GUEST_DNS = os.environ.get("GUEST_DNS", "10.0.0.245")
+GUEST_DNS = os.environ.get("GUEST_DNS") or SITE.get("GUEST_DNS") or "1.1.1.1"
 _PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 
 
@@ -1989,6 +2004,8 @@ def render():
                 .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
                 .replace("__SKILLS__", json.dumps(load_skills(), ensure_ascii=False))
                 .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
+                .replace("__PUBLIC_HOST__", PUBLIC_HOST)
+                .replace("__SIGNAL_HOST__", SIGNAL_HOST)
                 .replace("__HOME__", os.path.expanduser(
                     "~" + (os.environ.get("SUDO_USER") or "")))
                 )
@@ -2935,7 +2952,7 @@ class H(BaseHTTPRequestHandler):
         req = urllib.request.Request(url, data=payload, method="POST", headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
-            "HTTP-Referer": "https://agents.kat56.de",
+            "HTTP-Referer": f"https://{PUBLIC_HOST}",
             "X-Title": "kat56-agent"})
         try:
             r = urllib.request.urlopen(req, timeout=600)

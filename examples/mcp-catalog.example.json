@@ -1,0 +1,25 @@
+[
+  {
+    "name": "homeassistant",
+    "description": "Home Assistant (read/assist via MCP)",
+    "command": "mcp-remote",
+    "args": [
+      "http://10.0.0.10:8123/mcp_server/sse",
+      "--header", "Authorization: Bearer ${HA_TOKEN}",
+      "--transport", "sse-only", "--allow-http"
+    ]
+  },
+  {
+    "name": "portainer",
+    "description": "Portainer (Docker/stacks, read-only)",
+    "command": "mcp-portainer",
+    "args": [],
+    "env": {
+      "PORTAINER_URL": "http://10.0.0.20:9000",
+      "PORTAINER_API_KEY": "${PORTAINER_API_KEY}",
+      "PORTAINER_READ_ONLY": "true",
+      "PORTAINER_TLS_VERIFY": "false",
+      "PORTAINER_PROFILES": "BASE,DOCKER"
+    }
+  }
+]

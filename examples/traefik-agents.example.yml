@@ -4,7 +4,7 @@ http:
     srv-agents:
       loadBalancer:
         servers:
-          - url: "http://10.0.0.240:8700"
+          - url: "http://10.0.0.10:8700"
         passHostHeader: true
 
   middlewares:
@@ -15,7 +15,7 @@ http:
 
   routers:
     rtr-agents:
-      rule: "Host(`agents.kat56.de`)"
+      rule: "Host(`agents.example.com`)"
       service: srv-agents
       entryPoints:
         - websecure

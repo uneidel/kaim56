@@ -5,6 +5,10 @@
 # --- Laufzeit & Daten: gehoeren auf den Host, nie ins Repo -------------------
 # API-Keys (0600)
 manager/settings.json
+# Standort-Config (Domains/IPs/Interface) -> examples/site.example.json
+manager/site.json
+# MCP-Katalog mit echten LAN-Endpunkten -> examples/mcp-catalog.example.json
+manager/mcp-catalog.json
 # Chat-Verlauf, Aufgaben, Gedaechtnis, Wasserzeichen
 manager/chats.json
 manager/tasks.json

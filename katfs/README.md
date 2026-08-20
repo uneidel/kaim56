@@ -49,8 +49,8 @@ Am einfachsten über den **Firecracker-Manager**: Tab **„Sharing"** → *Share
 (er reicht diese Seite unter `/katfs/` durch, also mit seiner HTTPS-Herkunft und Auth).
 Direkt am Knoten braucht die File System Access API einen **sicheren Kontext** (HTTPS **oder** localhost):
 - **Desktop:** `ssh -L 8790:127.0.0.1:8790 <server>` → im Browser `http://127.0.0.1:8790` öffnen.
-- **Von überall (auch Handy):** Traefik-Route `katfs.kat56.de → 10.0.0.240:8790` (TLS) anlegen,
-  dann `https://katfs.kat56.de` öffnen.
+- **Von überall (auch Handy):** Traefik-Route `katfs.example.com → 10.0.0.10:8790` (TLS) anlegen,
+  dann `https://katfs.example.com` öffnen.
 
 Auf der Seite: **„Ordner freigeben"** → Verzeichnis wählen → **„Verbinden"** (node-id ist vorausgefüllt).
 Solange der Tab offen/verbunden ist, kann der Agent lesen/schreiben.

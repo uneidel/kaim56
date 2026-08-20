@@ -11,7 +11,7 @@ firecracker/
 ├── manager.py     Web-UI + API (Port 8700), laeuft als root
 ├── chatui.py      Chat-Oberflaeche (vom Manager unter /chat ausgeliefert)
 ├── firecracker-manager.service   systemd-Autostart
-└── traefik-firecracker.yml       Exposé via firecracker.kat56.de
+└── traefik-firecracker.yml       Exposé via manager.example.com
 ```
 
 ## Chat-Oberfläche (`/chat`)
@@ -40,7 +40,7 @@ Details:
   (Fallback; die Agent-zu-Agent-API `/i/<name>/api/chat` nutzt denselben Pfad).
 
 ## Netz-Modell (pro Instanz aus `index`)
-`host 172.30.<index>.1/30` · `guest 172.30.<index>.2/30` · `tap fc<index>` · MASQUERADE via `enp0s31f6`, Gast-DNS Pi-hole.
+`host 172.30.<index>.1/30` · `guest 172.30.<index>.2/30` · `tap fc<index>` · MASQUERADE via `eth0`, Gast-DNS Pi-hole.
 
 ## Instanz-JSON (`instances/<name>.json`)
 ```json
@@ -105,7 +105,7 @@ Kein Host-Ordner, sondern das Verzeichnis **des Rechners, an dem du gerade sitzt
 `iroh-fs/` gibt es per P2P an die Agenten (`remote_ls` / `remote_read` / `remote_write`).
 Der Manager reicht die Freigabe-Seite unter **`/katfs/`** durch — gleiche Herkunft,
 gleiche Auth und damit **HTTPS**, das die File System Access API zwingend braucht;
-der SSH-Tunnel bzw. die eigene `katfs.kat56.de`-Route aus `iroh-fs/README.md` ist
+der SSH-Tunnel bzw. die eigene `katfs.example.com`-Route aus `iroh-fs/README.md` ist
 dafür nicht mehr nötig. Der Tab zeigt Knoten-Status und ob gerade ein Browser teilt
 (`GET /api/katfs/status`). **Kein Mount:** ist der Tab zu, ist der Ordner weg —
 für dauerhafte Ordner die NFS-Mounts oben nehmen.
@@ -138,7 +138,7 @@ Die **node-id** ist etwas anderes und pro Instanz **kein** Wert: der Agent leite
 seinen Knoten aus der eigenen IP ab (`_katfs_base()` in `openrouter-agent/agent.py`
 → `http://<gateway>:8790`), die node-id sagt nur dem freigebenden *Browser*, wohin
 er sich verbindet. Soll eine Instanz einen *anderen* Knoten benutzen, braucht es
-eine Adresse: `KATFS_URL` in der Instanz-Config (z. B. `http://10.0.0.240:8790`).
+eine Adresse: `KATFS_URL` in der Instanz-Config (z. B. `http://10.0.0.10:8790`).
 
 ⚠️ `KATFS_SHARE`/`KATFS_URL` wertet erst ein **neu gebautes openrouter-Rootfs**
 aus (`agent.py` steckt im Image). Der Knoten selbst wird mit
@@ -170,10 +170,10 @@ Gast-Writes erscheinen auf dem Host als `ulrich` (all_squash/anonuid=1000).
 sudo cp /home/ulrich/firecracker/firecracker-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
 ```
-→ UI erreichbar unter `http://10.0.0.240:8700` (im LAN) und via Traefik unter
-`https://firecracker.kat56.de` (nach Einbau von `traefik-firecracker.yml`).
+→ UI erreichbar unter `http://10.0.0.10:8700` (im LAN) und via Traefik unter
+`https://manager.example.com` (nach Einbau von `traefik-firecracker.yml`).
 
-## Exposé (firecracker.kat56.de)
+## Exposé (manager.example.com)
 `traefik-firecracker.yml` in den **File-Provider-Ordner** des Traefik-Stacks legen
 (im traefik-Container `/etc/traefik/...`). Basic-Auth-Hash mit
 `htpasswd -nbB admin 'PW'` erzeugen. **Wichtig:** Der Manager steuert VMs als root —

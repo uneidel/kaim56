@@ -423,8 +423,8 @@ footer{border-top:1px solid var(--color-divider)}
       <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=mcpname placeholder="e.g. homeassistant"></div>
       <div class=field><label>Description</label><input class=input id=mcpdesc placeholder="What is this MCP?"></div>
       <div class=field><label>Command</label><input class=input id=mcpcmd placeholder="e.g. mcp-remote  or  npx"></div>
-      <div class=field><label>Args (one per line)</label><textarea class=input id=mcpargs style="min-height:80px;font-family:var(--font-mono);font-size:12.5px" placeholder="http://10.0.0.54:8123/mcp_server/sse&#10;--header&#10;Authorization: Bearer ${HA_TOKEN}"></textarea></div>
-      <div class="field span2"><label>Env (KEY=VALUE per line; use ${SECRET} for secrets)</label><textarea class=input id=mcpenv style="min-height:64px;font-family:var(--font-mono);font-size:12.5px" placeholder="PORTAINER_URL=http://10.0.0.187:9000&#10;PORTAINER_API_KEY=${PORTAINER_API_KEY}"></textarea></div>
+      <div class=field><label>Args (one per line)</label><textarea class=input id=mcpargs style="min-height:80px;font-family:var(--font-mono);font-size:12.5px" placeholder="http://10.0.0.10:8123/mcp_server/sse&#10;--header&#10;Authorization: Bearer ${HA_TOKEN}"></textarea></div>
+      <div class="field span2"><label>Env (KEY=VALUE per line; use ${SECRET} for secrets)</label><textarea class=input id=mcpenv style="min-height:64px;font-family:var(--font-mono);font-size:12.5px" placeholder="PORTAINER_URL=http://10.0.0.20:9000&#10;PORTAINER_API_KEY=${PORTAINER_API_KEY}"></textarea></div>
     </div>
     <div class=panel-foot><span id=mcpmsg class=msg></span><button class="btn btn-primary" onclick=saveMcp()>Save MCP</button></div>
   </div>
@@ -618,10 +618,10 @@ footer{border-top:1px solid var(--color-divider)}
 
       <rect class="bx" x="185" y="124" width="230" height="52"/>
       <text class="tt" x="300" y="145" text-anchor="middle">Traefik &#183; TLS + basicAuth</text>
-      <text class="ss" x="300" y="162" text-anchor="middle">agents.kat56.de</text>
+      <text class="ss" x="300" y="162" text-anchor="middle">__PUBLIC_HOST__</text>
       <rect class="bx" x="660" y="124" width="260" height="52"/>
       <text class="tt" x="790" y="145" text-anchor="middle">signal-cli REST</text>
-      <text class="ss" x="790" y="162" text-anchor="middle">signalapi.kat56.de</text>
+      <text class="ss" x="790" y="162" text-anchor="middle">__SIGNAL_HOST__</text>
 
       <path class="ln" d="M155 72 L282 124"/>
       <path class="ln" d="M445 72 L318 124"/>
@@ -788,7 +788,7 @@ footer{border-top:1px solid var(--color-divider)}
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
   <p class=card-body>Two directions, both through the signal-cli REST API
-  (<code>signalapi.kat56.de</code>, run in <code>json-rpc</code> mode). Inbound: the manager holds a
+  (<code>__SIGNAL_HOST__</code>, run in <code>json-rpc</code> mode). Inbound: the manager holds a
   stdlib WebSocket to <code>/v1/receive</code>; a message from an allow-listed sender is handed straight to
   the orchestrator (prefixed <code>/fresh</code> so each trigger starts on a clean context) and the turn lands
   in the shared chat history. json-rpc mode fixed the native-mode lock where a long receive blocked sending.

@@ -30,7 +30,7 @@ Debug-APK aufs Handy kopieren und öffnen → „Aus unbekannten Quellen erlaube
 (Oder per `adb install app-debug.apk`.)
 
 ## Konfiguration (Zahnrad oben rechts)
-- **Server-URL**: `https://agents.kat56.de` (nur im Heimnetz/VPN erreichbar).
+- **Server-URL**: `https://agents.example.com` (nur im Heimnetz/VPN erreichbar).
 - **Instanz**: Name einer **laufenden** Instanz im Manager (z. B. eine openrouter-/pi-Web-Instanz). Erst im Manager erstellen & starten.
 - **Benutzer/Passwort**: Manager-Basic-Auth (`admin` / …).
 - **Gemma-.task-Modell wählen**: eine `.task`-Datei (siehe unten). Wird in den App-Speicher kopiert und geladen.

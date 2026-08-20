@@ -43,7 +43,7 @@ mount -t devtmpfs devtmpfs /dev   2>/dev/null
 mkdir -p /dev/pts
 mount -t devpts   devpts   /dev/pts 2>/dev/null   # PTYs (webterm/Browser-Terminal)
 mount -t tmpfs    tmpfs    /tmp   2>/dev/null
-echo "nameserver 10.0.0.245" > /etc/resolv.conf
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
 export HOME=/home/node
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

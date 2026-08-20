@@ -52,8 +52,8 @@ journalctl -u claude-fc -f
 **3) Test:** katbot **direkt** `/help` schreiben → „🤖 katbot online".
 
 ## Netz-Details
-- tap0 = `172.30.0.1/30` (Host), Gast = `172.30.0.2/30`, NAT via `enp0s31f6`.
-- Gast-DNS = `10.0.0.245` (Pi-hole). Kernel konfiguriert eth0 via `ip=`-Bootparam.
+- tap0 = `172.30.0.1/30` (Host), Gast = `172.30.0.2/30`, NAT via `eth0`.
+- Gast-DNS = `1.1.1.1` (Pi-hole). Kernel konfiguriert eth0 via `ip=`-Bootparam.
 
 ## Sicherheit
 - **Stärkere Isolation** als Container: Kompromittierung bleibt in der VM; Zugriff nur
