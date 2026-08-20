@@ -261,6 +261,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val conversations = remember { mutableStateListOf<Conversation>().also { it.addAll(store.load()) } }
+    val tombs = remember { store.loadTombs() }   // Loesch-Tombstones {id -> deletedAt}
     if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
     var currentId by remember {
         mutableStateOf(prefs.currentChatId.takeIf { id -> conversations.any { it.id == id } } ?: conversations.first().id)
@@ -398,7 +399,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         pushJob[0] = scope.launch {
             delay(1200)
             withContext(Dispatchers.IO) {
-                ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toJson(conversations))
+                ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toPushJson(conversations, tombs))
             }
         }
     }
@@ -437,10 +438,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 
     fun deleteChat(c: Conversation) {
+        tombs[c.id] = System.currentTimeMillis()   // Loeschung propagieren (Web + andere Geraete)
+        store.saveTombs(tombs)
         conversations.remove(c)
         if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
         if (currentId == c.id) currentId = conversations.first().id
         store.save(conversations)
+        pushChats()
     }
 
     fun selectModel(f: File) {
@@ -465,6 +469,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             val byId = LinkedHashMap<String, Conversation>()
             for (c in conversations) byId[c.id] = c
             for (r in store.fromJson(remoteJson)) {
+                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // lokal getombstet
                 val local = byId[r.id]
                 if (local == null || r.updatedAt > local.updatedAt) byId[r.id] = r
             }
@@ -475,7 +480,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 currentId = conversations.first().id
             }
             store.save(conversations)
-            val ok = withContext(Dispatchers.IO) { ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toJson(conversations)) }
+            val ok = withContext(Dispatchers.IO) { ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toPushJson(conversations, tombs)) }
             syncing = false; online = ok; lastSync = nowHm()
             status = if (ok) "" else "⚠️ Push fehlgeschlagen"
         }
@@ -498,6 +503,29 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (res == null) { online = false; delay(5000); continue }   // offline / alter Manager
             online = true
             chatsRev[0] = res.rev
+            // Eingehende Loesch-Tombstones anwenden (auch ohne neue Chats)
+            res.tombstones?.let { ts ->
+                try {
+                    val o = JSONObject(ts)
+                    var tchanged = false
+                    o.keys().forEach { id ->
+                        val dat = o.optLong(id)
+                        if ((tombs[id] ?: 0) < dat) tombs[id] = dat
+                        val idx = conversations.indexOfFirst { it.id == id }
+                        if (idx >= 0 && conversations[idx].updatedAt <= dat) {
+                            if (currentId == conversations[idx].id) currentId =
+                                conversations.firstOrNull { it.id != id }?.id ?: currentId
+                            conversations.removeAt(idx); tchanged = true
+                        }
+                    }
+                    store.saveTombs(tombs)
+                    if (tchanged) {
+                        if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
+                        if (conversations.none { it.id == currentId }) currentId = conversations.first().id
+                        store.save(conversations)
+                    }
+                } catch (_: Exception) {}
+            }
             val remote = res.chats ?: continue           // Zeitablauf, nichts Neues
             var waited = 0
             while (busy && waited++ < 120) delay(500)
@@ -511,6 +539,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             for (c in conversations) byId[c.id] = c
             var changed = false
             for (r in store.fromJson(remote)) {
+                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // getombstet -> nicht auferstehen
                 val local = byId[r.id]
                 if (local == null) {                        // wirklich neu
                     byId[r.id] = r; changed = true

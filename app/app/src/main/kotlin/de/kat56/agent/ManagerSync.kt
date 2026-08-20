@@ -1,3 +1,6 @@
+// kAIm56 KatAgent — Android client for the kAIm56 agent platform
+// Copyright (C) 2026 Ulrich Neidel
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
 import android.util.Base64
@@ -150,7 +153,7 @@ object ManagerSync {
         request("GET", "${baseUrl.trimEnd('/')}/api/chats", user, pass, null)
 
     /** Ergebnis eines Chat-Long-Polls: `chats` ist null, wenn sich nichts getan hat. */
-    data class ChatPoll(val rev: Long, val chats: String?)
+    data class ChatPoll(val rev: Long, val chats: String?, val tombstones: String?)
 
     /**
      * Long-Poll auf den gemeinsamen Chat-Store: der Manager antwortet erst, wenn
@@ -164,12 +167,124 @@ object ManagerSync {
             user, pass, null, waitSec * 1000 + 15000) ?: return null
         return try {
             val o = JSONObject(raw)
-            ChatPoll(o.optLong("rev"), o.optJSONArray("chats")?.toString())
+            ChatPoll(o.optLong("rev"), o.optJSONArray("chats")?.toString(),
+                     o.optJSONObject("tombstones")?.toString())
         } catch (e: Exception) { null }
     }
 
     fun push(baseUrl: String, user: String, pass: String, json: String): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/chats", user, pass, json) != null
+
+    /** Ein Schritt einer Mission (mehrstufiger Orchestrator-Auftrag). */
+    data class MissionStep(val n: Int, val text: String, val status: String, val taskId: String)
+
+    /** Eine Mission: Plan + Fortschritt liegen im Manager. */
+    data class Mission(val id: String, val goal: String, val status: String,
+                       val steps: List<MissionStep>, val summary: String, val lastLog: String)
+
+    fun listMissions(baseUrl: String, user: String, pass: String): List<Mission>? {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/missions?instance=orchestrator",
+            user, pass, null) ?: return null
+        return try {
+            val arr = JSONObject(raw).optJSONArray("missions") ?: return emptyList()
+            (0 until arr.length()).map { i ->
+                val m = arr.getJSONObject(i)
+                val sa = m.optJSONArray("steps")
+                val steps = if (sa == null) emptyList() else (0 until sa.length()).map { j ->
+                    val st = sa.getJSONObject(j)
+                    MissionStep(st.optInt("n"), st.optString("text"),
+                        st.optString("status"), st.optString("task_id"))
+                }
+                val log = m.optJSONArray("log")
+                Mission(m.optString("id"), m.optString("goal"), m.optString("status"),
+                    steps, m.optString("summary"),
+                    if (log != null && log.length() > 0) log.optString(log.length() - 1) else "")
+            }
+        } catch (e: Exception) { null }
+    }
+
+    /** pause | resume | abort einer Mission (Admin). */
+    fun missionAction(baseUrl: String, user: String, pass: String, id: String, action: String): Boolean =
+        request("POST", "${baseUrl.trimEnd('/')}/api/mission-admin", user, pass,
+            JSONObject().put("id", id).put("action", action).toString()) != null
+
+    /** Prompt-Templates (Slash-Kommandos) vom Manager. */
+    fun listPrompts(baseUrl: String, user: String, pass: String): List<Pair<String, String>> {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/prompts", user, pass, null)
+            ?: return emptyList()
+        return try {
+            val arr = JSONObject(raw).optJSONArray("prompts") ?: return emptyList()
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                o.optString("name") to o.optString("text")
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** Nachricht in einen LAUFENDEN Turn einspeisen (Steering). true = queued. */
+    fun steer(baseUrl: String, user: String, pass: String, instance: String, message: String): Boolean {
+        val raw = request("POST", "${baseUrl.trimEnd('/')}/i/$instance/api/steer", user, pass,
+            JSONObject().put("message", message).toString()) ?: return false
+        return try { JSONObject(raw).optBoolean("queued") } catch (e: Exception) { false }
+    }
+
+    /** Eine Push-Benachrichtigung aus dem Manager. */
+    data class NotifItem(val id: String, val ts: Long, val title: String,
+                         val body: String, val instance: String, val read: Boolean,
+                         val link: String = "")
+
+    /** Ergebnis des Notification-Long-Polls: `items` ist null bei Zeitablauf. */
+    data class NotifPoll(val rev: Long, val items: List<NotifItem>?, val unread: Int)
+
+    /** Long-Poll auf /api/notifications — analog zu pollChats. */
+    fun pollNotifications(baseUrl: String, user: String, pass: String,
+                          since: Long, waitSec: Int): NotifPoll? {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/notifications?since=$since&wait=$waitSec",
+            user, pass, null, waitSec * 1000 + 15000) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            val arr = o.optJSONArray("notifications")
+            val items = if (arr == null) null else (0 until arr.length()).map {
+                val n = arr.getJSONObject(it)
+                NotifItem(n.optString("id"), n.optLong("ts"), n.optString("title"),
+                    n.optString("body"), n.optString("instance"), n.optBoolean("read"),
+                    n.optString("link"))
+            }
+            NotifPoll(o.optLong("rev"), items, o.optInt("unread"))
+        } catch (e: Exception) { null }
+    }
+
+    /** Alle Benachrichtigungen als gelesen quittieren. */
+    fun markNotifRead(baseUrl: String, user: String, pass: String): Boolean =
+        request("POST", "${baseUrl.trimEnd('/')}/api/notifications/read", user, pass, "{\"all\":true}") != null
+
+    /** Security Gateway: welche Chats gefiltert werden und wieviel bisher
+     *  entfernt wurde. Der Zustand liegt am Manager, nicht im Geraet — sonst
+     *  waere er in App und Web verschieden. */
+    data class Gateway(val on: Set<String>, val chars: Map<String, Int>, val images: Map<String, Int>,
+                       val available: Boolean)
+
+    fun gatewayGet(baseUrl: String, user: String, pass: String): Gateway? {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/gateway", user, pass, null) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            val on = mutableSetOf<String>()
+            o.optJSONObject("chats")?.let { c -> c.keys().forEach { if (c.optBoolean(it)) on.add(it) } }
+            val chars = mutableMapOf<String, Int>(); val imgs = mutableMapOf<String, Int>()
+            o.optJSONObject("stats")?.let { s ->
+                s.keys().forEach { k ->
+                    val e = s.optJSONObject(k) ?: return@forEach
+                    chars[k] = e.optInt("in") + e.optInt("out")
+                    imgs[k] = e.optInt("img")
+                }
+            }
+            Gateway(on, chars, imgs, o.optBoolean("available"))
+        } catch (e: Exception) { null }
+    }
+
+    fun gatewaySet(baseUrl: String, user: String, pass: String, chatId: String, on: Boolean): Boolean =
+        request("POST", "${baseUrl.trimEnd('/')}/api/gateway", user, pass,
+            JSONObject().put("chat", chatId).put("on", on).toString()) != null
 
     fun listInstances(baseUrl: String, user: String, pass: String): String? =
         request("GET", "${baseUrl.trimEnd('/')}/api/instances", user, pass, null)

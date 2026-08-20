@@ -1,5 +1,5 @@
 // kAIm56 KatAgent — Android client for the kAIm56 agent platform
-// Copyright (C) 2026 the kAIm56 authors
+// Copyright (C) 2026 Ulrich Neidel
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
@@ -153,7 +153,7 @@ object ManagerSync {
         request("GET", "${baseUrl.trimEnd('/')}/api/chats", user, pass, null)
 
     /** Ergebnis eines Chat-Long-Polls: `chats` ist null, wenn sich nichts getan hat. */
-    data class ChatPoll(val rev: Long, val chats: String?)
+    data class ChatPoll(val rev: Long, val chats: String?, val tombstones: String?)
 
     /**
      * Long-Poll auf den gemeinsamen Chat-Store: der Manager antwortet erst, wenn
@@ -167,7 +167,8 @@ object ManagerSync {
             user, pass, null, waitSec * 1000 + 15000) ?: return null
         return try {
             val o = JSONObject(raw)
-            ChatPoll(o.optLong("rev"), o.optJSONArray("chats")?.toString())
+            ChatPoll(o.optLong("rev"), o.optJSONArray("chats")?.toString(),
+                     o.optJSONObject("tombstones")?.toString())
         } catch (e: Exception) { null }
     }
 

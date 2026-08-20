@@ -1,3 +1,6 @@
+// kAIm56 KatAgent — Android client for the kAIm56 agent platform
+// Copyright (C) 2026 Ulrich Neidel
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
 import android.content.Context
@@ -31,6 +34,35 @@ class Conversation(
 class ChatStore(context: Context) {
     private val file = File(context.filesDir, "conversations.json")
     val modelsDir: File = File(context.filesDir, "models").apply { mkdirs() }
+    private val tombFile = File(context.filesDir, "chat_tombstones.json")
+    private val tombTtlMs = 60L * 24 * 3600 * 1000   // Loesch-Marker nach 60 Tagen verwerfen
+
+    /** Loesch-Tombstones {id -> deletedAt} laden. */
+    fun loadTombs(): MutableMap<String, Long> = try {
+        if (tombFile.exists()) {
+            val o = JSONObject(tombFile.readText())
+            val m = HashMap<String, Long>()
+            o.keys().forEach { m[it] = o.optLong(it) }
+            m
+        } else HashMap()
+    } catch (_: Exception) { HashMap() }
+
+    /** Tombstones speichern (mit TTL-Prune). */
+    fun saveTombs(t: Map<String, Long>) {
+        val now = System.currentTimeMillis()
+        val o = JSONObject()
+        for ((k, v) in t) if (now - v < tombTtlMs) o.put(k, v)
+        try { tombFile.writeText(o.toString()) } catch (_: Exception) {}
+    }
+
+    /** Push-Payload fuer den Server: {chats:[...], tombstones:{id:deletedAt}}. */
+    fun toPushJson(conversations: List<Conversation>, tombs: Map<String, Long>): String {
+        val to = JSONObject()
+        for ((k, v) in tombs) to.put(k, v)
+        return JSONObject()
+            .put("chats", JSONArray(toJson(conversations)))
+            .put("tombstones", to).toString()
+    }
 
     fun load(): List<Conversation> =
         if (file.exists()) fromJson(file.readText()) else emptyList()
