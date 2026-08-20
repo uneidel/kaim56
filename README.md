@@ -1,12 +1,12 @@
 # kAIm56
 
-Monorepo für die Agenten-Plattform: ein **Manager** verwaltet Agenten in eigenen
-Firecracker-microVMs, eine **Android-App** und eine **Web-Oberfläche** chatten mit
-ihnen, **katfs** reicht Ordner vom Browser per P2P an die Agenten durch.
+Monorepo for the agent platform: a **manager** runs agents in their own
+Firecracker microVMs, an **Android app** and a **web UI** chat with them, and
+**katfs** hands folders from the browser to the agents over P2P.
 
 ```
-Handy (App) ─┐
-             ├─► Manager (:8700, Web-UI + API) ─► microVM je Agent ─► LLM / MCP / Tools
+Phone (app) ─┐
+             ├─► Manager (:8700, web UI + API) ─► microVM per agent ─► LLM / MCP / tools
 Browser ─────┘         │                              ▲
                        └── katfs (iroh, P2P) ──────────┘
 ```
@@ -61,49 +61,48 @@ Browser ─────┘         │                              ▲
 - Per-instance egress allowlist and a secret leak-filter on outgoing messages
 - Per-instance tool allowlists and a per-instance audit trail
 
+## Layout
 
-## Was liegt wo
-
-| Pfad | Inhalt |
+| Path | Contents |
 |---|---|
-| `manager/` | Manager: `manager.py` (Web-UI + API + VM-Lebenszyklus), `chatui.py` (`/chat`), `webterm.py` (Browser-Terminal), `templates/` (Agenten-Vorlagen), systemd-Unit, `logo.svg` |
-| `app/` | **KatAgent** (Android, Kotlin/Compose): Chat mit Server-Agenten + lokales Gemma-Modell. Build ohne lokales Android-SDK über `Dockerfile.build` |
-| `katfs/` | Ordner-Freigabe vom Browser an die Agenten über iroh (P2P): `node/` + `client/` (Rust), `web/` (WASM-Bridge), `PROTOCOL.md` |
-| `agents/` | Bauskripte und Gast-Bridges der microVM-Images: `claude/`, `openrouter/`, `pi/`, `prime/` |
-| `examples/` | Vorlagen für die Dateien, die bewusst nicht im Repo liegen |
+| `manager/` | Manager: `manager.py` (web UI + API + VM lifecycle), `chatui.py` (`/chat`), `webterm.py` (browser terminal), `templates/` (agent templates), systemd unit, `logo.svg` |
+| `app/` | **KatAgent** (Android, Kotlin/Compose): chat with server agents + a local Gemma model. Builds without a local Android SDK via `Dockerfile.build` |
+| `katfs/` | Browser-to-agent folder sharing over iroh (P2P): `node/` + `client/` (Rust), `web/` (WASM bridge), `PROTOCOL.md` |
+| `agents/` | Build scripts and guest bridges for the microVM images: `claude/`, `openrouter/`, … |
+| `examples/` | Templates for the files intentionally kept out of the repo |
 
-## Was bewusst NICHT im Repo ist
+## What is intentionally NOT in the repo
 
-Nichts davon ist ein Versehen — siehe `.gitignore`:
+None of this is an accident — see `.gitignore`:
 
-- **Secrets**: `manager/settings.json` (API-Keys), `app/keystore/` (Signaturschlüssel
-  der App), `katfs/node/secret.key` (iroh-Identität), `manager/traefik-agents.yml`
-  (basicAuth-Hash → als Beispiel in `examples/`)
-- **Laufzeitdaten**: Chat-Verlauf, Tasks, Memory, History-DB, Audit-Log, `run/`
-- **Images**: `*.ext4` (rootfs, GB-Bereich) und `vmlinux` — werden gebaut, nicht versioniert
-- **Releases**: `*.apk` gehören an die Gitea-Releases, nicht in die Historie
+- **Secrets**: `manager/settings.json` (API keys), `app/keystore/` (the app's signing
+  key), `katfs/node/secret.key` (iroh identity), `manager/traefik-agents.yml`
+  (basicAuth hash → provided as a sample in `examples/`)
+- **Runtime data**: chat history, tasks, memory, history DB, audit log, `run/`
+- **Images**: `*.ext4` (rootfs, multi-GB) and `vmlinux` — built, not versioned
+- **Releases**: `*.apk` belong in the release area, not in history
 
-Enthalten sind dagegen `personas.json`, `skills.json`, `mcp-catalog.json` und
-`secret-policy.json` — das ist Konfiguration bzw. selbst verfasster Inhalt, und die
-MCP-Einträge referenzieren Secrets nur als `${NAME}`-Platzhalter.
+Included, on the other hand, are `personas.json`, `skills.json`, `mcp-catalog.json`
+and `secret-policy.json` — that is configuration or authored content, and the MCP
+entries reference secrets only as `${NAME}` placeholders.
 
-> Hinweis: In `manager/templates/*.json` und `agents/*/config*.env` stehen echte
-> Telefonnummern als Defaults (Signal-Bot und erlaubte Absender), und überall
-> tauchen interne Hostnamen/IPs auf. Kein Geheimnis, aber personenbezogen —
-> deshalb ist dieses Repo als **privat** gedacht.
+> Note: `manager/templates/*.json` and `agents/*/config*.env` carry real phone
+> numbers as defaults (the Signal bot and allowed senders), and internal
+> hostnames/IPs appear throughout. Nothing secret, but personal — so treat this
+> repo as **private**.
 
-## Manager starten
+## Running the manager
 
 ```bash
 cd manager
-cp ../examples/settings.example.json settings.json   # API-Keys eintragen (chmod 600)
-sudo python3 manager.py                              # oder via firecracker-manager.service
+cp ../examples/settings.example.json settings.json   # add API keys (chmod 600)
+sudo python3 manager.py                              # or via firecracker-manager.service
 ```
 
-Braucht auf dem Host: `bin/firecracker` + `bin/vmlinux`, die rootfs-Images unter
-`instances/` und die NFS-Freigabe (`setup-nfs-host.sh`). Details in `manager/README.md`.
+Requires on the host: `bin/firecracker` + `bin/vmlinux`, the rootfs images under
+`instances/`, and the NFS share (`setup-nfs-host.sh`). Details in `manager/README.md`.
 
-## App bauen
+## Building the app
 
 ```bash
 cd app
@@ -115,60 +114,58 @@ docker run --rm -v "$PWD":/project -v katagent-gradle:/root/.gradle katagent-bui
 
 ## katfs
 
-`katfs/node` (Host-Gateway) und `katfs/client` sind Rust-Crates, `katfs/web` die
-WASM-Bridge für die Browser-Freigabe. Protokoll: `katfs/PROTOCOL.md`.
+`katfs/node` (host gateway) and `katfs/client` are Rust crates; `katfs/web` is the
+WASM bridge for browser sharing. Protocol: `katfs/PROTOCOL.md`.
 
-## Änderungen
+## Changes
 
-`manager/CHANGELOG.md` führt die Historie der Plattform.
+`manager/CHANGELOG.md` tracks the platform's history.
 
+## Installing on a fresh machine
 
-## Installation auf einer frischen Maschine
-
-Voraussetzungen: Linux x86_64 **mit KVM** (`/dev/kvm`), Docker, Python ≥ 3.9, systemd.
+Requirements: Linux x86_64 **with KVM** (`/dev/kvm`), Docker, Python ≥ 3.9, systemd.
 
 ```bash
-# aus einem Klon:
-./install.sh --check          # nur Voraussetzungen pruefen
-VMLINUX_URL=<Release-Asset-URL> ./install.sh --with-voice
+# from a clone:
+./install.sh --check          # only check prerequisites
+VMLINUX_URL=<release-asset-url> ./install.sh --with-voice
 
-# oder klassisch (sobald das Repo public ist):
+# or the classic way (once the repo is public):
 curl -fsSL https://raw.githubusercontent.com/<user>/kaim56/main/install.sh | sh
 ```
 
-Der Installer legt das Laufzeit-Layout unter `$KAIM56_BASE` (Default `$HOME`) an,
-laedt das Firecracker-Binary (v1.16.1) von GitHub, bezieht den Gast-Kernel
-(`VMLINUX_URL` — als Release-Asset veroeffentlichen), baut das openrouter-Rootfs
-plus Embedding-/MCP-Hub-Container (`--with-voice`, `--with-agents` optional),
-richtet den systemd-Dienst mit generiertem Passwort ein und laeuft die
-Offline-Testsuite als Smoke-Test. Idempotent — erneut ausfuehren = Update.
-Danach: Web-UI Port 8700 → Settings-Tab → API-Key eintragen.
+The installer lays out the runtime tree under `$KAIM56_BASE` (default `$HOME`),
+downloads the Firecracker binary (v1.16.1) from GitHub, fetches the guest kernel
+(`VMLINUX_URL` — publish it as a release asset), builds the openrouter rootfs plus
+the embedding/MCP-hub containers (`--with-voice`, `--with-agents` optional), sets up
+the systemd service with a generated password, and runs a smoke test. Idempotent —
+run again to update. Then: web UI on port 8700 → Settings tab → add an API key.
 
+## License
 
-## Lizenz
+kAIm56 is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** — see [LICENSE](LICENSE).
 
-kAIm56 steht unter der **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** — siehe [LICENSE](LICENSE).
+In short: you may use, modify, and self-host the software. **If you run it (modified
+or not) as a network-accessible service, you must make your version's source
+available to its users.** This keeps kAIm56 open across forks and deployments — a
+closed-source SaaS built on it is not permitted.
 
-Kurz: Du darfst die Software nutzen, verändern und selbst betreiben. **Betreibst du sie
-(auch verändert) als über ein Netzwerk erreichbaren Dienst, musst du den Quellcode deiner
-Version den Nutzern zugänglich machen.** Damit bleibt kAIm56 auch in Forks/Deployments offen —
-ein geschlossenes SaaS auf dieser Basis ist nicht zulässig.
+Copyright (C) 2026 Ulrich Neidel. The Android app (`app/`) is under the same license.
 
-Copyright (C) 2026 Ulrich Neidel. Die Android-App (`app/`) steht unter derselben Lizenz.
+### Third-party / attribution
+The Python part (manager + agent) is **standard-library only**, with no bundled
+third-party code.
 
-### Drittanbieter / Attribution
-Der Python-Teil (Manager + Agent) ist **stdlib-only**, ohne gebündelten Fremdcode.
+**katfs** (Rust, `katfs/`) is original code (AGPL like the rest) but uses crates from
+crates.io — not vendored in the repo, pulled at build time: **iroh** (P2P), **tokio**,
+**serde**/**serde_json**, **anyhow**, **tiny_http**. These are permissively licensed
+(MIT or Apache-2.0) and compatible with the AGPL. Anyone distributing a **built katfs
+binary** must include those crates' copyright/license notices (the usual MIT/Apache
+requirement for binary distribution); see each crate's repository for exact terms.
 
-**katfs** (Rust, `katfs/`) ist eigener Code (AGPL wie der Rest), nutzt aber Crates von
-crates.io — nicht im Repo vendored, sondern beim Bauen bezogen: **iroh** (P2P), **tokio**,
-**serde**/**serde_json**, **anyhow**, **tiny_http**. Alle stehen unter permissiven Lizenzen
-(MIT bzw. Apache-2.0) und sind mit der AGPL vereinbar. Wer ein **gebautes katfs-Binary**
-weitergibt, muss die Copyright-/Lizenzhinweise dieser Crates mitliefern (übliche MIT/Apache-
-Pflicht bei Binär-Distribution); genaue Terms im jeweiligen Crate-Repo.
-
-Adaptierte **Konzepte** (nicht 1:1 kopiert):
-- Kontext-/Harness-Muster (Summarizing, Context-Offloader, Goal-Loop, Interventions) angelehnt
-  an **strands-agents/harness-sdk** (Apache-2.0); der Summarization-Prompt ist die einzige
-  textnahe Stelle.
-- `/model`, Steering, Prompt-Templates, Tool-Plugins, das Oracle-Tool: Ideen aus **pi.dev**.
-- Credential-Injection-Gateway: Muster aus **OneCLI**.
+Adapted **concepts** (not copied verbatim):
+- Context/harness patterns (summarizing, context offloader, goal loop, interventions)
+  informed by **strands-agents/harness-sdk** (Apache-2.0); the summarization prompt is
+  the only near-verbatim piece.
+- `/model`, steering, prompt templates, tool plugins, and the oracle tool: ideas from **pi.dev**.
+- Credential-injection gateway: pattern from **OneCLI**.
