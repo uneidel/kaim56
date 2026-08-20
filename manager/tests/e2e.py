@@ -97,6 +97,53 @@ class AgentLogic(unittest.TestCase):
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
         cls.a.report_usage = lambda *a, **k: None   # kein Netz zum Manager
 
+    def test_reasoning_content_streamed(self):
+        """llama.cpp/Qwen3 sendet Denken als reasoning_content — muss gestreamt
+        werden; content bleibt die eigentliche Antwort."""
+        a = self.a
+        lines = [
+            b'data: {"choices":[{"delta":{"role":"assistant","content":null}}]}\n',
+            b'data: {"choices":[{"delta":{"reasoning_content":"denke nach"}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"Hallo"}}]}\n',
+            b'data: [DONE]\n',
+        ]
+        class FakeResp:
+            headers = {}
+            def __iter__(self): return iter(lines)
+        saved = (a.urllib.request.urlopen, a._llm_headers, a._llm_url)
+        a.urllib.request.urlopen = lambda *ar, **kw: FakeResp()
+        a._llm_headers = lambda: {"Content-Type": "application/json"}
+        a._llm_url = lambda: "http://x/v1/chat/completions"
+        toks = []
+        try:
+            msg = a.or_chat_stream([{"role": "user", "content": "hi"}], None, toks.append)
+        finally:
+            (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
+        out = "".join(toks)
+        self.assertIn("denke nach", out)          # reasoning_content nicht verworfen
+        self.assertIn("Hallo", out)               # content gestreamt
+        self.assertEqual(msg["content"], "Hallo")
+
+    def test_reasoning_only_no_empty_reply(self):
+        """Nur Denken, kein content -> Fallback auf das Denken statt leerer Antwort."""
+        a = self.a
+        lines = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"nur gedacht"}}]}\n',
+            b'data: [DONE]\n',
+        ]
+        class FakeResp:
+            headers = {}
+            def __iter__(self): return iter(lines)
+        saved = (a.urllib.request.urlopen, a._llm_headers, a._llm_url)
+        a.urllib.request.urlopen = lambda *ar, **kw: FakeResp()
+        a._llm_headers = lambda: {"Content-Type": "application/json"}
+        a._llm_url = lambda: "http://x/v1/chat/completions"
+        try:
+            msg = a.or_chat_stream([{"role": "user", "content": "hi"}], None, lambda t: None)
+        finally:
+            (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
+        self.assertEqual(msg["content"], "nur gedacht")   # kein None -> kein _(empty reply)_
+
     def test_steps_unlimited(self):
         """/steps akzeptiert Zahl 1..x und 'unlimited' (0 = unbegrenzt)."""
         import itertools

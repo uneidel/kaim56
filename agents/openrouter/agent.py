@@ -1850,6 +1850,7 @@ def or_chat_stream(messages, tools, on_token):
     content = ""
     tcs = {}
     reasoning_open = False
+    reasoning_txt = ""
     # Nur den Verbindungsaufbau retryen (mitten im Stream nicht sinnvoll wieder-
     # holbar, da schon Tokens geflossen sein koennen).
     r = None
@@ -1887,10 +1888,12 @@ def or_chat_stream(messages, tools, on_token):
                 delta = chunk["choices"][0]["delta"]
             except (KeyError, IndexError):
                 continue
-            rzn = delta.get("reasoning")
+            # OpenRouter nennt es "reasoning", llama.cpp (Qwen3 u.ae.) "reasoning_content"
+            rzn = delta.get("reasoning") or delta.get("reasoning_content")
             if rzn:
                 if not reasoning_open:
                     on_token(THINK_START); reasoning_open = True
+                reasoning_txt += rzn
                 on_token(rzn)
             c = delta.get("content")
             if c:
@@ -1919,7 +1922,9 @@ def or_chat_stream(messages, tools, on_token):
         m = f"⚠️ {LLM_NAME}-Streamabbruch: {e!r}"
         on_token(m)
         content += ("\n" + m)
-    msg = {"role": "assistant", "content": content or None}
+    # Manche Reasoning-Modelle geben ALLES als Denken aus und lassen content leer
+    # -> statt einer leeren Antwort das Denken behalten (sonst "_(empty reply)_").
+    msg = {"role": "assistant", "content": content or reasoning_txt or None}
     if tcs:
         msg["tool_calls"] = [tcs[i] for i in sorted(tcs)]
     return msg
