@@ -670,7 +670,7 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(g.redact_secrets("tok hf_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 x")[1], 1)
         self.assertEqual(g.redact_secrets("normaler Text")[1], 0)
         # git-SHA (40 hex) darf NICHT als Secret gelten
-        self.assertEqual(g.redact_secrets("commit e80c4b19eb585554842b036889fbc10435b79bea")[1], 0)
+        self.assertEqual(g.redact_secrets("commit deadbeef00112233445566778899aabbccddeeff")[1], 0)
 
     def test_guard_rate_limit(self):
         m = self.m
