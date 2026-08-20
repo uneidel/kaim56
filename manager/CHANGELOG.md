@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Die Topbar-Nav war ueberladen (Glocke + „Missions" draengten Changelog und
+    Architecture aus der sichtbaren Zeile — Scrollbar ist ausgeblendet, wirkte
+    „verschwunden"). Beide jetzt in einem Footer; Topbar endet bei „Settings",
+    passt wieder in eine Zeile. showTab hebt auch die Footer-Links hervor.
+
+
 ## 2026-08-20 (Guardrails: Budget, Rate-Limit, Egress-Allowlist, Leak-Filter)
 - **Kosten-/Frequenz-Circuit-Breaker** am Key-Injection-Proxy (dort laufen
     alle LLM-Calls durch): Tages-Token-Budget je Instanz (Default 2 Mio, aus

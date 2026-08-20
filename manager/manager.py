@@ -2077,7 +2077,7 @@ def guest_stream(inst, message, image, on_token, timeout=620):
 # durch. Budget je Instanz und Tag (Tokens, aus llm_usage) und ein Frequenz-
 # Deckel je Minute. Override je Instanz via Config: BUDGET_TOKENS (0 = aus),
 # LLM_RATE_MIN. Bei Ueberschreitung: 429 + hoechstens stuendlich eine notify.
-GUARD_BUDGET_TOKENS = int(os.environ.get("GUARD_BUDGET_TOKENS", "2000000"))
+GUARD_BUDGET_TOKENS = int(os.environ.get("GUARD_BUDGET_TOKENS", "5000000"))
 GUARD_LLM_RATE_MIN = int(os.environ.get("GUARD_LLM_RATE_MIN", "60"))
 _guard_lock = threading.Lock()
 _guard_calls = {}          # instance -> [timestamps]
