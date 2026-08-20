@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Fix: `playbook_add` failed with RemoteDisconnected in every agent — `mgr/rules.py` used `uuid`/`time` without importing them, so `/api/playbook-add` crashed mid-request and the manager dropped the connection (memory/list worked as they don't use those). Added the imports; regression test covers it.
 - Slash typeahead: Esc now reliably closes the picker whenever it's visible and keeps it closed while you keep typing the same /command (reopens on a fresh /).
 - Web slash typeahead: now lists all 8 agent commands (added /fresh, /branch, /back) and was restyled into a command-palette (rounded panel, header hint, bold command + muted description, full-row highlight).
 - Graceful fallback when a local model emits invalid tool-call JSON: llama.cpp returns HTTP 500 ("Failed to parse tool call arguments as JSON") when a small model can't escape a large string argument (e.g. a whole file). The agent now retries that turn once WITHOUT tools so the model answers as text/code instead of losing the whole turn.

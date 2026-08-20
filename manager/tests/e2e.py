@@ -552,6 +552,20 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_playbook_add_imports_present(self):
+        """Regression: mgr/rules.pb_add nutzt uuid+time -> muessen importiert sein,
+        sonst crasht /api/playbook-add und der Agent sieht RemoteDisconnected."""
+        import mgr.rules as rules, tempfile, os
+        tmp = tempfile.mkdtemp(prefix="e2e-pb-")
+        old = rules.PLAYBOOKS_FILE
+        rules.PLAYBOOKS_FILE = os.path.join(tmp, "pb.json")
+        try:
+            pid = rules.pb_add("inst", "eine Regel")     # NameError bei fehlendem Import
+            self.assertTrue(pid and pid != "exists")
+            self.assertEqual(len(rules.pb_list("inst")), 1)
+        finally:
+            rules.PLAYBOOKS_FILE = old
+
     def test_merge_chats_tombstones(self):
         """Loeschung propagiert und resurrected nicht — ausser bei echter,
         NEUERER Bearbeitung (dann faellt der Tombstone weg)."""
