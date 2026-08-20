@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-20 (App 5.9: Fehlermeldungen verfallen + Lizenz-Header)
+- Status-/Fehlermeldungen in der App klebten dauerhaft (z. B. DNS-Fehler
+    „Unable to resolve agents.kat56.de", wenn das Handy nicht im Heimnetz/VPN
+    ist). Jetzt: Fehler verfallen nach 8 s, Hinweise nach 4 s, und ein
+    erfolgreicher Task-Load raeumt einen frueheren Fehler sofort weg.
+- AGPL/SPDX-Header in allen Kotlin-Quellen der App (Lizenz-Nachzug).
+
+
 ## 2026-08-20 (Fix: App/Tasks leer nach dem mgr/-Refactoring)
 - Regression aus der Paket-Aufteilung: `load_tasks`/`save_tasks` zogen nach
     mgr/store.py, die Konstante `TASKS_FILE` blieb aber undefiniert (configure
