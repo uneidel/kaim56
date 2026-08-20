@@ -78,6 +78,10 @@ WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
 MAX_TOOL_OUT = int(os.environ.get("MAX_TOOL_OUT", "8000"))
+# Heartbeat waehrend Tool-Ausfuehrung: langsame lokale Modelle + lange Tools
+# (apt, Downloads) erzeugen minutenlange Byte-Stille -> ein Proxy/Client-
+# Idle-Timeout (Traefik-Default 180s) kappt sonst den Stream mitten im Satz.
+HEARTBEAT_SEC = int(os.environ.get("HEARTBEAT_SEC", "30"))
 SYSTEM = os.environ.get("AGENT_SYSTEM",
     "Du bist ein hilfreicher Agent mit Tools (Shell, Dateien, Web, MCP). "
     "Arbeite im Verzeichnis %s. Nutze Tools wenn nötig, antworte sonst direkt. "
@@ -1976,7 +1980,22 @@ def run_stream(user_message, on_token, image=None):
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                out = exec_tool(fn["name"], args)
+                on_token(f"\n\U0001f527 {fn['name']} \u2026")
+                _hb_stop = threading.Event()
+                def _heartbeat(ev=_hb_stop):
+                    while not ev.wait(HEARTBEAT_SEC):
+                        try:
+                            on_token(" \u00b7")
+                        except Exception:
+                            return
+                _hb = threading.Thread(target=_heartbeat, daemon=True)
+                _hb.start()
+                try:
+                    out = exec_tool(fn["name"], args)
+                finally:
+                    _hb_stop.set()
+                    _hb.join(timeout=1)
+                on_token("\n")
                 log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
                 _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
         on_token("\n(max. Tool-Schritte erreicht)")

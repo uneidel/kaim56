@@ -97,6 +97,35 @@ class AgentLogic(unittest.TestCase):
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
         cls.a.report_usage = lambda *a, **k: None   # kein Netz zum Manager
 
+    def test_tool_heartbeat_keeps_stream_alive(self):
+        """Waehrend eines langsamen Tools muss der Stream ein sichtbares Tool-
+        Status-Token (🔧) und periodische Heartbeats (·) senden, sonst kappt ein
+        Idle-Timeout die Verbindung mitten im Satz (langsame lokale Modelle)."""
+        import time as _t
+        a = self.a
+        toks = []; calls = {"n": 0}
+        def fake_stream(hist, tools, on_token):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "shell", "arguments": "{}"}}]}
+            on_token("done"); return {"role": "assistant", "content": "done"}
+        def fake_exec(name, args):
+            _t.sleep(0.15); return "ok"
+        saved = (a.or_chat_stream, a.exec_tool, a.HEARTBEAT_SEC, a._drain_steer, a._goal)
+        a.or_chat_stream = fake_stream; a.exec_tool = fake_exec
+        a.HEARTBEAT_SEC = 0.03; a._drain_steer = lambda *x: False; a._goal = None
+        try:
+            del a._history[1:]
+            a.run_stream("build something", toks.append)
+        finally:
+            (a.or_chat_stream, a.exec_tool, a.HEARTBEAT_SEC, a._drain_steer, a._goal) = saved
+        out = "".join(toks)
+        self.assertIn("\U0001f527", out)   # Tool-Status
+        self.assertIn("\u00b7", out)        # Heartbeat waehrend Tool-Lauf
+        self.assertIn("done", out)           # finale Antwort danach
+
     # --- Backend-Auswahl (Kernstueck orcarouter/llama/openrouter) -----------
     def _select(self, env):
         """Den Backend-Auswahlblock aus agent.py mit env ausfuehren und die
