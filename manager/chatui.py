@@ -697,7 +697,7 @@ async function slashPrompts(){
       .map(p=>['/'+p.name,p.text.slice(0,70),'tpl']);}catch(e){}}
   return SLASH_PROMPTS;
 }
-let SL_HITS=[],SL_SEL=-1;
+let SL_HITS=[],SL_SEL=-1,SL_DISMISS=false;
 function slOpen(){return $('slashhint').style.display==='block'&&SL_HITS.length>0}
 function slClose(){$('slashhint').style.display='none';SL_HITS=[];SL_SEL=-1}
 function slRender(){
@@ -714,7 +714,8 @@ function slMove(d){
 }
 async function slashHint(){
   const el=$('slashhint'),v=$('t').value;
-  if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){slClose();return}
+  if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){SL_DISMISS=false;slClose();return}
+  if(SL_DISMISS)return;            // per Esc geschlossen -> zu bleiben, bis der Token wechselt
   const all=SLASH_BUILTIN.concat(await slashPrompts());
   SL_HITS=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,10);
   if(!SL_HITS.length){slClose();return}
@@ -724,10 +725,13 @@ function pickSlash(c){$('t').value=c+' ';$('t').focus();slClose();autogrow()}
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
 $('t').addEventListener('input',()=>{autogrow();slashHint();});
 $('t').addEventListener('keydown',e=>{
+  // Esc schliesst den Picker IMMER (auch wenn SL_HITS leer sein sollte) und
+  // haelt ihn zu, solange am selben /-Befehl weitergetippt wird.
+  if(e.key==='Escape'&&$('slashhint').style.display==='block'){
+    e.preventDefault();SL_DISMISS=true;slClose();return;}
   if(slOpen()){
     if(e.key==='ArrowDown'){e.preventDefault();slMove(1);return;}
     if(e.key==='ArrowUp'){e.preventDefault();slMove(-1);return;}
-    if(e.key==='Escape'){e.preventDefault();slClose();return;}
     if((e.key==='Enter'||e.key==='Tab')&&!e.shiftKey&&!e.isComposing&&SL_SEL>=0){
       e.preventDefault();pickSlash(SL_HITS[SL_SEL][0]);return;}
   }
