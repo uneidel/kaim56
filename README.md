@@ -157,7 +157,7 @@ or not) as a network-accessible service, you must make your version's source
 available to its users.** This keeps kAIm56 open across forks and deployments — a
 closed-source SaaS built on it is not permitted.
 
-Copyright (C) 2026 Ulrich Neidel. The Android app (`app/`) is under the same license.
+Copyright (C) 2026 the kAIm56 authors. The Android app (`app/`) is under the same license.
 
 ### Third-party / attribution
 The Python part (manager + agent) is **standard-library only**, with no bundled

@@ -1,5 +1,5 @@
 // kAIm56 KatAgent — Android client for the kAIm56 agent platform
-// Copyright (C) 2026 Ulrich Neidel
+// Copyright (C) 2026 the kAIm56 authors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
