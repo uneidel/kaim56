@@ -519,6 +519,33 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_merge_chats_tombstones(self):
+        """Loeschung propagiert und resurrected nicht — ausser bei echter,
+        NEUERER Bearbeitung (dann faellt der Tombstone weg)."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-tomb-")
+        oc, ot = m.CHATS_FILE, m.TOMBSTONES_FILE
+        m.CHATS_FILE = os.path.join(tmp, "chats.json")
+        m.TOMBSTONES_FILE = os.path.join(tmp, "tombs.json")
+        try:
+            NOW = 1_800_000_000_000
+            has = lambda: any(c.get("id") == "x" for c in m.load_chats())
+            m.merge_chats([{"id": "x", "updatedAt": NOW - 5000,
+                            "messages": [{"user": True, "text": "hi"}]}])
+            self.assertTrue(has())
+            m.merge_chats({"chats": [], "tombstones": {"x": NOW}})       # loeschen
+            self.assertFalse(has())
+            self.assertIn("x", m.load_tombstones())
+            m.merge_chats([{"id": "x", "updatedAt": NOW - 1000,          # Re-Push alt
+                            "messages": [{"user": True, "text": "hi"}]}])
+            self.assertFalse(has())                                      # bleibt weg
+            m.merge_chats([{"id": "x", "updatedAt": NOW + 9000,          # echte Bearbeitung
+                            "messages": [{"user": True, "text": "edit"}]}])
+            self.assertTrue(has())                                       # aufersteht
+            self.assertNotIn("x", m.load_tombstones())                   # Tombstone weg
+        finally:
+            m.CHATS_FILE, m.TOMBSTONES_FILE = oc, ot
+
     def test_provider_switch_sets_and_clears_keys(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-inst-")

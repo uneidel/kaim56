@@ -287,6 +287,10 @@ const IC={
 const AGENTS=__AGENTS__, START=__CURRENT__;
 const $=id=>document.getElementById(id);
 const KEY='fc-chat-convs';
+const TKEY='fc-chat-tombs';
+let TOMBS={};
+function loadTombs(){try{TOMBS=JSON.parse(localStorage.getItem(TKEY)||'{}')||{}}catch(e){TOMBS={}}}
+function saveTombs(){try{localStorage.setItem(TKEY,JSON.stringify(TOMBS))}catch(e){}}
 let convs=[], cur=null, agent='', img=null, ctrl=null;
 
 /* ---------- Persistenz ---------- */
@@ -314,17 +318,36 @@ let _pushT=null;
 function pushShared(delay){
   clearTimeout(_pushT);
   _pushT=setTimeout(()=>{fetch('/api/chats',{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify(toShared(convs))}).catch(()=>{});},
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({chats:toShared(convs),tombstones:TOMBS})}).catch(()=>{});},
     delay===undefined?400:delay);
 }
 let CHATS_REV=0;
 /* Remote in den lokalen Bestand mergen. true = lokal hat sich etwas geaendert.
    Der gerade streamende Chat bleibt unangetastet, sonst faellt der Teiltext weg. */
+/* Eingehende Loesch-Tombstones anwenden: lokal getombstete Chats entfernen
+   (sofern nicht neuer als die Loeschung) und die Marker uebernehmen. */
+function applyTombs(tombs){
+  if(!tombs)return;
+  let changed=false;
+  for(const id in tombs){
+    const dat=tombs[id]|0;
+    if(!TOMBS[id]||TOMBS[id]<dat)TOMBS[id]=dat;
+    const l=convs.find(c=>c.id===id);
+    if(l&&(l.ts||0)<=dat){
+      convs=convs.filter(c=>c.id!==id);
+      if(cur&&cur.id===id)cur=null;
+      changed=true;
+    }
+  }
+  saveTombs();
+  if(changed){try{localStorage.setItem(KEY,JSON.stringify(convs.slice(0,200)))}catch(e){}drawConvs();draw();}
+}
 function applyRemote(remote){
   const byId={}; convs.forEach(c=>byId[c.id]=c);
   let changed=false;
   remote.forEach(r=>{
     if(ctrl&&cur&&r.id===cur.id)return;
+    if(TOMBS[r.id]&&(r.ts||0)<=TOMBS[r.id])return;   // getombstet -> nicht auferstehen
     const l=byId[r.id];
     if(!l){byId[r.id]=r;changed=true;return;}
     if((r.ts||0)<=(l.ts||0))return;
@@ -354,6 +377,7 @@ async function syncChats(){
   try{
     const d=await (await fetch('/api/chats?since=0&wait=0')).json();
     CHATS_REV=d.rev||0;
+    applyTombs(d.tombstones);
     applyRemote(fromShared(d.chats||[]));
   }catch(e){}
   pushShared(0);
@@ -365,6 +389,7 @@ async function chatSyncLoop(){
     try{
       const d=await (await fetch('/api/chats?wait=25&since='+CHATS_REV)).json();
       if(typeof d.rev==='number')CHATS_REV=d.rev;
+      applyTombs(d.tombstones);
       if(d.chats)applyRemote(fromShared(d.chats));
     }catch(e){ await new Promise(r=>setTimeout(r,3000)); }
   }
@@ -427,6 +452,7 @@ function openChat(id){cur=convs.find(c=>c.id===id)||null;
   if(cur&&cur.abranch===undefined)cur.abranch=(cur.msgs.length?(cur.msgs[cur.msgs.length-1].branch||0):0);
   draw();drawConvs();branchUi()}
 function delChat(e,id){e.stopPropagation();
+  TOMBS[id]=Date.now();saveTombs();
   convs=convs.filter(c=>c.id!==id);if(cur&&cur.id===id)cur=null;save();draw();drawConvs()}
 
 /* ---------- Nachrichten ---------- */
@@ -758,7 +784,7 @@ $('clipBtn').innerHTML=IC.clip;
 [...document.querySelectorAll('.icon')].forEach(b=>{
   if(b.title&&b.title.includes('Restart agent'))b.innerHTML=IC.refresh;
 });
-load();drawAgents();
+load();loadTombs();drawAgents();
 /* Erst den geteilten Server-Store holen (await!), DANN den bestehenden Chat
    der Instanz oeffnen — sonst startet ein zweites Geraet mit leerem localStorage
    einen neuen Thread und der Verlauf wirkt "nicht synchronisiert". Auch fuer den

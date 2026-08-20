@@ -11,6 +11,7 @@ manager/site.json
 manager/mcp-catalog.json
 # Chat-Verlauf, Aufgaben, Gedaechtnis, Wasserzeichen
 manager/chats.json
+manager/chats_tombstones.json
 manager/tasks.json
 manager/memory.json
 manager/inbox_wm.json

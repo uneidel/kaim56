@@ -361,6 +361,28 @@ from mgr.gateway import (load_gateway, gateway_on, gateway_clean, gateway_count,
 
 # ---- Chat-Verlauf (Sync mit der App) ---------------------------------------
 CHATS_FILE = os.path.join(BASE, "chats.json")
+TOMBSTONES_FILE = os.path.join(BASE, "chats_tombstones.json")
+TOMB_TTL_MS = 60 * 24 * 3600 * 1000   # Loesch-Marker nach 60 Tagen verwerfen
+
+
+def load_tombstones():
+    try:
+        with open(TOMBSTONES_FILE) as fh:
+            d = json.load(fh)
+        return {str(k): int(v) for k, v in d.items()} if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError, TypeError):
+        return {}
+
+
+def save_tombstones(t):
+    now = int(time.time() * 1000)
+    t = {k: v for k, v in t.items() if now - v < TOMB_TTL_MS}   # TTL-Prune
+    try:
+        with open(TOMBSTONES_FILE, "w") as fh:
+            json.dump(t, fh)
+    except OSError:
+        pass
+    return t
 
 
 def load_chats():
@@ -495,24 +517,48 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
 
 
 def merge_chats(incoming):
-    """Eingehende Chats mit dem Bestand VEREINEN statt zu ersetzen — damit ein
-    Push von App ODER Web-UI die Chats des jeweils anderen nicht ueberschreibt.
-    Zusammengefuehrt wird pro id, der neuere updatedAt gewinnt. Leere Chats
-    (ohne Nachrichten) werden nicht gespeichert. Hinweis: geloeschte Chats
-    kommen so nicht 'weg' — Loesch-Sync braeuchte Tombstones (bewusst offen)."""
+    """Chats VEREINEN (neuerer updatedAt gewinnt) plus LOESCH-TOMBSTONES:
+    `incoming` ist entweder eine nackte Liste (alt: nur Chats) oder ein Objekt
+    {chats:[...], tombstones:{id:deletedAt}}. Ein getombsteter Chat kommt nicht
+    zurueck — auch nicht durch Re-Push der App —, solange sein updatedAt nicht
+    NEUER ist als die Loeschung (echte Bearbeitung nach dem Loeschen laesst ihn
+    wieder auferstehen und verwirft den Tombstone). Tombstones haben eine TTL."""
+    if isinstance(incoming, dict):
+        chats_in = incoming.get("chats") or []
+        tombs_in = incoming.get("tombstones") or {}
+    else:
+        chats_in = incoming if isinstance(incoming, list) else []
+        tombs_in = {}
+
+    tombs = load_tombstones()
+    if isinstance(tombs_in, dict):
+        for k, v in tombs_in.items():
+            try:
+                tombs[str(k)] = max(tombs.get(str(k), 0), int(v))
+            except (TypeError, ValueError):
+                continue
+
     by_id = {}
     for c in load_chats():
         if isinstance(c, dict) and c.get("id") and c.get("messages"):
             by_id[str(c["id"])] = c
-    for c in incoming if isinstance(incoming, list) else []:
-        if not isinstance(c, dict) or not c.get("id"):
-            continue
-        if not c.get("messages"):
+    for c in chats_in if isinstance(chats_in, list) else []:
+        if not isinstance(c, dict) or not c.get("id") or not c.get("messages"):
             continue
         cid = str(c["id"])
         cur = by_id.get(cid)
         if cur is None or c.get("updatedAt", 0) >= cur.get("updatedAt", 0):
             by_id[cid] = c
+
+    # Tombstones anwenden
+    for cid, dat in list(tombs.items()):
+        c = by_id.get(cid)
+        if c is not None and c.get("updatedAt", 0) > dat:
+            tombs.pop(cid, None)        # Chat ist neuer -> Auferstehung ok
+        else:
+            by_id.pop(cid, None)        # geloescht bleibt geloescht
+
+    save_tombstones(tombs)
     merged = sorted(by_id.values(), key=lambda x: x.get("updatedAt", 0), reverse=True)
     return save_chats(merged)
 
@@ -2828,7 +2874,8 @@ class H(BaseHTTPRequestHandler):
                 except ValueError:
                     since, wait = 0, 0.0
                 rev, chats = wait_chats(since, wait)
-                body = json.dumps({"rev": rev, "chats": chats}).encode()
+                body = json.dumps({"rev": rev, "chats": chats,
+                                   "tombstones": load_tombstones()}).encode()
             else:
                 body = json.dumps(load_chats()).encode()
             ct = "application/json"
