@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Leak-filter now also masks HuggingFace tokens (hf_…).
 - Scrubbed phone-number defaults from templates/agent configs (now empty); merged the two page footers into a single row.
 - Die Topbar-Nav war ueberladen (Glocke + „Missions" draengten Changelog und
     Architecture aus der sichtbaren Zeile — Scrollbar ist ausgeblendet, wirkte

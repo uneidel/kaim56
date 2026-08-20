@@ -247,6 +247,7 @@ _LEAK_PATTERNS = [
     re.compile(r"ptr_[A-Za-z0-9+/=]{16,}"),           # Portainer
     re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),        # GitHub
     re.compile(r"AKIA[0-9A-Z]{16}"),                  # AWS Access Key
+    re.compile(r"hf_[A-Za-z0-9]{30,}"),               # HuggingFace
     re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),      # Slack
     re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}"),  # JWT
 ]

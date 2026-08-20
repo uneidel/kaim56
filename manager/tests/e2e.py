@@ -666,6 +666,8 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(n, 2)
         self.assertNotIn("sk-or-v1", red)
         self.assertNotIn("ptr_ABCD", red)
+        # HuggingFace-Token wird maskiert
+        self.assertEqual(g.redact_secrets("tok hf_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 x")[1], 1)
         self.assertEqual(g.redact_secrets("normaler Text")[1], 0)
         # git-SHA (40 hex) darf NICHT als Secret gelten
         self.assertEqual(g.redact_secrets("commit e80c4b19eb585554842b036889fbc10435b79bea")[1], 0)
