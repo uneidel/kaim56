@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-20 (Refactoring-Nachbeben: drei Worker-Bugs + Notification-Klick + UI)
+- **Wurzel gefunden dank neuem worker.log**: (1) `chat_log_append` war nach
+    mgr/notify.py gerutscht und fand `load_chats` nicht (NameError) -> Task-
+    Ergebnisse erreichten den Chat nie (das Jobsuche-Symptom). Zurueck nach
+    manager.py (Chat-Domaene). (2) mgr/store.py fehlte `import re` ->
+    `_next_run` crashte, next_run blieb in der Vergangenheit -> **Scheduled-
+    Tasks liefen in Dauerschleife** (Heartbeat seit dem Abend, Jobsuche
+    mehrfach). (3) Worker hinterliess bei Nachlauf-Fehlern „running"-Waisen.
+- **Worker gehaertet**: jeder Nachlauf-Schritt einzeln abgesichert (Status-
+    Garantie), Waisen-Wache zur Laufzeit (>30 min running -> zurueckstellen),
+    Diagnose-Log run/worker.log (journal ist root-only).
+- **Notification-Klick oeffnet echten Chat** (App 5.10 + Web): bevorzugt den
+    Task-Chat des Agenten, sonst den juengsten — statt leerem Fenster.
+- **Glocke: „Leeren"** entfernt Notifications wirklich (`{clear:true}`);
+    Oeffnen markiert weiterhin nur als gelesen.
+- **UI**: klobige System-Scrollbars im Manager entfernt (Dialoge overflow-x
+    hidden, schlanke theme-konforme Scrollbars global).
+
+
 ## 2026-08-20 (App 5.9: Fehlermeldungen verfallen + Lizenz-Header)
 - Status-/Fehlermeldungen in der App klebten dauerhaft (z. B. DNS-Fehler
     „Unable to resolve agents.kat56.de", wenn das Handy nicht im Heimnetz/VPN

@@ -406,8 +406,7 @@ def wait_chats(since, timeout):
 # ---- Notifications: ausgelagert nach mgr/notify.py -------------------------
 from mgr import notify as _notify  # noqa: E402
 _notify.configure(BASE)
-from mgr.notify import (load_notifications, notify_add, notif_mark_read,  # noqa: E402,F401
-                        chat_log_append,
+from mgr.notify import (load_notifications, notify_add, notif_mark_read, notif_clear,  # noqa: E402,F401
                         wait_notifs, NOTIF_MAX, NOTIF_RATE, _notif_sent)
 _missions.notify_add = notify_add   # Injektion (mgr/missions)
 
@@ -451,6 +450,33 @@ def inbox_since(peek=False):
         except OSError:
             pass
     return items
+
+
+def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
+    """Einen Turn (Frage + Antwort) an die gemeinsame Chat-Historie haengen,
+    damit er in App und Web auftaucht. `kind`='signal' -> eine Konversation pro
+    (Instanz,Sender); 'task' -> eine Task-Konversation pro Instanz."""
+    if kind == "task":
+        cid = f"task-{inst_name}"
+        title = f"Tasks · {inst_name}"
+    else:
+        sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "signal"))[:20] or "signal"
+        cid = f"sig-{inst_name}-{sid}"
+        title = f"Signal · {inst_name}"
+    chats = load_chats()
+    conv = next((c for c in chats if isinstance(c, dict) and c.get("id") == cid), None)
+    now = int(time.time() * 1000)
+    if conv is None:
+        conv = {"id": cid, "title": title, "mode": "server",
+                "instance": inst_name, "messages": [], "updatedAt": now}
+        chats.append(conv)
+    if user_text:
+        conv["messages"].append({"user": True, "text": str(user_text)})
+    if reply_text:
+        conv["messages"].append({"user": False, "text": str(reply_text)})
+    conv["messages"] = conv["messages"][-500:]
+    conv["updatedAt"] = now
+    return save_chats(chats)
 
 
 def merge_chats(incoming):
@@ -650,6 +676,21 @@ def _orch_fire():
 _mi_sweep_ts = [0.0]
 
 
+WORKER_LOG = os.path.join(RUN_DIR, "worker.log")
+
+
+def _wlog(msg):
+    """Worker-Diagnose in eine Datei — journalctl ist nur root zugaenglich,
+    und genau beim Task-Waisen-Bug (20.08.) fehlte dadurch die Exception."""
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)
+    print("[worker]", msg, flush=True)
+    try:
+        with open(WORKER_LOG, "a") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
 def reclaim_stuck_tasks():
     """Beim Start verwaiste 'running'-Tasks zurueckstellen. Genau EIN Worker
     laeuft — was beim Start noch 'running' ist, gehoert zu einem abgestuerzten
@@ -686,38 +727,64 @@ def _task_worker():
                 t["status"] = "running"
                 t["updated"] = now
                 save_tasks(tasks)
-                ok, res = _run_task_now(t["instance"], t["message"])
-                fresh = load_tasks()
-                tt = next((x for x in fresh if x["id"] == t["id"]), None)
-                if tt is not None:
-                    tt["updated"] = int(time.time())
-                    tt["result"] = res
-                    if sched:
-                        tt["status"] = "scheduled"
-                        tt["next_run"] = _next_run(tt["schedule"], int(time.time()))
-                    else:
-                        tt["status"] = "done" if ok else "error"
-                    save_tasks(fresh)
-                # Ergebnis in die gemeinsame Chat-Historie (App/Web/Signal sehen es).
+                # Ab hier ist ALLES einzeln abgesichert: ein Fehler irgendwo darf
+                # den Task nie mehr als "running"-Waise hinterlassen (Bug 20.08.:
+                # Exception im Nachlauf -> aeusseres except -> Task feuerte nie
+                # wieder und der Chat-Eintrag fehlte).
+                try:
+                    ok, res = _run_task_now(t["instance"], t["message"])
+                except Exception as e:
+                    ok, res = False, f"worker-exception (run): {e!r}"
+                    _wlog(f"{t['id']}: {res}")
+                try:
+                    fresh = load_tasks()
+                    tt = next((x for x in fresh if x["id"] == t["id"]), None)
+                    if tt is not None:
+                        tt["updated"] = int(time.time())
+                        tt["result"] = res
+                        if sched:
+                            tt["status"] = "scheduled"
+                            tt["next_run"] = _next_run(tt["schedule"], int(time.time()))
+                        else:
+                            tt["status"] = "done" if ok else "error"
+                        save_tasks(fresh)
+                except Exception as e:
+                    _wlog(f"{t['id']}: Status-Update fehlgeschlagen: {e!r}")
                 try:
                     chat_log_append(t.get("instance", "task"), "task",
                                     t.get("message", ""), res, kind="task")
-                except Exception:
-                    pass
-                history_add(t.get("instance", ""), t.get("message", ""), res, ok,
-                            t.get("schedule", ""), origin="worker")
-                # Missions-Sofort-Trigger: wartet ein Missionsschritt auf diesen
-                # Task, macht der Orchestrator direkt den naechsten Vorstoss.
+                except Exception as e:
+                    _wlog(f"{t['id']}: chat_log_append: {e!r}")
+                try:
+                    history_add(t.get("instance", ""), t.get("message", ""), res, ok,
+                                t.get("schedule", ""), origin="worker")
+                except Exception as e:
+                    _wlog(f"{t['id']}: history_add: {e!r}")
                 try:
                     _mission_advance_fire(t["id"])
-                except Exception:
-                    pass
+                except Exception as e:
+                    _wlog(f"{t['id']}: mission-advance: {e!r}")
                 ran = True
                 break
         except Exception as e:
-            print("task-worker:", repr(e), flush=True)
+            _wlog(f"worker-loop: {e!r}")
         if not ran:
             time.sleep(5)
+            # Waisen-Wache: haengt ein Task laenger als 30 min auf "running",
+            # ist sein Lauf verloren (Timeout ist 10 min) -> zurueckstellen.
+            try:
+                tasks2 = load_tasks()
+                cut = int(time.time()) - 1800
+                dirty = False
+                for t2 in tasks2:
+                    if t2.get("status") == "running" and t2.get("updated", 0) < cut:
+                        t2["status"] = "scheduled" if t2.get("schedule") else "pending"
+                        _wlog(f"{t2.get('id')}: running-Waise zurueckgestellt")
+                        dirty = True
+                if dirty:
+                    save_tasks(tasks2)
+            except Exception as e:
+                _wlog(f"waisen-wache: {e!r}")
             # TTL-Sweep im Leerlauf, hoechstens einmal pro Stunde.
             now = time.time()
             if now - _mi_sweep_ts[0] > 3600:
@@ -3044,7 +3111,10 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            n = notif_mark_read(body.get("id"), bool(body.get("all")))
+            if body.get("clear"):
+                n = notif_clear()
+            else:
+                n = notif_mark_read(body.get("id"), bool(body.get("all")))
             out = json.dumps({"marked": n}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out))); self.end_headers()

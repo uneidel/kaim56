@@ -100,6 +100,16 @@ def notif_mark_read(nid=None, mark_all=False):
     return n
 
 
+def notif_clear():
+    """Alle Benachrichtigungen entfernen (UI-Aktion „Leeren")."""
+    with _notif_lock:
+        n = len(load_notifications())
+        _save_notifications([])
+    if n:
+        _bump_notif_rev()
+    return n
+
+
 def wait_notifs(since, timeout):
     """(rev, notifications|None) — analog zu wait_chats."""
     deadline = time.time() + max(0.0, timeout)
@@ -113,28 +123,3 @@ def wait_notifs(since, timeout):
     return rev, (load_notifications() if rev > since else None)
 
 
-def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
-    """Einen Turn (Frage + Antwort) an die gemeinsame Chat-Historie haengen,
-    damit er in App und Web auftaucht. `kind`='signal' -> eine Konversation pro
-    (Instanz,Sender); 'task' -> eine Task-Konversation pro Instanz."""
-    if kind == "task":
-        cid = f"task-{inst_name}"
-        title = f"Tasks · {inst_name}"
-    else:
-        sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "signal"))[:20] or "signal"
-        cid = f"sig-{inst_name}-{sid}"
-        title = f"Signal · {inst_name}"
-    chats = load_chats()
-    conv = next((c for c in chats if isinstance(c, dict) and c.get("id") == cid), None)
-    now = int(time.time() * 1000)
-    if conv is None:
-        conv = {"id": cid, "title": title, "mode": "server",
-                "instance": inst_name, "messages": [], "updatedAt": now}
-        chats.append(conv)
-    if user_text:
-        conv["messages"].append({"user": True, "text": str(user_text)})
-    if reply_text:
-        conv["messages"].append({"user": False, "text": str(reply_text)})
-    conv["messages"] = conv["messages"][-500:]
-    conv["updatedAt"] = now
-    return save_chats(chats)

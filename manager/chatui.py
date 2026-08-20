@@ -734,8 +734,11 @@ $('clipBtn').innerHTML=IC.clip;
   if(b.title&&b.title.includes('Restart agent'))b.innerHTML=IC.refresh;
 });
 load();drawAgents();syncChats();
-const last=convs.find(c=>c.agent===agent);
-if(last&&!START)openChat(last.id); else {draw();drawConvs()}
+/* Bestehenden Chat oeffnen — auch wenn per ?i=<agent> (z. B. Notification-
+   Klick) gestartet: bevorzugt den Task-Chat des Agenten, sonst den juengsten. */
+const last=convs.find(c=>c.id==='task-'+agent)
+  ||convs.filter(c=>c.agent===agent).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+if(last)openChat(last.id); else {draw();drawConvs()}
 refreshState();gwLoad();setInterval(refreshState,15000);
 </script></body></html>"""
 

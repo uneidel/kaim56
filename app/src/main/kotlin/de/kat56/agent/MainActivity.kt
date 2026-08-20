@@ -870,6 +870,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             notifNav.startsWith("chat:") -> {
                 val inst = notifNav.removePrefix("chat:")
                 prefs.mode = "server"; prefs.instance = inst; screen = null
+                // Bestehenden Chat oeffnen statt leerem Fenster: bevorzugt den
+                // Task-Chat (dort landen Task-Ergebnisse), sonst den juengsten
+                // Chat mit dieser Instanz.
+                val target = conversations.firstOrNull { it.id == "task-$inst" }
+                    ?: conversations.filter { it.instance == inst }
+                        .maxByOrNull { it.updatedAt }
+                if (target != null) currentId = target.id
             }
         }
     }

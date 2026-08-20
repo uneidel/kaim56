@@ -8,6 +8,7 @@ und der Embedding-Client. Teil des mgr-Pakets; braucht nur BASE.
 """
 import json
 import os
+import re
 import sqlite3
 import threading
 import time

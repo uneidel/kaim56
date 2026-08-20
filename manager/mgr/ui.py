@@ -137,6 +137,11 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .nbell{position:relative;flex:none;margin-left:14px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:1px solid var(--color-divider);border-radius:10px;background:var(--color-surface);color:var(--color-neutral-700);cursor:pointer}
 .nbell:hover{border-color:var(--color-accent);color:var(--color-accent)}
 .nbadge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--color-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--color-text) 18%,transparent);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--color-text) 32%,transparent)}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-corner{background:transparent}
 .npanel{position:absolute;top:58px;right:16px;width:340px;max-width:calc(100vw - 32px);max-height:60vh;overflow:auto;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);z-index:60}
 .nhead{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--color-divider);position:sticky;top:0;background:var(--color-surface)}
 .nitem{padding:10px 14px;border-bottom:1px solid var(--color-divider)}
@@ -206,7 +211,7 @@ footer{border-top:1px solid var(--color-divider)}
 /* — dialog — */
 .dialog-backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:var(--space-4);
   background:color-mix(in srgb,var(--color-neutral-900) 50%,transparent);z-index:50}
-.dialog{width:min(440px,100%);max-height:88vh;overflow:auto;display:flex;flex-direction:column;
+.dialog{width:min(440px,100%);max-height:88vh;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;
   gap:var(--space-3);padding:var(--space-6);border-radius:0;background:var(--color-bg);
   border:1px solid var(--color-divider);box-shadow:var(--shadow-lg)}
 .dialog-title{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:20px}
@@ -280,7 +285,7 @@ footer{border-top:1px solid var(--color-divider)}
     <span class=nbadge id=nbadge hidden>0</span>
   </button>
   <div class=npanel id=npanel hidden>
-    <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifReadAll()>Alle gelesen</button></div>
+    <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
     <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
   </div>
 </div></header>
@@ -1921,6 +1926,11 @@ function notifMarkAll(){
     .then(()=>{NOTIF_LIST.forEach(n=>n.read=true);notifRender();notifBadge(0);}).catch(()=>{});
 }
 function notifReadAll(){notifMarkAll();}
+function notifClear(){
+  fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({clear:true})})
+    .then(()=>{NOTIF_LIST=[];notifRender();notifBadge(0);}).catch(()=>{});
+}
 function notifToggle(){
   const p=document.getElementById('npanel');if(!p)return;
   const show=p.hidden;p.hidden=!show;
