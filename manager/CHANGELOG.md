@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Hardening: unhandled exceptions in a GET/POST route now return a clean HTTP 500 (and log a traceback) instead of dropping the connection — so a future route bug surfaces as an error the agent can read/retry, not a silent RemoteDisconnected.
 - Fix: `playbook_add` failed with RemoteDisconnected in every agent — `mgr/rules.py` used `uuid`/`time` without importing them, so `/api/playbook-add` crashed mid-request and the manager dropped the connection (memory/list worked as they don't use those). Added the imports; regression test covers it.
 - Slash typeahead: Esc now reliably closes the picker whenever it's visible and keeps it closed while you keep typing the same /command (reopens on a fresh /).
 - Web slash typeahead: now lists all 8 agent commands (added /fresh, /branch, /back) and was restyled into a command-palette (rounded panel, header hint, bold command + muted description, full-row highlight).

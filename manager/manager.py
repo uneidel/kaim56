@@ -2193,6 +2193,42 @@ def _guard_check(inst):
 
 
 class H(BaseHTTPRequestHandler):
+    # Schutzschicht: eine unbehandelte Exception in einer Route darf NICHT die
+    # Verbindung hart abreissen (Agent saehe sonst "RemoteDisconnected"). Wurde
+    # noch kein Header gesendet, antworten wir sauber mit HTTP 500; sonst wird
+    # die Antwort nur beendet. Der Fehler landet im Journal.
+    def end_headers(self):
+        self._sent = True
+        return super().end_headers()
+
+    def _fail500(self):
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[http] unhandled in {self.command} {self.path}:\n{tb}", flush=True)
+        if getattr(self, "_sent", False):
+            return
+        try:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"internal server error"}')
+        except Exception:
+            pass
+
+    def do_GET(self):
+        self._sent = False
+        try:
+            self._do_GET()
+        except Exception:
+            self._fail500()
+
+    def do_POST(self):
+        self._sent = False
+        try:
+            self._do_POST()
+        except Exception:
+            self._fail500()
+
     def _auth(self):
         if not PW:
             return True
@@ -2465,7 +2501,7 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
+    def _do_GET(self):
         if not self._auth():
             return
         if self.path.split("?", 1)[0].rstrip("/") == "/chat":
@@ -3043,7 +3079,7 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
 
-    def do_POST(self):
+    def _do_POST(self):
         if not self._auth():
             return
         _pp = self.path.split("?", 1)[0]
