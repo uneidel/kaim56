@@ -11,6 +11,57 @@ Browser ─────┘         │                              ▲
                        └── katfs (iroh, P2P) ──────────┘
 ```
 
+## Features
+
+**Architecture**
+- Self-hosted AI-agent platform — one hardened Firecracker microVM per agent (own kernel, fully isolated)
+- Single-process manager (Python standard library only, no framework, no external services) serving the control API, web UI, and chat
+- Copy-on-write overlay rootfs: a shared read-only base plus a per-instance write layer
+- Optional persistent disk per instance — installed packages and files survive restarts; one-click factory reset
+- Automatic per-agent networking: tap devices, /30 subnets, NAT, and LAN gating via iptables
+- One-command installer (`curl … | sh`) that provisions the whole stack on a fresh KVM host
+
+**Models & agents**
+- Pluggable backends — OpenRouter, OrcaRouter, and self-hosted llama.cpp — selected per instance
+- Switch model or provider live during a conversation (`/model`), no restart, context preserved
+- Reasoning toggle with a collapsible "thinking" view in web and app
+- Orchestrator agent that routes work to capable instances instead of doing it itself
+- Claude Code available headless as a first-class agent
+
+**Agent capabilities**
+- Built-in tools: shell, files, HTTP fetch, web search, PDF extraction, sub-agents, task scheduling
+- Missions — multi-step plans with progress that survive resets and restarts; a finished task instantly advances the next step
+- Semantic long-term memory (embeddings, per-query recall) plus flat key/value memory
+- Playbooks — standing rules the agent learns from your corrections and always follows
+- Prompt templates as slash commands, auto-summarizing context, and large-output offloading
+- Steering (interrupt a running turn), goal loops with a judge, and tree-chat (`/branch` … `/back` folds a side-question back into a one-line note)
+- Drop-in tool plugins — one Python file per new tool, no image rebuild
+
+**Communication**
+- Signal integration — receive and send, incoming messages trigger the agent
+- Push notifications to the mobile app and a web bell, clickable straight to the relevant chat
+- Voice — speech-to-text and text-to-speech with selectable voices and speed
+- Peer-to-peer folder sharing (iroh) from the browser or a native CLI, with ZIP download
+- Per-instance MCP servers (e.g. Home Assistant) via a host-side hub
+
+**Clients & UI**
+- Web manager: instances, tasks, missions, personas, playbooks, prompt templates, policy, models, sharing, secrets, settings
+- Android app (chat, voice, missions, tasks, plus an offline on-device Gemma mode)
+- Streaming web chat with Markdown, vision/image input, and a slash-command picker
+- Per-instance activity view with time filtering and token/cost usage
+
+**Security & guardrails**
+- Secret broker — API keys never touch a VM's disk, gated by source-IP allowlists
+- Credential-injection gateway — LLM keys never enter a VM; the manager injects them on egress
+- Human-in-the-loop approval for risky tools via Signal
+- Hard shell denylist plus an "oracle" second opinion required before destructive actions
+- Content gateway — strips invisible-Unicode injection and image metadata, per chat
+- Cost and rate circuit breakers — per-instance daily token budget and calls-per-minute
+- Task-frequency cap and orphaned-run recovery
+- Per-instance egress allowlist and a secret leak-filter on outgoing messages
+- Per-instance tool allowlists and a per-instance audit trail
+
+
 ## Was liegt wo
 
 | Pfad | Inhalt |
