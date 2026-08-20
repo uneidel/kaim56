@@ -11,6 +11,21 @@ Browser ─────┘         │                              ▲
                        └── katfs (iroh, P2P) ──────────┘
 ```
 
+## Screenshots
+
+The web manager — one microVM per agent, live model/backend, per-instance usage
+(instance names and cost figures blurred here):
+
+![Instances](docs/img/instances.png)
+
+The built-in **Architecture** view (rendered from the running manager):
+
+![Architecture](docs/img/architecture.png)
+
+**Missions** — multi-step plans the orchestrator drives autonomously:
+
+![Missions](docs/img/missions.png)
+
 ## Features
 
 **Architecture**
