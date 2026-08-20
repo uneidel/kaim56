@@ -343,7 +343,9 @@ function applyRemote(remote){
   convs=Object.values(byId).sort((a,b)=>(b.ts||0)-(a.ts||0));
   try{localStorage.setItem(KEY,JSON.stringify(convs.slice(0,200)))}catch(e){}
   drawConvs();
-  if(cur){const f=convs.find(c=>c.id===cur.id); if(f&&f!==cur){cur=f;draw();}}
+  // Auch wenn cur DASSELBE Objekt ist (Nachrichten wurden reingemutiert), neu
+  // zeichnen — sonst sieht das offene Geraet live angehaengte Nachrichten nicht.
+  if(cur){const f=convs.find(c=>c.id===cur.id); if(f){cur=f;draw();}}
   return true;
 }
 /* Einmal beim Laden: holen, danach die eigenen (nur lokal vorhandenen) Chats
@@ -355,7 +357,6 @@ async function syncChats(){
     applyRemote(fromShared(d.chats||[]));
   }catch(e){}
   pushShared(0);
-  chatSyncLoop();
 }
 /* Long-Poll: der Manager antwortet, sobald App ODER Web schreibt — dadurch
    stehen neue Nachrichten der anderen Seite in Sekundenbruchteilen hier. */
@@ -757,12 +758,18 @@ $('clipBtn').innerHTML=IC.clip;
 [...document.querySelectorAll('.icon')].forEach(b=>{
   if(b.title&&b.title.includes('Restart agent'))b.innerHTML=IC.refresh;
 });
-load();drawAgents();syncChats();
-/* Bestehenden Chat oeffnen — auch wenn per ?i=<agent> (z. B. Notification-
-   Klick) gestartet: bevorzugt den Task-Chat des Agenten, sonst den juengsten. */
-const last=convs.find(c=>c.id==='task-'+agent)
-  ||convs.filter(c=>c.agent===agent).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
-if(last)openChat(last.id); else {draw();drawConvs()}
+load();drawAgents();
+/* Erst den geteilten Server-Store holen (await!), DANN den bestehenden Chat
+   der Instanz oeffnen — sonst startet ein zweites Geraet mit leerem localStorage
+   einen neuen Thread und der Verlauf wirkt "nicht synchronisiert". Auch fuer den
+   Notification-Klick (?i=<agent>): bevorzugt den Task-Chat, sonst den juengsten. */
+(async()=>{
+  await syncChats();
+  const last=convs.find(c=>c.id==='task-'+agent)
+    ||convs.filter(c=>c.agent===agent).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+  if(last&&!cur)openChat(last.id); else if(!cur){draw();drawConvs()}
+  chatSyncLoop();
+})();
 refreshState();gwLoad();setInterval(refreshState,15000);
 </script></body></html>"""
 

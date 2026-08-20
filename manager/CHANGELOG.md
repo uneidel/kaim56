@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Multi-device chat sync fixed (web `/chat`): (1) the initial conversation was selected before the shared server store finished loading, so a second device opened an empty thread with a fresh id instead of the shared one — now it awaits the pull first; (2) live-appended messages from another device weren't redrawn in the open chat because the merge mutated the same object the `f!==cur` guard skipped — now the open conversation always repaints on a merge.
 - Fix `_(empty reply)_` with local reasoning models (llama.cpp/Qwen3): the server streams thinking as `reasoning_content`, which the agent only recognised under the OpenRouter name `reasoning` and silently dropped — if the model emitted no plain `content`, the whole answer was lost. Now both field names stream as thinking, and a reasoning-only turn falls back to showing the reasoning instead of an empty reply.
 - Web chat slash-command typeahead: fixed a latent bug (undefined `escT`) that made the picker throw on render so the dropdown never appeared — now it opens on `/`, navigable with ↑/↓, accept with Enter/Tab, Esc to close. Includes prompt templates (tagged), and reflects `/steps … unlimited`.
 - /steps now takes any count 1..x (60-cap removed) plus `/steps unlimited` (0 = unbounded rounds; only the guardrails — token budget + rate-limit — then apply). Web-chat + app slash-command help updated.
