@@ -18,12 +18,12 @@
     {
       "key": "SIGNAL_NUMBER",
       "label": "Signal number (bot)",
-      "default": "+490000000000"
+      "default": ""
     },
     {
       "key": "ALLOWED_SENDERS",
       "label": "Allowed number(s)",
-      "default": "+490000000000"
+      "default": ""
     },
     {
       "key": "LLAMA_ENDPOINT",

@@ -5,8 +5,8 @@
   "vcpus": 2, "mem_mib": 1536,
   "params": [
     {"key": "TRANSPORT", "label": "Transport", "type": "select", "options": ["signal", "web", "mail"], "default": "signal"},
-    {"key": "SIGNAL_NUMBER", "label": "Signal number (bot)", "default": "+490000000000"},
-    {"key": "ALLOWED_SENDERS", "label": "Allowed number(s)", "default": "+490000000000"},
+    {"key": "SIGNAL_NUMBER", "label": "Signal number (bot)", "default": ""},
+    {"key": "ALLOWED_SENDERS", "label": "Allowed number(s)", "default": ""},
     {"key": "ANTHROPIC_MODEL", "label": "Model (Claude Code)", "type": "select", "default": "",
      "options": [
        {"value": "", "label": "— account default —"},

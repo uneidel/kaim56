@@ -137,6 +137,7 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .appfoot{display:flex;align-items:center;gap:18px;padding:14px 28px;margin-top:24px;
   border-top:1px solid var(--color-divider);color:var(--color-neutral-600)}
 .af-brand{font-family:var(--font-heading);font-weight:600;font-size:13px;letter-spacing:.02em}
+.af-stat{font-size:12px;color:var(--color-neutral-600);white-space:nowrap}
 .af-nav{display:flex;gap:18px;margin-left:auto}
 .af-nav a{color:var(--color-neutral-600);text-decoration:none;font-size:13px}
 .af-nav a:hover,.af-nav a[aria-current=page]{color:var(--color-accent)}
@@ -882,15 +883,14 @@ footer{border-top:1px solid var(--color-divider)}
 
 <footer class=appfoot>
   <span class=af-brand>kAIm56</span>
+  <span class=af-stat>NAT via __HOSTIF__</span>
+  <span class=af-stat>Pool __POOL__</span>
+  <span class=af-stat id=spend></span>
   <nav class=af-nav>
     <a href="#changelog">Changelog</a>
     <a href="#architecture">Architecture</a>
   </nav>
 </footer>
-<footer><div class="foot-in text-muted">
-  <span>NAT via __HOSTIF__</span><span>Pool __POOL__</span>
-  <span id=spend></span><span style="margin-left:auto">kAIm56</span>
-</div></footer>
 </div>
 
 <div id=picker class=dialog-backdrop style="display:none;z-index:60">
