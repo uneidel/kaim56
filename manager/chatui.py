@@ -175,15 +175,16 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   border:1px solid var(--border);padding:8px 15px}
 .chips button:hover{background:color-mix(in srgb,var(--text) 7%,transparent);border-color:var(--accent)}
 
-.slrow{display:flex;gap:10px;align-items:baseline;padding:6px 12px;cursor:pointer;
-  background:var(--panel);border:1px solid var(--border);border-top:none;font-size:.85rem}
-#slashhint .slrow:first-child{border-top:1px solid var(--border)}
+#slashhint{max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:14px;
+  background:var(--panel);box-shadow:0 10px 34px rgba(0,0,0,.20);padding:6px}
+.slhead{padding:9px 12px 7px;font-size:.72rem;color:var(--muted);letter-spacing:.02em}
+.slrow{display:flex;gap:10px;align-items:baseline;padding:9px 12px;cursor:pointer;
+  border-radius:9px;font-size:.9rem}
 .slrow:hover{background:var(--panel-2)}
-.slrow code{flex:none;color:var(--accent)}
-.slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.slrow.slsel{background:var(--panel-2);box-shadow:inset 3px 0 0 var(--accent)}
+.slrow.slsel{background:var(--panel-2)}
+.slrow code{flex:none;color:var(--text);font-weight:600;background:none;padding:0}
+.slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem}
 .sltag{flex:none;margin-left:auto;font-size:.68rem;font-style:normal;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:0 6px;line-height:1.5}
-#slashhint{max-height:220px;overflow-y:auto;border-radius:10px}
 
 /* ---- Aeste (Tree-Chat) ---- */
 #branchbar{display:flex;align-items:center;gap:10px;padding:7px 12px;
@@ -685,6 +686,9 @@ const SLASH_BUILTIN=[
   ['/steps','Max. Tool-Schritte je Turn: /steps 30 oder /steps unlimited'],
   ['/goal','Ziel setzen — Antworten werden gegen einen Judge verfeinert'],
   ['/reset','Kontext zuruecksetzen'],
+  ['/fresh','Einmalige Anfrage im Wegwerf-Kontext (Verlauf bleibt unberuehrt)'],
+  ['/branch','Nebenast oeffnen — Rueckfrage abseits des Hauptthemas'],
+  ['/back','Nebenast schliessen und als Notiz zusammenfassen (/back drop = verwerfen)'],
 ];
 let SLASH_PROMPTS=[],_spTs=0;
 async function slashPrompts(){
@@ -697,7 +701,8 @@ let SL_HITS=[],SL_SEL=-1;
 function slOpen(){return $('slashhint').style.display==='block'&&SL_HITS.length>0}
 function slClose(){$('slashhint').style.display='none';SL_HITS=[];SL_SEL=-1}
 function slRender(){
-  $('slashhint').innerHTML=SL_HITS.map((h,i)=>
+  const hd=`<div class=slhead>Befehle \u00b7 \u2191\u2193 w\u00e4hlen \u00b7 \u21b5 \u00fcbernehmen \u00b7 Esc schlie\u00dft</div>`;
+  $('slashhint').innerHTML=hd+SL_HITS.map((h,i)=>
     `<div class="slrow${i===SL_SEL?' slsel':''}" onmousedown="event.preventDefault()" `+
     `onclick="pickSlash('${esc(h[0])}')"><code>${esc(h[0])}</code>`+
     `<span>${esc(h[1])}</span>${h[2]==='tpl'?`<em class=sltag>template</em>`:``}</div>`).join('');
@@ -705,13 +710,13 @@ function slRender(){
 function slMove(d){
   if(!SL_HITS.length)return;
   SL_SEL=(SL_SEL+d+SL_HITS.length)%SL_HITS.length; slRender();
-  const rows=$('slashhint').children; if(rows[SL_SEL])rows[SL_SEL].scrollIntoView({block:'nearest'});
+  const rows=$('slashhint').querySelectorAll('.slrow'); if(rows[SL_SEL])rows[SL_SEL].scrollIntoView({block:'nearest'});
 }
 async function slashHint(){
   const el=$('slashhint'),v=$('t').value;
   if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){slClose();return}
   const all=SLASH_BUILTIN.concat(await slashPrompts());
-  SL_HITS=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,8);
+  SL_HITS=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,10);
   if(!SL_HITS.length){slClose();return}
   SL_SEL=0; slRender(); el.style.display='block';
 }
