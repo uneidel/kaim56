@@ -86,10 +86,10 @@ Included, on the other hand, are `personas.json`, `skills.json`, `mcp-catalog.js
 and `secret-policy.json` — that is configuration or authored content, and the MCP
 entries reference secrets only as `${NAME}` placeholders.
 
-> Note: `manager/templates/*.json` and `agents/*/config*.env` carry real phone
-> numbers as defaults (the Signal bot and allowed senders), and internal
-> hostnames/IPs appear throughout. Nothing secret, but personal — so treat this
-> repo as **private**.
+> Note: template and agent defaults ship **empty** phone-number fields (fill in your
+> own Signal bot / allowed senders at instance creation). Internal hostnames/IPs
+> still appear in configs, and earlier git history contains real phone numbers —
+> so treat this repo as **private** until the history is scrubbed.
 
 ## Running the manager
 

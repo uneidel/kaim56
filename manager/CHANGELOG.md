@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Scrubbed phone-number defaults from templates/agent configs (now empty); merged the two page footers into a single row.
 - Die Topbar-Nav war ueberladen (Glocke + „Missions" draengten Changelog und
     Architecture aus der sichtbaren Zeile — Scrollbar ist ausgeblendet, wirkte
     „verschwunden"). Beide jetzt in einem Footer; Topbar endet bei „Settings",
