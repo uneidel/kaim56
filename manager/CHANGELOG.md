@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-20 (Fix: App/Tasks leer nach dem mgr/-Refactoring)
+- Regression aus der Paket-Aufteilung: `load_tasks`/`save_tasks` zogen nach
+    mgr/store.py, die Konstante `TASKS_FILE` blieb aber undefiniert (configure
+    setzte sie nicht). Folge: `/api/tasks` crashte -> App zeigte „keine Tasks",
+    und der Task-Worker starb, sodass zwei Scheduled-Tasks (Heartbeat, Jobsuche)
+    auf „running" haengenblieben und nie wieder feuerten.
+- Fix: `TASKS_FILE` in `store.configure()` + Re-Export. Dazu **Crash-Recovery**
+    `reclaim_stuck_tasks()` beim Worker-Start: verwaiste „running"-Tasks werden
+    auf scheduled/pending zurueckgestellt (heilt sich kuenftig selbst).
+- Regression-Tests: TASKS_FILE verdrahtet, reclaim-Logik. 55 gruen.
+
+
 ## 2026-08-19 (manager.py -> Paket mgr/ — Refactoring abgeschlossen)
 - Strangler-Fig-Refactoring durch: **manager.py von 6.705 auf ~1.400 Zeilen
     Kernlogik** (3.388 gesamt inkl. HTTP-Handler + main). Neun Module unter

@@ -635,6 +635,31 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE = old_file
 
+    def test_tasks_file_wired(self):
+        """Regression: TASKS_FILE muss in store.configure() gesetzt sein — sonst
+        crasht load_tasks (Bug vom 20.08., /api/tasks lieferte nichts)."""
+        import mgr.store as st
+        self.assertTrue(st.TASKS_FILE and st.TASKS_FILE.endswith("tasks.json"))
+        self.assertIsInstance(st.load_tasks(), list)
+
+    def test_reclaim_stuck_tasks(self):
+        m = self.m
+        import mgr.store as st
+        tmp = tempfile.mkdtemp(prefix="e2e-rc-")
+        old = st.TASKS_FILE
+        try:
+            st.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            st.save_tasks([{"id": "a", "status": "running", "schedule": "daily 07:00"},
+                           {"id": "b", "status": "running"},          # einmalig
+                           {"id": "c", "status": "done"}])
+            m.reclaim_stuck_tasks()
+            by = {t["id"]: t["status"] for t in st.load_tasks()}
+            self.assertEqual(by["a"], "scheduled")   # geplant -> scheduled
+            self.assertEqual(by["b"], "pending")      # einmalig -> pending
+            self.assertEqual(by["c"], "done")         # unberuehrt
+        finally:
+            st.TASKS_FILE = old
+
     def test_usage_for_shape(self):
         m = self.m
         d = m.usage_for("orchestrator", 0)

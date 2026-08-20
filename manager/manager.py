@@ -480,12 +480,11 @@ def merge_chats(incoming):
 
 
 # ---- Hintergrundaufgaben (Task-Queue + Scheduler) --------------------------
-TASKS_FILE = os.path.join(BASE, "tasks.json")
 
 # ---- store: SQLite-History/Usage/Semantik + Memory -> mgr/store.py --------
 from mgr import store as _store  # noqa: E402
 _store.configure(BASE)
-from mgr.store import (HISTORY_DB, MEMORY_FILE, EMBED_URL, _hist_lock, _hist_conn,  # noqa: E402,F401
+from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_lock, _hist_conn,  # noqa: E402,F401
                        usage_add, usage_summary, usage_for, history_add, history_search,
                        load_tasks, save_tasks, add_task, update_task, _next_run,
                        _embed, sem_store, sem_search, load_memory, mem_store, mem_recall)
@@ -651,8 +650,24 @@ def _orch_fire():
 _mi_sweep_ts = [0.0]
 
 
+def reclaim_stuck_tasks():
+    """Beim Start verwaiste 'running'-Tasks zurueckstellen. Genau EIN Worker
+    laeuft — was beim Start noch 'running' ist, gehoert zu einem abgestuerzten
+    Lauf (z. B. der store-Bug am 20.08.) und wuerde sonst nie wieder feuern."""
+    tasks = load_tasks()
+    n = 0
+    for t in tasks:
+        if t.get("status") == "running":
+            t["status"] = "scheduled" if t.get("schedule") else "pending"
+            n += 1
+    if n:
+        save_tasks(tasks)
+        print(f"[worker] {n} verwaiste 'running'-Task(s) zurueckgestellt", flush=True)
+
+
 def _task_worker():
     """Verarbeitet fällige/anstehende Tasks sequentiell im Hintergrund."""
+    reclaim_stuck_tasks()
     while True:
         ran = False
         try:

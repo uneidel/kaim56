@@ -15,15 +15,17 @@ import urllib.request
 
 HISTORY_DB = None
 MEMORY_FILE = None
+TASKS_FILE = None
 _hist_lock = threading.Lock()
 _mem_lock = threading.Lock()
 EMBED_URL = "http://127.0.0.1:" + os.environ.get("EMBED_PORT", "8772")
 
 
 def configure(base):
-    global HISTORY_DB, MEMORY_FILE
+    global HISTORY_DB, MEMORY_FILE, TASKS_FILE
     HISTORY_DB = os.path.join(base, "history.db")
     MEMORY_FILE = os.path.join(base, "memory.json")
+    TASKS_FILE = os.path.join(base, "tasks.json")
 
 
 # ---- History (SQLite, stdlib): abfragbares Langzeitgedaechtnis ueber Aufgaben ----
