@@ -7,6 +7,7 @@ Pro Chat schaltbar; Zustand in gateway.json. Teil des mgr-Pakets, nur BASE.
 """
 import json
 import os
+import re
 import struct
 import threading
 
@@ -234,3 +235,28 @@ def _webp_strip(raw):
     return bytes(out), n
 
 
+# ---- Leak-Filter: Secrets duerfen das System nicht per Nachricht verlassen --
+# Angewandt auf AUSGEHENDE Kanaele (notify, send_signal): bekannte Key-Muster
+# werden ersetzt statt blockiert — die Nachricht kommt an, das Secret nicht.
+# Bewusst KEIN generisches 40-hex-Muster (traefe jede git-SHA).
+_LEAK_PATTERNS = [
+    re.compile(r"sk-or-v1-[A-Za-z0-9]{16,}"),        # OpenRouter
+    re.compile(r"sk-orca-[A-Za-z0-9]{8,}"),           # OrcaRouter
+    re.compile(r"sk-ant-[A-Za-z0-9-]{16,}"),          # Anthropic
+    re.compile(r"sk-[A-Za-z0-9]{32,}"),               # OpenAI u.ae.
+    re.compile(r"ptr_[A-Za-z0-9+/=]{16,}"),           # Portainer
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),        # GitHub
+    re.compile(r"AKIA[0-9A-Z]{16}"),                  # AWS Access Key
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),      # Slack
+    re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}"),  # JWT
+]
+
+
+def redact_secrets(text):
+    """(gefilterter_text, anzahl_funde)."""
+    out = str(text or "")
+    hits = 0
+    for pat in _LEAK_PATTERNS:
+        out, n = pat.subn("[SECRET entfernt]", out)
+        hits += n
+    return out, hits

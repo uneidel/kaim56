@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from mgr.gateway import redact_secrets
+
 SIGNAL_LOG = None
 load_settings = lambda: {}
 chat_log_append = lambda *a, **k: None
@@ -79,6 +81,7 @@ def signal_send(text, to=None):
         return False, f"recipient {to} not permitted; allowed: {', '.join(allowed)}"
 
     text = (text or "").strip()
+    text, _leaks = redact_secrets(text)   # Secrets verlassen das System nicht
     if not text:
         return False, "empty message"
     text = text[:SIGNAL_MAX_CHARS]

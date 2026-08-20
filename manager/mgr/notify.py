@@ -12,6 +12,8 @@ import threading
 import time
 import uuid
 
+from mgr.gateway import redact_secrets
+
 NOTIF_FILE = None
 
 
@@ -63,8 +65,8 @@ def _bump_notif_rev():
 def notify_add(instance, title, body, link=""):
     """link steuert, wohin ein Klick auf die Notification fuehrt:
     'missions' | 'tasks' | 'chat:<instanz>' | '' (nichts)."""
-    title = (title or "").strip()[:120]
-    body = (body or "").strip()[:1000]
+    title, h1 = redact_secrets((title or "").strip()[:120])
+    body, h2 = redact_secrets((body or "").strip()[:1000])
     if not title and not body:
         return None, "empty"
     now = time.time()

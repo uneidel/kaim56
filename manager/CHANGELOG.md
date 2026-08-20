@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-20 (Guardrails: Budget, Rate-Limit, Egress-Allowlist, Leak-Filter)
+- **Kosten-/Frequenz-Circuit-Breaker** am Key-Injection-Proxy (dort laufen
+    alle LLM-Calls durch): Tages-Token-Budget je Instanz (Default 2 Mio, aus
+    llm_usage; Override `BUDGET_TOKENS`) + Frequenz-Deckel (Default 60/min,
+    `LLM_RATE_MIN`). Ueberschreitung -> 429 + max. stuendlich eine notify.
+    Motivation: die naechtliche Heartbeat-Schleife lief voellig ungebremst.
+- **Task-Frequenz-Deckel im Worker**: >6 Laeufe/h desselben Tasks -> 1 h
+    ausgesetzt + notify (fangt Schleifen jeder Ursache).
+- **Egress-Allowlist je Instanz** (`EGRESS_ALLOW` = Domains/IPs): die VM darf
+    dann NUR dorthin (A-Records beim Start aufgeloest, sonst wie bisher „alles
+    ausser privat"). Netz-Ebene via iptables-FC-Kette.
+- **Leak-Filter** auf ausgehende Kanaele (notify, send_signal): bekannte
+    Key-Muster (sk-or-/sk-ant-/sk-/ptr_/gh*_/AKIA/xox*/JWT) werden ersetzt,
+    NICHT ein generisches 40-hex (git-SHAs bleiben unberuehrt — getestet).
+- 57 Tests gruen.
+
+
 ## 2026-08-20 (Refactoring-Nachbeben: drei Worker-Bugs + Notification-Klick + UI)
 - **Wurzel gefunden dank neuem worker.log**: (1) `chat_log_append` war nach
     mgr/notify.py gerutscht und fand `load_chats` nicht (NameError) -> Task-

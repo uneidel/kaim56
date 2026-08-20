@@ -660,6 +660,28 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             st.TASKS_FILE = old
 
+    def test_leak_filter(self):
+        import mgr.gateway as g
+        red, n = g.redact_secrets("key sk-or-v1-abcdef0123456789xyz und ptr_ABCDEFGHIJ1234567890")
+        self.assertEqual(n, 2)
+        self.assertNotIn("sk-or-v1", red)
+        self.assertNotIn("ptr_ABCD", red)
+        self.assertEqual(g.redact_secrets("normaler Text")[1], 0)
+        # git-SHA (40 hex) darf NICHT als Secret gelten
+        self.assertEqual(g.redact_secrets("commit e80c4b19eb585554842b036889fbc10435b79bea")[1], 0)
+
+    def test_guard_rate_limit(self):
+        m = self.m
+        inst = {"name": "e2e-guard-r", "config": {"LLM_RATE_MIN": "2", "BUDGET_TOKENS": "0"}}
+        import mgr.store  # nur zur Sicherheit geladen
+        r1 = m._guard_check(inst)[0]
+        r2 = m._guard_check(inst)[0]
+        r3, why = m._guard_check(inst)
+        self.assertTrue(r1 and r2)
+        self.assertFalse(r3)
+        self.assertIn("rate", why)
+        self.assertTrue(m._guard_check(None)[0])   # Admin/Host immer frei
+
     def test_usage_for_shape(self):
         m = self.m
         d = m.usage_for("orchestrator", 0)

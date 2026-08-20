@@ -723,6 +723,22 @@ def _task_worker():
                         continue
                 elif t.get("status") != "pending":
                     continue
+                # Frequenz-Deckel: mehr als 6 Laeufe/h desselben Tasks ist
+                # IMMER ein Defekt (Schleifen-Bug 20.08.) — Stunde aussetzen.
+                runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
+                if len(runs) >= 6:
+                    t["recent_runs"] = runs
+                    t["next_run"] = now + 3600
+                    save_tasks(tasks)
+                    _wlog(f"{t['id']}: >6 Laeufe/h — 1 h ausgesetzt (Schleifen-Schutz)")
+                    try:
+                        notify_add("guardrail", f"Task-Schleife gebremst: {t['id']}",
+                                   str(t.get("message", ""))[:120] + " — lief >6x/h, pausiert 1 h.",
+                                   link="tasks")
+                    except Exception:
+                        pass
+                    continue
+                t["recent_runs"] = runs + [now]
                 # Task beanspruchen
                 t["status"] = "running"
                 t["updated"] = now
@@ -1146,7 +1162,28 @@ def apply_internet(inst, allow):
            "-j", "ACCEPT", check=False)
     for net in _PRIVATE_NETS:
         sh("iptables", "-A", chain, "-d", net, "-j", "REJECT", check=False)
-    sh("iptables", "-A", chain, "!", "-d", POOL, "-j", "ACCEPT", check=False)
+    # Egress-Allowlist (Guardrail): steht EGRESS_ALLOW in der Instanz-Config
+    # (Komma-Liste aus Domains/IPs), darf die VM NUR dorthin — statt "alles
+    # ausser privat". Domains werden beim Start aufgeloest (A-Records); bei
+    # DNS-Wechseln des Ziels ist ein Stop/Start noetig. Leer = wie bisher.
+    egress = (inst.get("config", {}).get("EGRESS_ALLOW", "") or "").strip()
+    if egress:
+        seen = set()
+        for host in [h.strip() for h in egress.split(",") if h.strip()]:
+            try:
+                infos = socket.getaddrinfo(host, None, socket.AF_INET)
+                ips = sorted({i[4][0] for i in infos})
+            except OSError:
+                print(f"[egress] {inst['name']}: '{host}' nicht aufloesbar — uebersprungen",
+                      flush=True)
+                continue
+            for ip in ips:
+                if ip not in seen:
+                    seen.add(ip)
+                    sh("iptables", "-A", chain, "-d", ip, "-j", "ACCEPT", check=False)
+        sh("iptables", "-A", chain, "!", "-d", POOL, "-j", "REJECT", check=False)
+    else:
+        sh("iptables", "-A", chain, "!", "-d", POOL, "-j", "ACCEPT", check=False)
     sh("iptables", "-I", "FORWARD", "1", "-i", n["tap"], "-j", chain, check=False)
     if not have_back:
         sh("iptables", "-I", "FORWARD", "1", *back, "-j", "ACCEPT", check=False)
@@ -2035,6 +2072,63 @@ def guest_stream(inst, message, image, on_token, timeout=620):
         on_token(tail)
 
 
+# ---- Guardrails: Budget + Rate-Limit fuer LLM-Aufrufe -----------------------
+# Enforcement am Key-Injection-Proxy: dort laufen alle Router-Calls der VMs
+# durch. Budget je Instanz und Tag (Tokens, aus llm_usage) und ein Frequenz-
+# Deckel je Minute. Override je Instanz via Config: BUDGET_TOKENS (0 = aus),
+# LLM_RATE_MIN. Bei Ueberschreitung: 429 + hoechstens stuendlich eine notify.
+GUARD_BUDGET_TOKENS = int(os.environ.get("GUARD_BUDGET_TOKENS", "2000000"))
+GUARD_LLM_RATE_MIN = int(os.environ.get("GUARD_LLM_RATE_MIN", "60"))
+_guard_lock = threading.Lock()
+_guard_calls = {}          # instance -> [timestamps]
+_guard_notified = {}       # instance -> ts der letzten Budget-notify
+
+
+def _guard_check(inst):
+    """(erlaubt, grund). inst = Instanz-Dict oder None (Admin/Host: immer ok)."""
+    if inst is None:
+        return True, ""
+    name = inst["name"]
+    cfg = inst.get("config") or {}
+    now = time.time()
+    # 1) Frequenz je Minute
+    try:
+        rate = int(cfg.get("LLM_RATE_MIN", GUARD_LLM_RATE_MIN))
+    except ValueError:
+        rate = GUARD_LLM_RATE_MIN
+    with _guard_lock:
+        lst = _guard_calls.setdefault(name, [])
+        lst[:] = [t for t in lst if now - t < 60]
+        if rate > 0 and len(lst) >= rate:
+            return False, f"rate limit: {rate} LLM-Aufrufe/min erreicht"
+        lst.append(now)
+    # 2) Tages-Budget (Tokens seit lokaler Mitternacht)
+    try:
+        budget = int(cfg.get("BUDGET_TOKENS", GUARD_BUDGET_TOKENS))
+    except ValueError:
+        budget = GUARD_BUDGET_TOKENS
+    if budget > 0:
+        midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
+        u = usage_for(name, midnight)
+        used = (u.get("in") or 0) + (u.get("out") or 0)
+        if used >= budget:
+            with _guard_lock:
+                last = _guard_notified.get(name, 0)
+                fire = now - last > 3600
+                if fire:
+                    _guard_notified[name] = now
+            if fire:
+                try:
+                    notify_add("guardrail", f"Budget erreicht: {name}",
+                               f"{used:,} Tokens heute (Limit {budget:,}). LLM-Aufrufe "
+                               f"pausieren bis Mitternacht. Override: BUDGET_TOKENS in der "
+                               f"Instanz-Config.", link="tasks")
+                except Exception:
+                    pass
+            return False, f"budget: {used:,}/{budget:,} Tokens heute verbraucht"
+    return True, ""
+
+
 class H(BaseHTTPRequestHandler):
     def _auth(self):
         if not PW:
@@ -2805,6 +2899,13 @@ class H(BaseHTTPRequestHandler):
         if backend not in LLM_PROXY_UPSTREAMS or parts[3:] != ["chat", "completions"]:
             out = b'{"error":"unknown llm proxy path"}'
             self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers(); self.wfile.write(out); return
+        ok_g, why = _guard_check(instance_by_ip(self.client_address[0]))
+        if not ok_g:
+            out = json.dumps({"error": {"message": f"guardrail: {why}", "code": 429}}).encode()
+            self.send_response(429)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
             self.end_headers(); self.wfile.write(out); return
