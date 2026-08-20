@@ -1840,13 +1840,17 @@ def run(user_message):
 def or_chat_stream(messages, tools, on_token):
     """Wie or_chat, aber streamend: ruft on_token(text) je Delta. Baut die
     (assistant-)Nachricht inkl. evtl. tool_calls aus dem Stream zusammen."""
-    _b = {"model": OR_MODEL, "messages": messages, "stream": True, "usage": {"include": True}}
-    if tools:
-        _b["tools"] = tools
-        _b["tool_choice"] = "auto"
-    if _reasoning:
-        _b["reasoning"] = {"effort": _reasoning}
-    body = json.dumps(_b).encode()
+    def _build_llm_body(use_tools):
+        b = {"model": OR_MODEL, "messages": messages, "stream": True, "usage": {"include": True}}
+        if use_tools and tools:
+            b["tools"] = tools
+            b["tool_choice"] = "auto"
+        if _reasoning:
+            b["reasoning"] = {"effort": _reasoning}
+        return json.dumps(b).encode()
+
+    tools_on = bool(tools)
+    body = _build_llm_body(tools_on)
     content = ""
     tcs = {}
     reasoning_open = False
@@ -1861,7 +1865,21 @@ def or_chat_stream(messages, tools, on_token):
             r = urllib.request.urlopen(req, timeout=180)
             break
         except urllib.error.HTTPError as e:
-            m = f"⚠️ {LLM_NAME} HTTP {e.code}: {e.read().decode()[:300]}"
+            err_body = e.read().decode("utf-8", "replace")[:400]
+            # Lokale Modelle erzeugen bei grossen String-Argumenten (z. B. eine
+            # ganze Datei) oft kaputtes Tool-Call-JSON -> llama.cpp antwortet 500
+            # ("Failed to parse tool call arguments as JSON"). Ein erneuter Versuch
+            # mit demselben Body scheitert gleich wieder; stattdessen EINMAL ohne
+            # Tools wiederholen: das Modell gibt die Antwort dann als Text/Code aus,
+            # statt den ganzen Turn zu verlieren.
+            if (e.code == 500 and tools_on
+                    and ("tool call" in err_body.lower() or "tool_call" in err_body.lower())):
+                tools_on = False
+                body = _build_llm_body(False)
+                on_token("\n⚠️ Ungueltiges Tool-Call-JSON vom lokalen Modell — "
+                         "Runde ohne Tools wiederholt (Antwort als Text).\n")
+                continue
+            m = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
             on_token(m); return {"role": "assistant", "content": m}

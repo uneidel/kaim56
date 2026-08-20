@@ -97,6 +97,39 @@ class AgentLogic(unittest.TestCase):
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
         cls.a.report_usage = lambda *a, **k: None   # kein Netz zum Manager
 
+    def test_llama_tool_json_500_falls_back_to_no_tools(self):
+        """llama.cpp 500 wegen kaputtem Tool-Call-JSON -> Runde ohne Tools
+        wiederholen (Text-Antwort) statt den Turn zu verlieren."""
+        import io, urllib.error
+        a = self.a
+        calls = []
+        good = [b'data: {"choices":[{"delta":{"content":"ok"}}]}\n', b'data: [DONE]\n']
+        class FakeResp:
+            headers = {}
+            def __iter__(self): return iter(good)
+        def fake_urlopen(req, *ar, **kw):
+            body = req.data.decode()
+            has_tools = '"tools"' in body
+            calls.append("tools" if has_tools else "notools")
+            if has_tools:
+                raise urllib.error.HTTPError("http://x", 500, "err", {},
+                    io.BytesIO(b'{"error":{"message":"Failed to parse tool call arguments as JSON"}}'))
+            return FakeResp()
+        saved = (a.urllib.request.urlopen, a._llm_headers, a._llm_url)
+        a.urllib.request.urlopen = fake_urlopen
+        a._llm_headers = lambda: {"Content-Type": "application/json"}
+        a._llm_url = lambda: "http://x/v1/chat/completions"
+        toks = []
+        try:
+            msg = a.or_chat_stream([{"role": "user", "content": "hi"}],
+                                   [{"type": "function", "function": {"name": "t", "parameters": {}}}],
+                                   toks.append)
+        finally:
+            (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
+        self.assertEqual(calls, ["tools", "notools"])     # erst mit, dann ohne Tools
+        self.assertIn("ok", "".join(toks))                # Text-Antwort kam durch
+        self.assertEqual(msg["content"], "ok")
+
     def test_reasoning_content_streamed(self):
         """llama.cpp/Qwen3 sendet Denken als reasoning_content — muss gestreamt
         werden; content bleibt die eigentliche Antwort."""
