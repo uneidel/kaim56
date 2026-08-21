@@ -1,11 +1,12 @@
 // kAIm56 KatAgent — Android client for the kAIm56 agent platform
-// Copyright (C) 2026 the kAIm56 authors
+// Copyright (C) 2026 Ulrich Neidel
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
 import android.util.Base64
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 
 /** Server-Modus: chattet mit dem laufenden Agenten ueber den Manager-Proxy
@@ -64,6 +65,7 @@ object ServerAgent {
         message: String,
         image: String? = null,
         chatId: String = "",
+        isCancelled: () -> Boolean = { false },
         onPartial: (String) -> Unit,
     ): String? {
         val url = URL("${baseUrl.trimEnd('/')}/i/$instance/api/chat/stream")
@@ -71,7 +73,8 @@ object ServerAgent {
         return try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15000
-            conn.readTimeout = 600000
+            conn.readTimeout = 2000        // kurzes Poll-Timeout: erlaubt Abbruch,
+            // lange Modell-Pausen werden per continue toleriert (siehe Loop).
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             if (user.isNotEmpty()) {
@@ -88,7 +91,12 @@ object ServerAgent {
             val reader = stream.bufferedReader()
             val buf = CharArray(256)
             while (true) {
-                val n = reader.read(buf)
+                if (isCancelled()) break
+                val n = try {
+                    reader.read(buf)
+                } catch (te: SocketTimeoutException) {
+                    if (isCancelled()) break else continue   // nur Pause -> weiterlesen
+                }
                 if (n < 0) break
                 if (n > 0) onPartial(String(buf, 0, n))
             }

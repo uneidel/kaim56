@@ -113,7 +113,7 @@ import java.util.Locale
 // wartet nach jedem Satz. 1,8 s laesst Raum fuer eine Atempause mitten im
 // Satz, ohne dass sich das Ende der Aufnahme wie Haengen anfuehlt.
 private const val VAD_TICK = 100L
-private const val VAD_HANG = 2200L
+private const val VAD_HANG = 3500L   // laengere Denkpausen erlaubt (natuerliches Reden)
 private const val VAD_LEAD = 6000L      // nie etwas gesagt -> abbrechen
 private const val VAD_MAX = 120_000L    // Notbremse gegen die Aufnahme ohne Ende
 
@@ -635,6 +635,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // Zaehler statt Flagge: die Sprachsynthese laeuft ueber das Netz, und eine
     // Antwort, die nach dem Abbruch eintrudelt, darf nicht doch noch losplaerren.
     val speakGen = remember { intArrayOf(0) }
+    // Turn-Generation: erneuter Mikro-Druck erhoeht sie -> laufende Sendung wird
+    // ignoriert und chatStream bricht ab (Korrektur der vorherigen Aussage).
+    val turnGen = remember { intArrayOf(0) }
 
     fun stopSpeak() {
         speakGen[0]++
@@ -747,7 +750,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 // Aufnahme am Leben. So zaehlen die kurzen Amplituden-Taeler
                 // zwischen Woertern/Silben NICHT als Stille — genau das cuttete
                 // die Aufnahme mitten im fluessigen Reden nach wenigen Sekunden.
-                val loud = if (spoke) amp > base + 500 else amp > base + 1500
+                val loud = if (spoke) amp > base + 350 else amp > base + 1500
                 if (loud) { spoke = true; quiet = 0L } else if (spoke) quiet += VAD_TICK
                 val done = (spoke && quiet >= VAD_HANG) ||
                     (!spoke && total >= VAD_LEAD) ||       // gar nichts gesagt
@@ -794,8 +797,26 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
+    fun cancelTurn() {
+        // Laufende Antwort/Sendung verwerfen: Generation erhoehen (Stream bricht
+        // ab, spaete Chunks werden ignoriert), Auto-Send abschalten, halbe
+        // Antwort als abgebrochen markieren.
+        turnGen[0]++
+        pendingVoiceSend = false
+        val msgs = current.messages
+        val li = msgs.lastIndex
+        if (li >= 0 && !msgs[li].user && msgs[li].text.isBlank())
+            msgs[li] = msgs[li].copy(text = "_(abgebrochen)_")
+        busy = false
+        stopSpeak()
+        persist()
+    }
+
     fun micToggle() {
         if (recording) { stopRec(); return }
+        // Erneuter Druck waehrend Antwort/Auto-Send: abbrechen und NEU aufnehmen
+        // (Korrektur der vorherigen Aussage), statt die alte Sendung fortzusetzen.
+        if (busy || pendingVoiceSend) cancelTurn()
         if (speakingIdx >= 0) stopSpeak()   // erst die Ausgabe, dann das Ohr
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -818,12 +839,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             val idx = msgs.lastIndex
             val inst = current.instance.ifBlank { prefs.instance }
             val imgB64 = img?.let { bitmapToBase64(it) }
+            val myGen = ++turnGen[0]
             scope.launch {
                 val err = withContext(Dispatchers.IO) {
                     ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
-                        chatId = current.id) { chunk ->
+                        chatId = current.id, isCancelled = { myGen != turnGen[0] }) { chunk ->
+                        if (myGen != turnGen[0]) return@chatStream
                         mainHandler.post {
-                            if (idx < msgs.size) {
+                            if (myGen == turnGen[0] && idx < msgs.size) {
                                 msgs[idx] = msgs[idx].copy(text = msgs[idx].text + chunk)
                                 val t = System.currentTimeMillis()
                                 if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
@@ -831,6 +854,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         }
                     }
                 }
+                if (myGen != turnGen[0]) return@launch          // abgebrochen -> nichts mehr tun
                 if (err != null) mainHandler.post { if (idx < msgs.size) msgs[idx] = msgs[idx].copy(text = msgs[idx].text + "\n$err") }
                 busy = false; persist(); listState.animateScrollToItem(msgs.size)
                 if (voiceIn) { voiceIn = false; speakText(splitThink(msgs.getOrNull(idx)?.text ?: "").answer, idx) }
@@ -1166,7 +1190,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             }
                             Spacer(Modifier.weight(1f))
                             RoundIconButton(
-                                { micToggle() }, enabled = !busy && !transcribing,
+                                { micToggle() }, enabled = !transcribing,
                                 background = if (recording) Kat.accent else Kat.tile,
                             ) {
                                 Icon(
