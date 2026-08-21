@@ -638,6 +638,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // Turn-Generation: erneuter Mikro-Druck erhoeht sie -> laufende Sendung wird
     // ignoriert und chatStream bricht ab (Korrektur der vorherigen Aussage).
     val turnGen = remember { intArrayOf(0) }
+    val cancelHandle = remember { arrayOfNulls<ServerAgent.CancelHandle>(1) }
 
     fun stopSpeak() {
         speakGen[0]++
@@ -802,6 +803,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         // ab, spaete Chunks werden ignoriert), Auto-Send abschalten, halbe
         // Antwort als abgebrochen markieren.
         turnGen[0]++
+        runCatching { cancelHandle[0]?.cancel() }   // laufenden Stream sofort trennen
         pendingVoiceSend = false
         val msgs = current.messages
         val li = msgs.lastIndex
@@ -840,10 +842,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             val inst = current.instance.ifBlank { prefs.instance }
             val imgB64 = img?.let { bitmapToBase64(it) }
             val myGen = ++turnGen[0]
+            val ch = ServerAgent.CancelHandle(); cancelHandle[0] = ch
             scope.launch {
                 val err = withContext(Dispatchers.IO) {
                     ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
-                        chatId = current.id, isCancelled = { myGen != turnGen[0] }) { chunk ->
+                        chatId = current.id, cancel = ch) { chunk ->
                         if (myGen != turnGen[0]) return@chatStream
                         mainHandler.post {
                             if (myGen == turnGen[0] && idx < msgs.size) {

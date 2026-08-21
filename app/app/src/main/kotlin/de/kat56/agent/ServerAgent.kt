@@ -57,6 +57,13 @@ object ServerAgent {
 
     /** Streaming: POST /i/{instance}/api/chat/stream -> Tokens als roher Text.
      *  onPartial wird je Chunk gerufen. Rueckgabe: null=ok, sonst Fehlertext. */
+    /** Abbruch-Handle: cancel() trennt die laufende Verbindung -> der blockierende
+     *  read() bricht sofort ab, egal wie lange das Modell gerade denkt. */
+    class CancelHandle {
+        @Volatile var disconnect: (() -> Unit)? = null
+        fun cancel() { runCatching { disconnect?.invoke() } }
+    }
+
     fun chatStream(
         baseUrl: String,
         instance: String,
@@ -65,16 +72,18 @@ object ServerAgent {
         message: String,
         image: String? = null,
         chatId: String = "",
-        isCancelled: () -> Boolean = { false },
+        cancel: CancelHandle? = null,
         onPartial: (String) -> Unit,
     ): String? {
         val url = URL("${baseUrl.trimEnd('/')}/i/$instance/api/chat/stream")
         val conn = url.openConnection() as HttpURLConnection
+        cancel?.disconnect = { runCatching { conn.disconnect() } }   // Abbruch = Verbindung trennen
         return try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15000
-            conn.readTimeout = 2000        // kurzes Poll-Timeout: erlaubt Abbruch,
-            // lange Modell-Pausen werden per continue toleriert (siehe Loop).
+            conn.readTimeout = 600000      // lange Modell-Pausen tolerieren; Abbruch laeuft
+            // ueber cancel.disconnect(), NICHT ueber ein kurzes Read-Timeout
+            // (ein Timeout schliesst den Socket -> "Socket is closed").
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             if (user.isNotEmpty()) {
@@ -91,12 +100,7 @@ object ServerAgent {
             val reader = stream.bufferedReader()
             val buf = CharArray(256)
             while (true) {
-                if (isCancelled()) break
-                val n = try {
-                    reader.read(buf)
-                } catch (te: SocketTimeoutException) {
-                    if (isCancelled()) break else continue   // nur Pause -> weiterlesen
-                }
+                val n = reader.read(buf)     // blockiert; cancel.disconnect() bricht es ab
                 if (n < 0) break
                 if (n > 0) onPartial(String(buf, 0, n))
             }
@@ -104,6 +108,7 @@ object ServerAgent {
         } catch (e: Exception) {
             "⚠️ Fehler: ${e.message}"
         } finally {
+            cancel?.disconnect = null
             conn.disconnect()
         }
     }
