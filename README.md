@@ -86,31 +86,6 @@ The built-in **Architecture** view (rendered from the running manager):
 | `agents/` | Build scripts and guest bridges for the microVM images: `claude/`, `openrouter/`, … |
 | `examples/` | Templates for the files intentionally kept out of the repo |
 
-## What is intentionally NOT in the repo
-
-None of this is an accident — see `.gitignore`:
-
-- **Secrets**: `manager/settings.json` (API keys), `app/keystore/` (the app's signing
-  key), `katfs/node/secret.key` (iroh identity), `manager/traefik-agents.yml`
-  (basicAuth hash → provided as a sample in `examples/`)
-- **Site config**: `manager/site.json` (this host's public domain, DNS, uplink NIC)
-  and `manager/mcp-catalog.json` (real LAN endpoints of your MCP servers) — both
-  shipped as templates in `examples/`. Source defaults are neutral placeholders
-  (`example.com`, `1.1.1.1`, `eth0`), so the repo carries no internal addresses.
-- **Runtime data**: chat history, tasks, memory, history DB, audit log, `run/`
-- **Images**: `*.ext4` (rootfs, multi-GB) and `vmlinux` — built, not versioned
-- **Releases**: `*.apk` belong in the release area, not in history
-
-Included, on the other hand, are `personas.json`, `skills.json`, `mcp-catalog.json`
-and `secret-policy.json` — that is configuration or authored content, and the MCP
-entries reference secrets only as `${NAME}` placeholders.
-
-> Note: `HEAD` carries no secrets and no internal addresses — phone-number fields
-> ship **empty** and every host/IP/NIC lives in the gitignored `site.json` /
-> `mcp-catalog.json`. Only the earlier **git history** still contains real phone
-> numbers and addresses, so treat this repo as **private** until the history is
-> squashed or scrubbed (a single-commit publish avoids it entirely).
-
 ## Running the manager
 
 ```bash
