@@ -91,6 +91,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -169,6 +172,36 @@ class MainActivity : ComponentActivity() {
 // mit sichtbaren Unicode-Klammern (siehe agent.py). streaming=true -> der Block
 // ist noch offen (Modell denkt gerade).
 private data class Thought(val think: String, val answer: String, val streaming: Boolean)
+private val MD_INLINE = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`|\\*(.+?)\\*|_(.+?)_")
+
+// Leichtes Markdown -> AnnotatedString: fett, kursiv, code, #-Ueberschriften
+// (fett) und Aufzaehlungen (Bullet). Absichtlich simpel.
+private fun mdAnnotated(src: String): AnnotatedString = buildAnnotatedString {
+    val lines = src.split("\n")
+    lines.forEachIndexed { li, raw ->
+        var line = raw
+        var boldLine = false
+        Regex("^(#{1,6})\\s+(.*)").find(line)?.let { line = it.groupValues[2]; boldLine = true }
+        Regex("^(\\s*)[-*]\\s+(.*)").find(line)?.let { append(it.groupValues[1] + "\u2022  "); line = it.groupValues[2] }
+        if (boldLine) pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+        var i = 0
+        for (m in MD_INLINE.findAll(line)) {
+            if (m.range.first > i) append(line.substring(i, m.range.first))
+            val g = m.groupValues
+            when {
+                g[1].isNotEmpty() -> { pushStyle(SpanStyle(fontWeight = FontWeight.Bold)); append(g[1]); pop() }
+                g[2].isNotEmpty() -> { pushStyle(SpanStyle(fontFamily = PlexMono)); append(g[2]); pop() }
+                g[3].isNotEmpty() -> { pushStyle(SpanStyle(fontStyle = FontStyle.Italic)); append(g[3]); pop() }
+                g[4].isNotEmpty() -> { pushStyle(SpanStyle(fontStyle = FontStyle.Italic)); append(g[4]); pop() }
+            }
+            i = m.range.last + 1
+        }
+        if (i < line.length) append(line.substring(i))
+        if (boldLine) pop()
+        if (li < lines.lastIndex) append("\n")
+    }
+}
+
 private fun splitThink(s: String): Thought {
     val a = "\u27E6think\u27E7"; val b = "\u27E6/think\u27E7"
     val th = StringBuilder(); val ans = StringBuilder(); var open = false; var i = 0
@@ -1595,10 +1628,13 @@ fun Bubble(
                     .padding(horizontal = 16.dp, vertical = 11.dp)
             ) {
                 SelectionContainer {
-                    Text(
+                    if (m.user) Text(
                         body.ifEmpty { "…" },
+                        fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex, color = Kat.onAccent,
+                    ) else Text(
+                        if (body.isEmpty()) AnnotatedString("…") else mdAnnotated(body),
                         fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex,
-                        color = if (m.user) Kat.onAccent else if (body.isEmpty()) Kat.textFaint else Kat.textStrong,
+                        color = if (body.isEmpty()) Kat.textFaint else Kat.textStrong,
                     )
                 }
             }
