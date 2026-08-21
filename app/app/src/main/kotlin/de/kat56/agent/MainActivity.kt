@@ -837,20 +837,25 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         persist()
 
         if (current.mode == "server") {
-            msgs.add(Msg(false, ""))
-            val idx = msgs.lastIndex
+            val botMsg = Msg(false, "")
+            msgs.add(botMsg)
+            val botKey = botMsg.key           // per Key ansteuern, NICHT per Index (Interrupt/Sync-fest)
             val inst = current.instance.ifBlank { prefs.instance }
             val imgB64 = img?.let { bitmapToBase64(it) }
             val myGen = ++turnGen[0]
             val ch = ServerAgent.CancelHandle(); cancelHandle[0] = ch
+            fun appendBot(chunk: String) {
+                val i = msgs.indexOfFirst { it.key == botKey }
+                if (i >= 0) msgs[i] = msgs[i].copy(text = msgs[i].text + chunk)
+            }
             scope.launch {
                 val err = withContext(Dispatchers.IO) {
                     ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
                         chatId = current.id, cancel = ch) { chunk ->
                         if (myGen != turnGen[0]) return@chatStream
                         mainHandler.post {
-                            if (myGen == turnGen[0] && idx < msgs.size) {
-                                msgs[idx] = msgs[idx].copy(text = msgs[idx].text + chunk)
+                            if (myGen == turnGen[0]) {
+                                appendBot(chunk)
                                 val t = System.currentTimeMillis()
                                 if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
                             }
@@ -858,13 +863,26 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     }
                 }
                 if (myGen != turnGen[0]) return@launch          // abgebrochen -> nichts mehr tun
-                if (err != null) mainHandler.post { if (idx < msgs.size) msgs[idx] = msgs[idx].copy(text = msgs[idx].text + "\n$err") }
+                if (err != null) mainHandler.post { appendBot("\n$err") }
                 busy = false; persist(); listState.animateScrollToItem(msgs.size)
-                if (voiceIn) { voiceIn = false; speakText(splitThink(msgs.getOrNull(idx)?.text ?: "").answer, idx) }
+                if (voiceIn) {
+                    voiceIn = false
+                    val bi = msgs.indexOfFirst { it.key == botKey }
+                    if (bi >= 0) speakText(splitThink(msgs[bi].text).answer, bi)
+                }
             }
         } else {
-            msgs.add(Msg(false, ""))
-            val idx = msgs.lastIndex
+            val botMsg = Msg(false, "")
+            msgs.add(botMsg)
+            val botKey = botMsg.key
+            fun appendBot(chunk: String) {
+                val i = msgs.indexOfFirst { it.key == botKey }
+                if (i >= 0) msgs[i] = msgs[i].copy(text = msgs[i].text + chunk)
+            }
+            fun setBot(txt: String) {
+                val i = msgs.indexOfFirst { it.key == botKey }
+                if (i >= 0) msgs[i] = msgs[i].copy(text = txt)
+            }
             val useWeb = web
             scope.launch {
                 try {
@@ -883,19 +901,17 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         } else text
                         gemma.generateStreaming(prompt, img) { d ->
                             mainHandler.post {
-                                if (idx < msgs.size) {
-                                    msgs[idx] = msgs[idx].copy(text = msgs[idx].text + d)
-                                    val t = System.currentTimeMillis()
-                                    if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
-                                }
+                                appendBot(d)
+                                val t = System.currentTimeMillis()
+                                if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    mainHandler.post { if (idx < msgs.size) msgs[idx] = msgs[idx].copy(text = "⚠️ ${e.message}") }
+                    mainHandler.post { setBot("⚠️ ${e.message}") }
                 } finally {
                     busy = false; persist(); listState.animateScrollToItem(msgs.size)
-                if (voiceIn) { voiceIn = false; speakText(splitThink(msgs.getOrNull(idx)?.text ?: "").answer, idx) }
+                if (voiceIn) { voiceIn = false; val bi = msgs.indexOfFirst { it.key == botKey }; if (bi >= 0) speakText(splitThink(msgs[bi].text).answer, bi) }
                 }
             }
         }

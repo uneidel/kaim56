@@ -13,7 +13,16 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-data class Msg(val user: Boolean, val text: String)
+private val msgKeySeq = java.util.concurrent.atomic.AtomicLong(1)
+// key: stabile Identitaet EINER Nachricht (bleibt ueber copy() erhalten), damit
+// Streaming-Chunks per Key statt per Positions-Index ans Ziel gehen -> keine
+// verrutschten Indizes bei Interrupt/Sync. key ist bewusst NICHT Teil von
+// equals/hashCode, sonst wuerde der Multi-Device-Prefix-Merge (Vergleich per
+// Inhalt) brechen.
+data class Msg(val user: Boolean, val text: String, val key: Long = msgKeySeq.getAndIncrement()) {
+    override fun equals(other: Any?) = other is Msg && other.user == user && other.text == text
+    override fun hashCode() = user.hashCode() * 31 + text.hashCode()
+}
 
 /** Eine Konversation. title/updatedAt sind Compose-State -> UI aktualisiert sich. */
 class Conversation(
