@@ -516,6 +516,113 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
     return save_chats(chats)
 
 
+# ---- Tool-Plugins verwalten (Drag&Drop im Web-Manager) ---------------------
+# Jedes Tool = ein Ordner plugins/<name>/ mit Entry-Datei tool.py (Konvention
+# DESC/PARAMS/REQUIRED/run). Einzelne .py werden als plugins/<name>/tool.py
+# abgelegt. Der Ordner wird beim Instanz-Start auf die Config-Disk kopiert und
+# in der VM geladen (Sandbox). stdlib-only.
+PLUGINS_SRC = os.path.join(BASE, "plugins")
+PLUGIN_MAX_BYTES = 5 * 1024 * 1024
+PLUGIN_BOILERPLATE = (
+    "# Tool-Plugin fuer kAIm56. Konvention: DESC / PARAMS / REQUIRED / run().\n"
+    "# Laeuft in der Agent-VM (Sandbox), stdlib-only. Mehrdatei? Lege weitere\n"
+    "# .py in diesen Ordner und importiere sie hier (z. B. `import helper`).\n"
+    "DESC = \"Kurz: was das Tool tut (wird dem Modell als Tool-Beschreibung gezeigt).\"\n"
+    "PARAMS = {\n"
+    "    \"text\": {\"type\": \"string\", \"description\": \"Beispiel-Parameter\"},\n"
+    "}\n"
+    "REQUIRED = []\n"
+    "\n"
+    "def run(text=\"\"):\n"
+    "    # ... deine Logik; gib einen String zurueck ...\n"
+    "    return f\"ok: {text}\"\n"
+)
+
+
+def _safe_tool_name(name):
+    return re.sub(r"[^a-z0-9_-]", "", (name or "").strip().lower())[:40]
+
+
+def list_plugins():
+    out = []
+    if not os.path.isdir(PLUGINS_SRC):
+        return out
+    for entry in sorted(os.listdir(PLUGINS_SRC)):
+        if entry.startswith((".", "__")):        # __pycache__, versteckte
+            continue
+        path = os.path.join(PLUGINS_SRC, entry)
+        if os.path.isdir(path):
+            files = []
+            for root, _dirs, fs in os.walk(path):
+                for f in fs:
+                    rel = os.path.relpath(os.path.join(root, f), path)
+                    files.append(rel)
+            out.append({"name": entry, "kind": "folder", "files": sorted(files)})
+        elif entry.endswith(".py"):
+            out.append({"name": entry[:-3], "kind": "file", "files": [entry]})
+    return out
+
+
+def plugin_write_py(name, code):
+    name = _safe_tool_name(name)
+    if not name:
+        return "ungueltiger Name"
+    dest = os.path.join(PLUGINS_SRC, name)
+    os.makedirs(dest, exist_ok=True)
+    with open(os.path.join(dest, "tool.py"), "w", encoding="utf-8") as fh:
+        fh.write(code or PLUGIN_BOILERPLATE)
+    return None
+
+
+def plugin_write_zip(name, raw):
+    import zipfile
+    import io
+    name = _safe_tool_name(name)
+    if not name:
+        return "ungueltiger Name"
+    dest = os.path.join(PLUGINS_SRC, name)
+    dest_abs = os.path.abspath(dest)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest, exist_ok=True)
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        return "kaputtes Zip"
+    names = [n for n in z.namelist() if not n.endswith("/")]
+    tops = {n.split("/", 1)[0] for n in names}
+    strip = len(tops) == 1 and any("/" in n for n in names)
+    top = next(iter(tops)) if strip else None
+    for m in z.infolist():
+        if m.is_dir():
+            continue
+        rel = m.filename[len(top) + 1:] if strip else m.filename
+        if not rel or rel.startswith("__MACOSX"):
+            continue
+        target = os.path.normpath(os.path.join(dest, rel))
+        if not (target == dest_abs or target.startswith(dest_abs + os.sep)):
+            continue   # zip-slip-Schutz
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with z.open(m) as fsrc, open(target, "wb") as fdst:
+            shutil.copyfileobj(fsrc, fdst)
+    if not any(os.path.isfile(os.path.join(dest, c))
+               for c in ("tool.py", "__init__.py", name + ".py")):
+        return "kein Entry (tool.py/__init__.py) im Zip gefunden"
+    return None
+
+
+def plugin_delete(name):
+    name = _safe_tool_name(name)
+    dfolder = os.path.join(PLUGINS_SRC, name)
+    dfile = os.path.join(PLUGINS_SRC, name + ".py")
+    if os.path.isdir(dfolder):
+        shutil.rmtree(dfolder, ignore_errors=True)
+        return True
+    if os.path.isfile(dfile):
+        os.remove(dfile)
+        return True
+    return False
+
+
 def merge_chats(incoming):
     """Chats VEREINEN (neuerer updatedAt gewinnt) plus LOESCH-TOMBSTONES:
     `incoming` ist entweder eine nackte Liste (alt: nur Chats) oder ein Objekt
@@ -1427,8 +1534,11 @@ def make_config_disk(inst):
     if os.path.isdir(psrc):
         os.makedirs(pdst, exist_ok=True)
         for f0 in sorted(os.listdir(psrc)):
-            if f0.endswith(".py"):
-                shutil.copy2(os.path.join(psrc, f0), os.path.join(pdst, f0))
+            sp = os.path.join(psrc, f0)
+            if os.path.isdir(sp):                 # Mehrdatei-Tool: ganzer Ordner
+                shutil.copytree(sp, os.path.join(pdst, f0), dirs_exist_ok=True)
+            elif f0.endswith(".py"):              # Einzel-.py (abwaertskompatibel)
+                shutil.copy2(sp, os.path.join(pdst, f0))
     with open(os.path.join(d, "config.env"), "w") as f:
         for k, v in cfg.items():
             # Werte quoten (EXTRA_MOUNTS u.a. enthalten Shell-Metazeichen wie | und ;)
@@ -2814,6 +2924,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(st); self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data))); self.end_headers()
             self.wfile.write(data); return
+        if self.path.split("?", 1)[0] == "/api/plugins":
+            body = json.dumps({"plugins": list_plugins()}, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         if self.path.split("?", 1)[0] == "/api/prompts":
             body = json.dumps({"prompts": load_prompts()}, ensure_ascii=False).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
@@ -3271,6 +3386,45 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
+        if self.path.split("?", 1)[0].startswith("/api/plugins"):
+            # Tool-Plugins verwalten (Upload/Boilerplate/Delete): Admin only.
+            if instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403); self.send_header("Content-Type", "application/json")
+                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
+            pp = self.path.split("?", 1)[0]
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            raw_body = self.rfile.read(ln) if ln else b""
+            if ln > PLUGIN_MAX_BYTES:
+                out = json.dumps({"error": "Datei zu gross (max 5 MB)"}).encode()
+            else:
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except ValueError:
+                    b = {}
+                parts = pp.strip("/").split("/")
+                if len(parts) == 4 and parts[3] == "delete":
+                    ok = plugin_delete(parts[2])
+                    out = json.dumps({"msg": "deleted" if ok else "not found"}).encode()
+                elif pp == "/api/plugins/new":
+                    err = plugin_write_py(b.get("name", ""), PLUGIN_BOILERPLATE)
+                    out = json.dumps({"error": err} if err else {"msg": "created"}).encode()
+                else:
+                    kind = b.get("kind"); name = b.get("name", "")
+                    if kind == "zip":
+                        try:
+                            raw = base64.b64decode(b.get("data_b64", ""))
+                        except Exception:
+                            raw = b""
+                        err = plugin_write_zip(name, raw)
+                    else:
+                        code = b.get("code")
+                        if code is None and b.get("data_b64"):
+                            code = base64.b64decode(b.get("data_b64", "")).decode("utf-8", "replace")
+                        err = plugin_write_py(name, code or PLUGIN_BOILERPLATE)
+                    out = json.dumps({"error": err} if err else {"msg": "saved"}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
         if self.path == "/api/prompts":
             # Verwaltung der Prompt-Templates: Admin only.
             if instance_by_ip(self.client_address[0]) is not None:

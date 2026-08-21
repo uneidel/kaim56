@@ -50,7 +50,7 @@ The built-in **Architecture** view (rendered from the running manager):
 - Playbooks — standing rules the agent learns from your corrections and always follows
 - Prompt templates as slash commands, auto-summarizing context, and large-output offloading
 - Steering (interrupt a running turn), goal loops with a judge, and tree-chat (`/branch` … `/back` folds a side-question back into a one-line note)
-- Drop-in tool plugins — one Python file per new tool, no image rebuild
+- Drop-in tool plugins (pi.dev-style) — add a tool as a single `.py` or a multi-file folder via drag-and-drop in the web UI, no image rebuild
 
 **Communication**
 - Signal integration — receive and send, incoming messages trigger the agent
@@ -138,6 +138,28 @@ docker run --rm -v "$PWD":/project -v katagent-gradle:/root/.gradle katagent-bui
 
 `katfs/node` (host gateway) and `katfs/client` are Rust crates; `katfs/web` is the
 WASM bridge for browser sharing. Protocol: `katfs/PROTOCOL.md`.
+
+## Tool plugins
+
+Give an agent a new tool without rebuilding anything. A plugin is either a single
+`.py` file or a **folder** (multi-file projects — each tool gets its own folder),
+following one convention:
+
+```python
+DESC = "what the tool does (shown to the model)"
+PARAMS = {"text": {"type": "string", "description": "an argument"}}
+REQUIRED = []
+
+def run(text=""):
+    return f"ok: {text}"          # return a string
+```
+
+Manage them in the web UI's **Plugins** tab: drag a `.py`/`.zip` onto the drop zone,
+or generate a boilerplate. Files live under `manager/plugins/<name>/`, ride the
+per-instance config disk into the microVM, and are loaded at agent start (the VM is
+the sandbox; stdlib only). A tool's folder is put on `sys.path`, so intra-folder
+imports (`import helper`) work. Restart an instance to activate a new plugin. The
+mechanism is adapted from **pi.dev**'s extension idea.
 
 ## Changes
 

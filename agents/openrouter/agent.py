@@ -2048,19 +2048,36 @@ PLUGIN_DIR = os.environ.get("PLUGIN_DIR", "/config/plugins")
 
 
 def load_plugins():
-    import importlib.util
+    import importlib.util, sys
     if not os.path.isdir(PLUGIN_DIR):
         return
-    for f in sorted(os.listdir(PLUGIN_DIR)):
-        if not f.endswith(".py"):
+    for entry in sorted(os.listdir(PLUGIN_DIR)):
+        path = os.path.join(PLUGIN_DIR, entry)
+        syspath_add = None
+        if os.path.isdir(path):
+            # Mehrdatei-Tool: Ordner <name>/ mit Entry-Datei tool.py (oder
+            # __init__.py / <name>.py). Der Ordner kommt auf sys.path, damit
+            # interne Importe (import helper) funktionieren.
+            name = os.path.basename(path)
+            src = None
+            for cand in ("tool.py", "__init__.py", name + ".py"):
+                if os.path.isfile(os.path.join(path, cand)):
+                    src = os.path.join(path, cand); break
+            if not src:
+                log(f"plugin '{name}' ignoriert: keine tool.py/__init__.py im Ordner")
+                continue
+            syspath_add = path
+        elif path.endswith(".py"):
+            name, src = os.path.basename(path)[:-3], path
+        else:
             continue
-        name = f[:-3]
         if name in BUILTIN and name not in PLUGIN_TOOLS:
             log(f"plugin '{name}' ignoriert: kollidiert mit eingebautem Tool")
             continue
         try:
-            spec = importlib.util.spec_from_file_location("plugin_" + name,
-                                                          os.path.join(PLUGIN_DIR, f))
+            if syspath_add and syspath_add not in sys.path:
+                sys.path.insert(0, syspath_add)
+            spec = importlib.util.spec_from_file_location("plugin_" + name, src)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             BUILTIN[name] = (mod.run, str(getattr(mod, "DESC", name))[:300],

@@ -552,6 +552,31 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_plugin_zip_and_slip_guard(self):
+        """Multi-File-Zip landet im Tool-Ordner; ein ../-Pfad (zip-slip) darf NICHT
+        ausserhalb entpackt werden; Zip ohne Entry-Datei wird abgelehnt."""
+        m = self.m
+        import tempfile, os, io, zipfile
+        tmp = tempfile.mkdtemp(prefix="e2e-plug-")
+        old = m.PLUGINS_SRC
+        m.PLUGINS_SRC = tmp
+        try:
+            buf = io.BytesIO(); z = zipfile.ZipFile(buf, "w")
+            z.writestr("tool.py", "DESC='x'\nPARAMS={}\nREQUIRED=[]\ndef run():\n    return 1\n")
+            z.writestr("helper.py", "x=1\n"); z.close()
+            self.assertIsNone(m.plugin_write_zip("mytool", buf.getvalue()))
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "mytool", "tool.py")))
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "mytool", "helper.py")))
+            b2 = io.BytesIO(); z2 = zipfile.ZipFile(b2, "w")
+            z2.writestr("tool.py", "def run():\n    return 1\n")
+            z2.writestr("../evil.py", "boom\n"); z2.close()
+            m.plugin_write_zip("slip", b2.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(tmp, "evil.py")))
+            b3 = io.BytesIO(); z3 = zipfile.ZipFile(b3, "w"); z3.writestr("readme.txt", "x"); z3.close()
+            self.assertIsNotNone(m.plugin_write_zip("noentry", b3.getvalue()))
+        finally:
+            m.PLUGINS_SRC = old
+
     def test_playbook_add_imports_present(self):
         """Regression: mgr/rules.pb_add nutzt uuid+time -> muessen importiert sein,
         sonst crasht /api/playbook-add und der Agent sieht RemoteDisconnected."""

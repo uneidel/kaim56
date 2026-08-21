@@ -105,6 +105,9 @@ textarea.input{min-height:90px;resize:vertical;line-height:1.5}
 .radio input:focus-visible+.dot{outline:2px solid var(--color-accent);outline-offset:2px}
 input[type=checkbox]{accent-color:var(--color-accent)}
 /* — cards — */
+.plugdrop{border:2px dashed var(--color-divider);border-radius:14px;padding:34px;text-align:center;color:var(--color-neutral-600);transition:.15s}
+.plugdrop.drag{border-color:var(--color-accent);background:color-mix(in srgb,var(--color-accent) 7%,transparent);color:var(--color-accent)}
+.pluglnk{color:var(--color-accent);cursor:pointer;text-decoration:underline}
 .card{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3);
   border-radius:0;background:transparent;border:1px solid var(--color-divider)}
 .card-title{font-family:var(--font-heading);font-weight:var(--font-heading-weight);
@@ -276,6 +279,7 @@ footer{border-top:1px solid var(--color-divider)}
     <a href="#instances">Instances</a>
     <a href="#personas">Personas</a>
     <a href="#skills">Skills</a>
+    <a href="#plugins">Plugins</a>
     <a href="#mcp">MCP servers</a>
     <a href="#tasks">Tasks</a>
     <a href="#missions">Missions</a>
@@ -408,6 +412,22 @@ footer{border-top:1px solid var(--color-divider)}
     </div>
     <div class=panel-foot><span id=skmsg class=msg></span><button class="btn btn-primary" onclick=saveSkill()>Save skill</button></div>
   </div>
+</section>
+
+<section class="screen" id=s-plugins>
+  <div class=sec-head>
+    <div><h6>Custom tools</h6><h3>Plugins</h3></div>
+    <span class="note text-muted">Ziehe eine <code>.py</code>-Datei oder ein <code>.zip</code> (Mehrdatei &#8594; eigener Ordner) hierher. Konvention: <code>DESC / PARAMS / REQUIRED / run()</code>. Laeuft in der Agent-VM (Sandbox, stdlib) &#183; Instanz neu starten zum Aktivieren.</span>
+  </div>
+  <div id=plugdrop class=plugdrop>
+    <b>.py</b> oder <b>.zip</b> hierher ziehen &#8212; oder <label class=pluglnk>durchsuchen<input type=file id=plugfile accept=".py,.zip" hidden></label>
+  </div>
+  <div class=grid2 style="margin-top:16px">
+    <div class=field><label>Neues Tool aus Boilerplate (Name: a-z 0-9 _ -)</label><input class=input id=plugnew placeholder="z. B. weather_lookup"></div>
+    <div class=field style="align-self:end"><button class="btn btn-secondary" onclick=plugCreate()>Boilerplate anlegen</button></div>
+  </div>
+  <div id=plugmsg class=msg style="margin-top:8px"></div>
+  <div id=pluglist class=grid3 style="margin-top:20px"></div>
 </section>
 
 <section class="screen" id=s-mcp>
@@ -727,7 +747,7 @@ footer{border-top:1px solid var(--color-divider)}
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
   3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; the <b>oracle</b> tool gives a second opinion before destructive actions (challenges assumptions, never acts — playbook-enforced for the orchestrator); risky
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
-  <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (one .py per tool in <code>plugins/</code>) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
+  <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
@@ -986,6 +1006,43 @@ async function loadTools(){
 function toolAll(on){document.querySelectorAll('.toolcb').forEach(c=>c.checked=!!on)}
 
 /* — Policy: was jede Instanz darf (Netz/Tools/Secrets/MCP) + was sie tut (Audit) — */
+function _b64(buf){let str='',a=new Uint8Array(buf);for(let i=0;i<a.length;i+=0x8000)str+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000));return btoa(str);}
+async function loadPlugins(){
+  let ps=[]; try{ps=(await (await fetch('/api/plugins')).json()).plugins||[];}catch(e){return;}
+  const el=document.getElementById('pluglist'); if(!el)return;
+  el.innerHTML = ps.length ? ps.map(p=>
+    `<div class=card><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">`+
+    `<b>${escT(p.name)}</b><button class="btn btn-ghost" style="font-size:12px" onclick="plugDel('${esc(p.name)}')">L&#246;schen</button></div>`+
+    `<div class=text-muted style="font-size:12px">${escT(p.kind)} &#183; ${p.files.length} Datei(en)</div>`+
+    `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(escT).join(', ')}</div></div>`
+  ).join('') : '<div class=text-muted>Noch keine Plugins.</div>';
+}
+async function plugUpload(file){
+  if(!file)return;
+  const isZip=/\.zip$/i.test(file.name), name=file.name.replace(/\.(py|zip)$/i,'');
+  if(!/\.(py|zip)$/i.test(file.name)){document.getElementById('plugmsg').textContent='\u26a0\ufe0f nur .py oder .zip';return;}
+  const b64=_b64(await file.arrayBuffer());
+  const body=isZip?{name,kind:'zip',data_b64:b64}:{name,kind:'py',data_b64:b64};
+  const d=await (await fetch('/api/plugins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' gespeichert \u2014 Instanz neu starten zum Aktivieren');
+  loadPlugins();
+}
+async function plugCreate(){
+  const inp=document.getElementById('plugnew'),name=inp.value.trim(); if(!name)return;
+  const d=await (await fetch('/api/plugins/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' angelegt (tool.py) \u2014 im Ordner editieren, Instanz neu starten');
+  inp.value='';loadPlugins();
+}
+async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))return;
+  await fetch('/api/plugins/'+encodeURIComponent(name)+'/delete',{method:'POST'}); loadPlugins(); }
+(function(){
+  const dz=document.getElementById('plugdrop'); if(!dz)return;
+  const fi=document.getElementById('plugfile');
+  if(fi)fi.addEventListener('change',()=>{if(fi.files[0])plugUpload(fi.files[0]);fi.value='';});
+  ['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag');}));
+  ['dragleave','dragend'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag');}));
+  dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)plugUpload(f);});
+})();
 let POL_TOOLS=[];
 async function loadPolicy(){
   let pol={instances:[]};
@@ -1207,7 +1264,7 @@ async function refreshUsage(){
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','mcp','tasks','missions','policy','models','sharing','secrets','settings','changelog','architecture'];
+const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','policy','models','sharing','secrets','settings','changelog','architecture'];
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
@@ -1854,7 +1911,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadTasks();loadPolicy();
+  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();
   refreshUsage();
   // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
   // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein

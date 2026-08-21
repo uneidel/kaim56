@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Tool plugins now support multi-file projects (each tool its own folder, put on sys.path) next to single .py files, plus a Plugins tab in the web UI: drag-and-drop a .py or .zip, generate a boilerplate, list/delete. Zip extraction is zip-slip-guarded and 5 MB-capped, admin-only. README documents the plugin convention (adapted from pi.dev).
 - Web chat: your own messages now have a Copy button too (previously only assistant messages did) and bubble text is explicitly selectable — a background redraw during streaming/long-poll no longer forces you to re-select to copy.
 - New tool plugin `indeed_filter` (adapted from gvfullstack/JobSearchAutomation): stdlib-only post-filter that narrows a found job list to genuinely NEW postings (parses 'today'/'vor N Tagen'/ISO dates, filters by since_date) plus include/exclude keywords — no scraping. Wired into the jobresearcher task for precise dedup.
 - Hardening: unhandled exceptions in a GET/POST route now return a clean HTTP 500 (and log a traceback) instead of dropping the connection — so a future route bug surfaces as an error the agent can read/retry, not a silent RemoteDisconnected.
