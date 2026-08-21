@@ -154,6 +154,11 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   font-size:.75rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;opacity:0}
 .row:hover .tools button{opacity:1}
 .tools button:hover{color:var(--accent)}
+.body{user-select:text;-webkit-user-select:text}
+.tools-me{justify-content:flex-end}
+.row.me .tools button{color:var(--accent-contrast)}
+.row.me:hover .tools button{opacity:.8}
+.row.me .tools button:hover{opacity:1;color:#fff}
 .think{margin:0 0 .6rem;border:1px solid var(--border);background:color-mix(in srgb,var(--text) 4%,transparent)}
 .think summary{cursor:pointer;padding:.4rem .7rem;font-size:10.5px;letter-spacing:.08em;
   text-transform:uppercase;color:var(--muted);user-select:none;font-weight:500}
@@ -473,7 +478,8 @@ function draw(){
   const row=(x,i)=>{
     const pic=x.image?`<img src="data:image/jpeg;base64,${x.image}" alt="">`:'';
     if(x.role==='user')
-      return `<div class="row me"><div class=body>${pic}${esc(x.content).replace(/\n/g,'<br>')}</div></div>`;
+      return `<div class="row me"><div class=body>${pic}${esc(x.content).replace(/\n/g,'<br>')}`+
+        `<div class="tools tools-me"><button onclick="copyMsg(this,${i})">Copy</button></div></div></div>`;
     const busy=x.busy?'<span class=cursor></span>':'';
     const tools=x.busy?'':`<div class=tools><button onclick="copyMsg(this,${i})">Copy</button>`+
       `<button onclick="speakMsg(${i})">Vorlesen</button></div>`;
