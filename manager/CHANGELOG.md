@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Android app v5.14: the 'Assist-Taste öffnet Instanz' setting is now a dropdown of the live server instances (with '— aktive Instanz —' for the default) instead of a free-text field.
 - Android app v5.13: new setting 'Assist-Taste öffnet Instanz' — the device assistant button (ACTION_ASSIST) now opens/records against a configurable server instance (empty = current). Set it in Settings › Server-Verbindung.
 - Android app v5.12 (voice): (1) recording no longer cuts off mid-sentence during natural pauses — silence hang raised 2.2s→3.5s and the keep-alive threshold lowered; (2) tapping the mic again while the agent is answering now cancels that turn (stream aborted within ~2s) and starts a fresh recording, so you can correct your previous statement. The mic button is enabled during a response.
 - Tool plugins now support multi-file projects (each tool its own folder, put on sys.path) next to single .py files, plus a Plugins tab in the web UI: drag-and-drop a .py or .zip, generate a boilerplate, list/delete. Zip extraction is zip-slip-guarded and 5 MB-capped, admin-only. README documents the plugin convention (adapted from pi.dev).

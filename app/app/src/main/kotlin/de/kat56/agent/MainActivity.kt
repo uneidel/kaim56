@@ -1355,7 +1355,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
             ) {
                 SettingsScreen(
-                    prefs, store, dl,
+                    prefs, store, dl, instances = instances,
                     web = web, onWeb = { web = it; prefs.webAccess = it },
                     syncing = syncing, lastSync = lastSync, online = online,
                     onClose = { screen = null },
@@ -2049,6 +2049,7 @@ fun SettingsScreen(
     prefs: Prefs,
     store: ChatStore,
     dl: Dl,
+    instances: List<AgentInstance>,
     web: Boolean,
     onWeb: (Boolean) -> Unit,
     syncing: Boolean,
@@ -2166,7 +2167,38 @@ fun SettingsScreen(
                         LabeledField("Passwort", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)
                     }
                     LabeledField("Aktive Instanz", instance, { instance = it; prefs.instance = it.trim() }, mono = true)
-                    LabeledField("Assist-Taste \u00f6ffnet Instanz (leer = aktive)", assistInstance, { assistInstance = it; prefs.assistInstance = it.trim() }, mono = true)
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Assist-Taste \u00f6ffnet Instanz", fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint)
+                        var assistMenu by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Kat.tile)
+                                    .tap { assistMenu = true }.padding(horizontal = 14.dp, vertical = 13.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    assistInstance.ifBlank { "\u2014 aktive Instanz \u2014" },
+                                    fontSize = 13.sp, fontFamily = PlexMono,
+                                    color = if (assistInstance.isBlank()) Kat.textFaint else Kat.textStrong,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                                )
+                                Text("\u25be", fontSize = 15.sp, fontFamily = Plex, color = Kat.textSubtle)
+                            }
+                            DropdownMenu(expanded = assistMenu, onDismissRequest = { assistMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("\u2014 aktive Instanz \u2014", fontFamily = Plex, fontSize = 13.sp) },
+                                    onClick = { assistInstance = ""; prefs.assistInstance = ""; assistMenu = false },
+                                )
+                                instances.forEach { inst ->
+                                    DropdownMenuItem(
+                                        text = { Text(inst.name, fontFamily = PlexMono, fontSize = 13.sp) },
+                                        onClick = { assistInstance = inst.name; prefs.assistInstance = inst.name; assistMenu = false },
+                                    )
+                                }
+                            }
+                        }
+                    }
                     FilledPill(
                         "Server-Agenten verwalten", onManageAgents, Modifier.fillMaxWidth(),
                         trailing = {
