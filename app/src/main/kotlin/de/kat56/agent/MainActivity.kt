@@ -912,7 +912,15 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // wird die Antwort danach von allein — stopRec() setzt voiceIn, sobald
     // die Eingabe wirklich per Stimme kam.
     LaunchedEffect(assistCalls) {
-        if (assistCalls > 0 && !recording && !busy) micToggle()
+        if (assistCalls > 0) {
+            val ai = prefs.assistInstance.trim()
+            if (ai.isNotBlank() && !(current.mode == "server" && current.instance == ai)) {
+                val existing = conversations.filter { it.mode == "server" && it.instance == ai }.maxByOrNull { it.updatedAt }
+                currentId = existing?.id ?: Conversation(mode = "server", instance = ai)
+                    .also { conversations.add(0, it); store.save(conversations) }.id
+            }
+            if (!recording && !busy) micToggle()
+        }
     }
     // Tipp auf eine System-Notification: zum Ziel navigieren.
     LaunchedEffect(notifNavCalls) {
@@ -2061,6 +2069,7 @@ fun SettingsScreen(
     }
     var url by remember { mutableStateOf(prefs.serverUrl) }
     var instance by remember { mutableStateOf(prefs.instance) }
+    var assistInstance by remember { mutableStateOf(prefs.assistInstance) }
     var user by remember { mutableStateOf(prefs.user) }
     var pass by remember { mutableStateOf(prefs.pass) }
     var token by remember { mutableStateOf(prefs.hfToken) }
@@ -2157,6 +2166,7 @@ fun SettingsScreen(
                         LabeledField("Passwort", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)
                     }
                     LabeledField("Aktive Instanz", instance, { instance = it; prefs.instance = it.trim() }, mono = true)
+                    LabeledField("Assist-Taste \u00f6ffnet Instanz (leer = aktive)", assistInstance, { assistInstance = it; prefs.assistInstance = it.trim() }, mono = true)
                     FilledPill(
                         "Server-Agenten verwalten", onManageAgents, Modifier.fillMaxWidth(),
                         trailing = {

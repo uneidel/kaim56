@@ -1,3 +1,6 @@
+// kAIm56 KatAgent — Android client for the kAIm56 agent platform
+// Copyright (C) 2026 Ulrich Neidel
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
 import android.content.Context
@@ -7,12 +10,18 @@ class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("katagent", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = sp.getString("serverUrl", "https://agents.example.com") ?: ""
+        get() = sp.getString("serverUrl", "https://agents.kat56.de") ?: ""
         set(v) = sp.edit().putString("serverUrl", v).apply()
 
     var instance: String
         get() = sp.getString("instance", "ortest") ?: ""
         set(v) = sp.edit().putString("instance", v).apply()
+
+    // Welche Server-Instanz die Assistenten-Taste (ACTION_ASSIST) oeffnet.
+    // Leer = die aktuell aktive Instanz verwenden.
+    var assistInstance: String
+        get() = sp.getString("assistInstance", "") ?: ""
+        set(v) = sp.edit().putString("assistInstance", v).apply()
 
     var user: String
         get() = sp.getString("user", "admin") ?: ""
