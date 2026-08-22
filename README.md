@@ -188,3 +188,4 @@ Adapted **concepts** (not copied verbatim):
   the only near-verbatim piece.
 - `/model`, steering, prompt templates, tool plugins, and the oracle tool: ideas from **pi.dev**.
 - Credential-injection gateway: pattern from **OneCLI**.
+- Security-gateway text scrubber (invisible-Unicode / watermark carrier removal, Layer A): `manager/text_unicode.py` is adapted from **guillaumemeyer/watermarks-remover** (MIT) and extended (Unicode noncharacters + reserved default-ignorables); the statistical/LLM and pixel-ML layers of that project are deliberately not included.

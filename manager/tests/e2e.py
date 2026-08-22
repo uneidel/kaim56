@@ -552,6 +552,18 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_gateway_strips_noncharacters(self):
+        """Layer-A-Erweiterung (watermarks-remover): Unicode-Noncharacters und
+        permanent-reservierte default-ignorable Codepoints werden entfernt;
+        normaler Text und Emoji bleiben unangetastet."""
+        import text_unicode as tu
+        for cp in (0xFDD0, 0xFFFE, 0x1FFFE, 0x2065, 0xFFF5, 0xE0000):
+            out, _st = tu.clean_text("A" + chr(cp) + "B")
+            self.assertEqual(out, "AB", "U+%04X nicht entfernt" % cp)
+        self.assertEqual(tu.clean_text("Hallo Welt")[0], "Hallo Welt")
+        self.assertEqual(tu.clean_text("x" + chr(0x2764) + chr(0xFE0F) + "y")[0],
+                         "x" + chr(0x2764) + chr(0xFE0F) + "y")
+
     def test_plugin_hash_pinning(self):
         """Content-Hash-Pinning: Upload pinnt automatisch; direkte Datei-Aenderung
         -> modified=True; Approve pinnt neu -> modified=False; delete entfernt Pin."""

@@ -774,7 +774,7 @@ footer{border-top:1px solid var(--color-divider)}
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Security gateway</span>
   <p class=card-body>Per-chat toggle (shield icon in app and web). Strips invisible Unicode
-  &#8212; tag characters U+E0020&#8211;E007F, zero-width, bidi overrides, homoglyph spaces &#8212; from chat
+  &#8212; tag characters U+E0020&#8211;E007F, zero-width, bidi overrides, homoglyph spaces, plus Unicode noncharacters (U+FDD0&#8211;FDEF, U+xFFFE/xFFFF) and reserved default-ignorables &#8212; from chat
   text in <em>both</em> directions, and EXIF/XMP/C2PA metadata from uploaded JPEG/PNG/WEBP,
   byte-surgically, before anything reaches the guest. Streams are cut at word boundaries so
   emoji ZWJ chains survive. State and counters live in <code>gateway.json</code>, filtering happens in
