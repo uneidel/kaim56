@@ -1,0 +1,22 @@
+{
+  "template": "claude",
+  "description": "Claude Code Agent",
+  "rootfs": "instances/claude-rootfs.ext4",
+  "vcpus": 2, "mem_mib": 1536,
+  "params": [
+    {"key": "TRANSPORT", "label": "Transport", "type": "select", "options": ["signal", "web", "mail"], "default": "signal"},
+    {"key": "SIGNAL_NUMBER", "label": "Signal number (bot)", "default": ""},
+    {"key": "ALLOWED_SENDERS", "label": "Allowed number(s)", "default": ""},
+    {"key": "ANTHROPIC_MODEL", "label": "Model (Claude Code)", "type": "select", "default": "",
+     "options": [
+       {"value": "", "label": "— account default —"},
+       {"value": "opus", "label": "opus — latest Opus (alias)"},
+       {"value": "sonnet", "label": "sonnet — latest Sonnet (alias)"},
+       {"value": "haiku", "label": "haiku — latest Haiku (alias)"},
+       {"value": "claude-opus-5", "label": "claude-opus-5"},
+       {"value": "claude-sonnet-5", "label": "claude-sonnet-5"},
+       {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5"}
+     ]},
+    {"key": "ALLOW_ACTIONS", "label": "Allow actions", "type": "select", "options": ["true", "false"], "default": "true"}
+  ]
+}

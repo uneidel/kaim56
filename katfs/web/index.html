@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>katfs — Share a folder</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --panel-2: #f8f9fb;
+      --border: #e3e6ea;
+      --text: #1c2024;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-contrast: #ffffff;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.05);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1116;
+        --panel: #161b22;
+        --panel-2: #1b222b;
+        --border: #2b323c;
+        --text: #e6e9ee;
+        --muted: #9aa4b2;
+        --accent: #4f8bff;
+        --accent-contrast: #0b0f14;
+        --shadow: 0 1px 3px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 780px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+      line-height: 1.5; color: var(--text); background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    header { margin-bottom: 1.75rem; }
+    h1 { font-size: 1.5rem; font-weight: 650; margin: 0 0 .35rem; letter-spacing: -.01em; }
+    .lede { color: var(--muted); font-size: .95rem; margin: 0; max-width: 60ch; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 1.5rem; margin: 1.25rem 0;
+    }
+    .steps { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; padding: 0; list-style: none; }
+    .steps li {
+      flex: 1 1 14rem; background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 10px; padding: .8rem 1rem; font-size: .9rem; color: var(--text);
+    }
+    .steps .n {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.4rem; height: 1.4rem; border-radius: 50%;
+      background: var(--accent); color: var(--accent-contrast);
+      font-size: .8rem; font-weight: 600; margin-right: .5rem;
+    }
+    .row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin: .75rem 0; }
+    label.field-label { font-weight: 600; font-size: .9rem; }
+    button {
+      padding: .55rem 1rem; font-size: .92rem; font-weight: 550; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2);
+      color: var(--text); transition: background .12s ease, border-color .12s ease, opacity .12s ease;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button#connect { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    button#connect:hover:not(:disabled) { filter: brightness(1.06); }
+    input[type=text] {
+      flex: 1 1 22rem; min-width: 0; padding: .6rem .7rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88rem;
+      color: var(--text); background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 9px;
+    }
+    input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+    .status {
+      display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+      padding: .7rem .9rem; border-radius: 10px;
+      background: var(--panel-2); border: 1px solid var(--border);
+      margin: 1rem 0 0; font-size: .92rem;
+    }
+    .status .sep { color: var(--muted); }
+    .dot {
+      display: inline-block; width: .7rem; height: .7rem; border-radius: 50%;
+      background: #9aa4b2; margin-right: .45rem; vertical-align: middle;
+    }
+    .dot.ok { background: #22c55e; } .dot.err { background: #ef4444; } .dot.wait { background: #f59e0b; }
+    #log {
+      background: #0b0e13; color: #cbd5e1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
+      padding: .8rem; height: 16rem; overflow: auto;
+      border-radius: 10px; border: 1px solid #1e2530; white-space: pre-wrap; margin-top: 1rem;
+    }
+    code { background: rgba(127,127,127,.16); padding: .05rem .3rem; border-radius: 5px; font-size: .85em; }
+    .muted { color: var(--muted); font-size: .85rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>katfs — Share a folder</h1>
+    <p class="lede">
+      This browser connects as an iroh client to the host node and serves a local
+      folder as a katfs/0 provider. Requires a Chromium-based browser (File System
+      Access API) over HTTPS or localhost.
+    </p>
+  </header>
+
+  <ol class="steps">
+    <li><span class="n">1</span>Choose a folder to share</li>
+    <li><span class="n">2</span>Connect &amp; serve it to the host node</li>
+  </ol>
+
+  <div class="card">
+    <h2>Connection</h2>
+
+    <div class="row">
+      <label class="field-label" for="nodeid">Host node-id</label>
+      <input id="nodeid" type="text" placeholder="node-id (hex) or ticket" value="%%NODE_ID%%" />
+    </div>
+
+    <div class="row">
+      <button id="pick">📁 Choose folder</button>
+      <button id="connect">🔌 Connect &amp; serve</button>
+      <button id="disconnect" disabled>✖ Disconnect</button>
+    </div>
+
+    <div class="status">
+      <span><span id="conn-dot" class="dot"></span><span id="conn-text">not connected</span></span>
+      <span class="sep">·</span>
+      <span id="dir-text">no folder selected</span>
+    </div>
+
+    <div id="log">ready.\n</div>
+  </div>
+
+  <p class="muted">
+    Framing: 4-byte BE length + JSON; <code>read</code>/<code>write</code> use a
+    second byte frame. <code>..</code> in paths is rejected.
+  </p>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

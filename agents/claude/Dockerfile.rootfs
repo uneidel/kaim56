@@ -1,0 +1,21 @@
+# Builds the CONTENTS of the guest rootfs (turned into ext4 via docker export).
+# node:20-slim = Debian/glibc -> Claude Code (npm) + gebundeltes ripgrep laufen sauber.
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git ripgrep python3 iproute2 iputils-ping nfs-common \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force
+
+# Bridge + config + guest-init
+COPY bridge.py       /app/bridge.py
+COPY web_bridge.py   /app/web_bridge.py
+COPY webterm.py      /app/webterm.py
+COPY config.env      /app/config.env
+COPY guest-init.sh   /init
+# Agent runs as 'node' (uid 1000) -> claude-code does not allow action mode as root
+RUN chmod +x /init && mkdir -p /home/node/.claude /home/node/workspace \
+    && chown -R node:node /home/node
+
+# (login /root/.claude/.credentials.json and kernel are added externally)
