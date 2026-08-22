@@ -133,6 +133,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Uncaught-Exceptions in eine Datei schreiben, damit man Abstuerze
+        // ohne PC/adb in Einstellungen > Diagnose einsehen kann.
+        run {
+            val prev = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { t, e ->
+                try {
+                    val sw = java.io.StringWriter()
+                    e.printStackTrace(java.io.PrintWriter(sw))
+                    val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (x: Exception) { "?" }
+                    java.io.File(filesDir, "crash.log").writeText(
+                        "kAIm56 " + ver + " @ " + java.util.Date() + "\nThread " + t.name + "\n\n" + sw)
+                } catch (_: Throwable) {}
+                prev?.uncaughtException(t, e)
+            }
+        }
         val prefs = Prefs(this)
         val gemma = LocalGemma(this)
         val store = ChatStore(this)
@@ -866,8 +881,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         val text = input.trim()
         if ((text.isEmpty() && pendingImage == null) || busy) return
         val img = pendingImage
+        val imgB64 = img?.let { bitmapToBase64(it) }
         val msgs = current.messages
-        msgs.add(Msg(true, if (img != null) "📷 " + (if (text.isEmpty()) "(Bild)" else text) else text))
+        msgs.add(Msg(true, text, image = imgB64))
         input = ""; pendingImage = null
         if (text.startsWith("/") && handleSlash(text, msgs)) { persist(); return }
         busy = true
@@ -878,7 +894,6 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             msgs.add(botMsg)
             val botKey = botMsg.key           // per Key ansteuern, NICHT per Index (Interrupt/Sync-fest)
             val inst = current.instance.ifBlank { prefs.instance }
-            val imgB64 = img?.let { bitmapToBase64(it) }
             val myGen = ++turnGen[0]
             val ch = ServerAgent.CancelHandle(); cancelHandle[0] = ch
             fun appendBot(chunk: String) {
@@ -1631,15 +1646,33 @@ fun Bubble(
                     )
                     .padding(horizontal = 16.dp, vertical = 11.dp)
             ) {
-                SelectionContainer {
-                    if (m.user) Text(
-                        body.ifEmpty { "…" },
-                        fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex, color = Kat.onAccent,
-                    ) else Text(
-                        if (body.isEmpty()) AnnotatedString("…") else mdAnnotated(body),
-                        fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex,
-                        color = if (body.isEmpty()) Kat.textFaint else Kat.textStrong,
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (m.user && m.image != null) {
+                        val thumb = remember(m.image) {
+                            runCatching {
+                                val b = android.util.Base64.decode(m.image, android.util.Base64.DEFAULT)
+                                BitmapFactory.decodeByteArray(b, 0, b.size)
+                            }.getOrNull()
+                        }
+                        thumb?.let {
+                            Image(
+                                it.asImageBitmap(), "Bild",
+                                Modifier.heightIn(max = 180.dp).widthIn(max = maxWidth).clip(RoundedCornerShape(10.dp)),
+                                contentScale = ContentScale.Fit,
+                            )
+                        }
+                    }
+                    val hasImg = m.user && m.image != null
+                    if (!hasImg || body.isNotBlank()) SelectionContainer {
+                        if (m.user) Text(
+                            if (hasImg) body else body.ifEmpty { "…" },
+                            fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex, color = Kat.onAccent,
+                        ) else Text(
+                            if (body.isEmpty()) AnnotatedString("…") else mdAnnotated(body),
+                            fontSize = 15.sp, lineHeight = 22.5.sp, fontFamily = Plex,
+                            color = if (body.isEmpty()) Kat.textFaint else Kat.textStrong,
+                        )
+                    }
                 }
             }
             // Der Prototyp setzt hier "Uhrzeit · Agent". Msg traegt keine
@@ -2286,6 +2319,27 @@ fun SettingsScreen(
                             if (syncing) "running …" else "up to date",
                             fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textFaint,
                         )
+                    }
+                }
+            }
+
+            // ── Diagnose ────────────────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Diagnose", Modifier.padding(horizontal = 4.dp))
+                var crash by remember { mutableStateOf(
+                    runCatching { java.io.File(ctx.filesDir, "crash.log").takeIf { it.exists() }?.readText() }.getOrNull() ?: "") }
+                KatCard(padding = PaddingValues(12.dp), spacing = 8.dp) {
+                    if (crash.isBlank()) {
+                        Text("Kein Absturz protokolliert.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
+                    } else {
+                        Text(crash.take(4000), fontSize = 11.sp, fontFamily = PlexMono,
+                            color = Kat.textStrong, maxLines = 16, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledPill("Kopieren", { clipboard.setText(AnnotatedString(crash)) }, height = 36.dp)
+                            FilledPill("Löschen", {
+                                runCatching { java.io.File(ctx.filesDir, "crash.log").delete() }; crash = ""
+                            }, height = 36.dp)
+                        }
                     }
                 }
             }

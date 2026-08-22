@@ -19,7 +19,7 @@ private val msgKeySeq = java.util.concurrent.atomic.AtomicLong(1)
 // verrutschten Indizes bei Interrupt/Sync. key ist bewusst NICHT Teil von
 // equals/hashCode, sonst wuerde der Multi-Device-Prefix-Merge (Vergleich per
 // Inhalt) brechen.
-data class Msg(val user: Boolean, val text: String, val key: Long = msgKeySeq.getAndIncrement()) {
+data class Msg(val user: Boolean, val text: String, val key: Long = msgKeySeq.getAndIncrement(), val image: String? = null) {
     override fun equals(other: Any?) = other is Msg && other.user == user && other.text == text
     override fun hashCode() = user.hashCode() * 31 + text.hashCode()
 }
@@ -91,7 +91,7 @@ class ChatStore(context: Context) {
                 .put("id", c.id).put("title", c.title).put("mode", c.mode)
                 .put("instance", c.instance).put("updatedAt", c.updatedAt)
             val ma = JSONArray()
-            for (m in c.messages) ma.put(JSONObject().put("user", m.user).put("text", m.text))
+            for (m in c.messages) ma.put(JSONObject().put("user", m.user).put("text", m.text).apply { if (m.image != null) put("image", m.image) })
             o.put("messages", ma)
             arr.put(o)
         }
@@ -114,7 +114,7 @@ class ChatStore(context: Context) {
                     val ma = o.getJSONArray("messages")
                     for (j in 0 until ma.length()) {
                         val m = ma.getJSONObject(j)
-                        messages.add(Msg(m.getBoolean("user"), m.getString("text")))
+                        messages.add(Msg(m.getBoolean("user"), m.getString("text"), image = m.optString("image", "").ifEmpty { null }))
                     }
                 }
             }
