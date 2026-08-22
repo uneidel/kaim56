@@ -9,6 +9,8 @@ manager/settings.json
 manager/site.json
 # MCP-Katalog mit echten LAN-Endpunkten -> examples/mcp-catalog.example.json
 manager/mcp-catalog.json
+# Plugin-Integritaets-Pins (Content-Hashes) -> deployment-spezifisch
+manager/plugins/.pins.json
 # Chat-Verlauf, Aufgaben, Gedaechtnis, Wasserzeichen
 manager/chats.json
 manager/chats_tombstones.json

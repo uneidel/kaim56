@@ -19,6 +19,7 @@ import mimetypes
 import os
 import re
 import shlex
+import hashlib
 import shutil
 import signal
 import socket
@@ -543,6 +544,71 @@ def _safe_tool_name(name):
     return re.sub(r"[^a-z0-9_-]", "", (name or "").strip().lower())[:40]
 
 
+# ---- Plugin-Integritaet: Content-Hash-Pinning (Idee aus MS "APM") ----------
+# Beim Upload/Anlegen wird der SHA-256 ueber alle Dateien des Tools als
+# "genehmigt" festgehalten. Wird eine Plugin-Datei spaeter direkt (an der UI
+# vorbei) geaendert, weicht der Hash ab -> die UI zeigt "modified" und man muss
+# die Aenderung bewusst per "Approve" neu pinnen. Runtime-State, gitignored.
+PLUGIN_PINS_FILE = os.path.join(PLUGINS_SRC, ".pins.json")
+
+
+def _plugin_hash(name):
+    """SHA-256 ueber (relpath\0inhalt\0) aller Dateien eines Tools, sortiert."""
+    name = _safe_tool_name(name)
+    folder = os.path.join(PLUGINS_SRC, name)
+    single = os.path.join(PLUGINS_SRC, name + ".py")
+    if os.path.isdir(folder):
+        files, base = [], folder
+        for root, _d, fs in os.walk(folder):
+            for f in fs:
+                files.append(os.path.join(root, f))
+        files.sort()
+    elif os.path.isfile(single):
+        files, base = [single], PLUGINS_SRC
+    else:
+        return None
+    h = hashlib.sha256()
+    for fp in files:
+        h.update(os.path.relpath(fp, base).encode()); h.update(b"\0")
+        try:
+            with open(fp, "rb") as fh:
+                h.update(fh.read())
+        except OSError:
+            return None
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def load_plugin_pins():
+    try:
+        with open(PLUGIN_PINS_FILE) as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _save_plugin_pins(d):
+    try:
+        with open(PLUGIN_PINS_FILE, "w") as fh:
+            json.dump(d, fh, indent=2)
+    except OSError:
+        pass
+
+
+def plugin_pin(name):
+    """Aktuellen Zustand als genehmigt festhalten (Upload oder 'Approve')."""
+    name = _safe_tool_name(name)
+    h = _plugin_hash(name)
+    pins = load_plugin_pins()
+    if h:
+        pins[name] = h
+    else:
+        pins.pop(name, None)
+    _save_plugin_pins(pins)
+    return h
+
+
 def list_plugins():
     out = []
     if not os.path.isdir(PLUGINS_SRC):
@@ -560,6 +626,12 @@ def list_plugins():
             out.append({"name": entry, "kind": "folder", "files": sorted(files)})
         elif entry.endswith(".py"):
             out.append({"name": entry[:-3], "kind": "file", "files": [entry]})
+    pins = load_plugin_pins()
+    for e in out:
+        cur = _plugin_hash(e["name"]); pin = pins.get(e["name"])
+        e["sha"] = (cur or "")[:12]
+        e["pinned"] = bool(pin)
+        e["modified"] = bool(pin) and cur is not None and cur != pin
     return out
 
 
@@ -571,6 +643,7 @@ def plugin_write_py(name, code):
     os.makedirs(dest, exist_ok=True)
     with open(os.path.join(dest, "tool.py"), "w", encoding="utf-8") as fh:
         fh.write(code or PLUGIN_BOILERPLATE)
+    plugin_pin(name)
     return None
 
 
@@ -607,11 +680,15 @@ def plugin_write_zip(name, raw):
     if not any(os.path.isfile(os.path.join(dest, c))
                for c in ("tool.py", "__init__.py", name + ".py")):
         return "kein Entry (tool.py/__init__.py) im Zip gefunden"
+    plugin_pin(name)
     return None
 
 
 def plugin_delete(name):
     name = _safe_tool_name(name)
+    pins = load_plugin_pins()
+    if pins.pop(name, None) is not None:
+        _save_plugin_pins(pins)
     dfolder = os.path.join(PLUGINS_SRC, name)
     dfile = os.path.join(PLUGINS_SRC, name + ".py")
     if os.path.isdir(dfolder):
@@ -3405,6 +3482,9 @@ class H(BaseHTTPRequestHandler):
                 if len(parts) == 4 and parts[3] == "delete":
                     ok = plugin_delete(parts[2])
                     out = json.dumps({"msg": "deleted" if ok else "not found"}).encode()
+                elif len(parts) == 4 and parts[3] == "pin":
+                    h = plugin_pin(parts[2])
+                    out = json.dumps({"msg": "approved" if h else "not found", "sha": (h or "")[:12]}).encode()
                 elif pp == "/api/plugins/new":
                     err = plugin_write_py(b.get("name", ""), PLUGIN_BOILERPLATE)
                     out = json.dumps({"error": err} if err else {"msg": "created"}).encode()

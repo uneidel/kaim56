@@ -747,7 +747,7 @@ footer{border-top:1px solid var(--color-divider)}
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
   3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; the <b>oracle</b> tool gives a second opinion before destructive actions (challenges assumptions, never acts — playbook-enforced for the orchestrator); risky
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
-  <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
+  <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab; each is SHA-256 content-pinned so a later out-of-band edit shows as \u201cmodified\u201d until re-approved) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
@@ -1016,7 +1016,15 @@ async function loadPlugins(){
     `<div class=card><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">`+
     `<b>${escT(p.name)}</b><button class="btn btn-ghost" style="font-size:12px" onclick="plugDel('${esc(p.name)}')">L&#246;schen</button></div>`+
     `<div class=text-muted style="font-size:12px">${escT(p.kind)} &#183; ${p.files.length} Datei(en)</div>`+
-    `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(escT).join(', ')}</div></div>`
+    `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(escT).join(', ')}</div>`+
+    `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">`+
+      (p.modified
+        ? `<span class="tag" style="background:#c0392b;color:#fff;font-size:11px">\u26a0 ge\u00e4ndert seit Approve</span>`
+        : p.pinned
+          ? `<span class="tag tag-accent" style="font-size:11px">\u2713 gepinnt ${escT(p.sha||'')}</span>`
+          : `<span class="tag tag-neutral" style="font-size:11px">nicht gepinnt</span>`)+
+      ((p.modified||!p.pinned)?`<button class="btn btn-secondary" style="font-size:12px;margin-left:auto" onclick="plugApprove('${esc(p.name)}')">Approve</button>`:``)+
+    `</div></div>`
   ).join('') : '<div class=text-muted>Noch keine Plugins.</div>';
 }
 async function plugUpload(file){
@@ -1034,6 +1042,11 @@ async function plugCreate(){
   const d=await (await fetch('/api/plugins/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
   document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' angelegt (tool.py) \u2014 im Ordner editieren, Instanz neu starten');
   inp.value='';loadPlugins();
+}
+async function plugApprove(name){
+  const d=await (await fetch('/api/plugins/'+encodeURIComponent(name)+'/pin',{method:'POST'})).json();
+  document.getElementById('plugmsg').textContent=(d.msg==='approved'?'\u2713 '+name+' gepinnt ('+(d.sha||'')+')':(d.msg||'?'));
+  loadPlugins();
 }
 async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))return;
   await fetch('/api/plugins/'+encodeURIComponent(name)+'/delete',{method:'POST'}); loadPlugins(); }

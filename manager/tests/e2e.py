@@ -552,6 +552,32 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_plugin_hash_pinning(self):
+        """Content-Hash-Pinning: Upload pinnt automatisch; direkte Datei-Aenderung
+        -> modified=True; Approve pinnt neu -> modified=False; delete entfernt Pin."""
+        m = self.m
+        import tempfile, os
+        tmp = tempfile.mkdtemp(prefix="e2e-pin-")
+        old_src, old_pins = m.PLUGINS_SRC, m.PLUGIN_PINS_FILE
+        m.PLUGINS_SRC = tmp
+        m.PLUGIN_PINS_FILE = os.path.join(tmp, ".pins.json")
+        try:
+            self.assertIsNone(m.plugin_write_py("foo", "DESC='x'\ndef run():\n    return 1\n"))
+            lst = {p["name"]: p for p in m.list_plugins()}
+            self.assertTrue(lst["foo"]["pinned"])
+            self.assertFalse(lst["foo"]["modified"])
+            with open(os.path.join(tmp, "foo", "tool.py"), "a") as fh:
+                fh.write("# tampered\n")
+            lst = {p["name"]: p for p in m.list_plugins()}
+            self.assertTrue(lst["foo"]["modified"])          # Manipulation erkannt
+            m.plugin_pin("foo")                              # Approve
+            lst = {p["name"]: p for p in m.list_plugins()}
+            self.assertFalse(lst["foo"]["modified"])
+            m.plugin_delete("foo")
+            self.assertNotIn("foo", m.load_plugin_pins())    # Pin mit weg
+        finally:
+            m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
+
     def test_set_instance_tools_roundtrip(self):
         """Policy-Tools speichern: Subset bleibt (tools_all=False), ALLE Tools
         entfernt das Feld (tools_all=True), unbekannte Namen werden gefiltert.
