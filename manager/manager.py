@@ -1262,6 +1262,69 @@ def is_running(inst):
         return False
 
 
+# ---- Ressourcen-Uebersicht je Instanz (Resources-Tab) ----------------------
+def _read_pid(inst):
+    try:
+        return int(open(pidfile(inst)).read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _proc_cpu_jiffies(pid):
+    """utime+stime aus /proc/<pid>/stat, robust gegen Leerzeichen im comm."""
+    try:
+        with open("/proc/%d/stat" % pid) as fh:
+            after = fh.read().rpartition(")")[2].split()
+        return int(after[11]) + int(after[12])   # utime (Feld14) + stime (Feld15)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _proc_rss_kb(pid):
+    try:
+        with open("/proc/%d/status" % pid) as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return None
+
+
+def resource_stats():
+    """Je Instanz: konfigurierte Groesse (vCPU/RAM) + Live-Verbrauch (RSS, CPU%,
+    Overlay-Disk). CPU% ueber ein kurzes Sample; Prozent bezogen auf EINEN Kern
+    (ein 2-vCPU-Gast kann bis ~200 %)."""
+    insts = load_instances()
+    clk = os.sysconf("SC_CLK_TCK") or 100
+    pids = {i["name"]: _read_pid(i) for i in insts}
+    pids = {n: p for n, p in pids.items() if p is not None and os.path.exists("/proc/%d" % p)}
+    t0 = {n: _proc_cpu_jiffies(p) for n, p in pids.items()}
+    dt = 0.3
+    time.sleep(dt)
+    t1 = {n: _proc_cpu_jiffies(p) for n, p in pids.items()}
+    out = []
+    for i in insts:
+        name = i["name"]
+        running = name in pids
+        rss = _proc_rss_kb(pids[name]) if running else None
+        j0, j1 = t0.get(name), t1.get(name)
+        cpu_pct = round(100.0 * (j1 - j0) / (clk * dt), 1) if (j0 is not None and j1 is not None) else None
+        try:
+            st = os.stat(upper_path(i)); upper_used_mb = round(st.st_blocks * 512 / 1048576.0, 1)
+        except OSError:
+            upper_used_mb = None
+        out.append({
+            "name": name, "running": running,
+            "vcpus": i.get("vcpus", 2), "mem_mib": i.get("mem_mib", 1024),
+            "rss_mb": round(rss / 1024.0, 1) if rss else None,
+            "cpu_pct": cpu_pct,
+            "persist": bool(i.get("persist_disk")),
+            "upper_used_mb": upper_used_mb,
+        })
+    return out
+
+
 # ---- networking ------------------------------------------------------------
 def ensure_net_base():
     sh("sysctl", "-w", "net.ipv4.ip_forward=1", check=False)
@@ -3001,6 +3064,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(st); self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data))); self.end_headers()
             self.wfile.write(data); return
+        if self.path.split("?", 1)[0] == "/api/resources":
+            body = json.dumps({"resources": resource_stats()}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         if self.path.split("?", 1)[0] == "/api/plugins":
             body = json.dumps({"plugins": list_plugins()}, ensure_ascii=False).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")

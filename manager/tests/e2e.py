@@ -552,6 +552,23 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_resource_stats_shape(self):
+        """resource_stats liefert je Instanz Groesse + Live-Felder; eine Instanz
+        ohne PID gilt als nicht laufend (Live-Werte None)."""
+        m = self.m
+        old_load = m.load_instances
+        m.load_instances = lambda: [{"name": "e2e-res-xyz", "vcpus": 4, "mem_mib": 2048, "config": {}}]
+        try:
+            r = next(x for x in m.resource_stats() if x["name"] == "e2e-res-xyz")
+            self.assertEqual(r["vcpus"], 4)
+            self.assertEqual(r["mem_mib"], 2048)
+            self.assertFalse(r["running"])
+            self.assertIsNone(r["rss_mb"])
+            for k in ("cpu_pct", "upper_used_mb", "persist", "name"):
+                self.assertIn(k, r)
+        finally:
+            m.load_instances = old_load
+
     def test_gateway_strips_noncharacters(self):
         """Layer-A-Erweiterung (watermarks-remover): Unicode-Noncharacters und
         permanent-reservierte default-ignorable Codepoints werden entfernt;

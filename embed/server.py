@@ -3,7 +3,7 @@
 
 Laeuft am Host, nicht in den VMs: das Modell (~120 MB) laege sonst je Instanz
 im Speicher, und Embeddings sind der eine ML-Schritt, der auf der CPU wirklich
-schnell ist — kein Grund, dafuer die llama-Box abzuwarten. Gebunden 0.0.0.0 im
+schnell ist Gebunden 0.0.0.0 im
 Container, auf der Host-Seite auf 127.0.0.1 beschraenkt (-p 127.0.0.1:8772:8772),
 genau wie der Sprachdienst. Erreichbar nur ueber den Manager.
 

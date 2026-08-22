@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- New Resources tab: per-instance sizing (vCPU, configured RAM) plus live usage — actual RSS, CPU% (from /proc, per-core basis), and written overlay-disk size, with bars. Backed by a new /api/resources endpoint; test added.
 - Android app v5.19: uploaded photos now show a real thumbnail in the message bubble (Msg gained an image field, persisted + synced) instead of just a 📷 icon; plus an on-device crash log — uncaught exceptions are written to crash.log and viewable/copyable under Settings › Diagnose.
 - Security gateway (Layer A completed): the invisible-Unicode scrubber now also removes Unicode noncharacters (U+FDD0–FDEF, U+xFFFE/xFFFF per plane) and permanently-reserved default-ignorable code points (U+2065, U+FFF0–FFF8, U+E0000, tag/ignorable ranges) — the remaining deterministic watermark carriers from guillaumemeyer/watermarks-remover. Emoji/variation-selectors preserved; test added. Also: `manager/text_unicode.py` is now tracked (was missing, breaking the gateway on a fresh clone).
 - Tool-plugin integrity: content-hash pinning (idea from Microsoft's APM). Uploading/creating a plugin records a SHA-256 over its files; if a plugin is later edited out-of-band the Plugins tab flags it 'geändert seit Approve' with an Approve button to re-pin. Pins in gitignored manager/plugins/.pins.json; test covers upload→tamper→approve→delete.

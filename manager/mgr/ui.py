@@ -285,6 +285,7 @@ footer{border-top:1px solid var(--color-divider)}
     <a href="#missions">Missions</a>
     <a href="#policy">Policy</a>
     <a href="#models">Models</a>
+    <a href="#resources">Resources</a>
     <a href="#sharing">Sharing</a>
     <a href="#secrets">Secrets</a>
     <a href="#settings">Settings</a>
@@ -448,6 +449,17 @@ footer{border-top:1px solid var(--color-divider)}
     </div>
     <div class=panel-foot><span id=mcpmsg class=msg></span><button class="btn btn-primary" onclick=saveMcp()>Save MCP</button></div>
   </div>
+</section>
+
+<section class="screen" id=s-resources>
+  <div class=sec-head>
+    <div><h6>Sizing &amp; live usage</h6><h3>Resources</h3></div>
+    <span class="note text-muted">Konfigurierte Groesse (vCPU/RAM) und Live-Verbrauch je Instanz &#183; CPU% bezogen auf EINEN Kern (2-vCPU-Gast bis ~200%) &#183; Disk = beschriebene Overlay-Schicht.</span>
+  </div>
+  <table class=table id=restable>
+    <thead><tr><th style="width:22%">Instance</th><th>Status</th><th>vCPU</th><th>RAM (konfig.)</th><th>RAM (genutzt)</th><th>CPU</th><th>Disk (Overlay)</th></tr></thead>
+    <tbody id=resrows><tr><td colspan=7 class=text-muted style="padding:14px">…</td></tr></tbody>
+  </table>
 </section>
 
 <section class="screen" id=s-models>
@@ -1114,6 +1126,28 @@ function savePolTools(name){
       else if(el)el.textContent='⚠️ '+(d.msg||('HTTP '+r.status));
     }).catch(e=>{const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
 }
+function _bar(pct,max,color){
+  const w=Math.max(0,Math.min(100,max?100*pct/max:0));
+  return `<div style="background:var(--color-neutral-200,#e5e7eb);border-radius:4px;height:6px;overflow:hidden;min-width:60px"><div style="width:${w}%;height:100%;background:${color}"></div></div>`;
+}
+async function loadResources(){
+  let rs=[]; try{rs=(await (await fetch('/api/resources')).json()).resources||[];}catch(e){return;}
+  const el=document.getElementById('resrows'); if(!el)return;
+  el.innerHTML = rs.length ? rs.map(r=>{
+    const run=r.running;
+    const status=run?`<span class="tag tag-accent">\u25cf running</span>`:`<span class="tag tag-neutral">\u25cb off</span>`;
+    const ramUsed = run&&r.rss_mb!=null ? `${r.rss_mb} MB ${_bar(r.rss_mb,r.mem_mib,'var(--color-accent)')}` : '\u2014';
+    const cpu = run&&r.cpu_pct!=null ? `${r.cpu_pct}% ${_bar(r.cpu_pct,100*r.vcpus,'#2e9e6b')}` : '\u2014';
+    const disk = r.upper_used_mb!=null ? `${r.upper_used_mb} MB${r.persist?' <span class="tag tag-accent" style="font-size:10px">persist</span>':''}` : '\u2014';
+    return `<tr><td data-label=Instance><b style="font-family:var(--font-heading)">${escT(r.name)}</b></td>`+
+      `<td data-label=Status>${status}</td>`+
+      `<td data-label=vCPU style="font-variant-numeric:tabular-nums">${r.vcpus}</td>`+
+      `<td data-label="RAM (konfig.)" style="font-variant-numeric:tabular-nums">${r.mem_mib} MiB</td>`+
+      `<td data-label="RAM (genutzt)"><div style="display:flex;align-items:center;gap:8px;font-size:12px">${ramUsed}</div></td>`+
+      `<td data-label=CPU><div style="display:flex;align-items:center;gap:8px;font-size:12px">${cpu}</div></td>`+
+      `<td data-label="Disk (Overlay)" style="font-size:12px">${disk}</td></tr>`;
+  }).join('') : '<tr><td colspan=7 class=text-muted style="padding:14px">no instances</td></tr>';
+}
 let ACT_CUR='', ACT_EVENTS=[], ACT_WIN=0;
 async function openActivity(name){
   ACT_CUR=name;
@@ -1290,7 +1324,7 @@ async function refreshUsage(){
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','policy','models','sharing','secrets','settings','changelog','architecture'];
+const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
@@ -1937,7 +1971,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();
+  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();
   refreshUsage();
   // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
   // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
@@ -1949,6 +1983,7 @@ window.onload=()=>{
     if(t==='tasks'&&!TK_EDIT)loadTasks();
     else if(t==='missions')loadMissions();
     else if(t==='policy')loadPolicy(true);
+    else if(t==='resources')loadResources();
     else if(t==='instances')refreshUsage();
   },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};
