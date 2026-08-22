@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+- Chat sync robustness (web + Android v5.18): when two devices' histories DIVERGE (from an earlier corruption or an out-of-band edit) the prefix-append merge used to stall forever, leaving one side on an older state. Now, if the remote conversation is newer and not shorter, the client adopts the server state as the merge point instead of getting stuck.
 - Android app v5.17: assistant messages now render basic Markdown (bold **, italic *, `code`, #-headings as bold, - / * bullets) via AnnotatedString — previously the app showed raw asterisks (only the web chat rendered Markdown).
 - Android app v5.16: fix streamed reply landing in the USER bubble (raw ⟦think⟧ markers visible) after a mic-interrupt+re-record — chunks now target the assistant message by a stable key instead of a positional index that could drift. Msg gained a `key` (excluded from equals so multi-device merge is unaffected).
 - Android app v5.15: FIX 'Socket is closed' on server chats (regression from v5.12). The 2s read-timeout used for interrupt-polling closed the socket whenever a model took >2s for the first token (e.g. gemini-2.5-pro thinking). Read-timeout is back to 600s and the mic interrupt now cancels via a disconnect handle instead — responsive AND no false timeouts.

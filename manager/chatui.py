@@ -361,10 +361,19 @@ function applyRemote(remote){
        Gegenseite eine gerade getippte, noch nicht gepushte Frage weg. Nur
        wenn die lokale Liste ein Praefix der entfernten ist, ist das sicher. */
     const lm=l.msgs||[], rm=r.msgs||[];
-    if(rm.length<lm.length)return;
-    for(let i=0;i<lm.length;i++)
-      if(lm[i].role!==rm[i].role||lm[i].content!==rm[i].content)return;
-    if(rm.length>lm.length){lm.push(...rm.slice(lm.length));l.msgs=lm;changed=true;}
+    /* Ist der lokale Verlauf ein PRAEFIX des entfernten? Dann sicher anhaengen. */
+    let prefix=rm.length>=lm.length;
+    if(prefix)for(let i=0;i<lm.length;i++)
+      if(lm[i].role!==rm[i].role||lm[i].content!==rm[i].content){prefix=false;break;}
+    if(prefix){
+      if(rm.length>lm.length){lm.push(...rm.slice(lm.length));l.msgs=lm;changed=true;}
+    }else if(rm.length>=lm.length){
+      /* DIVERGENZ (kein Praefix), aber remote ist neuer (r.ts>l.ts, oben geprueft)
+         und nicht kuerzer -> Server-Stand als Merge-Punkt uebernehmen, statt den
+         Sync fuer immer haengen zu lassen. Eigene, noch nicht gepushte Aenderungen
+         waeren zu diesem Zeitpunkt bereits gepusht gewesen. */
+      l.msgs=rm.slice();changed=true;
+    }else return;   /* lokal ist laenger -> behalten, der eigene Push gleicht ab */
     if(r.title&&l.title!==r.title){l.title=r.title;changed=true;}
     l.ts=r.ts;
   });

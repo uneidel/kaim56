@@ -588,11 +588,15 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 // sonst gleicht der naechste Push das aus.
                 val lm = local.messages
                 val rm = r.messages
-                if (rm.size < lm.size || lm.indices.any { lm[it] != rm[it] }) continue
-                if (rm.size > lm.size) {
-                    for (i in lm.size until rm.size) lm.add(rm[i])
-                    changed = true
-                }
+                val isPrefix = rm.size >= lm.size && lm.indices.all { lm[it] == rm[it] }
+                if (isPrefix) {
+                    if (rm.size > lm.size) { for (i in lm.size until rm.size) lm.add(rm[i]); changed = true }
+                } else if (rm.size >= lm.size) {
+                    // DIVERGENZ (kein Praefix), remote ist neuer (oben geprueft) und nicht
+                    // kuerzer -> Server-Stand als Merge-Punkt uebernehmen, statt den Sync
+                    // fuer immer haengen zu lassen. In-Place fuellen (Objekt nicht tauschen!).
+                    lm.clear(); lm.addAll(rm); changed = true
+                } else continue    // lokal ist laenger -> behalten, eigener Push gleicht ab
                 if (local.title != r.title && r.title.isNotBlank()) { local.title = r.title; changed = true }
                 if (local.instance != r.instance && r.instance.isNotBlank()) local.instance = r.instance
                 local.updatedAt = r.updatedAt
