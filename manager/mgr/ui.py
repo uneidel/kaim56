@@ -1046,7 +1046,13 @@ async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))retur
   dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)plugUpload(f);});
 })();
 let POL_TOOLS=[];
-async function loadPolicy(){
+let POL_DIRTY=new Set();   // Instanzen mit noch nicht gespeicherten Tool-Aenderungen
+document.addEventListener('DOMContentLoaded',()=>{
+  const pc=document.getElementById('policycards');
+  if(pc)pc.addEventListener('change',e=>{const pt=e.target&&e.target.dataset&&e.target.dataset.pt;if(pt)POL_DIRTY.add(pt);});
+});
+async function loadPolicy(auto){
+  if(auto&&POL_DIRTY.size)return;   // ungespeicherte Haken nicht ueberschreiben
   let pol={instances:[]};
   try{
     pol=await (await fetch('/api/policy')).json();
@@ -1082,13 +1088,18 @@ async function loadPolicy(){
       `</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:2px 14px">${tools}</div></div>`+
     `</div>`;
   }).join('')||'<span class=text-muted style="font-size:13px">no instances</span>';
+  if(!auto)POL_DIRTY.clear();
 }
 function polToolAll(name,on){document.querySelectorAll(`input[data-pt="${CSS.escape(name)}"]`).forEach(c=>c.checked=!!on)}
 function savePolTools(name){
   const tools=[...document.querySelectorAll(`input[data-pt="${CSS.escape(name)}"]:checked`)].map(c=>c.value);
   fetch(`/api/instances/${name}/tools`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({tools})}).then(r=>r.json()).then(d=>{
-      const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);if(el)el.textContent=(d.msg||'saved')+' ✓';});
+    body:JSON.stringify({tools})}).then(async r=>{
+      const ok=r.ok; let d={}; try{d=await r.json()}catch(e){}
+      const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);
+      if(ok){POL_DIRTY.delete(name); if(el)el.textContent=(d.msg||'saved')+' ✓';}
+      else if(el)el.textContent='⚠️ '+(d.msg||('HTTP '+r.status));
+    }).catch(e=>{const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
 }
 let ACT_CUR='', ACT_EVENTS=[], ACT_WIN=0;
 async function openActivity(name){
@@ -1924,7 +1935,7 @@ window.onload=()=>{
     const t=location.hash.slice(1)||'instances';
     if(t==='tasks'&&!TK_EDIT)loadTasks();
     else if(t==='missions')loadMissions();
-    else if(t==='policy')loadPolicy();
+    else if(t==='policy')loadPolicy(true);
     else if(t==='instances')refreshUsage();
   },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};

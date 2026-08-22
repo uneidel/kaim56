@@ -552,6 +552,37 @@ class ManagerFunctions(unittest.TestCase):
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
+    def test_set_instance_tools_roundtrip(self):
+        """Policy-Tools speichern: Subset bleibt (tools_all=False), ALLE Tools
+        entfernt das Feld (tools_all=True), unbekannte Namen werden gefiltert.
+        Regression fuer 'nach dem Speichern sind wieder alle Tools aktiv'."""
+        m = self.m
+        import tempfile, os
+        tmp = tempfile.mkdtemp(prefix="e2e-tools-")
+        with open(os.path.join(tmp, "toolinst.json"), "w") as fh:
+            json.dump({"name": "toolinst", "template": "openrouter", "config": {}}, fh)
+        old_dir, old_load, old_run = m.INST_DIR, m.load_instances, m.is_running
+        m.INST_DIR = tmp
+        m.load_instances = lambda: [_readj(os.path.join(tmp, "toolinst.json"))]
+        m.is_running = lambda inst: False
+        try:
+            picks = sorted(m.AGENT_TOOL_NAMES)[:3]
+            m.set_instance_tools("toolinst", picks)
+            cfg = _readj(os.path.join(tmp, "toolinst.json"))["config"]
+            self.assertEqual(set(cfg["AGENT_TOOLS"].split(",")), set(picks))   # Subset bleibt
+            self.assertFalse(m.effective_policy(_readj(os.path.join(tmp, "toolinst.json")))["tools_all"])
+
+            m.set_instance_tools("toolinst", list(m.AGENT_TOOL_NAMES))
+            cfg2 = _readj(os.path.join(tmp, "toolinst.json"))["config"]
+            self.assertNotIn("AGENT_TOOLS", cfg2)                              # alle -> Feld raus
+            self.assertTrue(m.effective_policy(_readj(os.path.join(tmp, "toolinst.json")))["tools_all"])
+
+            m.set_instance_tools("toolinst", ["kein_tool", picks[0]])
+            cfg3 = _readj(os.path.join(tmp, "toolinst.json"))["config"]
+            self.assertEqual(cfg3["AGENT_TOOLS"], picks[0])                    # unbekannte gefiltert
+        finally:
+            m.INST_DIR, m.load_instances, m.is_running = old_dir, old_load, old_run
+
     def test_plugin_zip_and_slip_guard(self):
         """Multi-File-Zip landet im Tool-Ordner; ein ../-Pfad (zip-slip) darf NICHT
         ausserhalb entpackt werden; Zip ohne Entry-Datei wird abgelehnt."""
