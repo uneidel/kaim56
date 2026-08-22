@@ -2,9 +2,9 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Notifications: Push-Kanal an App + Web (Store, rev/Long-Poll, mark-read).
+"""Notifications: push channel to app + web (store, rev/long-poll, mark-read).
 
-Teil des mgr-Pakets; kein Import aus manager. BASE via configure().
+Part of the mgr package; no import from manager. BASE via configure().
 """
 import json
 import os
@@ -27,10 +27,10 @@ def configure(base):
 
 
 # ---- Notifications: Push an App + Web -------------------------------------
-# Eigener Kanal neben Signal: ein Agent ruft das Tool `notify`, der Eintrag
-# landet hier und wird von App (Android-Systemnotification) und Web-Manager
-# (Glocke + optional Browser-Notification) via Long-Poll abgeholt. Global
-# (nicht pro Instanz), kurzlebig, gedeckelt.
+# A separate channel alongside Signal: an agent calls the `notify` tool, the
+# entry lands here and is fetched via long-poll by the app (Android system
+# notification) and the web manager (bell + optional browser notification).
+# Global (not per instance), short-lived, capped.
 _notif_lock = threading.Lock()
 NOTIF_MAX = 200
 NOTIF_RATE = (30, 300)          # max 30 in 5 min gegen Spam

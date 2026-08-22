@@ -2,8 +2,8 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Manager-Weboberflaeche: das komplette HTML/CSS/JS als eine Konstante.
-Reine Daten — Logik (render/Ersetzungen) bleibt in manager.py."""
+"""Manager web UI: the complete HTML/CSS/JS as a single constant.
+Pure data — logic (render/substitutions) stays in manager.py."""
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -207,9 +207,9 @@ footer{border-top:1px solid var(--color-divider)}
 .fbsharerow.sel{background:var(--color-neutral-100);box-shadow:inset 3px 0 0 var(--color-accent)}
 .fbsz{color:var(--color-neutral-500);font-size:12px;font-variant-numeric:tabular-nums}
 .fbact{font-size:12px;padding:2px 8px}
-/* Architektur-Diagramm. Die Regeln stehen HIER und nicht als <style> im SVG:
-   ein style-Element in Inline-SVG beendet beim HTML-Parsen den SVG-Kontext,
-   und alles danach faellt unsichtbar aus dem Bild (Chrome; jsdom verzeiht es). */
+/* Architecture diagram. The rules live HERE and not as a <style> inside the SVG:
+   a style element in inline SVG ends the SVG context during HTML parsing, and
+   everything after it drops invisibly out of the image (Chrome; jsdom forgives it). */
 #archsvg .bx{fill:var(--color-surface);stroke:var(--color-divider)}
 #archsvg .bx2{fill:none;stroke:var(--color-accent)}
 #archsvg .tt{fill:var(--color-text);font-size:13px;font-weight:600}
@@ -371,28 +371,28 @@ footer{border-top:1px solid var(--color-divider)}
   </div>
 
   <div class=sec-head style="margin-top:36px">
-    <div><h6>Wiederkehrende Auftraege</h6><h3 style="font-size:22px">Prompt templates</h3></div>
-    <span class="note text-muted">Als Slash-Kommando im Chat: <code>/name [zusatz]</code> — der Agent expandiert serverseitig (Web, App und Signal)</span>
+    <div><h6>Recurring jobs</h6><h3 style="font-size:22px">Prompt templates</h3></div>
+    <span class="note text-muted">As a slash command in chat: <code>/name [extra]</code> — the agent expands it server-side (web, app and Signal)</span>
   </div>
   <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <div id=promptlist><span class=text-muted style="font-size:13px">…</span></div>
     <div class=grid2 style="margin-top:16px">
-      <div class=field><label>Name (wird /name)</label><input class=input id=prname placeholder="daily"></div>
-      <div class="field span2"><label>Prompt-Text</label><textarea class=input id=prtext style="min-height:70px" placeholder="Erstelle mein Tagesbriefing: …"></textarea></div>
+      <div class=field><label>Name (becomes /name)</label><input class=input id=prname placeholder="daily"></div>
+      <div class="field span2"><label>Prompt-Text</label><textarea class=input id=prtext style="min-height:70px" placeholder="Write my daily briefing: …"></textarea></div>
     </div>
     <div class=panel-foot><span id=prmsg class=msg></span><button class="btn btn-primary" onclick=savePrompt()>Save template</button></div>
   </div>
 
   <div class=sec-head style="margin-top:36px">
-    <div><h6>Gelernte Regeln</h6><h3 style="font-size:22px">Playbooks</h3></div>
-    <span class="note text-muted">Feste Regeln je Agent — gelten JEDEN Turn. Der Agent lernt sie selbst aus Korrekturen (playbook_add); hier einsehen, ergaenzen, entfernen.</span>
+    <div><h6>Learned rules</h6><h3 style="font-size:22px">Playbooks</h3></div>
+    <span class="note text-muted">Fixed rules per agent — apply EVERY turn. The agent learns them itself from corrections (playbook_add); view, add, remove them here.</span>
   </div>
   <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <div class=field style="max-width:280px;margin-bottom:12px"><label>Agent</label>
       <select class=input id=pbinst onchange=loadPlaybooks()></select></div>
     <div id=pblist><span class=text-muted style="font-size:13px">…</span></div>
-    <div class="field span2" style="margin-top:14px"><label>Neue Regel</label>
-      <textarea class=input id=pbtext style="min-height:56px" placeholder="Aktienkurse immer per http_fetch von query1.finance.yahoo.com holen …"></textarea></div>
+    <div class="field span2" style="margin-top:14px"><label>New rule</label>
+      <textarea class=input id=pbtext style="min-height:56px" placeholder="Always fetch stock prices via http_fetch from query1.finance.yahoo.com …"></textarea></div>
     <div class=panel-foot><span id=pbmsg class=msg></span><button class="btn btn-primary" onclick=addPlaybook()>Add rule</button></div>
   </div>
 </section>
@@ -418,14 +418,14 @@ footer{border-top:1px solid var(--color-divider)}
 <section class="screen" id=s-plugins>
   <div class=sec-head>
     <div><h6>Custom tools</h6><h3>Plugins</h3></div>
-    <span class="note text-muted">Ziehe eine <code>.py</code>-Datei oder ein <code>.zip</code> (Mehrdatei &#8594; eigener Ordner) hierher. Konvention: <code>DESC / PARAMS / REQUIRED / run()</code>. Laeuft in der Agent-VM (Sandbox, stdlib) &#183; Instanz neu starten zum Aktivieren.</span>
+    <span class="note text-muted">Drag a <code>.py</code> file or a <code>.zip</code> (multi-file &#8594; its own folder) here. Convention: <code>DESC / PARAMS / REQUIRED / run()</code>. Runs in the agent VM (sandbox, stdlib) &#183; restart the instance to activate.</span>
   </div>
   <div id=plugdrop class=plugdrop>
-    <b>.py</b> oder <b>.zip</b> hierher ziehen &#8212; oder <label class=pluglnk>durchsuchen<input type=file id=plugfile accept=".py,.zip" hidden></label>
+    <b>.py</b> or <b>.zip</b> — drag here &#8212; or <label class=pluglnk>browse<input type=file id=plugfile accept=".py,.zip" hidden></label>
   </div>
   <div class=grid2 style="margin-top:16px">
-    <div class=field><label>Neues Tool aus Boilerplate (Name: a-z 0-9 _ -)</label><input class=input id=plugnew placeholder="z. B. weather_lookup"></div>
-    <div class=field style="align-self:end"><button class="btn btn-secondary" onclick=plugCreate()>Boilerplate anlegen</button></div>
+    <div class=field><label>New tool from boilerplate (name: a-z 0-9 _ -)</label><input class=input id=plugnew placeholder="e.g. weather_lookup"></div>
+    <div class=field style="align-self:end"><button class="btn btn-secondary" onclick=plugCreate()>Create boilerplate</button></div>
   </div>
   <div id=plugmsg class=msg style="margin-top:8px"></div>
   <div id=pluglist class=grid3 style="margin-top:20px"></div>
@@ -454,10 +454,10 @@ footer{border-top:1px solid var(--color-divider)}
 <section class="screen" id=s-resources>
   <div class=sec-head>
     <div><h6>Sizing &amp; live usage</h6><h3>Resources</h3></div>
-    <span class="note text-muted">Konfigurierte Groesse (vCPU/RAM) und Live-Verbrauch je Instanz &#183; CPU% bezogen auf EINEN Kern (2-vCPU-Gast bis ~200%) &#183; Disk = beschriebene Overlay-Schicht.</span>
+    <span class="note text-muted">Configured size (vCPU/RAM) and live usage per instance &#183; CPU% is relative to ONE core (a 2-vCPU guest goes up to ~200%) &#183; Disk = written overlay layer.</span>
   </div>
   <table class=table id=restable>
-    <thead><tr><th style="width:22%">Instance</th><th>Status</th><th>vCPU</th><th>RAM (konfig.)</th><th>RAM (genutzt)</th><th>CPU</th><th>Disk (Overlay)</th></tr></thead>
+    <thead><tr><th style="width:22%">Instance</th><th>Status</th><th>vCPU</th><th>RAM (config.)</th><th>RAM (used)</th><th>CPU</th><th>Disk (Overlay)</th></tr></thead>
     <tbody id=resrows><tr><td colspan=7 class=text-muted style="padding:14px">…</td></tr></tbody>
   </table>
 </section>
@@ -521,12 +521,12 @@ footer{border-top:1px solid var(--color-divider)}
 <section class="screen" id=s-missions>
   <div class=sec-head>
     <div><h6>Multi-step work</h6><h3>Missions</h3></div>
-    <span class="note text-muted">Mehrstufige Auftraege des Orchestrators — Plan + Fortschritt ueberleben Neustart und Kontext-Reset · ein fertiger Task triggert sofort den naechsten Schritt</span>
+    <span class="note text-muted">Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step</span>
   </div>
   <div id=missions class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <span class=text-muted style="font-size:13px">…</span>
   </div>
-  <p class=text-muted style="font-size:12.5px;margin-top:14px">Missionen legt der Orchestrator selbst an, wenn ein Auftrag mehrere Schritte braucht — z. B. per Chat: „… — als Mission".</p>
+  <p class=text-muted style="font-size:12.5px;margin-top:14px">The orchestrator creates missions itself when a job needs several steps — e.g. via chat: "… — as a mission".</p>
 </section>
 
 <section class="screen" id=s-sharing>
@@ -762,13 +762,13 @@ footer{border-top:1px solid var(--color-divider)}
   <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab; each is SHA-256 content-pinned so a later out-of-band edit shows as \u201cmodified\u201d until re-approved) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
-  <p class=card-body>Stdlib-<code>unittest</code>, keine Dependency: <code>tests/e2e.py</code> /
-  <code>./run-tests.sh</code>. Drei Stufen, die fehlende Umgebung sauber ueberspringen &#8212;
-  <b>OFFLINE</b> importiert Agent und Manager direkt und prueft die Kernlogik (Backend-Wahl,
-  Summarizing, Offloader, Hook-Denylist, Goal, Provider-Switch, HITL-Store, katfs-ZIP-Walk);
-  <b>HTTP</b> faehrt gegen den laufenden Manager (<code>/api/agents</code> backend+model,
-  <code>/api/hitl</code>, katfs-status); <b>LIVE</b> macht einen kostenlosen <code>/goal</code>-Roundtrip
-  zur Orchestrator-VM. Laeuft bei jeder Aenderung mit, zusammen mit Changelog und diesem Tab.</p></div>
+  <p class=card-body>Stdlib <code>unittest</code>, no dependency: <code>tests/e2e.py</code> /
+  <code>./run-tests.sh</code>. Three tiers that cleanly skip a missing environment &#8212;
+  <b>OFFLINE</b> imports agent and manager directly and checks the core logic (backend choice,
+  summarizing, offloader, hook denylist, goal, provider switch, HITL store, katfs ZIP walk);
+  <b>HTTP</b> runs against the live manager (<code>/api/agents</code> backend+model,
+  <code>/api/hitl</code>, katfs status); <b>LIVE</b> does a free <code>/goal</code> round-trip
+  to the orchestrator VM. Runs on every change, together with the changelog and this tab.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Templates &amp; rootfs images</span>
   <p class=card-body><b>Install anywhere:</b> <code>install.sh</code> in the repo deploys the whole stack on a fresh KVM machine (preflight, layout, Firecracker download, builds, systemd) — verified end-to-end in a nested-KVM QEMU rig. Four templates (claude, openrouter, pi, prime), each with a Docker-built
@@ -831,13 +831,13 @@ footer{border-top:1px solid var(--color-divider)}
   10 per 5 minutes, audits every call. Bot number and API stay on the host.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Notifications</span>
-  <p class=card-body>Push-Kanal neben Signal: das Agent-Tool <code>notify(title, message)</code> schreibt
-  ueber <code>/api/notify</code> in einen kleinen Store (<code>notifications.json</code>, rev + Long-Poll
-  wie der Chat-Store, gedeckelt, rate-limited). Abgeholt wird per <code>/api/notifications?since=&amp;wait=</code>:
-  der <b>Web-Manager</b> zeigt eine Glocke mit Unread-Badge + Dropdown und kann eine Browser-Notification
-  ausloesen; die <b>App</b> pollt denselben Endpunkt und hebt eine Android-Systemnotification. Jede Notification traegt ein <code>link</code>-Ziel
-  (missions / tasks / chat:&#8249;instanz&#8250;) — ein Klick (Web-Glocke) bzw. Tipp (Android) fuehrt direkt
-  zur Aktion. Anders als <code>send_signal</code> klingelt das auf App/Web, nicht in Signal.</p></div>
+  <p class=card-body>A push channel alongside Signal: the agent tool <code>notify(title, message)</code> writes
+  via <code>/api/notify</code> into a small store (<code>notifications.json</code>, rev + long-poll
+  like the chat store, capped, rate-limited). It is fetched via <code>/api/notifications?since=&amp;wait=</code>:
+  the <b>web manager</b> shows a bell with an unread badge + dropdown and can raise a browser notification;
+  the <b>app</b> polls the same endpoint and raises an Android system notification. Every notification carries a <code>link</code> target
+  (missions / tasks / chat:&#8249;instance&#8250;) — a click (web bell) or tap (Android) leads straight
+  to the action. Unlike <code>send_signal</code> this rings on app/web, not in Signal.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>KatAgent app</span>
   <p class=card-body>Android/Compose client. Talks only to the manager: chat via
@@ -1009,7 +1009,7 @@ const I_DEL='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=curren
 function esc(s){return (s||'').replace(/"/g,'&quot;')}
 function escT(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
-/* — Werkzeug-Auswahl im Anlege-Formular — */
+/* — tool selection in the create form — */
 let TOOLS=[];
 async function loadTools(){
   try{TOOLS=(await (await fetch('/api/agent-tools')).json()).tools||[];}catch(e){return;}
@@ -1019,7 +1019,7 @@ async function loadTools(){
 }
 function toolAll(on){document.querySelectorAll('.toolcb').forEach(c=>c.checked=!!on)}
 
-/* — Policy: was jede Instanz darf (Netz/Tools/Secrets/MCP) + was sie tut (Audit) — */
+/* — Policy: what each instance may do (net/tools/secrets/MCP) + what it does (audit) — */
 function _b64(buf){let str='',a=new Uint8Array(buf);for(let i=0;i<a.length;i+=0x8000)str+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000));return btoa(str);}
 async function loadPlugins(){
   let ps=[]; try{ps=(await (await fetch('/api/plugins')).json()).plugins||[];}catch(e){return;}
@@ -1027,37 +1027,37 @@ async function loadPlugins(){
   el.innerHTML = ps.length ? ps.map(p=>
     `<div class=card><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">`+
     `<b>${escT(p.name)}</b><button class="btn btn-ghost" style="font-size:12px" onclick="plugDel('${esc(p.name)}')">L&#246;schen</button></div>`+
-    `<div class=text-muted style="font-size:12px">${escT(p.kind)} &#183; ${p.files.length} Datei(en)</div>`+
+    `<div class=text-muted style="font-size:12px">${escT(p.kind)} &#183; ${p.files.length} file(s)</div>`+
     `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(escT).join(', ')}</div>`+
     `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">`+
       (p.modified
         ? `<span class="tag" style="background:#c0392b;color:#fff;font-size:11px">\u26a0 ge\u00e4ndert seit Approve</span>`
         : p.pinned
-          ? `<span class="tag tag-accent" style="font-size:11px">\u2713 gepinnt ${escT(p.sha||'')}</span>`
-          : `<span class="tag tag-neutral" style="font-size:11px">nicht gepinnt</span>`)+
+          ? `<span class="tag tag-accent" style="font-size:11px">\u2713 pinned ${escT(p.sha||'')}</span>`
+          : `<span class="tag tag-neutral" style="font-size:11px">not pinned</span>`)+
       ((p.modified||!p.pinned)?`<button class="btn btn-secondary" style="font-size:12px;margin-left:auto" onclick="plugApprove('${esc(p.name)}')">Approve</button>`:``)+
     `</div></div>`
-  ).join('') : '<div class=text-muted>Noch keine Plugins.</div>';
+  ).join('') : '<div class=text-muted>No plugins yet.</div>';
 }
 async function plugUpload(file){
   if(!file)return;
   const isZip=/\.zip$/i.test(file.name), name=file.name.replace(/\.(py|zip)$/i,'');
-  if(!/\.(py|zip)$/i.test(file.name)){document.getElementById('plugmsg').textContent='\u26a0\ufe0f nur .py oder .zip';return;}
+  if(!/\.(py|zip)$/i.test(file.name)){document.getElementById('plugmsg').textContent='\u26a0\ufe0f only .py or .zip';return;}
   const b64=_b64(await file.arrayBuffer());
   const body=isZip?{name,kind:'zip',data_b64:b64}:{name,kind:'py',data_b64:b64};
   const d=await (await fetch('/api/plugins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' gespeichert \u2014 Instanz neu starten zum Aktivieren');
+  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' saved \u2014 restart the instance to activate');
   loadPlugins();
 }
 async function plugCreate(){
   const inp=document.getElementById('plugnew'),name=inp.value.trim(); if(!name)return;
   const d=await (await fetch('/api/plugins/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
-  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' angelegt (tool.py) \u2014 im Ordner editieren, Instanz neu starten');
+  document.getElementById('plugmsg').textContent=d.error?('\u26a0\ufe0f '+d.error):('\u2713 '+name+' created (tool.py) \u2014 edit in the folder, restart the instance');
   inp.value='';loadPlugins();
 }
 async function plugApprove(name){
   const d=await (await fetch('/api/plugins/'+encodeURIComponent(name)+'/pin',{method:'POST'})).json();
-  document.getElementById('plugmsg').textContent=(d.msg==='approved'?'\u2713 '+name+' gepinnt ('+(d.sha||'')+')':(d.msg||'?'));
+  document.getElementById('plugmsg').textContent=(d.msg==='approved'?'\u2713 '+name+' pinned ('+(d.sha||'')+')':(d.msg||'?'));
   loadPlugins();
 }
 async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))return;
@@ -1071,13 +1071,13 @@ async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))retur
   dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)plugUpload(f);});
 })();
 let POL_TOOLS=[];
-let POL_DIRTY=new Set();   // Instanzen mit noch nicht gespeicherten Tool-Aenderungen
+let POL_DIRTY=new Set();   // instances with not-yet-saved tool changes
 document.addEventListener('DOMContentLoaded',()=>{
   const pc=document.getElementById('policycards');
   if(pc)pc.addEventListener('change',e=>{const pt=e.target&&e.target.dataset&&e.target.dataset.pt;if(pt)POL_DIRTY.add(pt);});
 });
 async function loadPolicy(auto){
-  if(auto&&POL_DIRTY.size)return;   // ungespeicherte Haken nicht ueberschreiben
+  if(auto&&POL_DIRTY.size)return;   // do not overwrite unsaved checkboxes
   let pol={instances:[]};
   try{
     pol=await (await fetch('/api/policy')).json();
@@ -1142,8 +1142,8 @@ async function loadResources(){
     return `<tr><td data-label=Instance><b style="font-family:var(--font-heading)">${escT(r.name)}</b></td>`+
       `<td data-label=Status>${status}</td>`+
       `<td data-label=vCPU style="font-variant-numeric:tabular-nums">${r.vcpus}</td>`+
-      `<td data-label="RAM (konfig.)" style="font-variant-numeric:tabular-nums">${r.mem_mib} MiB</td>`+
-      `<td data-label="RAM (genutzt)"><div style="display:flex;align-items:center;gap:8px;font-size:12px">${ramUsed}</div></td>`+
+      `<td data-label="RAM (config.)" style="font-variant-numeric:tabular-nums">${r.mem_mib} MiB</td>`+
+      `<td data-label="RAM (used)"><div style="display:flex;align-items:center;gap:8px;font-size:12px">${ramUsed}</div></td>`+
       `<td data-label=CPU><div style="display:flex;align-items:center;gap:8px;font-size:12px">${cpu}</div></td>`+
       `<td data-label="Disk (Overlay)" style="font-size:12px">${disk}</td></tr>`;
   }).join('') : '<tr><td colspan=7 class=text-muted style="padding:14px">no instances</td></tr>';
@@ -1170,7 +1170,7 @@ function actRender(){
     return `<tr><td class=text-muted style="white-space:nowrap;font-size:12px">${d}</td>`+
       `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">denied</span>':''}</td>`+
       `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}</td></tr>`;
-  }).join('')||'<tr><td class=text-muted style="padding:12px">nichts im gewählten Zeitraum</td></tr>';
+  }).join('')||'<tr><td class=text-muted style="padding:12px">nothing in the selected range</td></tr>';
   actUsage(cut, ev.length);
 }
 async function actUsage(cut, nEv){
@@ -1184,7 +1184,7 @@ async function actUsage(cut, nEv){
 }
 function actClose(){document.getElementById('actdlg').style.display='none'}
 
-/* — Tasks: geplante Arbeit pro Instanz (Backend: /api/tasks, Worker im Manager) — */
+/* — Tasks: scheduled work per instance (backend: /api/tasks, worker in the manager) — */
 function fmtTs(t){if(!t)return '—';const d=new Date(t*1000);
   return d.toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
 async function loadMissions(){
@@ -1212,7 +1212,7 @@ async function loadMissions(){
         <span style="margin-left:auto;display:flex;gap:6px">
           ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause')">Pause</button>`:''}
           ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume')">Weiter</button>`:''}
-          ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort')">Abbrechen</button>`:''}
+          ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort')">Cancel</button>`:''}
         </span>
       </div>
       ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">aktueller Schritt ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
@@ -1223,7 +1223,7 @@ async function loadMissions(){
     (open.length||closed.length
       ? open.map(row).join('')
         + (closed.length?`<div class=text-muted style="margin:14px 0 4px;font-size:10px;letter-spacing:.1em;text-transform:uppercase">Zuletzt abgeschlossen</div>${closed.map(row).join('')}`:'')
-      : '<span class=text-muted style="font-size:13px">Keine Missionen. Der Orchestrator legt sie bei mehrstufigen Auftraegen selbst an (mission_start) — z. B. per Chat: „… — als Mission".</span>');
+      : '<span class=text-muted style="font-size:13px">No missions. The orchestrator creates them itself for multi-step jobs (mission_start) — e.g. via chat: "… — as a mission".</span>');
 }
 async function missionAct(id,action){
   if(action==='abort'&&!confirm('Mission '+id+' abbrechen?'))return;
@@ -1257,9 +1257,9 @@ async function loadTasks(){
   }).join('')||'<tr><td colspan=6 class=text-muted style="padding:14px">no tasks yet</td></tr>';
 }
 let TASKS=[], TK_EDIT='';
-/* Bearbeiten laeuft ueber dasselbe Formular — eine zweite Maske waere doppelt
-   gepflegt. Die Instanz bleibt gesperrt: sie zu wechseln waere ein anderer
-   Task (andere Tools/Secrets), dafuer gibt es Anlegen. */
+/* Editing goes through the same form — a second dialog would be maintained
+   twice. The instance stays locked: switching it would be a different task
+   (different tools/secrets), that is what Create is for. */
 function editTask(id){
   const t=TASKS.find(x=>x.id===id); if(!t)return;
   TK_EDIT=id;
@@ -1304,7 +1304,7 @@ function saveTask(){
 }
 async function delTask(id){if(confirm('Delete task?')){await fetch('/api/tasks/'+encodeURIComponent(id)+'/delete',{method:'POST'});loadTasks();}}
 
-/* — Verbrauch: dieselben Zahlen wie serverseitig, nur nachgereicht — */
+/* — Usage: the same numbers as server-side, just fetched afterwards — */
 function fmtTok(n){n=n||0;
   return n>=1e6?(n/1e6).toFixed(1).replace(/\\.0$/,'')+'M'
        : n>=1000?(n/1000).toFixed(1).replace(/\\.0$/,'')+'k' : String(n)}
@@ -1348,7 +1348,7 @@ async function loadPlaybooks(){
     `<span class=mono style="flex:none;font-size:11px;color:var(--color-neutral-500)">${escT(p.id||'')}</span>`+
     `<span style="flex:1;font-size:13px">${escT(p.text||'')}</span>`+
     `<button class="btn btn-ghost btn-sm" onclick="delPlaybook('${esc(inst)}','${esc(p.id)}')">✕</button></div>`).join('')
-    :'<span class=text-muted style="font-size:13px">Keine Regeln fuer diesen Agenten.</span>';
+    :'<span class=text-muted style="font-size:13px">No rules for this agent.</span>';
 }
 async function addPlaybook(){
   const inst=document.getElementById('pbinst').value,text=document.getElementById('pbtext').value.trim();
@@ -1374,7 +1374,7 @@ async function loadPrompts(){
     `<span class=text-muted style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escT(p.text)}</span>`+
     `<button class="btn btn-ghost btn-sm" onclick="editPrompt('${esc(p.name)}')">Edit</button>`+
     `<button class="btn btn-ghost btn-sm" onclick="delPrompt('${esc(p.name)}')">✕</button></div>`).join('')
-    :'<span class=text-muted style="font-size:13px">Keine Templates. Unten anlegen — dann im Chat per /name nutzbar.</span>';
+    :'<span class=text-muted style="font-size:13px">No templates. Create one below — then usable in chat via /name.</span>';
 }
 function editPrompt(n){const p=PROMPTS.find(x=>x.name===n);if(!p)return;
   document.getElementById('prname').value=p.name;document.getElementById('prtext').value=p.text;}
@@ -1387,7 +1387,7 @@ async function savePrompt(){
   loadPrompts();
 }
 async function delPrompt(n){
-  if(!confirm('Template /'+n+' loeschen?'))return;
+  if(!confirm('Delete template /'+n+'?'))return;
   await fetch('/api/prompts',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:n,delete:true})});
   loadPrompts();
@@ -1469,8 +1469,8 @@ function saveSettings(){
 function fieldFor(p){
   const v=p.default||SETTINGS[p.key]||'';
   if(p.type==='select'&&p.options)
-    // Ein Eintrag ist entweder ein String oder {value,label} — so kann eine
-    // Option einen sprechenden Text tragen (z. B. "— account default —").
+    // An entry is either a string or {value,label} — so an option can carry
+    // a readable label (e.g. "— account default —").
     return `<select class=input data-k="${p.key}" ${p.key==='TRANSPORT'?'onchange=applyTransport()':''}>`+p.options.map(o=>{
       const val=(o&&typeof o==='object')?(o.value||''):o, lbl=(o&&typeof o==='object')?(o.label||o.value||''):o;
       return `<option value="${esc(val)}"${val===v?' selected':''}>${escT(lbl)}</option>`;
@@ -1492,18 +1492,18 @@ function loadModels(sel,force){
   const cur=sel.value; sel.disabled=true;
   let q='?'; if(force)q+='refresh=1&'; if(sel.dataset.tools)q+='tools=1&'; if(sel.dataset.relevant)q+='relevant=1';
   fetch('/api/openrouter-models'+q).then(r=>r.json()).then(ms=>{
-    // Der Fetch (Upstream openrouter.ai) kann Sekunden dauern. In der Zeit kann
-    // der Nutzer laengst etwas ANDERES gewaehlt haben — oder das Select wurde
-    // durch einen Template-Wechsel ersetzt. Darum: den Wert JETZT lesen (nicht
-    // den vom Fetch-Start) und abgehaengte Selects gar nicht mehr anfassen.
-    // Sonst springt das Dropdown scheinbar grundlos auf den Anfangswert zurueck.
+    // The fetch (upstream openrouter.ai) can take seconds. In that time the
+    // user may long since have picked something ELSE — or the select was
+    // replaced by a template switch. So: read the value NOW (not the one from
+    // the fetch start) and never touch detached selects again.
+    // Otherwise the dropdown seemingly jumps back to the initial value for no reason.
     if(!sel.isConnected){return}
     const now=sel.value||cur;
     sel.innerHTML=(ms.length?ms:[{id:now,label:now+' (list n/a)'}]).map(m=>
       `<option value="${m.id}"${m.id===now?' selected':''}>${m.label}</option>`).join('')
       +`<option value="${OR_CUSTOM}">— other model id… —</option>`;
-    // Ein Wert ausserhalb der Auswahl darf nicht still auf den ersten Eintrag
-    // kippen — er bleibt als eigene Option stehen.
+    // A value outside the shortlist must not silently flip to the first entry
+    // — it stays as its own option.
     if(now&&!ms.some(m=>m.id===now))
       sel.insertAdjacentHTML('afterbegin',`<option value="${esc(now)}" selected>${escT(now)} (not in the shortlist)</option>`);
     sel.disabled=false;
@@ -1658,9 +1658,9 @@ async function saveMounts(){
   alert(d.msg||'ok');location.reload();
 }
 
-/* — Modellwechsel fuer bestehende Instanzen: derselbe Picker wie beim Anlegen
-     (fieldFor rendert je nach Template die OpenRouter-Liste bzw. die kuratierten
-     Optionen), vorbelegt mit dem aktuellen Modell der Instanz. */
+/* — Model switch for existing instances: the same picker as on create
+     (fieldFor renders the OpenRouter list or the curated options per template),
+     prefilled with the instance's current model. */
 let MODELDLG='';
 async function editModel(name){
   const list=await (await fetch('/api/instances')).json();
@@ -1690,9 +1690,9 @@ async function saveModel(){
   alert(d.msg||'ok');location.reload();
 }
 
-/* — Changelog + Security: Befunde stehen in security.json, die UI schaltet nur
-     den Status um. Markdown wird bewusst minimal gerendert (Ueberschriften,
-     Listen, fett, code) — nach dem Escapen, damit nichts aus dem Text ausbricht. */
+/* — Changelog + security: findings live in security.json, the UI only toggles
+     the status. Markdown is rendered deliberately minimally (headings, lists,
+     bold, code) — after escaping, so nothing can break out of the text. */
 let ISSUES=[];
 const SEVORDER={high:0,medium:1,low:2};
 async function loadChangelog(){
@@ -1746,15 +1746,15 @@ function md(src){
     if(inList){out.push('</ul>');inList=false}
     if(/^### /.test(line)) out.push('<h3>'+line.slice(4)+'</h3>');
     else if(/^## /.test(line)) out.push('<h2>'+line.slice(3)+'</h2>');
-    else if(/^# /.test(line)) out.push('');            // Titel steht schon im Tab
+    else if(/^# /.test(line)) out.push('');            // title is already in the tab
     else if(line.trim()) out.push('<p>'+line+'</p>');
   }
   if(inList)out.push('</ul>');
   return out.join('');
 }
 
-/* — Models: der volle Katalog live, daraus die Auswahl fuers Anlege-Formular.
-     Die Haken liegen in CURATED (models.json), nicht mehr im Quelltext. — */
+/* — Models: the full catalog live, and from it the shortlist for the create form.
+     The ticks live in CURATED (models.json), no longer in the source. — */
 let CATALOG=[], PICKED=new Set();
 async function loadModels2(force){
   const msg=document.getElementById('mdlmsg');
@@ -1802,9 +1802,9 @@ async function loadKatfs(){
   let d;
   try{d=await (await fetch('/api/katfs/status')).json()}
   catch(e){d={up:false,error:'manager unreachable'}}
-  // Datei-Browser: die zuletzt gewaehlte Freigabe behalten, solange sie noch
-  // verbunden ist; sonst die erste. So sind die Status-Zeilen gleich korrekt
-  // hervorgehoben. Klick auf eine Zeile wechselt spaeter (fbPick).
+  // File browser: keep the last selected share as long as it is still
+  // connected; otherwise the first. That way the status rows are highlighted
+  // correctly right away. Clicking a row switches later (fbPick).
   const ids=(d.shares||[]).map(x=>x.id);
   if(!FB.share || !ids.includes(FB.share)) FB.share = ids[0] || '';
   const tag=(on,yes,no)=>`<span class="tag ${on?'tag-accent':'tag-neutral'}">${on?yes:no}</span>`;
@@ -1838,9 +1838,9 @@ const FB={path:'.',share:''};
 function fbSize(n){n=+n||0;return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(1)+' GB';}
 function fbQ(p){const q='path='+encodeURIComponent(p);return FB.share?q+'&share='+encodeURIComponent(FB.share):q;}
 function fbUp(){if(FB.path==='.'||FB.path==='')return;const i=FB.path.lastIndexOf('/');fbGo(i<0?'.':FB.path.slice(0,i));}
-/* Auf eine Freigabe im Status-Panel klicken -> diese im Browser oeffnen. */
+/* Click a share in the status panel -> open it in the browser. */
 function fbPick(id){ FB.share=id; FB.path='.'; renderShareSel(); fbGo('.'); }
-/* Aktive Freigabe im Status-Panel hervorheben, ohne alles neu zu laden. */
+/* Highlight the active share in the status panel without reloading everything. */
 function renderShareSel(){
   document.querySelectorAll('.fbsharerow').forEach(r=>{
     const on=r.getAttribute('onclick')===("fbPick('"+FB.share+"')");
@@ -1874,8 +1874,8 @@ async function fbGo(p){
       `<a class="btn btn-ghost fbact" href="/api/katfs/file?dl=1&${fbQ(child)}">download</a></div>`;
   }).join('');
 }
-/* Der Key ist die node-id des Knotens; iroh parst sie als EndpointId — ein
-   Ticket akzeptiert die WASM-Bruecke (noch) nicht, daher der harte Hinweis. */
+/* The key is the node's node-id; iroh parses it as an EndpointId — the WASM
+   bridge does not (yet) accept a ticket, hence the hard hint. */
 function keyHint(){
   const inp=document.getElementById('katfskey'),v=inp.value.trim(),h=document.getElementById('keyhint');
   if(inp.value!==KATFS_ID)inp.dataset.auto='0';
@@ -1887,8 +1887,8 @@ function keyHint(){
     ? 'This host — agents on this machine reach the share.'
     : 'Foreign node — the folder is served to that node, not to this host.';
 }
-/* Auswahl der Freigabe im Anlege-Formular. Der Wert ist die share-id, die der
-   freigebende Browser meldet (stabil ueber Reload) — nicht die node-id. */
+/* Share selection in the create form. The value is the share-id reported by
+   the sharing browser (stable across reload) — not the node-id. */
 let KATFS_SHARES=[];
 function renderShareOptions(){
   const sel=document.getElementById('katfsshare'),cur=sel.value;
@@ -1933,7 +1933,7 @@ async function togglePersist(n,on){
   location.reload();
 }
 function diskReset(n){
-  if(confirm('Persistente Schreibschicht von '+n+' loeschen? (Installationen weg, Basis-Image bleibt)'))
+  if(confirm('Delete the persistent write layer of '+n+'? (installed packages gone, base image stays)'))
     fetch(`/api/instances/${n}/diskreset`,{method:'POST'}).then(r=>r.json()).then(d=>alert(d.msg||'ok'));
   return false;
 }
@@ -1973,10 +1973,10 @@ window.onload=()=>{
   showTab(location.hash.slice(1));
   renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();
   refreshUsage();
-  // Tasks, Policy und die Verbrauchszahlen kamen bisher nur beim Laden der
-  // Seite — wer den Tab offen liess, sah beliebig alte Staende (und hielt ein
-  // laengst behobenes Problem fuer aktuell). Alle 15 s nachziehen, aber nur
-  // fuer den sichtbaren Tab und nicht im Hintergrund-Reiter.
+  // Tasks, policy and the usage numbers used to arrive only on page load —
+  // whoever left the tab open saw arbitrarily stale state (and thought a
+  // long-fixed problem was current). Refresh every 15s, but only for the
+  // visible tab, not a background one.
   setInterval(()=>{
     if(document.hidden)return;
     const t=location.hash.slice(1)||'instances';
@@ -1987,19 +1987,19 @@ window.onload=()=>{
     else if(t==='instances')refreshUsage();
   },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};
-  // Haken merken, ohne bei jedem Klick die ganze Tabelle neu zu bauen.
+  // Remember ticks without rebuilding the whole table on every click.
   document.getElementById('mdlrows').onchange=e=>{
     const b=e.target.closest('[data-m]'); if(!b)return;
     b.checked?PICKED.add(b.dataset.m):PICKED.delete(b.dataset.m);
     document.getElementById('mdlcount').textContent=
       PICKED.size+' selected · '+document.querySelectorAll('#mdlrows tr').length+' shown';
   };
-  // Folder-Picker: ein Handler fuer Liste + Schnellziele, damit Pfade mit
-  // Anfuehrungszeichen/Apostroph nicht durch inline-onclick muessen.
+  // Folder picker: one handler for list + quick targets, so paths with
+  // quotes/apostrophes don't have to go through inline onclick.
   ['pklist','pkquick'].forEach(id=>document.getElementById(id).onclick=e=>{
     const b=e.target.closest('[data-p]'); if(b)pkGo(b.dataset.p);
   });
-  // Klick auf den Hintergrund bzw. Esc schliesst den obersten Dialog.
+  // A click on the backdrop or Esc closes the topmost dialog.
   document.getElementById('picker').onclick=e=>{if(e.target.id==='picker')pkClose()};
   document.getElementById('mdlg').onclick=e=>{if(e.target.id==='mdlg')mdlgClose()};
   document.addEventListener('keydown',e=>{
@@ -2016,10 +2016,10 @@ function notifBadge(u){const b=document.getElementById('nbadge');if(!b)return;if
 function notifRender(list){
   if(list)NOTIF_LIST=list;
   const el=document.getElementById('nlist');if(!el)return;
-  if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">Keine Benachrichtigungen.</span>';return;}
+  if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">No notifications.</span>';return;}
   el.innerHTML=NOTIF_LIST.slice().reverse().map(n=>{
     const t=new Date((n.ts||0)*1000).toLocaleString();
-    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'Zu den Missionen':n.link==='tasks'?'Zu den Tasks':'Zum Chat'}"`:'';
+    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':'To chat'}"`:'';
     return `<div class="nitem ${n.read?'':'unread'}"${lk}><div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
       (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
       `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div></div>`;

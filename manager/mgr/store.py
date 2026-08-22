@@ -2,9 +2,9 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""store: alle Datenhaltung an einem Ort — SQLite (Aufgaben-History, LLM-
-Verbrauch, semantische Vektoren), das flache Agenten-Gedaechtnis (memory.json)
-und der Embedding-Client. Teil des mgr-Pakets; braucht nur BASE.
+"""store: all data storage in one place — SQLite (task history, LLM usage,
+semantic vectors), the flat agent memory (memory.json) and the embedding
+client. Part of the mgr package; only needs BASE.
 """
 import json
 import os
@@ -30,8 +30,8 @@ def configure(base):
 
 
 # ---- History (SQLite, stdlib): abfragbares Langzeitgedaechtnis ueber Aufgaben ----
-# Jeder ausgefuehrte Task landet hier; Agenten fragen ihn per recall_tasks ab
-# ("haben wir das schon gemacht?" -> keine Dubletten, Stammwissen).
+# Every executed task lands here; agents query it via recall_tasks
+# ("have we done this already?" -> no duplicates, base knowledge).
 
 
 def _hist_conn():
@@ -41,18 +41,18 @@ def _hist_conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, target TEXT, task TEXT, result TEXT, ok INTEGER,
         schedule TEXT, origin TEXT)""")
-    # Verbrauch je LLM-Aufruf. Die Agenten melden ihn nach jedem Call an
-    # /api/usage; der Manager erkennt die Instanz an der Quell-IP. cost ist
-    # das, was der Anbieter fuer diesen Aufruf abrechnet (OpenRouter liefert
+    # Usage per LLM call. The agents report it after every call to
+    # /api/usage; the manager identifies the instance by source IP. cost is
+    # what the provider bills for that call (OpenRouter reports
     # es bei "usage":{"include":true} mit) — 0.0, wenn er nichts nennt.
     c.execute("""CREATE TABLE IF NOT EXISTS llm_usage(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, instance TEXT, model TEXT,
         prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_usage_inst_ts ON llm_usage(instance, ts)")
-    # Semantisches Langzeitgedaechtnis: je Erinnerung Text + Embedding-Vektor
-    # (als JSON). Die Suche laedt die Vektoren einer Instanz und rechnet Cosinus
-    # im Speicher — bei persoenlicher Groessenordnung (Hunderte) reicht das ohne
+    # Semantic long-term memory: per memory a text + embedding vector
+    # (as JSON). Search loads an instance's vectors and computes cosine in
+    # memory — at a personal scale (hundreds) that is enough without
     # Vektor-DB. Vektoren sind normalisiert, Cosinus = Skalarprodukt.
     c.execute("""CREATE TABLE IF NOT EXISTS semantic_memory(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +75,7 @@ def usage_add(instance, model, prompt_tokens, completion_tokens, cost):
 
 
 def usage_summary():
-    """Verbrauch je Instanz: heute (lokale Mitternacht) und gesamt."""
+    """Usage per instance: today (local midnight) and total."""
     midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
     out = {}
     try:
@@ -98,10 +98,10 @@ def usage_summary():
 
 
 def usage_for(instance, since=0):
-    """Verbrauch EINER Instanz seit `since` (epoch). Fuers Activity-Panel:
-    Tokens rein/raus, Kosten und Anzahl LLM-Aufrufe im gewaehlten Zeitfenster.
-    Tokens fallen pro LLM-Turn an (nicht pro Tool-Aufruf) — darum eine Summe,
-    keine Zuordnung zu einzelnen Audit-Zeilen."""
+    """Usage of ONE instance since `since` (epoch). For the Activity panel:
+    tokens in/out, cost and number of LLM calls in the chosen time window.
+    Tokens accrue per LLM turn (not per tool call) — hence a sum, not an
+    attribution to individual audit lines."""
     try:
         with _hist_lock, _hist_conn() as c:
             row = c.execute(
@@ -178,10 +178,10 @@ def add_task(instance, message, schedule=""):
 
 
 def update_task(task_id, message=None, schedule=None):
-    """Aufgabe aendern. Ein geaenderter Zeitplan wird sofort neu terminiert —
-    sonst liefe die Aufgabe noch einmal nach dem alten Plan. Ein leerer Plan
-    macht aus der Wiederholung eine einmalige Aufgabe (faellig jetzt); eine
-    gerade laufende Aufgabe wird nicht angefasst."""
+    """Change a task. A changed schedule is re-scheduled immediately —
+    otherwise the task would run once more on the old plan. An empty plan
+    turns the repetition into a one-off task (due now); a task that is
+    currently running is left untouched."""
     tasks = load_tasks()
     t = next((x for x in tasks if x.get("id") == task_id), None)
     if t is None:
@@ -204,8 +204,8 @@ def update_task(task_id, message=None, schedule=None):
 
 
 def _next_run(schedule, from_ts):
-    """Nächster Ausführungszeitpunkt (epoch) für eine Zeitplan-Angabe.
-    Formate: 'every 30m' | 'every 2h' | 'every 1d' | 'daily HH:MM' | 'hourly'."""
+    """Next run time (epoch) for a schedule spec.
+    Formats: 'every 30m' | 'every 2h' | 'every 1d' | 'daily HH:MM' | 'hourly'."""
     s = (schedule or "").strip().lower()
     m = re.match(r"every\s+(\d+)\s*([mhd])", s)
     if m:
@@ -229,9 +229,9 @@ def _next_run(schedule, from_ts):
 
 
 def _embed(texts, kind):
-    """Texte -> Vektoren ueber den Embedding-Dienst. None, wenn er nicht
-    erreichbar ist (dann faellt der Aufrufer auf das flache Gedaechtnis
-    zurueck, statt zu scheitern)."""
+    """Texts -> vectors via the embedding service. None if it is not
+    reachable (the caller then falls back to the flat memory instead of
+    failing)."""
     try:
         body = json.dumps({"texts": texts, "kind": kind}).encode()
         req = urllib.request.Request(EMBED_URL + "/embed", data=body,
@@ -243,13 +243,13 @@ def _embed(texts, kind):
 
 
 def sem_store(instance, text, key=""):
-    """Eine Erinnerung einbetten und ablegen. Gleicher (instance,key) wird
-    ersetzt statt verdoppelt — so aktualisiert der Agent Bestehendes."""
+    """Embed and store a memory. The same (instance,key) is replaced rather
+    than duplicated — so the agent updates existing entries."""
     text = (text or "").strip()
     if not instance or not text:
         return False
-    # Den key mit einbetten und mit ablegen: ist der value knapp ("Watzmann"),
-    # traegt "lieblingsberg: Watzmann" wenigstens etwas Kontext in Vektor UND
+    # Embed and store the key too: if the value is terse ("Watzmann"),
+    # "favourite_mountain: Watzmann" carries at least some context into vector AND
     # in den spaeter angezeigten Treffer.
     full = f"{key}: {text}" if key else text
     vecs = _embed([full], "passage")
@@ -269,8 +269,8 @@ def sem_store(instance, text, key=""):
 
 
 def sem_search(instance, query, k=5):
-    """Die k inhaltlich naechsten Erinnerungen einer Instanz. Cosinus im
-    Speicher; die Vektoren sind normalisiert, also genuegt das Skalarprodukt."""
+    """The k most semantically similar memories of an instance. Cosine in
+    memory; the vectors are normalised, so the dot product suffices."""
     query = (query or "").strip()
     if not instance or not query:
         return []
@@ -294,7 +294,7 @@ def sem_search(instance, query, k=5):
 
 
 
-# ---- Agenten-Gedächtnis (persistent, je Instanz) ---------------------------
+# ---- Agent memory (persistent, per instance) ------------------------------
 
 
 def load_memory():

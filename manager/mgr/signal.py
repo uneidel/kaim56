@@ -2,9 +2,9 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Signal: Versand (signal-cli REST), HITL-Freigaben, Empfang (json-rpc
-WebSocket), stdlib-WS-Client. Teil des mgr-Pakets. Querbezuege (load_settings,
-chat_log_append, orchestrator_ping) werden per configure() injiziert.
+"""Signal: sending (signal-cli REST), HITL approvals, receiving (json-rpc
+WebSocket), stdlib WS client. Part of the mgr package. Cross-references
+(load_settings, chat_log_append, orchestrator_ping) are injected via configure().
 """
 import base64
 import json
@@ -39,32 +39,31 @@ def configure(base, settings_fn=None, chat_log_fn=None, ping_fn=None):
 
 
 # ---- Signal-Versand --------------------------------------------------------
-# Agenten koennen dem Nutzer von sich aus schreiben (fertige Aufgabe, Fund,
-# Rueckfrage). Der Versand laeuft ueber den Manager, nicht aus der VM:
+# Agents can write to the user on their own (finished task, finding, follow-up
+# question). Sending goes through the manager, not from the VM:
 #
-#   * Der Empfaenger muss in ALLOWED_SENDERS stehen — also in genau der Liste,
-#     die den Bot auch steuern darf. Ein Agent kann damit NUR an Leute
-#     schreiben, die ihm ohnehin Befehle geben duerfen. Ohne diese Fessel
-#     waere das Werkzeug ein Versandapparat fuer beliebige Nummern, und ein
-#     uebernommener oder nur schlecht gelaunter Agent koennte in fremdem Namen
-#     Nachrichten verschicken.
-#   * Die Bot-Nummer und der API-Zugang bleiben im Host. Die VM sieht sie nie.
-#   * Eine Drossel begrenzt den Schaden einer Schleife.
+#   * The recipient must be in ALLOWED_SENDERS — i.e. exactly the list that may
+#     also command the bot. So an agent can ONLY write to people who are allowed
+#     to give it commands anyway. Without that leash the tool would be a mass
+#     sender for arbitrary numbers, and a compromised or merely ill-tempered
+#     agent could send messages in someone else's name.
+#   * The bot number and the API access stay on the host. The VM never sees them.
+#   * A throttle limits the damage of a loop.
 SIGNAL_DEFAULT_API = "https://signal-api.example.com"
-SIGNAL_MAX_CHARS = 3500          # signal-cli nimmt mehr, Lesbarkeit nicht
-SIGNAL_RATE = (10, 300)          # hoechstens 10 Nachrichten je 5 Minuten
+SIGNAL_MAX_CHARS = 3500          # signal-cli takes more, readability does not
+SIGNAL_RATE = (10, 300)          # at most 10 messages per 5 minutes
 _signal_sent = []                # Zeitstempel der letzten Sendungen
 _signal_lock = threading.Lock()
 
 
 def signal_recipients():
-    """Erlaubte Empfaenger aus den Einstellungen (kommagetrennt)."""
+    """Allowed recipients from the settings (comma-separated)."""
     raw = (load_settings().get("ALLOWED_SENDERS") or "")
     return [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
 
 
 def signal_send(text, to=None):
-    """(ok, meldung). Schickt eine Nachricht ueber die signal-cli-REST-API."""
+    """(ok, message). Sends a message via the signal-cli REST API."""
     s = load_settings()
     api = (s.get("SIGNAL_API") or SIGNAL_DEFAULT_API).rstrip("/")
     number = (s.get("SIGNAL_NUMBER") or "").strip()
@@ -75,13 +74,13 @@ def signal_send(text, to=None):
         return False, "ALLOWED_SENDERS is empty — no permitted recipient"
     to = (to or "").strip() or allowed[0]
     if to not in allowed:
-        # Absichtlich mit Liste: der Agent soll den Fehler beheben koennen,
-        # ohne dass ein Mensch nachsieht. Geheim ist daran nichts — es sind
-        # die Nummern, die den Bot ohnehin steuern.
+        # Deliberately with the list: the agent should be able to fix the
+        # error without a human looking. Nothing about it is secret — these are
+        # the numbers that command the bot anyway.
         return False, f"recipient {to} not permitted; allowed: {', '.join(allowed)}"
 
     text = (text or "").strip()
-    text, _leaks = redact_secrets(text)   # Secrets verlassen das System nicht
+    text, _leaks = redact_secrets(text)   # secrets must not leave the system
     if not text:
         return False, "empty message"
     text = text[:SIGNAL_MAX_CHARS]
@@ -106,11 +105,11 @@ def signal_send(text, to=None):
         return False, f"signal API unreachable: {e!r}"
 
 
-# ---- HITL: Freigabe riskanter Tool-Aufrufe per Signal ----------------------
-# Ein Agent (opt-in per HITL=1) fragt vor einem riskanten Tool hier an; wir
-# fragen den Nutzer per Signal ("ok <id>" / "nein <id>") und der Agent pollt den
-# Status. Klappt der Signal-Versand nicht (kein Empfaenger konfiguriert), geben
-# wir KEINE id zurueck -> der Agent blockiert dann nicht. In-Memory, kurzlebig.
+# ---- HITL: approval of risky tool calls via Signal -------------------------
+# An agent (opt-in via HITL=1) asks here before a risky tool; we ask the user
+# via Signal ("ok <id>" / "no <id>") and the agent polls the status. If the
+# Signal send fails (no recipient configured) we return NO id -> the agent then
+# does not block. In-memory, short-lived.
 _hitl_lock = threading.Lock()
 _hitl = {}
 HITL_TTL = 600
@@ -124,9 +123,9 @@ def hitl_create(instance, tool, target):
             _hitl.pop(k, None)
         _hitl[hid] = {"tool": tool, "target": target, "instance": instance,
                       "status": "pending", "ts": now}
-    msg = (f"🔒 Freigabe noetig: Agent '{instance}' will {tool}"
+    msg = (f"🔒 Approval needed: agent '{instance}' wants to {tool}"
            + (f" ({target})" if target else "")
-           + f".\nAntworte 'ok {hid}' zum Erlauben oder 'nein {hid}' zum Ablehnen.")
+           + f".\nReply 'ok {hid}' to allow or 'no {hid}' to deny.")
     ok, _m = signal_send(msg)
     if not ok:
         with _hitl_lock:
@@ -150,14 +149,13 @@ def hitl_resolve(hid, approve):
         return True
 
 
-# ---- Signal-Empfang (Long-Poll) --------------------------------------------
-# signal-cli-rest (Modus "native") kennt keine Webhooks — es POSTet nicht zu
-# uns. Also holen WIR ab: ein Long-Poll auf /v1/receive kommt in dem Moment
-# zurueck, in dem eine Nachricht eintrifft. Jede Nachricht wird genau einmal
-# geliefert (der Aufruf leert die Warteschlange). Eine erlaubte Nachricht
-# landet im gemeinsamen Chat-Store und feuert denselben orchestrator_ping, den
-# App/Web nutzen — der Orchestrator reagiert also binnen Sekunden statt erst
-# beim naechsten Heartbeat. Antworten schickt er ueber send_signal zurueck.
+# ---- Signal receiving (long-poll) ------------------------------------------
+# signal-cli-rest ("native" mode) has no webhooks — it does not POST to us. So
+# WE fetch: a long-poll on /v1/receive returns the moment a message arrives.
+# Each message is delivered exactly once (the call drains the queue). An allowed
+# message lands in the shared chat store and fires the same orchestrator_ping
+# that app/web use — so the orchestrator reacts within seconds instead of at the
+# next heartbeat. It sends replies back via send_signal.
 def _signal_inbound(sender, text):
     chat_log_append("orchestrator", sender, f"[Signal] {text}", "", kind="signal")
     try:
@@ -166,16 +164,16 @@ def _signal_inbound(sender, text):
         pass
 
 
-# native-mode: Empfang und Versand sperren dasselbe Konto. Nach einer
-# eingegangenen Nachricht pausiert der Empfaenger kurz — ein kontentionsfreies
-# Fenster, in dem der Orchestrator seine Antwort zuegig rausschicken kann.
+# native mode: receiving and sending lock the same account. After an incoming
+# message the receiver pauses briefly — a contention-free window in which the
+# orchestrator can send its reply out promptly.
 # (Sauber loesen wuerde das der json-rpc-Modus des Gateways.)
 SIGNAL_REPLY_WINDOW = int(os.environ.get("SIGNAL_REPLY_WINDOW", "60"))
 
 
 def _slog(m):
-    """Diagnose in eine LESBARE Datei — das systemd-Journal ist fuer den
-    Nutzer nicht zugaenglich. Bei Bedarf einfach loeschen."""
+    """Diagnostics into a READABLE file — the systemd journal is not
+    accessible to the user. Just delete it if not needed."""
     try:
         with open(SIGNAL_LOG, "a") as f:
             f.write(f"{time.strftime('%F %T')} {m}\n")
@@ -196,9 +194,9 @@ def _handle_signal_envelope(env, allowed):
     if not text:
         return
     if allowed and src not in allowed and uuid_ not in allowed:
-        _slog(f"ignoriert: Absender {src or uuid_} nicht in {sorted(allowed)}")
+        _slog(f"ignored: sender {src or uuid_} not in {sorted(allowed)}")
         return
-    # HITL-Freigabe? Erlaubter Absender antwortet "ok <id>" / "nein <id>".
+    # HITL approval? An allowed sender replies "ok <id>" / "no <id>" (German "ja"/"nein" also accepted).
     mo = re.match(r"^(ok|ja|yes|approve|nein|no|deny|ablehnen)\s+([0-9a-f]{8})$",
                   text.lower().strip())
     if mo:
@@ -222,7 +220,7 @@ def _recvn(sock, n):
 
 
 def _ws_frame(sock):
-    """Server-Frame lesen -> (opcode, payload). Server maskiert nicht."""
+    """Read a server frame -> (opcode, payload). The server does not mask."""
     hdr = _recvn(sock, 2)
     if hdr is None:
         return None, b""
@@ -273,14 +271,14 @@ def _ws_connect(host, path, port=443):
         if len(resp) > 8192:
             break
     if b" 101 " not in resp.split(b"\r\n", 1)[0]:
-        raise RuntimeError("kein 101: " + resp[:120].decode("latin1", "replace"))
+        raise RuntimeError("no 101: " + resp[:120].decode("latin1", "replace"))
     return sock
 
 
 def _signal_receiver():
-    """json-rpc-Modus: der Gateway pusht Nachrichten ueber einen WebSocket
-    (Echtzeit). Empfang und Versand laufen jetzt parallel — keine Konto-Sperre,
-    keine Sende-Pause mehr noetig."""
+    """json-rpc mode: the gateway pushes messages over a WebSocket (real time).
+    Receiving and sending now run in parallel — no account lock, no send pause
+    needed anymore."""
     _slog("receiver gestartet (json-rpc websocket)")
     while True:
         s = load_settings()

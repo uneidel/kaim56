@@ -2,9 +2,9 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Playbooks (feste Regeln je Agent) + Prompt-Templates (/name-Kommandos).
+"""Playbooks (fixed rules per agent) + prompt templates (/name commands).
 
-Teil des mgr-Pakets; reine Datei-Stores unter BASE, keine Abhaengigkeit nach oben.
+Part of the mgr package; plain file stores under BASE, no upward dependency.
 """
 import json
 import os
@@ -23,9 +23,9 @@ def configure(base):
     PROMPTS_FILE = os.path.join(base, "prompts.json")
 
 
-# ---- Playbooks: dauerhafte Regeln, die IMMER gelten (nicht nur bei Bezug wie
-# das semantische Gedaechtnis). Der Agent fuellt sie selbst aus dem Gespraech
-# und bekommt sie jeden Turn in den Prompt eingeblendet. Je Instanz getrennt.
+# ---- Playbooks: permanent rules that ALWAYS apply (not only on relevance
+# like the semantic memory). The agent fills them itself from the conversation
+# and gets them shown in the prompt every turn. Kept separate per instance.
 _pb_lock = threading.Lock()
 PB_MAX = 40
 

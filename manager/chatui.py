@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Chat-Oberflaeche fuer die Agent-microVMs (wird vom Manager unter /chat
-ausgeliefert). Nur eine HTML-Seite, keine Abhaengigkeiten, kein CDN.
+"""Chat interface for the agent microVMs (served by the manager under /chat).
+Just one HTML page, no dependencies, no CDN.
 
-Backend ist der Manager:
-  GET  /api/instances      Agentenliste + Laufzustand
-  POST /api/chat/<name>    Prompt -> Antwort-Tokens als roher Text (Stream)
+Backend is the manager:
+  GET  /api/instances      agent list + run state
+  POST /api/chat/<name>    prompt -> reply tokens as raw text (stream)
 
-Der Verlauf liegt im localStorage des Browsers. Die microVM haelt ihre eigene
-Session (claude --resume bzw. _history), deshalb geht pro Turn nur die neue
-Nachricht raus — ein neuer Chat hier startet keine neue Agent-Session.
+The history lives in the browser's localStorage. The microVM keeps its own
+session (claude --resume / _history), so each turn only the new message goes
+out — a new chat here does not start a new agent session.
 """
 
 PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
@@ -16,11 +16,11 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <title>kAIm56 chat</title>
 <link rel=icon type="image/svg+xml" href="/logo.svg">
 <style>
-/* Design-System "Industry" (claude.ai/design) — direkt aus styles.css des
-   Projekts uebernommen: Token-Rampen, Barlow/Barlow Condensed, eckige
-   Blueprint-Objekte mit Haarlinien und Registrierungs-Ecken. Der dunkle
-   Block ist aus denselben OKLCH-Rampen abgeleitet (das System liefert nur
-   das helle Band aus). */
+/* Design system "Industry" (claude.ai/design) — taken directly from the
+   project's styles.css: token ramps, Barlow/Barlow Condensed, square
+   blueprint objects with hairlines and registration corners. The dark block
+   is derived from the same OKLCH ramps (the system ships only the light
+   band). */
 @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
 :root{
   --bg:#f2f2f3;--panel:#e9e9ea;--panel-2:#f5f5f8;
@@ -56,7 +56,7 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 ::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--text) 30%,transparent)}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* — Blueprint-Objekte: eckig, Haarlinie, Registrierungs-Ecken — */
+/* — Blueprint objects: square, hairline, registration corners — */
 .blueprint{position:relative;border:1px solid var(--border)}
 .blueprint>.corner{position:absolute;width:11px;height:11px;
   color:color-mix(in srgb,var(--text) 55%,transparent)}
@@ -107,8 +107,8 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;
   border-radius:0;line-height:1;padding:0}
 .icon:hover{color:var(--text);border-color:var(--border);background:color-mix(in srgb,var(--text) 7%,transparent)}
-/* Gateway: an ist ein Zustand, den man auf einen Blick sehen muss — deshalb
-   Farbe und Rahmen, nicht nur ein anderes Symbol. */
+/* Gateway: "on" is a state you must see at a glance — hence colour and
+   border, not just a different icon. */
 .icon.on{color:var(--ok);border-color:var(--ok);background:var(--accent-100)}
 .gwcount{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
 #agent{font-family:var(--font-heading);font-weight:600;font-size:15.5px;letter-spacing:.01em;
@@ -191,7 +191,7 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
 .slrow span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem}
 .sltag{flex:none;margin-left:auto;font-size:.68rem;font-style:normal;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:0 6px;line-height:1.5}
 
-/* ---- Aeste (Tree-Chat) ---- */
+/* ---- Branches (tree chat) ---- */
 #branchbar{display:flex;align-items:center;gap:10px;padding:7px 12px;
   background:var(--accent-100);border:1px solid var(--accent-400)}
 .bb-label{flex:1;font-size:.8rem;color:var(--accent-700)}
@@ -261,19 +261,19 @@ details.ast .row{margin-bottom:18px}
 
   <div id=comp>
     <div id=branchbar style="max-width:760px;margin:0 auto 6px;display:none">
-      <span class=bb-label>⑂ Nebenast aktiv (Tiefe <span id=bdepth>1</span>) — Antworten laufen im geerbten Kontext</span>
-      <button class=bb-btn onclick=backBranch()>↩ zurück zum Hauptthema</button>
+      <span class=bb-label>⑂ Side branch active (depth <span id=bdepth>1</span>) — replies run in the inherited context</span>
+      <button class=bb-btn onclick=backBranch()>↩ back to main thread</button>
     </div>
     <div id=slashhint style="max-width:760px;margin:0 auto 6px;display:none"></div>
     <div id=box class=blueprint><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision-capable agents only)" onclick="document.getElementById('file').click()"></button>
-        <button class=icon id=branchBtn title="Nebenast öffnen: Rückfrage stellen, ohne das Hauptthema zu verschmutzen (↩ bringt dich zurück)" onclick=openBranch()>⑂</button>
-        <button class=icon id=micBtn title="Sprechen (nochmal tippen = fertig)" onclick=micToggle()>🎙</button>
+        <button class=icon id=branchBtn title="Open a side branch: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()>⑂</button>
+        <button class=icon id=micBtn title="Speak (tap again = done)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*" hidden onchange=addImage(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
-        <button id=send onclick=send(true) title="Send: senden · während einer Antwort: ■ = abbrechen (Enter mit Text = reinrufen)">➤</button>
+        <button id=send onclick=send(true) title="Send · during a reply: ■ = stop (Enter with text = interject)">➤</button>
       </div>
     </div>
     <div class=foot id=foot></div>
@@ -281,8 +281,8 @@ details.ast .row{margin-bottom:18px}
 </div>
 
 <script>
-// Inline-SVGs statt Farb-Emoji: die haengen sonst von einer Emoji-Schrift ab
-// und erscheinen ohne sie als graue Kaestchen (Tofu). SVG rendert ueberall.
+// Inline SVGs instead of colour emoji: those depend on an emoji font and
+// show up as grey boxes (tofu) without one. SVG renders everywhere.
 const _S='<svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round>';
 const IC={
   clip:_S+'<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
@@ -299,18 +299,18 @@ function loadTombs(){try{TOMBS=JSON.parse(localStorage.getItem(TKEY)||'{}')||{}}
 function saveTombs(){try{localStorage.setItem(TKEY,JSON.stringify(TOMBS))}catch(e){}}
 let convs=[], cur=null, agent='', img=null, ctrl=null;
 
-/* ---------- Persistenz ---------- */
+/* ---------- Persistence ---------- */
 function load(){
   try{convs=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){convs=[]}
-  convs.forEach(c=>(c.msgs||[]).forEach(m=>{delete m.busy}));  /* abgebrochener Stream */
+  convs.forEach(c=>(c.msgs||[]).forEach(m=>{delete m.busy}));  /* aborted stream */
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(convs.slice(0,200)))}catch(e){}pushShared();}
 
-/* ---------- Sync mit /api/chats (gemeinsamer Store mit der App) ----------
-   Die App speichert Chats als {id,instance,title,updatedAt,mode,messages:[{user,text}]},
-   diese Web-UI als {id,agent,title,ts,msgs:[{role,content}]}. Beide Formate hier
-   ineinander abbilden, per updatedAt/ts mergen — so sehen App und Web denselben
-   Verlauf. */
+/* ---------- Sync with /api/chats (shared store with the app) ----------
+   The app stores chats as {id,instance,title,updatedAt,mode,messages:[{user,text}]},
+   this web UI as {id,agent,title,ts,msgs:[{role,content}]}. Map the two formats
+   onto each other here, merge by updatedAt/ts — so app and web see the same
+   history. */
 function toShared(list){return list.map(c=>({
   id:String(c.id), title:c.title||'', mode:'server', instance:c.agent||'',
   updatedAt:c.ts||0,
@@ -328,10 +328,10 @@ function pushShared(delay){
     delay===undefined?400:delay);
 }
 let CHATS_REV=0;
-/* Remote in den lokalen Bestand mergen. true = lokal hat sich etwas geaendert.
-   Der gerade streamende Chat bleibt unangetastet, sonst faellt der Teiltext weg. */
-/* Eingehende Loesch-Tombstones anwenden: lokal getombstete Chats entfernen
-   (sofern nicht neuer als die Loeschung) und die Marker uebernehmen. */
+/* Merge remote into the local set. true = something changed locally.
+   The currently streaming chat is left untouched, else the partial text is lost. */
+/* Apply incoming delete tombstones: remove locally tombstoned chats
+   (unless newer than the deletion) and adopt the markers. */
 function applyTombs(tombs){
   if(!tombs)return;
   let changed=false;
@@ -353,27 +353,27 @@ function applyRemote(remote){
   let changed=false;
   remote.forEach(r=>{
     if(ctrl&&cur&&r.id===cur.id)return;
-    if(TOMBS[r.id]&&(r.ts||0)<=TOMBS[r.id])return;   // getombstet -> nicht auferstehen
+    if(TOMBS[r.id]&&(r.ts||0)<=TOMBS[r.id])return;   // tombstoned -> do not resurrect
     const l=byId[r.id];
     if(!l){byId[r.id]=r;changed=true;return;}
     if((r.ts||0)<=(l.ts||0))return;
-    /* Nachrichten nur ANHAENGEN, nie ersetzen: sonst wischt ein Stand der
-       Gegenseite eine gerade getippte, noch nicht gepushte Frage weg. Nur
-       wenn die lokale Liste ein Praefix der entfernten ist, ist das sicher. */
+    /* Only APPEND messages, never replace: otherwise a state from the other
+       side wipes a just-typed, not-yet-pushed question. Only safe when the
+       local list is a prefix of the remote one. */
     const lm=l.msgs||[], rm=r.msgs||[];
-    /* Ist der lokale Verlauf ein PRAEFIX des entfernten? Dann sicher anhaengen. */
+    /* Is the local history a PREFIX of the remote one? Then appending is safe. */
     let prefix=rm.length>=lm.length;
     if(prefix)for(let i=0;i<lm.length;i++)
       if(lm[i].role!==rm[i].role||lm[i].content!==rm[i].content){prefix=false;break;}
     if(prefix){
       if(rm.length>lm.length){lm.push(...rm.slice(lm.length));l.msgs=lm;changed=true;}
     }else if(rm.length>=lm.length){
-      /* DIVERGENZ (kein Praefix), aber remote ist neuer (r.ts>l.ts, oben geprueft)
-         und nicht kuerzer -> Server-Stand als Merge-Punkt uebernehmen, statt den
-         Sync fuer immer haengen zu lassen. Eigene, noch nicht gepushte Aenderungen
-         waeren zu diesem Zeitpunkt bereits gepusht gewesen. */
+      /* DIVERGENCE (no prefix), but remote is newer (r.ts>l.ts, checked above)
+         and not shorter -> adopt the server state as the merge point, instead of
+         letting the sync stall forever. Own not-yet-pushed changes would already
+         have been pushed by this point. */
       l.msgs=rm.slice();changed=true;
-    }else return;   /* lokal ist laenger -> behalten, der eigene Push gleicht ab */
+    }else return;   /* local is longer -> keep it, our own push reconciles */
     if(r.title&&l.title!==r.title){l.title=r.title;changed=true;}
     l.ts=r.ts;
   });
@@ -381,13 +381,13 @@ function applyRemote(remote){
   convs=Object.values(byId).sort((a,b)=>(b.ts||0)-(a.ts||0));
   try{localStorage.setItem(KEY,JSON.stringify(convs.slice(0,200)))}catch(e){}
   drawConvs();
-  // Auch wenn cur DASSELBE Objekt ist (Nachrichten wurden reingemutiert), neu
-  // zeichnen — sonst sieht das offene Geraet live angehaengte Nachrichten nicht.
+  // Even if cur is the SAME object (messages were mutated in), redraw —
+  // otherwise the open device does not see live-appended messages.
   if(cur){const f=convs.find(c=>c.id===cur.id); if(f){cur=f;draw();}}
   return true;
 }
-/* Einmal beim Laden: holen, danach die eigenen (nur lokal vorhandenen) Chats
-   hochschieben — ab dann reicht der Push bei jeder lokalen Aenderung. */
+/* Once on load: fetch, then push up our own (local-only) chats — after that
+   a push on each local change is enough. */
 async function syncChats(){
   try{
     const d=await (await fetch('/api/chats?since=0&wait=0')).json();
@@ -397,8 +397,8 @@ async function syncChats(){
   }catch(e){}
   pushShared(0);
 }
-/* Long-Poll: der Manager antwortet, sobald App ODER Web schreibt — dadurch
-   stehen neue Nachrichten der anderen Seite in Sekundenbruchteilen hier. */
+/* Long-poll: the manager responds as soon as app OR web writes — so new
+   messages from the other side show up here within a fraction of a second. */
 async function chatSyncLoop(){
   for(;;){
     try{
@@ -410,7 +410,7 @@ async function chatSyncLoop(){
   }
 }
 
-/* ---------- Markdown (klein, ohne Fremdcode) ---------- */
+/* ---------- Markdown (small, no third-party code) ---------- */
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function md(src){
   const lines=esc(src).split('\n'), out=[];
@@ -423,7 +423,7 @@ function md(src){
   let i=0;
   while(i<lines.length){
     const l=lines[i];
-    if(FENCE.test(l)){                       /* Codeblock (auch noch offen im Stream) */
+    if(FENCE.test(l)){                       /* code block (may still be open in the stream) */
       const buf=[];i++;
       while(i<lines.length&&!FENCE.test(lines[i]))buf.push(lines[i++]);
       i++;
@@ -439,7 +439,7 @@ function md(src){
       while(i<lines.length&&OL.test(lines[i]))b.push(inline(lines[i++].replace(OL,'')));
       out.push('<ol><li>'+b.join('</li><li>')+'</li></ol>');continue}
     if(!l.trim()){i++;continue}
-    const b=[];                              /* Absatz bis Leerzeile/Blockanfang */
+    const b=[];                              /* paragraph until blank line / block start */
     while(i<lines.length&&lines[i].trim()&&!FENCE.test(lines[i])&&!H.test(lines[i])
           &&!UL.test(lines[i])&&!OL.test(lines[i]))b.push(inline(lines[i++]));
     out.push('<p>'+b.join('<br>')+'</p>');
@@ -470,7 +470,7 @@ function delChat(e,id){e.stopPropagation();
   TOMBS[id]=Date.now();saveTombs();
   convs=convs.filter(c=>c.id!==id);if(cur&&cur.id===id)cur=null;save();draw();drawConvs()}
 
-/* ---------- Nachrichten ---------- */
+/* ---------- Messages ---------- */
 function draw(){
   const m=$('msgs');
   if(!cur||!cur.msgs.length){
@@ -491,11 +491,11 @@ function draw(){
         `<div class="tools tools-me"><button onclick="copyMsg(this,${i})">Copy</button></div></div></div>`;
     const busy=x.busy?'<span class=cursor></span>':'';
     const tools=x.busy?'':`<div class=tools><button onclick="copyMsg(this,${i})">Copy</button>`+
-      `<button onclick="speakMsg(${i})">Vorlesen</button></div>`;
+      `<button onclick="speakMsg(${i})">Read aloud</button></div>`;
     return `<div class=row><div class=av>${IC.bot}</div><div class=body>${botHtml(x.content,false)}${busy}${tools}</div></div>`;
   };
-  /* Aeste: zusammenhaengende Nachrichten mit branch>0 werden zu einem
-     einklappbaren Block — offen nur, solange der Ast noch aktiv ist. */
+  /* Branches: contiguous messages with branch>0 become one collapsible block
+     — open only while the branch is still active. */
   let html='',i=0;
   while(i<cur.msgs.length){
     const b=cur.msgs[i].branch||0;
@@ -504,7 +504,7 @@ function draw(){
     let seg='';
     while(i<cur.msgs.length&&(cur.msgs[i].branch||0)>0){seg+=row(cur.msgs[i],i);i++;n++}
     const live=(i>=cur.msgs.length)&&(cur.abranch||0)>0;
-    html+=`<details class=ast ${live?'open':''}><summary>⑂ Nebenast · ${n} Nachrichten</summary>${seg}</details>`;
+    html+=`<details class=ast ${live?'open':''}><summary>⑂ Side branch · ${n} messages</summary>${seg}</details>`;
   }
   m.innerHTML=html;
   scroll();
@@ -519,14 +519,14 @@ function splitThink(s){
 }
 function botHtml(content,cursor){
   const t=splitThink(content); let h='';
-  if(t.think) h+=`<details class=think ${t.open?'open':''}><summary>💡 Denken${t.open?' …':''}</summary><div class=thinkbody>${esc(t.think).replace(/\n/g,'<br>')}</div></details>`;
+  if(t.think) h+=`<details class=think ${t.open?'open':''}><summary>💡 Thinking${t.open?' …':''}</summary><div class=thinkbody>${esc(t.think).replace(/\n/g,'<br>')}</div></details>`;
   h+=md(t.ans)+(cursor?'<span class=cursor></span>':'');
   return h;
 }
 function scroll(){const l=$('log');l.scrollTop=l.scrollHeight}
 function atBottom(){const l=$('log');return l.scrollHeight-l.scrollTop-l.clientHeight<80}
 let pend=false;
-function paint(){                      /* Streaming: nur den letzten Block updaten */
+function paint(){                      /* streaming: only update the last block */
   if(pend)return; pend=true;
   requestAnimationFrame(()=>{
     pend=false;
@@ -534,8 +534,8 @@ function paint(){                      /* Streaming: nur den letzten Block updat
     const b=rows.length?rows[rows.length-1].querySelector('.body'):null;
     if(!b)return draw();
     const stick=atBottom();
-    /* Klappt der Nutzer "Denken" waehrend des Streams zu, darf der naechste
-       Repaint das nicht wieder aufreissen: Zustand merken und wiederherstellen. */
+    /* If the user collapses "thinking" during the stream, the next repaint must
+       not reopen it: remember and restore the state. */
     const d0=b.querySelector('details.think');
     const keepOpen=d0?d0.open:null;
     b.innerHTML=botHtml(cur.msgs[cur.msgs.length-1].content,true);
@@ -545,7 +545,7 @@ function paint(){                      /* Streaming: nur den letzten Block updat
 }
 function suggest(b){$('t').value=b.textContent;$('t').focus();autogrow()}
 
-/* ---------- Agenten ---------- */
+/* ---------- Agents ---------- */
 function drawAgents(){
   $('agent').innerHTML=AGENTS.map(a=>`<option value="${esc(a.name)}">${esc(a.name)}</option>`).join('')
     ||'<option value="">no web instance</option>';
@@ -562,9 +562,9 @@ async function refreshState(){
   $('foot').textContent=`The agent keeps its own session — a new chat here does not reset it (restart button above).`;
 }
 /* ---- Security Gateway ----
-   Pro Chat, nicht pro Agent: derselbe Agent kann in einem Chat Fremdtexte
-   verarbeiten (Gateway an) und im naechsten die eigenen Notizen (aus).
-   Der Zustand liegt am Manager, damit App und Web dieselbe Antwort sehen. */
+   Per chat, not per agent: the same agent can process foreign text in one
+   chat (gateway on) and its own notes in the next (off). The state lives on
+   the manager, so app and web see the same reply. */
 let GW={chats:{},stats:{},available:false};
 async function gwLoad(){
   try{GW=await (await fetch('/api/gateway')).json()}catch(e){}
@@ -601,7 +601,7 @@ async function restartAgent(){
   setTimeout(refreshState,3000);
 }
 
-/* ---------- Bilder ---------- */
+/* ---------- Images ---------- */
 function addImage(inp){
   const f=inp.files&&inp.files[0];inp.value='';
   if(!f)return;
@@ -614,17 +614,17 @@ function drawThumb(){
     `<button class=x onclick="img=null;drawThumb()">✕</button></div>`:'';
 }
 
-/* ---------- Sprache ----------
-   Aufnahme im Browser, Erkennung und Ausgabe im Manager. Was per Sprache
-   gefragt wurde, wird auch vorgelesen — getippte Fragen nicht, sonst liest er
-   ungefragt lange Erklaerungen vor. */
+/* ---------- Voice ----------
+   Recording in the browser, recognition and output in the manager. What was
+   asked by voice is also read aloud — typed questions are not, otherwise it
+   reads out long explanations unprompted. */
 let REC=null, CHUNKS=[], VOICE_IN=false, AUDIO=null;
 async function micToggle(){
   const b=$('micBtn');
   if(REC&&REC.state==='recording'){REC.stop();return;}
   let stream;
   try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
-  catch(e){ $('foot').textContent='Kein Mikrofon: '+(e&&e.name||e); return; }
+  catch(e){ $('foot').textContent='No microphone: '+(e&&e.name||e); return; }
   CHUNKS=[]; REC=new MediaRecorder(stream);
   REC.ondataavailable=e=>{ if(e.data&&e.data.size)CHUNKS.push(e.data); };
   REC.onstop=async()=>{
@@ -637,11 +637,11 @@ async function micToggle(){
       const d=await r.json();
       if(d.text&&d.text.trim()){
         $('t').value=d.text.trim(); autogrow();
-        VOICE_IN=true; send();                 /* freihaendig: direkt abschicken */
+        VOICE_IN=true; send();                 /* hands-free: send directly */
       } else {
-        $('foot').textContent='Nichts verstanden'+(d.error?': '+d.error:'');
+        $('foot').textContent='Nothing understood'+(d.error?': '+d.error:'');
       }
-    }catch(e){ $('foot').textContent='Erkennung fehlgeschlagen'; }
+    }catch(e){ $('foot').textContent='Recognition failed'; }
     b.disabled=false;
   };
   REC.start(); b.classList.add('rec');
@@ -659,7 +659,7 @@ async function speakText(text){
 }
 function speakMsg(i){ if(cur&&cur.msgs[i])speakText(splitThink(cur.msgs[i].content).ans); }
 
-/* ---------- Aeste (Tree-Chat) ---------- */
+/* ---------- Branches (tree chat) ---------- */
 function branchUi(){
   const d=(cur&&cur.abranch)||0;
   $('branchbar').style.display=d>0?'flex':'none';
@@ -670,7 +670,7 @@ function openBranch(){
   if(ctrl||!agent)return;
   const t=$('t').value.trim();
   const d=((cur&&cur.abranch)||0)+1;
-  /* send() legt bei Bedarf selbst einen neuen Chat an — im Callback existiert cur. */
+  /* send() creates a new chat itself if needed — in the callback cur exists. */
   sendRaw('/branch'+(t?' '+t:''),d,d,()=>{
     cur.abranch=d;branchUi();
     if(t){$('t').value='';autogrow()}
@@ -682,28 +682,28 @@ function backBranch(){
   sendRaw('/back',d,Math.max(0,d-1),()=>{cur.abranch=Math.max(0,d-1);branchUi()});
 }
 
-/* ---------- Steering: dem laufenden Agenten reinrufen ---------- */
+/* ---------- Steering: interject into the running agent ---------- */
 async function steer(text){
   $('t').value='';autogrow();
-  cur.msgs.splice(cur.msgs.length-1,0,{role:'user',content:text});  /* vor der laufenden Antwort */
+  cur.msgs.splice(cur.msgs.length-1,0,{role:'user',content:text});  /* before the running reply */
   draw();
   try{
     const d=await (await fetch('/i/'+encodeURIComponent(agent)+'/api/steer',
       {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})})).json();
-    if(!d.queued) $('foot').textContent='Kein laufender Turn mehr — Nachricht bitte normal senden.';
-  }catch(e){ $('foot').textContent='Steering fehlgeschlagen: '+e; }
+    if(!d.queued) $('foot').textContent='No running turn anymore — please send the message normally.';
+  }catch(e){ $('foot').textContent='Steering failed: '+e; }
 }
 
-/* ---------- Senden ---------- */
+/* ---------- Send ---------- */
 const SLASH_BUILTIN=[
-  ['/model','Modell wechseln (z. B. /model orcarouter:anthropic/claude-sonnet-4.6)'],
-  ['/reasoning','Reasoning umschalten (low·medium·high·off)'],
-  ['/steps','Max. Tool-Schritte je Turn: /steps 30 oder /steps unlimited'],
-  ['/goal','Ziel setzen — Antworten werden gegen einen Judge verfeinert'],
-  ['/reset','Kontext zuruecksetzen'],
-  ['/fresh','Einmalige Anfrage im Wegwerf-Kontext (Verlauf bleibt unberuehrt)'],
-  ['/branch','Nebenast oeffnen — Rueckfrage abseits des Hauptthemas'],
-  ['/back','Nebenast schliessen und als Notiz zusammenfassen (/back drop = verwerfen)'],
+  ['/model','Switch model (e.g. /model orcarouter:anthropic/claude-sonnet-4.6)'],
+  ['/reasoning','Toggle reasoning (low·medium·high·off)'],
+  ['/steps','Max tool steps per turn: /steps 30 or /steps unlimited'],
+  ['/goal','Set a goal — replies are refined against a judge'],
+  ['/reset','Reset the context'],
+  ['/fresh','One-off request in a throwaway context (history untouched)'],
+  ['/branch','Open a side branch — a follow-up aside from the main thread'],
+  ['/back','Close the side branch and summarise it as a note (/back drop = discard)'],
 ];
 let SLASH_PROMPTS=[],_spTs=0;
 async function slashPrompts(){
@@ -716,7 +716,7 @@ let SL_HITS=[],SL_SEL=-1,SL_DISMISS=false;
 function slOpen(){return $('slashhint').style.display==='block'&&SL_HITS.length>0}
 function slClose(){$('slashhint').style.display='none';SL_HITS=[];SL_SEL=-1}
 function slRender(){
-  const hd=`<div class=slhead>Befehle \u00b7 \u2191\u2193 w\u00e4hlen \u00b7 \u21b5 \u00fcbernehmen \u00b7 Esc schlie\u00dft</div>`;
+  const hd=`<div class=slhead>Commands \u00b7 \u2191\u2193 select \u00b7 \u21b5 apply \u00b7 Esc closes</div>`;
   $('slashhint').innerHTML=hd+SL_HITS.map((h,i)=>
     `<div class="slrow${i===SL_SEL?' slsel':''}" onmousedown="event.preventDefault()" `+
     `onclick="pickSlash('${esc(h[0])}')"><code>${esc(h[0])}</code>`+
@@ -730,7 +730,7 @@ function slMove(d){
 async function slashHint(){
   const el=$('slashhint'),v=$('t').value;
   if(!v.startsWith('/')||v.includes(' ')&&!v.startsWith('/model ')){SL_DISMISS=false;slClose();return}
-  if(SL_DISMISS)return;            // per Esc geschlossen -> zu bleiben, bis der Token wechselt
+  if(SL_DISMISS)return;            // closed via Esc -> stay closed until the token changes
   const all=SLASH_BUILTIN.concat(await slashPrompts());
   SL_HITS=all.filter(x=>x[0].startsWith(v.split(' ')[0])).slice(0,10);
   if(!SL_HITS.length){slClose();return}
@@ -740,8 +740,8 @@ function pickSlash(c){$('t').value=c+' ';$('t').focus();slClose();autogrow()}
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
 $('t').addEventListener('input',()=>{autogrow();slashHint();});
 $('t').addEventListener('keydown',e=>{
-  // Esc schliesst den Picker IMMER (auch wenn SL_HITS leer sein sollte) und
-  // haelt ihn zu, solange am selben /-Befehl weitergetippt wird.
+  // Esc ALWAYS closes the picker (even if SL_HITS should be empty) and keeps
+  // it closed while typing continues on the same /-command.
   if(e.key==='Escape'&&$('slashhint').style.display==='block'){
     e.preventDefault();SL_DISMISS=true;slClose();return;}
   if(slOpen()){
@@ -753,13 +753,13 @@ $('t').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send();}
 });
 
-let RAW=null;   /* {text,u,r,cb} — von sendRaw() gesetzt (Ast-Kommandos) */
+let RAW=null;   /* {text,u,r,cb} — set by sendRaw() (branch commands) */
 function sendRaw(text,u,r,cb){ if(ctrl)return; RAW={text,u,r,cb}; send(); }
 async function send(fromButton){
   if(ctrl){
     const t=$('t').value.trim();
-    if(!fromButton&&t){ return steer(t); }   /* Enter mit Text: reinrufen */
-    ctrl.abort();return;                      /* Button (■) bricht ab */
+    if(!fromButton&&t){ return steer(t); }   /* Enter with text: interject */
+    ctrl.abort();return;                      /* button (■) aborts */
   }
   const raw=RAW; RAW=null;
   const text=raw?raw.text:$('t').value.trim();
@@ -801,18 +801,18 @@ async function send(fromButton){
 }
 
 /* ---------- Start ---------- */
-// Statische Icon-Buttons einmal befuellen (Composer + Kopfzeile) — SVG statt
-// Emoji, damit ohne Emoji-Schrift keine grauen Kaestchen erscheinen.
+// Fill the static icon buttons once (composer + header) — SVG instead of
+// emoji, so no grey boxes appear without an emoji font.
 $('termBtn').innerHTML=IC.term;
 $('clipBtn').innerHTML=IC.clip;
 [...document.querySelectorAll('.icon')].forEach(b=>{
   if(b.title&&b.title.includes('Restart agent'))b.innerHTML=IC.refresh;
 });
 load();loadTombs();drawAgents();
-/* Erst den geteilten Server-Store holen (await!), DANN den bestehenden Chat
-   der Instanz oeffnen — sonst startet ein zweites Geraet mit leerem localStorage
-   einen neuen Thread und der Verlauf wirkt "nicht synchronisiert". Auch fuer den
-   Notification-Klick (?i=<agent>): bevorzugt den Task-Chat, sonst den juengsten. */
+/* Fetch the shared server store first (await!), THEN open the instance's
+   existing chat — otherwise a second device with empty localStorage starts a
+   new thread and the history looks "out of sync". Also for the notification
+   click (?i=<agent>): prefer the task chat, otherwise the most recent one. */
 (async()=>{
   await syncChats();
   const last=convs.find(c=>c.id==='task-'+agent)
@@ -825,7 +825,7 @@ refreshState();gwLoad();setInterval(refreshState,15000);
 
 
 def render(agents, current="", logo=""):
-    """agents: Liste von {name, running, description} (Instanzen mit TRANSPORT=web)."""
+    """agents: list of {name, running, description} (instances with TRANSPORT=web)."""
     import json
     return (PAGE.replace("__LOGO__", logo)
                 .replace("__AGENTS__", json.dumps(agents, ensure_ascii=False))

@@ -1,27 +1,27 @@
 #!/bin/sh
-# kAIm56 — Installer fuer eine frische Maschine.
+# kAIm56 — installer for a fresh machine.
 #
 #   curl -fsSL https://raw.githubusercontent.com/<user>/kaim56/main/install.sh | sh
-#   (oder aus einem Klon:  ./install.sh)
+#   (or from a clone:  ./install.sh)
 #
-# Was er tut: Voraussetzungen pruefen, Repo holen (falls noetig), Laufzeit-
-# Layout unter $KAIM56_BASE anlegen, Firecracker-Binary laden, Kernel (vmlinux)
-# beziehen, Rootfs/Container bauen, systemd-Dienst einrichten, Smoke-Test.
-# Idempotent: ein zweiter Lauf aktualisiert.
+# What it does: check prerequisites, fetch the repo (if needed), lay out the
+# runtime tree under $KAIM56_BASE, download the Firecracker binary, obtain the
+# guest kernel (vmlinux), build the rootfs/containers, install the systemd
+# service, run a smoke test. Idempotent: a second run updates.
 #
-# Optionen / Env:
-#   --check            nur Voraussetzungen pruefen, nichts installieren
-#   --files-only       nur Layout+Binaries (kein Build, kein Dienst) — fuer Tests/Updates
-#   --no-build         Docker-Builds ueberspringen (nur Dateien/Dienst)
-#   --with-voice       Sprachdienst (STT/TTS, ~2 GB Docker-Build) mitinstallieren
-#   --with-agents      auch pi/prime/claude-Rootfs bauen (gross)
-#   KAIM56_BASE=<dir>  Zielverzeichnis (Default: $HOME)
-#   VMLINUX_URL=<url>  Download-Quelle fuer den Gast-Kernel (Release-Asset)
-#   GUEST_DNS=<ip>     DNS fuer die microVMs (Default: 1.1.1.1)
-#   REPO_URL=<url>     Git-Quelle (Default: github kaim56)
+# Options / env:
+#   --check            only check prerequisites, install nothing
+#   --files-only       only layout+binaries (no build, no service) — for tests/updates
+#   --no-build         skip the Docker builds (files/service only)
+#   --with-voice       also install the voice service (STT/TTS, ~2 GB Docker build)
+#   --with-agents      also build the pi/prime/claude rootfs (large)
+#   KAIM56_BASE=<dir>  target directory (default: $HOME)
+#   VMLINUX_URL=<url>  download source for the guest kernel (release asset)
+#   GUEST_DNS=<ip>     DNS for the microVMs (default: 1.1.1.1)
+#   REPO_URL=<url>     git source (default: github kaim56)
 set -eu
 
-FC_VERSION="v1.16.1"                       # gleiche Version wie die Referenz-Installation
+FC_VERSION="v1.16.1"                       # same version as the reference installation
 REPO_URL="${REPO_URL:-https://github.com/ulrich-kat56/kaim56.git}"
 BASE="${KAIM56_BASE:-$HOME}"
 FC_DIR="$BASE/firecracker"
@@ -33,42 +33,42 @@ for a in "$@"; do case "$a" in
   --no-build) NO_BUILD=1;;
   --with-voice) WITH_VOICE=1;;
   --with-agents) WITH_AGENTS=1;;
-  *) echo "unbekannte Option: $a"; exit 2;;
+  *) echo "unknown option: $a"; exit 2;;
 esac; done
 
 say()  { printf '\033[1m== %s\033[0m\n' "$*"; }
-fail() { printf '\033[31mFEHLER: %s\033[0m\n' "$*" >&2; exit 1; }
+fail() { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# ── [1] Voraussetzungen ──────────────────────────────────────────────────────
-say "[1/7] Voraussetzungen pruefen"
-[ "$(uname -m)" = "x86_64" ] || fail "x86_64 noetig (ist: $(uname -m))"
-[ -e /dev/kvm ] || fail "/dev/kvm fehlt — KVM aktivieren (BIOS/nested virt); ohne KVM keine microVMs"
-[ -w /dev/kvm ] || echo "  Hinweis: /dev/kvm nicht schreibbar fuer $(id -un) — Manager laeuft als root, ok"
-command -v python3 >/dev/null || fail "python3 fehlt"
-python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' || fail "python3 >= 3.9 noetig"
-command -v docker >/dev/null || fail "docker fehlt (wird fuer Rootfs-/Dienst-Builds gebraucht)"
-docker info >/dev/null 2>&1 || fail "docker-Daemon nicht erreichbar (Gruppe 'docker'? sudo?)"
-command -v git >/dev/null || fail "git fehlt"
-command -v curl >/dev/null || fail "curl fehlt"
-command -v iptables >/dev/null 2>&1 || [ -x /sbin/iptables ] || [ -x /usr/sbin/iptables ] || fail "iptables fehlt (NAT fuer die Gaeste)"
-MKFS="$(command -v mkfs.ext4 || echo /sbin/mkfs.ext4)"; [ -x "$MKFS" ] || fail "mkfs.ext4 fehlt (e2fsprogs)"
-command -v systemctl >/dev/null || fail "systemd noetig (Dienst-Installation)"
-command -v rsync >/dev/null || fail "rsync fehlt"
-echo "  alles da."
-[ "$CHECK_ONLY" = "1" ] && { say "Check ok — Installation wuerde nach $BASE gehen."; exit 0; }
+# ── [1] Prerequisites ────────────────────────────────────────────────────────
+say "[1/7] Check prerequisites"
+[ "$(uname -m)" = "x86_64" ] || fail "x86_64 required (is: $(uname -m))"
+[ -e /dev/kvm ] || fail "/dev/kvm missing — enable KVM (BIOS/nested virt); no microVMs without KVM"
+[ -w /dev/kvm ] || echo "  note: /dev/kvm not writable for $(id -un) — manager runs as root, ok"
+command -v python3 >/dev/null || fail "python3 missing"
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' || fail "python3 >= 3.9 required"
+command -v docker >/dev/null || fail "docker missing (needed for rootfs/service builds)"
+docker info >/dev/null 2>&1 || fail "docker daemon not reachable (group 'docker'? sudo?)"
+command -v git >/dev/null || fail "git missing"
+command -v curl >/dev/null || fail "curl missing"
+command -v iptables >/dev/null 2>&1 || [ -x /sbin/iptables ] || [ -x /usr/sbin/iptables ] || fail "iptables missing (NAT for the guests)"
+MKFS="$(command -v mkfs.ext4 || echo /sbin/mkfs.ext4)"; [ -x "$MKFS" ] || fail "mkfs.ext4 missing (e2fsprogs)"
+command -v systemctl >/dev/null || fail "systemd required (service installation)"
+command -v rsync >/dev/null || fail "rsync missing"
+echo "  all present."
+[ "$CHECK_ONLY" = "1" ] && { say "Check ok — installation would go to $BASE."; exit 0; }
 
-# ── [2] Quellcode ────────────────────────────────────────────────────────────
-say "[2/7] Quellcode"
+# ── [2] Source code ──────────────────────────────────────────────────────────
+say "[2/7] Source code"
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)"
 if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/manager/manager.py" ]; then
-  SRC="$SELF_DIR"; echo "  nutze lokalen Klon: $SRC"
+  SRC="$SELF_DIR"; echo "  using local clone: $SRC"
 else
   SRC="$BASE/kaim56"
   if [ -d "$SRC/.git" ]; then (cd "$SRC" && git pull --ff-only); else git clone --depth 1 "$REPO_URL" "$SRC"; fi
 fi
 
-# ── [3] Laufzeit-Layout (Repo -> Arbeitsverzeichnisse) ──────────────────────
-say "[3/7] Laufzeit-Layout unter $BASE"
+# ── [3] Runtime layout (repo -> working directories) ────────────────────────
+say "[3/7] Runtime layout under $BASE"
 mkdir -p "$FC_DIR/bin" "$FC_DIR/instances" "$FC_DIR/run" "$FC_DIR/audit"
 rsync -a "$SRC/manager/manager.py" "$SRC/manager/chatui.py" "$SRC/manager/webterm.py" \
          "$SRC/manager/setup-nfs-host.sh" "$SRC/manager/logo.svg" \
@@ -84,8 +84,8 @@ done
 for d in voice embed mcp-hub; do [ -d "$SRC/$d" ] && rsync -a "$SRC/$d/" "$BASE/$d/"; done
 chmod +x "$FC_DIR/run-tests.sh" 2>/dev/null || true
 
-# ── [4] Binaries: firecracker + Gast-Kernel ─────────────────────────────────
-say "[4/7] Firecracker $FC_VERSION + Kernel"
+# ── [4] Binaries: firecracker + guest kernel ────────────────────────────────
+say "[4/7] Firecracker $FC_VERSION + kernel"
 if [ ! -x "$FC_DIR/bin/firecracker" ]; then
   T="$(mktemp -d)"
   curl -fsSL -o "$T/fc.tgz" \
@@ -101,14 +101,14 @@ if [ ! -f "$FC_DIR/bin/vmlinux" ]; then
   elif [ -f "$SRC/manager/bin/vmlinux" ]; then
     cp "$SRC/manager/bin/vmlinux" "$FC_DIR/bin/vmlinux"
   else
-    fail "Gast-Kernel fehlt: VMLINUX_URL=<Release-Asset-URL> setzen (oder bin/vmlinux manuell nach $FC_DIR/bin/ legen)"
+    fail "guest kernel missing: set VMLINUX_URL=<release-asset-url> (or place bin/vmlinux manually into $FC_DIR/bin/)"
   fi
 fi
-echo "  Kernel: $(du -h "$FC_DIR/bin/vmlinux" | cut -f1)"
+echo "  kernel: $(du -h "$FC_DIR/bin/vmlinux" | cut -f1)"
 
 # ── [5] Builds (Docker) ──────────────────────────────────────────────────────
 if [ "$NO_BUILD" = "0" ]; then
-  say "[5/7] Rootfs + Dienste bauen (dauert beim ersten Mal)"
+  say "[5/7] Build rootfs + services (takes a while the first time)"
   ( cd "$BASE/openrouter-agent" && FC_DIR="$FC_DIR" bash build-openrouter-rootfs.sh )
   ( cd "$BASE/embed"   && docker build -q -t kaim56-embed .   && docker rm -f kaim56-embed 2>/dev/null; \
     docker run -d --restart unless-stopped --name kaim56-embed -p 127.0.0.1:8772:8772 kaim56-embed )
@@ -122,19 +122,19 @@ if [ "$NO_BUILD" = "0" ]; then
     ( cd "$BASE/claude-signal-firecracker" && FC_DIR="$FC_DIR" PATH="$PATH:/sbin:/usr/sbin" bash build-rootfs.sh )
   fi
 else
-  say "[5/7] Builds uebersprungen (--no-build)"
+  say "[5/7] Builds skipped (--no-build)"
 fi
 
-[ "$FILES_ONLY" = "1" ] && { say "FERTIG (files-only): Layout unter $BASE steht."; exit 0; }
+[ "$FILES_ONLY" = "1" ] && { say "DONE (files-only): layout under $BASE is in place."; exit 0; }
 
-# ── [6] systemd-Dienst ───────────────────────────────────────────────────────
-say "[6/7] systemd-Dienst (braucht sudo)"
+# ── [6] systemd service ──────────────────────────────────────────────────────
+say "[6/7] systemd service (needs sudo)"
 HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
 PASS_LINE=""
 if [ ! -f /etc/systemd/system/firecracker-manager.service ]; then
   PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
   PASS_LINE="Environment=MANAGER_PASS=$PW"
-  echo "  Web-Login: admin / $PW   (in der Unit aenderbar)"
+  echo "  web login: admin / $PW   (changeable in the unit)"
 fi
 sudo tee /etc/systemd/system/firecracker-manager.service >/dev/null <<UNIT
 [Unit]
@@ -160,23 +160,23 @@ echo net.ipv4.ip_forward=1 | sudo tee /etc/sysctl.d/99-kaim56.conf >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now firecracker-manager
 
-# ── [7] Smoke-Test ───────────────────────────────────────────────────────────
-say "[7/7] Smoke-Test"
+# ── [7] Smoke test ───────────────────────────────────────────────────────────
+say "[7/7] Smoke test"
 sleep 3
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8700/" || echo 000)
 case "$CODE" in
-  200|401) echo "  Manager antwortet (HTTP $CODE) ✓";;   # 401 = laeuft, Auth aktiv
-  *) fail "Manager antwortet nicht (HTTP $CODE) — journalctl -u firecracker-manager";;
+  200|401) echo "  manager responds (HTTP $CODE) ✓";;   # 401 = running, auth active
+  *) fail "manager not responding (HTTP $CODE) — journalctl -u firecracker-manager";;
 esac
 FC_DIR="$FC_DIR" AGENT_PATH="$BASE/openrouter-agent/agent.py" \
   python3 "$FC_DIR/tests/e2e.py" AgentLogic ManagerFunctions 2>&1 | tail -2 || true
 
-say "FERTIG"
+say "DONE"
 cat <<EOF
 
-  Web-UI:    http://$(hostname -I 2>/dev/null | awk '{print $1}'):8700
-  Naechste Schritte:
-    1. Settings-Tab: OpenRouter- oder OrcaRouter-API-Key eintragen
-    2. Instances-Tab: erste Instanz aus dem openrouter-Template anlegen
-    3. optional: sudo $FC_DIR/setup-nfs-host.sh  (Host-Ordner-Mounts)
+  Web UI:    http://$(hostname -I 2>/dev/null | awk '{print $1}'):8700
+  Next steps:
+    1. Settings tab: enter your OpenRouter or OrcaRouter API key
+    2. Instances tab: create the first instance from the openrouter template
+    3. optional: sudo $FC_DIR/setup-nfs-host.sh  (host-folder mounts)
 EOF

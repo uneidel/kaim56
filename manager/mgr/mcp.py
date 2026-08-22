@@ -2,8 +2,8 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""MCP-Server-Katalog + Hub-Aufrufe (per-Instanz auswaehlbare MCP-Server).
-Teil des mgr-Pakets. load_instances wird per configure() injiziert.
+"""MCP server catalog + hub calls (per-instance selectable MCP servers).
+Part of the mgr package. load_instances is injected via configure().
 """
 import json
 import os
@@ -22,7 +22,7 @@ def configure(base, load_instances_fn=None):
         load_instances = load_instances_fn
 
 
-# ---- MCP-Katalog (auswählbare MCP-Server je Instanz) -----------------------
+# ---- MCP catalog (selectable MCP servers per instance) --------------------
 _DEFAULT_MCPS = [
     {"name": "homeassistant",
      "description": "Home Assistant (Lesen/Assist via MCP)",
@@ -88,9 +88,9 @@ def mcp_required_secrets(names):
 def mcp_hub_call(inst, server, payload):
     """JSON-RPC eines Gastes an 'seinen' MCP-Server im Hub durchreichen.
 
-    Autorisierung HIER, nicht im Hub: der Server muss in MCP_SERVERS der
-    Instanz stehen. argv/env baut der Manager aus Katalog + Policy-Secrets —
-    beides verlaesst den Host nie; die VM schickt nur Servernamen und Payload."""
+    Authorization HERE, not in the hub: the server must be in the instance's
+    MCP_SERVERS. The manager builds argv/env from catalog + policy secrets —
+    neither ever leaves the host; the VM sends only server names and payload."""
     names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
     if server not in names:
         return 403, {"error": f"server '{server}' not assigned to this instance"}
@@ -119,8 +119,8 @@ def mcp_hub_call(inst, server, payload):
 
 
 def mcp_hub_kill(inst_name):
-    """Prozesse dieser Instanz im Hub beenden (beim Stop). Bester Versuch —
-    ein toter Hub darf keinen Instanz-Stop verhindern."""
+    """Kill this instance's processes in the hub (on stop). Best effort —
+    a dead hub must not prevent an instance stop."""
     try:
         req = urllib.request.Request(MCP_HUB + "/kill",
                                      data=json.dumps({"prefix": inst_name + ":"}).encode(),
@@ -131,9 +131,9 @@ def mcp_hub_kill(inst_name):
 
 
 def build_mcp_config(names, allowed=None):
-    """mcpServers-JSON aus Katalognamen. `allowed` begrenzt die Substitution auf
-    die per Policy freigegebenen Secrets — nicht Freigegebenes bleibt als
-    ${PLATZHALTER} stehen, damit der Aufrufer es merkt statt still zu scheitern."""
+    """mcpServers JSON from catalog names. `allowed` limits substitution to the
+    secrets released by policy — anything not released stays as ${PLACEHOLDER}
+    so the caller notices instead of failing silently."""
     if not names:
         return ""
     secrets = secret_store()

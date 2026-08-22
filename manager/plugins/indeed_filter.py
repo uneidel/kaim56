@@ -1,42 +1,44 @@
-# Tool-Plugin: Jobliste auf NEUE Treffer filtern (Datum + Keywords).
-# Adaptiert aus github.com/gvfullstack/JobSearchAutomation (tools/search_indeed.py,
-# MIT-artig) — reine stdlib-Nachbearbeitung: KEIN Scraping. Die Roh-Jobs holt der
-# Agent selbst via web_search/http_fetch; dieses Tool entfernt Alt-Treffer
-# (gepostet vor since_date) und wendet Include/Exclude-Keywords an. So wird
-# "neue Stelle" praezise ueber das Datum bestimmt statt geraten.
+# Tool plugin: filter a job list down to NEW matches (date + keywords).
+# Adapted from github.com/gvfullstack/JobSearchAutomation (tools/search_indeed.py,
+# MIT-style) — pure stdlib post-processing: NO scraping. The agent fetches the raw
+# jobs itself via web_search/http_fetch; this tool drops stale hits (posted before
+# since_date) and applies include/exclude keywords. That way "new job" is decided
+# precisely by date instead of guessed.
 import json
 import re
 from datetime import date, datetime, timedelta
 
-DESC = ("Filtert eine Jobliste auf NEUE, passende Treffer. Input `jobs` ist die "
-        "Liste, die du selbst per web_search/http_fetch gefunden hast (je Job u.a. "
-        "title, company, location, url, date_posted). `since_date` (YYYY-MM-DD): nur "
-        "Jobs, die am/nach dem Datum gepostet wurden (fuer die taegliche Suche z.B. "
-        "das gestrige oder heutige Datum). `keywords`: 'include:a,b exclude:c,d'. "
-        "Versteht Indeed-Datumsformate ('today', 'vor 2 Tagen', ISO). Gibt die "
-        "gefilterten Jobs + eine Zusammenfassung zurueck; unparsebare Daten bleiben drin.")
+DESC = ("Filters a job list down to NEW, matching hits. Input `jobs` is the list "
+        "you found yourself via web_search/http_fetch (each job has e.g. title, "
+        "company, location, url, date_posted). `since_date` (YYYY-MM-DD): only jobs "
+        "posted on/after that date (for the daily search e.g. yesterday's or today's "
+        "date). `keywords`: 'include:a,b exclude:c,d'. Understands Indeed date formats "
+        "('today', '2 days ago', German 'vor 2 Tagen', ISO). Returns the filtered "
+        "jobs + a summary; unparseable dates are kept.")
 
 PARAMS = {
     "jobs": {"type": "array", "items": {"type": "object"},
-             "description": "Gefundene Jobs (Objekte mit title/company/location/url/date_posted)"},
+             "description": "Found jobs (objects with title/company/location/url/date_posted)"},
     "since_date": {"type": "string",
-                   "description": "ISO-Datum YYYY-MM-DD; nur Jobs am/nach diesem Tag. Leer = kein Datumsfilter."},
+                   "description": "ISO date YYYY-MM-DD; only jobs on/after this day. Empty = no date filter."},
     "keywords": {"type": "string",
-                 "description": "optional 'include:python,sql exclude:praktikum'"},
+                 "description": "optional 'include:python,sql exclude:internship'"},
 }
 REQUIRED = ["jobs"]
 
-# "3 days ago" / "3 Tage her" (Suffix) ODER "vor 3 Tagen" (deutsches Praefix).
+# "3 days ago" (suffix) OR German "vor 3 Tagen" (prefix). The German literals are
+# kept on purpose: Indeed.de posts dates in German, so parsing them is functional.
 _DAYS_AGO = re.compile(r"(\d+)\+?\s*(?:days?|tag(?:e|en)?)\s+(?:ago|her|zuvor)", re.I)
 _DAYS_AGO_DE = re.compile(r"vor\s+(\d+)\+?\s*tag(?:e|en)?", re.I)
 
 
 def _parse_posted(s):
-    """Indeed-Datumsstring -> date | None (None = 'behalten', nie still verwerfen)."""
+    """Indeed date string -> date | None (None = 'keep', never silently drop)."""
     if not s:
         return None
     t = str(s).strip().lower()
     today = date.today()
+    # English + German ('heute'/'gestern') Indeed wordings — kept for the .de locale.
     if t in ("just posted", "today", "active today", "posted today", "heute", "gerade eben"):
         return today
     if t in ("yesterday", "gestern"):
@@ -63,21 +65,21 @@ def _parse_keywords(raw):
 
 
 def run(jobs=None, since_date="", keywords=""):
-    # Modelle liefern die Liste mal als JSON-String, mal als echte Liste.
+    # Models sometimes pass the list as a JSON string, sometimes as a real list.
     if isinstance(jobs, str):
         try:
             jobs = json.loads(jobs)
         except ValueError:
-            return "Fehler: 'jobs' ist kein gueltiges JSON-Array."
+            return "Error: 'jobs' is not a valid JSON array."
     if not isinstance(jobs, list):
-        return "Fehler: 'jobs' muss eine Liste von Job-Objekten sein."
+        return "Error: 'jobs' must be a list of job objects."
 
     since = None
     if since_date and str(since_date).strip():
         try:
             since = datetime.strptime(str(since_date).strip(), "%Y-%m-%d").date()
         except ValueError:
-            since = None   # ungueltig -> Datumsfilter aus, statt alles zu verwerfen
+            since = None   # invalid -> date filter off, instead of dropping everything
 
     kw = _parse_keywords(keywords)
 
@@ -102,6 +104,6 @@ def run(jobs=None, since_date="", keywords=""):
             continue
         kept.append(job)
 
-    summary = (f"# {len(jobs)} gesamt, {skipped_old} zu alt (vor {since_date or '-'}), "
-               f"{skipped_kw} per Keyword raus, {len(kept)} NEU/passend.")
+    summary = (f"# {len(jobs)} total, {skipped_old} too old (before {since_date or '-'}), "
+               f"{skipped_kw} dropped by keyword, {len(kept)} NEW/matching.")
     return summary + "\n" + json.dumps(kept, ensure_ascii=False, indent=2)

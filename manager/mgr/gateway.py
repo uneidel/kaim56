@@ -25,19 +25,19 @@ def configure(base):
 
 
 # ---- Security Gateway ------------------------------------------------------
-# Pro Chat ankreuzbar. Zwei Dinge, beide am Manager, nicht im Gast:
+# Toggleable per chat. Two things, both in the manager, not in the guest:
 #
-#   Text   unsichtbare Zeichen raus — Tag-Zeichen (U+E0020..E007F), Zero-Width,
-#          Bidi-Overrides, Homoglyph-Leerzeichen. Das ist der Kanal, ueber den
-#          man einem Agenten Anweisungen unterschiebt, die im Chatfenster
-#          schlicht nicht zu sehen sind. Gefiltert wird in BEIDE Richtungen:
-#          eine Antwort landet in chats.json und wird spaeter wieder gelesen.
-#   Bilder EXIF/XMP/C2PA raus, bevor das Bild den Host verlaesst. Ein Foto vom
-#          Handy traegt GPS-Koordinaten, Geraetenummer und Aufnahmezeit mit.
+#   Text   strip invisible characters — tag chars (U+E0020..E007F), zero-width,
+#          bidi overrides, homoglyph spaces. That is the channel used to slip an
+#          agent instructions that simply are not visible in the chat window.
+#          Filtered in BOTH directions: a reply lands in chats.json and is read
+#          again later.
+#   Images strip EXIF/XMP/C2PA before the image leaves the host. A phone photo
+#          carries GPS coordinates, device serial and capture time.
 #
-# Der Zustand liegt bewusst HIER und nicht im Chat-Objekt: chats.json wird
-# zwischen App und Web gemerged, und jedes zusaetzliche Feld dort hat sich
-# bisher als Bruchstelle erwiesen.
+# The state deliberately lives HERE and not in the chat object: chats.json is
+# merged between app and web, and every extra field there has so far proven to
+# be a breaking point.
 _gateway_lock = threading.Lock()
 
 
@@ -62,16 +62,16 @@ def save_gateway(d):
 
 
 def gateway_on(chat_id):
-    """Ohne Chat-Kennung ist das Gateway aus — ein Aufrufer, der nicht sagt,
-    zu welchem Chat er gehoert, kann auch nicht angehakt worden sein."""
+    """Without a chat id the gateway is off — a caller that doesn't say which
+    chat it belongs to cannot have been ticked on either."""
     if not chat_id or _clean_unicode is None:
         return False
     return bool(load_gateway()["chats"].get(str(chat_id)))
 
 
 def gateway_count(chat_id, key, n):
-    """Entfernte Zeichen/Bilder mitzaehlen. Still zu filtern waere das
-    Unangenehmste: man will sehen, dass etwas drin war."""
+    """Count removed characters/images. Filtering silently would be the worst
+    part: you want to see that something was in there."""
     if not n:
         return
     with _gateway_lock:
@@ -86,8 +86,8 @@ def gateway_count(chat_id, key, n):
 
 
 def gateway_clean(text, chat_id, key):
-    """Text saeubern und zaehlen. Gibt den Text unveraendert zurueck, wenn das
-    Gateway aus ist."""
+    """Clean and count text. Returns the text unchanged when the gateway is
+    off."""
     if not text or not gateway_on(chat_id):
         return text
     out, st = _clean_unicode(text)
@@ -96,12 +96,12 @@ def gateway_clean(text, chat_id, key):
 
 
 class StreamGuard:
-    """Saeubert einen Token-Strom, ohne ihn zu stauen.
+    """Cleans a token stream without stalling it.
 
-    Geschnitten wird an der Wortgrenze: Unicode-Kleber (ZWJ in Emoji-Ketten,
-    Tag-Zeichen) haengt immer an einem Zeichen, nie an einem Leerzeichen. Wer
-    stur alle 4 KB schneidet, zerreisst dagegen eine Emoji-Kette und der
-    Filter sieht einen Verbinder ohne Vorzeichen — und wirft ihn weg."""
+    Cut at the word boundary: Unicode glue (ZWJ in emoji chains, tag chars)
+    always hangs on a character, never on a space. Cutting stubbornly every
+    4 KB instead tears an emoji chain apart and the filter sees a joiner with
+    no lead-in — and throws it away."""
 
     def __init__(self, chat_id, key="out"):
         self.chat_id = chat_id
@@ -136,11 +136,11 @@ class StreamGuard:
 def strip_image_meta(b64):
     """EXIF/XMP/C2PA aus einem Base64-Bild schneiden. (bereinigt, entfernte Bloecke)
 
-    Von Hand statt mit Pillow: Pillow ist hier nicht installiert, und ein
-    Neu-Kodieren wuerde das Bild ausserdem verlustbehaftet anfassen. Hier
-    bleiben die Bilddaten Byte fuer Byte gleich, es fallen nur Metadaten weg.
-    Bei allem, was nicht sicher erkannt wird, bleibt das Bild unangetastet —
-    ein kaputtes Bild waere schlimmer als ein Zeitstempel darin."""
+    By hand instead of with Pillow: Pillow isn't installed here, and re-encoding
+    would also touch the image lossily. Here the image data stays byte-for-byte
+    identical, only metadata is dropped. For anything not reliably recognised
+    the image is left untouched — a broken image would be worse than a
+    timestamp inside it."""
     if not b64:
         return b64, 0
     prefix = ""
@@ -166,9 +166,9 @@ def strip_image_meta(b64):
 
 
 def _jpeg_strip(raw):
-    """APP1..APP15 raus (Exif, XMP, C2PA/JUMBF) — APP0/JFIF bleibt, das ist
-    der Bildkopf. Danach kommt SOS und der komprimierte Rest; ab dort wird
-    nichts mehr angefasst."""
+    """Strip APP1..APP15 (Exif, XMP, C2PA/JUMBF) — APP0/JFIF stays, that's the
+    image header. After it come SOS and the compressed rest; from there on
+    nothing is touched."""
     out = bytearray(raw[:2])
     i, n = 2, 0
     while i + 4 <= len(raw):
@@ -180,7 +180,7 @@ def _jpeg_strip(raw):
             return bytes(out), n
         ln = int.from_bytes(raw[i + 2:i + 4], "big")
         if ln < 2 or i + 2 + ln > len(raw):
-            return raw, 0                            # unerwartet -> nicht anfassen
+            return raw, 0                            # unexpected -> do not touch
         if 0xE1 <= m <= 0xEF or m == 0xFE:           # APP1..APP15, COM
             n += 1
         else:
@@ -192,8 +192,8 @@ def _jpeg_strip(raw):
 
 
 def _png_strip(raw):
-    """Textbloecke und eXIf raus. PNG ist in Bloecken mit Laenge und Pruefsumme
-    aufgebaut, das laesst sich sauber trennen."""
+    """Strip text chunks and eXIf. PNG is built from chunks with a length and
+    checksum, which separate cleanly."""
     drop = {b"eXIf", b"tEXt", b"iTXt", b"zTXt", b"tIME", b"caBX"}
     out = bytearray(raw[:8])
     i, n = 8, 0
@@ -214,8 +214,8 @@ def _png_strip(raw):
 
 
 def _webp_strip(raw):
-    """EXIF/XMP-Bloecke aus dem RIFF-Container. Die Gesamtlaenge im Kopf muss
-    danach stimmen, sonst halten manche Betrachter die Datei fuer defekt."""
+    """EXIF/XMP chunks out of the RIFF container. The total length in the header
+    must be correct afterwards, else some viewers consider the file broken."""
     out = bytearray(raw[:12])
     i, n = 12, 0
     while i + 8 <= len(raw):
@@ -235,10 +235,10 @@ def _webp_strip(raw):
     return bytes(out), n
 
 
-# ---- Leak-Filter: Secrets duerfen das System nicht per Nachricht verlassen --
-# Angewandt auf AUSGEHENDE Kanaele (notify, send_signal): bekannte Key-Muster
-# werden ersetzt statt blockiert — die Nachricht kommt an, das Secret nicht.
-# Bewusst KEIN generisches 40-hex-Muster (traefe jede git-SHA).
+# ---- Leak filter: secrets must not leave the system in a message ----------
+# Applied to OUTGOING channels (notify, send_signal): known key patterns are
+# replaced rather than blocked — the message arrives, the secret does not.
+# Deliberately NO generic 40-hex pattern (it would hit every git SHA).
 _LEAK_PATTERNS = [
     re.compile(r"sk-or-v1-[A-Za-z0-9]{16,}"),        # OpenRouter
     re.compile(r"sk-orca-[A-Za-z0-9]{8,}"),           # OrcaRouter

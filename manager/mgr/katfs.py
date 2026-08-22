@@ -13,15 +13,15 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-# ---- katfs (P2P-Ordnerfreigabe aus dem Browser) ----------------------------
-# Der katfs-Host-Knoten laeuft auf dem Host (Port 8790) und haelt die iroh-
-# Verbindung zum freigebenden Browser-Tab. Die Agenten greifen ueber
-# remote_ls/remote_read/remote_write auf <gateway>:8790 zu — nichts davon wird
-# in die VM gemountet, katfs ist kein Dateisystem.
+# ---- katfs (P2P folder sharing from the browser) --------------------------
+# The katfs host node runs on the host (port 8790) and holds the iroh
+# connection to the sharing browser tab. Agents reach <gateway>:8790 via
+# remote_ls/remote_read/remote_write — none of it is mounted into the VM,
+# katfs is not a filesystem.
 #
-# Der Manager reicht die Freigabe-Seite unter /katfs/ durch: gleiche Herkunft,
-# gleiche Auth — und vor allem HTTPS, das die File System Access API im
-# Browser zwingend braucht (secure context). Damit entfaellt der SSH-Tunnel
+# The manager proxies the share page under /katfs/: same origin, same auth —
+# and above all HTTPS, which the browser's File System Access API strictly
+# requires (secure context). That removes the SSH tunnel
 # bzw. die eigene Traefik-Route aus iroh-fs/README.md.
 KATFS_HOST = os.environ.get("KATFS_HOST", "127.0.0.1")
 KATFS_PORT = int(os.environ.get("KATFS_PORT", "8790"))
@@ -32,16 +32,16 @@ KATFS_MAX_WRITE = 64 * 1024 * 1024   # Deckel gegen Platten-DoS im Operator-Ordn
 
 
 def katfs_share_for(inst):
-    """Die Freigabe, die diese Instanz benutzen DARF. Genau die aus ihrer Config
-    — nie eine vom Gast mitgegebene. Leer heisst: der Knoten entscheidet, was er
-    nur kann, solange hoechstens eine Freigabe aktiv ist."""
+    """The share this instance MAY use. Exactly the one from its config —
+    never one supplied by the guest. Empty means: the node decides, which it
+    can only do while at most one share is active."""
     return (inst.get("config", {}).get("KATFS_SHARE", "") or "").strip()
 
 
 def katfs_proxy_fs(op, share, path, recursive=False, body=None):
-    """Eine Dateioperation an den (jetzt loopback-gebundenen) Knoten weiterreichen.
-    Der Aufrufer hat die Instanz bereits per Source-IP verifiziert und die Freigabe
-    aus deren Config gesetzt — der Gast kann keine fremde Freigabe adressieren."""
+    """Forward a file operation to the (now loopback-bound) node. The caller
+    has already verified the instance by source IP and set the share from its
+    config — the guest cannot address a foreign share."""
     q = f"?path={urllib.parse.quote(path)}"
     if share:
         q += f"&share={urllib.parse.quote(share)}"
@@ -55,15 +55,15 @@ def katfs_proxy_fs(op, share, path, recursive=False, body=None):
         return r.status, r.headers.get("Content-Type", "application/octet-stream"), r.read()
 
 
-# Grenzen fuer den "alles herunterladen"-ZIP: der Knoten liest jede Datei ganz
-# in den Speicher, darum ein Deckel gegen versehentliche Riesen-Freigaben.
+# Limits for the "download everything" ZIP: the node reads each file fully
+# into memory, hence a cap against accidental giant shares.
 KATFS_ZIP_MAX_FILES = 2000
 KATFS_ZIP_MAX_BYTES = 512 * 1024 * 1024   # 512 MB gesamt
 
 
 def katfs_zip(share, root):
-    """Den Teilbaum ab `root` einer Freigabe rekursiv einsammeln und als ZIP
-    zurueckgeben. Laeuft ueber dieselben ls/read-Proxyaufrufe wie der Browser,
+    """Recursively collect the subtree from `root` of a share and return it as
+    a ZIP. Runs over the same ls/read proxy calls as the browser,
     d.h. nur, solange die Freigabe im Browser-Tab offen ist. Wirft bei zu
     grossen Baeumen, bevor er den Speicher sprengt."""
     root = (root or ".").strip() or "."
