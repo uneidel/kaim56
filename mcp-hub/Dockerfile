@@ -1,6 +1,6 @@
-# MCP-Hub: die MCP-Serverprozesse (mcp-remote fuer Home Assistant,
-# mcp-portainer) laufen HIER statt in jeder microVM. Gleiche Abhaengigkeiten
-# wie vorher im Gast-Image, aber einmal am Host.
+# MCP hub: the MCP server processes (mcp-remote for Home Assistant,
+# mcp-portainer) run HERE instead of in every microVM. Same dependencies
+# as previously in the guest image, but once on the host.
 FROM node:24-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates python3 python3-pip \

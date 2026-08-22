@@ -1,6 +1,6 @@
-# Achtung: .gitignore kennt KEINE Kommentare am Zeilenende — ein "# …" hinter
-# dem Muster wird Teil des Musters und die Regel greift nie. Kommentare stehen
-# darum immer in eigenen Zeilen.
+# Note: .gitignore has NO end-of-line comments — a "# …" after the pattern
+# becomes part of the pattern and the rule never matches. Comments therefore
+# always go on their own lines.
 
 # --- Laufzeit & Daten: gehoeren auf den Host, nie ins Repo -------------------
 # API-Keys (0600)
@@ -11,7 +11,7 @@ manager/site.json
 manager/mcp-catalog.json
 # Plugin-Integritaets-Pins (Content-Hashes) -> deployment-spezifisch
 manager/plugins/.pins.json
-# Chat-Verlauf, Aufgaben, Gedaechtnis, Wasserzeichen
+# chat history, tasks, memory, watermarks
 manager/chats.json
 manager/chats_tombstones.json
 manager/tasks.json
@@ -19,7 +19,7 @@ manager/memory.json
 manager/inbox_wm.json
 # Aufgaben-History inkl. SQLite-WAL-Sidecars (-wal/-shm)
 manager/history.db*
-# Befunde ueber die eigene Installation
+# findings about the own installation
 manager/security.json
 # enthaelt den basicAuth-Hash -> examples/traefik-agents.example.yml
 manager/traefik-agents.yml
@@ -41,13 +41,13 @@ katfs/**/target/
 katfs/dist/
 *.log
 
-# --- Nichts Grosses und nichts Geheimes --------------------------------------
+# --- Nothing large and nothing secret ---------------------------------------
 # Releases gehoeren an die Gitea-Releases
 *.apk
-# rootfs-Images (GB-Bereich) und Kernel werden gebaut, nicht versioniert
+# rootfs images (GB range) and kernels are built, not versioned
 *.ext4
 vmlinux
-# Signaturschluessel der App
+# the app signing key
 app/keystore/
 # iroh-Node-Identitaet (katfs)
 secret.key

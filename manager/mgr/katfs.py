@@ -2,9 +2,9 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""katfs: P2P-Ordnerfreigabe (iroh) — Proxy-Helfer zum Host-Knoten.
+"""katfs: P2P folder sharing (iroh) — proxy helpers to the host node.
 
-Teil des mgr-Pakets; spricht nur den loopback-gebundenen katfs-Knoten an.
+Part of the mgr package; talks only to the loopback-bound katfs node.
 """
 import io
 import json
@@ -22,13 +22,13 @@ import zipfile
 # The manager proxies the share page under /katfs/: same origin, same auth —
 # and above all HTTPS, which the browser's File System Access API strictly
 # requires (secure context). That removes the SSH tunnel
-# bzw. die eigene Traefik-Route aus iroh-fs/README.md.
+# or the dedicated Traefik route from iroh-fs/README.md.
 KATFS_HOST = os.environ.get("KATFS_HOST", "127.0.0.1")
 KATFS_PORT = int(os.environ.get("KATFS_PORT", "8790"))
 KATFS_BASE = f"http://{KATFS_HOST}:{KATFS_PORT}"
 
 
-KATFS_MAX_WRITE = 64 * 1024 * 1024   # Deckel gegen Platten-DoS im Operator-Ordner
+KATFS_MAX_WRITE = 64 * 1024 * 1024   # cap against disk DoS in the operator folder
 
 
 def katfs_share_for(inst):
@@ -64,8 +64,8 @@ KATFS_ZIP_MAX_BYTES = 512 * 1024 * 1024   # 512 MB gesamt
 def katfs_zip(share, root):
     """Recursively collect the subtree from `root` of a share and return it as
     a ZIP. Runs over the same ls/read proxy calls as the browser,
-    d.h. nur, solange die Freigabe im Browser-Tab offen ist. Wirft bei zu
-    grossen Baeumen, bevor er den Speicher sprengt."""
+    i.e. only while the share is open in the browser tab. Raises on trees that
+    are too large, before it blows up memory."""
     root = (root or ".").strip() or "."
     buf = io.BytesIO()
     stats = {"files": 0, "bytes": 0}
@@ -92,7 +92,7 @@ def katfs_zip(share, root):
             stats["bytes"] += len(fdata)
             if stats["bytes"] > KATFS_ZIP_MAX_BYTES:
                 raise RuntimeError("archive too large (>512 MB)")
-            # Pfad im Archiv relativ zum gewaehlten Ordner.
+            # path in the archive relative to the selected folder.
             arc = child[len(base) + 1:] if base and child.startswith(base + "/") else child
             zf.writestr(arc, fdata)
 
@@ -116,7 +116,7 @@ def katfs_status():
             out["node_id"] = json.loads(r.read().decode()).get("node_id", "")
     except Exception:
         pass
-    # /shares gibt es erst ab dem Multi-Share-Knoten; ein aelterer antwortet 404.
+    # /shares only exists from the multi-share node on; an older one answers 404.
     try:
         with urllib.request.urlopen(KATFS_BASE + "/shares", timeout=3) as r:
             out["shares"] = json.loads(r.read().decode()).get("shares", [])

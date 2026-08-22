@@ -29,7 +29,7 @@ def configure(base):
     TASKS_FILE = os.path.join(base, "tasks.json")
 
 
-# ---- History (SQLite, stdlib): abfragbares Langzeitgedaechtnis ueber Aufgaben ----
+# ---- History (SQLite, stdlib): queryable long-term memory of tasks ----------
 # Every executed task lands here; agents query it via recall_tasks
 # ("have we done this already?" -> no duplicates, base knowledge).
 
@@ -43,8 +43,8 @@ def _hist_conn():
         schedule TEXT, origin TEXT)""")
     # Usage per LLM call. The agents report it after every call to
     # /api/usage; the manager identifies the instance by source IP. cost is
-    # what the provider bills for that call (OpenRouter reports
-    # es bei "usage":{"include":true} mit) — 0.0, wenn er nichts nennt.
+    # what the provider bills for that call (OpenRouter reports it with
+    # "usage":{"include":true}) — 0.0 if it reports nothing.
     c.execute("""CREATE TABLE IF NOT EXISTS llm_usage(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, instance TEXT, model TEXT,
@@ -53,7 +53,7 @@ def _hist_conn():
     # Semantic long-term memory: per memory a text + embedding vector
     # (as JSON). Search loads an instance's vectors and computes cosine in
     # memory — at a personal scale (hundreds) that is enough without
-    # Vektor-DB. Vektoren sind normalisiert, Cosinus = Skalarprodukt.
+    # Vector DB. Vectors are normalised, cosine = dot product.
     c.execute("""CREATE TABLE IF NOT EXISTS semantic_memory(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, instance TEXT, mkey TEXT, text TEXT, vec TEXT)""")

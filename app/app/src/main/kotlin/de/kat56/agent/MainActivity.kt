@@ -111,20 +111,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Sprechpausen-Erkennung, alles in Millisekunden. VAD_HANG ist der eine Wert,
-// den man spuert: zu kurz und es schneidet mitten im Satz ab, zu lang und man
-// wartet nach jedem Satz. 1,8 s laesst Raum fuer eine Atempause mitten im
-// Satz, ohne dass sich das Ende der Aufnahme wie Haengen anfuehlt.
+// Speech-pause detection, everything in milliseconds. VAD_HANG is the one value
+// you feel: too short and it cuts off mid-sentence, too long and you wait after
+// every sentence. 1.8 s leaves room for a breath mid-sentence, without the end
+// of the recording feeling like a hang.
 private const val VAD_TICK = 100L
-private const val VAD_HANG = 3500L   // laengere Denkpausen erlaubt (natuerliches Reden)
-private const val VAD_LEAD = 6000L      // nie etwas gesagt -> abbrechen
-private const val VAD_MAX = 120_000L    // Notbremse gegen die Aufnahme ohne Ende
+private const val VAD_HANG = 3500L   // longer pauses for thought allowed (natural speech)
+private const val VAD_LEAD = 6000L      // never said anything -> abort
+private const val VAD_MAX = 120_000L    // emergency brake against an endless recording
 
 class MainActivity : ComponentActivity() {
-    /** Zaehler statt Flagge: beim zweiten Assistentenruf ist der Wert schon
-     *  gesetzt, ein Boolean wuerde kein zweites Mal ausloesen. */
+    /** Counter instead of a flag: on the second assistant call the value is
+     *  already set, a Boolean would not trigger a second time. */
     private val assistCalls = mutableStateOf(0)
-    /** Ziel-Link einer angetippten System-Notification ("missions" | "chat:x"). */
+    /** Target link of a tapped system notification ("missions" | "chat:x"). */
     private val notifNav = mutableStateOf("")
     private val notifNavCalls = mutableStateOf(0)
 
@@ -133,8 +133,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Uncaught-Exceptions in eine Datei schreiben, damit man Abstuerze
-        // ohne PC/adb in Einstellungen > Diagnose einsehen kann.
+        // Write uncaught exceptions to a file, so crashes can be inspected in
+        // Settings > Diagnostics without a PC/adb.
         run {
             val prev = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -151,14 +151,14 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         val gemma = LocalGemma(this)
         val store = ChatStore(this)
-        store.migrate(prefs)   // v1.0-Modell uebernehmen, falls vorhanden
+        store.migrate(prefs)   // migrate the v1.0 model, if present
         if (isAssist(intent)) assistCalls.value++
         intent?.getStringExtra("notifLink")?.takeIf { it.isNotBlank() }?.let {
             notifNav.value = it; notifNavCalls.value++
         }
         setContent {
-            // Der Prototyp ist nur in einem Band gezeichnet (dark="true"),
-            // deshalb kein isSystemInDarkTheme() mehr.
+            // The prototype is drawn in only one theme (dark="true"),
+            // so no more isSystemInDarkTheme().
             MaterialTheme(
                 colorScheme = KatColors,
                 typography = KatTypography,
@@ -170,8 +170,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Laeuft die App schon, kommt der Assistentenruf hier an statt in
-     *  onCreate — mit singleTask wird keine zweite Kopie gestartet. */
+    /** If the app is already running, the assistant call arrives here instead of
+     *  in onCreate — with singleTask no second copy is started. */
     override fun onNewIntent(i: Intent) {
         super.onNewIntent(i)
         setIntent(i)
@@ -182,15 +182,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Ein Modell-Vorschlag aus dem Prototyp (Name, Beschreibung, Marke, Groesse, URL). */
-// Reasoning/Denken aus dem Nachrichtentext trennen. Der Agent umschliesst es
-// mit sichtbaren Unicode-Klammern (siehe agent.py). streaming=true -> der Block
-// ist noch offen (Modell denkt gerade).
+/** A model suggestion from the prototype (name, description, tag, size, URL). */
+// Separate reasoning/thinking from the message text. The agent wraps it in
+// visible Unicode brackets (see agent.py). streaming=true -> the block is
+// still open (the model is currently thinking).
 private data class Thought(val think: String, val answer: String, val streaming: Boolean)
 private val MD_INLINE = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`|\\*(.+?)\\*|_(.+?)_")
 
-// Leichtes Markdown -> AnnotatedString: fett, kursiv, code, #-Ueberschriften
-// (fett) und Aufzaehlungen (Bullet). Absichtlich simpel.
+// Light markdown -> AnnotatedString: bold, italic, code, #-headings
+// (bold) and bullet lists. Deliberately simple.
 private fun mdAnnotated(src: String): AnnotatedString = buildAnnotatedString {
     val lines = src.split("\n")
     lines.forEachIndexed { li, raw ->
@@ -232,20 +232,20 @@ private fun splitThink(s: String): Thought {
 }
 
 
-// Slash-Befehle fuer die Autovervollstaendigung ueber der Eingabezeile.
-// arg=true -> nimmt Argumente (Befehl + Leerzeichen einfuegen); arg=false ->
-// direkt absenden. Reihenfolge = Anzeige; gefiltert wird per Praefix.
-// Eine Push-Benachrichtigung vom Agenten als Android-Systemnotification zeigen.
+// Slash commands for the autocomplete above the input row.
+// arg=true -> takes arguments (insert command + space); arg=false ->
+// send directly. Order = display; filtered by prefix.
+// Show a push notification from the agent as an Android system notification.
 private fun showAgentNotification(ctx: Context, id: String, title: String, body: String,
                                   link: String = "") {
     val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
         nm.createNotificationChannel(
-            NotificationChannel("kaim56_agent", "Agent-Benachrichtigungen",
+            NotificationChannel("kaim56_agent", "Agent notifications",
                 NotificationManager.IMPORTANCE_HIGH))
     }
-    // Tipp auf die Benachrichtigung fuehrt zur Aktion: Missionen-Screen bzw.
-    // Chat der ausloesenden Instanz (link kommt vom Manager mit).
+    // Tapping the notification leads to the action: missions screen or the
+    // chat of the triggering instance (the link comes from the manager).
     val tap = android.app.PendingIntent.getActivity(
         ctx, id.hashCode(),
         Intent(ctx, MainActivity::class.java)
@@ -266,14 +266,14 @@ private fun showAgentNotification(ctx: Context, id: String, title: String, body:
 
 private data class SlashCmd(val cmd: String, val desc: String, val arg: Boolean = false)
 private val SLASH_CMDS = listOf(
-    SlashCmd("/task", "Hintergrundaufgabe (z. B. every 30m …)", arg = true),
-    SlashCmd("/reasoning", "Reasoning umschalten (low · medium · high · off)", arg = true),
-    SlashCmd("/goal", "Ziel setzen; Antwort wird gegen einen Judge verfeinert (off = aus)", arg = true),
-    SlashCmd("/model", "Modell wechseln (z. B. orcarouter:anthropic/claude-sonnet-4.6)", arg = true),
-    SlashCmd("/steps", "Max. Tool-Schritte je Turn: 30 oder unlimited", arg = true),
-    SlashCmd("/reset", "Gesprächskontext zurücksetzen"),
-    SlashCmd("/agents", "Agenten-Verwaltung öffnen"),
-    SlashCmd("/help", "Befehle anzeigen"),
+    SlashCmd("/task", "Background task (e.g. every 30m …)", arg = true),
+    SlashCmd("/reasoning", "Toggle reasoning (low · medium · high · off)", arg = true),
+    SlashCmd("/goal", "Set a goal; the answer is refined against a judge (off = disable)", arg = true),
+    SlashCmd("/model", "Switch model (e.g. orcarouter:anthropic/claude-sonnet-4.6)", arg = true),
+    SlashCmd("/steps", "Max. tool steps per turn: 30 or unlimited", arg = true),
+    SlashCmd("/reset", "Reset conversation context"),
+    SlashCmd("/agents", "Open agent management"),
+    SlashCmd("/help", "Show commands"),
 )
 
 
@@ -282,21 +282,21 @@ private data class Preset(
 )
 
 private val PRESETS = listOf(
-    Preset("Gemma-4 E4B", "Text · Bild · Audio, beste Qualität", "multimodal", "3,7 GB",
+    Preset("Gemma-4 E4B", "Text · image · audio, best quality", "multimodal", "3.7 GB",
         "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"),
-    Preset("Gemma-4 E2B", "Text · Bild · Audio, sparsamer", "multimodal", "2,6 GB",
+    Preset("Gemma-4 E2B", "Text · image · audio, more economical", "multimodal", "2.6 GB",
         "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"),
-    Preset("Gemma-3n E2B", "Bewährt, int4-quantisiert", "text", "3,0 GB",
+    Preset("Gemma-3n E2B", "Proven, int4-quantized", "text", "3.0 GB",
         "https://huggingface.co/litert-community/Gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm"),
-    Preset("Qwen2.5 1.5B", "Schnell, gut für einfache Aufgaben", "text", "1,6 GB",
+    Preset("Qwen2.5 1.5B", "Fast, good for simple tasks", "text", "1.6 GB",
         "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.litertlm"),
-    Preset("Qwen2 0.5B", "Minimal, läuft auf schwacher Hardware", "klein", "0,6 GB",
+    Preset("Qwen2 0.5B", "Minimal, runs on weak hardware", "small", "0.6 GB",
         "https://huggingface.co/litert-community/Qwen2-0.5B-Instruct/resolve/main/Qwen2-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.litertlm"),
 )
 
 private fun nowHm(): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date())
 
-/** Kurzname des Agenten eines Chats — im Prototyp die Zeile unter dem Titel. */
+/** Short name of a chat's agent — in the prototype the line under the title. */
 private fun agentOf(c: Conversation): String =
     if (c.mode == "server") c.instance.ifBlank { "server" } else "device"
 
@@ -309,7 +309,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val conversations = remember { mutableStateListOf<Conversation>().also { it.addAll(store.load()) } }
-    val tombs = remember { store.loadTombs() }   // Loesch-Tombstones {id -> deletedAt}
+    val tombs = remember { store.loadTombs() }   // delete tombstones {id -> deletedAt}
     if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
     var currentId by remember {
         mutableStateOf(prefs.currentChatId.takeIf { id -> conversations.any { it.id == id } } ?: conversations.first().id)
@@ -322,15 +322,15 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
-    // Status-Meldungen duerfen nicht ewig stehen bleiben (DNS-Fehler klebte
-    // dauerhaft im UI): Fehler verfallen nach 8 s, normale Hinweise nach 4 s.
+    // Status messages must not stay up forever (a DNS error used to stick in
+    // the UI permanently): errors expire after 8 s, normal hints after 4 s.
     LaunchedEffect(status) {
         if (status.isNotBlank()) {
             delay(if (status.startsWith("⚠")) 8000 else 4000)
             status = ""
         }
     }
-    // Der Prototyp kennt drei Vollbilder: Chat, Tasks, Settings.
+    // The prototype has three full screens: Chat, Tasks, Settings.
     var screen by remember { mutableStateOf<String?>(null) }
     var showAgents by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -338,7 +338,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     var pendingImage by remember { mutableStateOf<Bitmap?>(null) }
     var web by remember { mutableStateOf(prefs.webAccess) }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
-    // Kopfzeile und Einstellungen zeigen den Sync-Zustand ("Syncing …" / "Synced · N chats").
+    // Header and settings show the sync state ("Syncing …" / "Synced · N chats").
     var syncing by remember { mutableStateOf(false) }
     var lastSync by remember { mutableStateOf("") }
     var online by remember { mutableStateOf(false) }
@@ -351,10 +351,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (j != null) instances = ManagerSync.parseInstances(j)
         }
     }
-    // Beim Start laden und nach dem Schliessen der Agenten-Verwaltung erneut.
+    // Load at startup and again after the agent management is closed.
     LaunchedEffect(showAgents) { if (!showAgents) loadInstances() }
-    // Der Prototyp hat keinen Aktualisieren-Knopf mehr in der Chip-Zeile; die
-    // Liste wird stattdessen beim Oeffnen der Schublade nachgezogen.
+    // The prototype no longer has a refresh button in the chip row; the list
+    // is instead reloaded when the drawer is opened.
     LaunchedEffect(drawerState.currentValue) {
         if (drawerState.currentValue == DrawerValue.Open) loadInstances()
     }
@@ -362,7 +362,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS) }
 
-    // Prompt-Templates des Managers -> tauchen im Slash-Picker auf (/daily …).
+    // Prompt templates from the manager -> appear in the slash picker (/daily …).
     var promptCmds by remember { mutableStateOf(listOf<SlashCmd>()) }
     LaunchedEffect(Unit) {
         while (prefs.serverUrl.isBlank()) delay(3000)
@@ -374,9 +374,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
-    // Benachrichtigungen: pollt /api/notifications und hebt fuer neue, ungelesene
-    // Eintraege (ab App-Start) eine Android-Systemnotification. Eigener Loop,
-    // damit ein langsamer Chat-Poll die Notifications nicht blockiert.
+    // Notifications: polls /api/notifications and raises an Android system
+    // notification for new, unread entries (since app start). Its own loop, so a
+    // slow chat poll doesn't block the notifications.
     LaunchedEffect(Unit) {
         val startTs = System.currentTimeMillis() / 1000
         var nrev = 0L
@@ -396,7 +396,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
-    // Hintergrund-Download beobachten.
+    // Observe the background download.
     val dl by DownloadBus.state.collectAsState()
     LaunchedEffect(dl) {
         when (val s = dl) {
@@ -404,9 +404,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 "Download ${s.done * 100 / s.total}% (${s.done / 1_000_000}/${s.total / 1_000_000} MB)"
                 else "Download ${s.done / 1_000_000} MB…"
             is Dl.Done -> {
-                status = "Modell wird geladen…"
+                status = "Loading model…"
                 withContext(Dispatchers.IO) { try { gemma.load(s.path) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
-                if (gemma.isReady()) status = "Modell geladen ✅"
+                if (gemma.isReady()) status = "Model loaded ✅"
             }
             is Dl.Error -> status = "⚠️ ${s.msg}"
             Dl.Idle -> {}
@@ -415,31 +415,31 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
-            status = "Modell wird kopiert…"
+            status = "Copying model…"
             val path = withContext(Dispatchers.IO) { copyModel(context, store.modelsDir, uri) }
             if (path != null) {
                 prefs.activeModel = File(path).name
-                status = "Modell wird geladen…"
+                status = "Loading model…"
                 withContext(Dispatchers.IO) { try { gemma.load(path) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
-                if (gemma.isReady()) status = "Modell geladen ✅"
-            } else status = "⚠️ Kopieren fehlgeschlagen"
+                if (gemma.isReady()) status = "Model loaded ✅"
+            } else status = "⚠️ Copy failed"
         }
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) scope.launch {
             val bmp = withContext(Dispatchers.IO) { loadBitmap(context, uri) }
-            if (bmp != null) pendingImage = bmp else status = "⚠️ Bild konnte nicht geladen werden"
+            if (bmp != null) pendingImage = bmp else status = "⚠️ Image could not be loaded"
         }
     }
-    // Anhang-Blatt des Prototyps: "Camera" nimmt eine Vorschau auf (kein
-    // FileProvider noetig), send() verarbeitet ohnehin nur Bitmaps.
+    // The prototype's attachment sheet: "Camera" takes a preview (no
+    // FileProvider needed), send() only handles bitmaps anyway.
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp: Bitmap? ->
         if (bmp != null) pendingImage = bmp
     }
 
-    // Debounced Hintergrund-Push zum Manager, damit neue/geaenderte Chats live
-    // beim Server (und darueber in der Web-UI) landen — nicht erst beim naechsten
-    // manuellen Sync. Der Manager MERGED serverseitig, ueberschreibt also nichts.
+    // Debounced background push to the manager, so new/changed chats land on the
+    // server live (and via it in the web UI) — not only at the next manual sync.
+    // The manager MERGES server-side, so it overwrites nothing.
     val pushJob = remember { arrayOfNulls<kotlinx.coroutines.Job>(1) }
     fun pushChats() {
         if (prefs.serverUrl.isBlank()) return
@@ -454,7 +454,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
     fun persist() {
         current.updatedAt = System.currentTimeMillis()
-        if (current.title == "Neuer Chat") {
+        if (current.title == "New Chat") {
             current.messages.firstOrNull { it.user }?.text?.trim()?.take(40)?.let {
                 if (it.isNotBlank()) current.title = it
             }
@@ -470,9 +470,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         store.save(conversations)
     }
 
-    // Agent wechseln = zum Verlauf DIESES Agenten springen (ein Thread pro Agent),
-    // statt den offenen Chat still umzuhaengen. Ist der aktuelle Chat noch leer,
-    // wird er einfach zugewiesen (kein neuer leerer Thread).
+    // Switch agent = jump to THIS agent's history (one thread per agent), instead
+    // of silently rehoming the open chat. If the current chat is still empty, it
+    // is simply reassigned (no new empty thread).
     fun switchToAgent(mode: String, instance: String) {
         prefs.mode = mode; prefs.instance = instance
         if (current.messages.isEmpty()) {
@@ -486,7 +486,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 
     fun deleteChat(c: Conversation) {
-        tombs[c.id] = System.currentTimeMillis()   // Loeschung propagieren (Web + andere Geraete)
+        tombs[c.id] = System.currentTimeMillis()   // propagate the deletion (web + other devices)
         store.saveTombs(tombs)
         conversations.remove(c)
         if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
@@ -497,27 +497,27 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
     fun selectModel(f: File) {
         prefs.activeModel = f.name
-        status = "Modell wird geladen…"
+        status = "Loading model…"
         scope.launch {
             withContext(Dispatchers.IO) { try { gemma.load(f.absolutePath) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
-            if (gemma.isReady()) status = "Modell geladen ✅"
+            if (gemma.isReady()) status = "Model loaded ✅"
         }
     }
 
     fun sync() {
-        if (prefs.serverUrl.isBlank()) { status = "⚠️ Server-URL fehlt (Einstellungen)"; return }
+        if (prefs.serverUrl.isBlank()) { status = "⚠️ Server URL missing (Settings)"; return }
         scope.launch {
             syncing = true
             status = "Sync…"
             val remoteJson = withContext(Dispatchers.IO) { ManagerSync.pull(prefs.serverUrl, prefs.user, prefs.pass) }
             if (remoteJson == null) {
                 syncing = false; online = false
-                status = "⚠️ Sync: Server nicht erreichbar"; return@launch
+                status = "⚠️ Sync: server unreachable"; return@launch
             }
             val byId = LinkedHashMap<String, Conversation>()
             for (c in conversations) byId[c.id] = c
             for (r in store.fromJson(remoteJson)) {
-                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // lokal getombstet
+                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // tombstoned locally
                 val local = byId[r.id]
                 if (local == null || r.updatedAt > local.updatedAt) byId[r.id] = r
             }
@@ -530,16 +530,16 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             store.save(conversations)
             val ok = withContext(Dispatchers.IO) { ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toPushJson(conversations, tombs)) }
             syncing = false; online = ok; lastSync = nowHm()
-            status = if (ok) "" else "⚠️ Push fehlgeschlagen"
+            status = if (ok) "" else "⚠️ Push failed"
         }
     }
 
-    // Live-Sync mit dem Manager: einmal voll abgleichen, danach dauerhaft am
-    // Long-Poll haengen (/api/chats?since=&wait=). Der Manager antwortet, sobald
-    // die Web-UI oder ein anderes Geraet schreibt — neue Nachrichten stehen also
-    // binnen Sekundenbruchteilen hier, ohne Dauer-Polling und ohne Neustart.
-    // Waehrend eine Antwort streamt (busy) wird nicht gemerged, sonst wuerde der
-    // Teiltext ueberschrieben.
+    // Live sync with the manager: do one full reconcile, then stay on the
+    // long-poll permanently (/api/chats?since=&wait=). The manager answers as soon
+    // as the web UI or another device writes — so new messages appear here within
+    // fractions of a second, without constant polling and without a restart.
+    // While a reply is streaming (busy) nothing is merged, otherwise the partial
+    // text would be overwritten.
     val chatsRev = remember { longArrayOf(0L) }
     LaunchedEffect(Unit) {
         while (prefs.serverUrl.isBlank()) delay(3000)
@@ -548,10 +548,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             val res = withContext(Dispatchers.IO) {
                 ManagerSync.pollChats(prefs.serverUrl, prefs.user, prefs.pass, chatsRev[0], 25)
             }
-            if (res == null) { online = false; delay(5000); continue }   // offline / alter Manager
+            if (res == null) { online = false; delay(5000); continue }   // offline / old manager
             online = true
             chatsRev[0] = res.rev
-            // Eingehende Loesch-Tombstones anwenden (auch ohne neue Chats)
+            // Apply incoming delete tombstones (even without new chats)
             res.tombstones?.let { ts ->
                 try {
                     val o = JSONObject(ts)
@@ -574,44 +574,42 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     }
                 } catch (_: Exception) {}
             }
-            val remote = res.chats ?: continue           // Zeitablauf, nichts Neues
+            val remote = res.chats ?: continue           // timeout, nothing new
             var waited = 0
             while (busy && waited++ < 120) delay(500)
-            // WICHTIG: bestehende Conversation-Objekte werden BEFUELLT, nicht
-            // ersetzt. send() haelt eine Referenz auf current.messages fest und
-            // streamt die Antwort dorthin — tauscht man das Objekt aus, landen
-            // Frage und Antwort in einer abgehaengten Liste: unsichtbar,
-            // ungespeichert, nie gepusht. Die offene Konversation bleibt
-            // zusaetzlich unangetastet, solange ein Turn laeuft.
+            // IMPORTANT: existing Conversation objects are FILLED, not replaced.
+            // send() holds a reference to current.messages and streams the reply
+            // there — if you swap the object out, question and answer land in a
+            // detached list: invisible, unsaved, never pushed. The open
+            // conversation also stays untouched while a turn is running.
             val byId = LinkedHashMap<String, Conversation>()
             for (c in conversations) byId[c.id] = c
             var changed = false
             for (r in store.fromJson(remote)) {
-                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // getombstet -> nicht auferstehen
+                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // tombstoned -> do not resurrect
                 val local = byId[r.id]
-                if (local == null) {                        // wirklich neu
+                if (local == null) {                        // genuinely new
                     byId[r.id] = r; changed = true
                     continue
                 }
-                if (r.updatedAt <= local.updatedAt) continue   // lokal ist aktueller
-                if (busy && local.id == currentId) continue    // laufender Turn
-                // Nachrichten nur ANHAENGEN. Ein Ersetzen wuerde eine gerade
-                // getippte, noch nicht gepushte Frage wegwischen - genau der
-                // Fall, in dem die Gegenseite (Web/Manager) eine neuere Uhr
-                // hat. Nur wenn die lokale Liste ein Praefix der entfernten
-                // ist, sind wir sicher, dass nichts Eigenes verlorengeht;
-                // sonst gleicht der naechste Push das aus.
+                if (r.updatedAt <= local.updatedAt) continue   // local is newer
+                if (busy && local.id == currentId) continue    // turn in progress
+                // Only APPEND messages. Replacing would wipe out a just-typed,
+                // not-yet-pushed question - exactly the case where the other side
+                // (web/manager) has a newer clock. Only if the local list is a
+                // prefix of the remote one are we sure nothing of our own is lost;
+                // otherwise the next push reconciles it.
                 val lm = local.messages
                 val rm = r.messages
                 val isPrefix = rm.size >= lm.size && lm.indices.all { lm[it] == rm[it] }
                 if (isPrefix) {
                     if (rm.size > lm.size) { for (i in lm.size until rm.size) lm.add(rm[i]); changed = true }
                 } else if (rm.size >= lm.size) {
-                    // DIVERGENZ (kein Praefix), remote ist neuer (oben geprueft) und nicht
-                    // kuerzer -> Server-Stand als Merge-Punkt uebernehmen, statt den Sync
-                    // fuer immer haengen zu lassen. In-Place fuellen (Objekt nicht tauschen!).
+                    // DIVERGENCE (no prefix), remote is newer (checked above) and not
+                    // shorter -> adopt the server state as the merge point, instead of
+                    // letting the sync hang forever. Fill in place (don't swap the object!).
                     lm.clear(); lm.addAll(rm); changed = true
-                } else continue    // lokal ist laenger -> behalten, eigener Push gleicht ab
+                } else continue    // local is longer -> keep it, our own push reconciles
                 if (local.title != r.title && r.title.isNotBlank()) { local.title = r.title; changed = true }
                 if (local.instance != r.instance && r.instance.isNotBlank()) local.instance = r.instance
                 local.updatedAt = r.updatedAt
@@ -623,72 +621,71 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             conversations.addAll(merged)
             if (conversations.isNotEmpty() && conversations.none { it.id == currentId })
                 currentId = conversations.first().id
-            store.save(conversations)                    // nur lokal, kein Push
+            store.save(conversations)                    // local only, no push
         }
     }
 
-    // true  = die App hat den Befehl selbst erledigt (nichts an den Agenten).
-    // false = durchreichen: die Nachricht geht als normaler Text an den Agenten
-    //         (so greifen dessen eigene Befehle wie /reset).
+    // true  = the app handled the command itself (nothing to the agent).
+    // false = pass through: the message goes to the agent as normal text
+    //         (so its own commands like /reset take effect).
     fun handleSlash(text: String, msgs: androidx.compose.runtime.snapshots.SnapshotStateList<Msg>): Boolean {
         val body = text.removePrefix("/").trim()
         val cmd = body.substringBefore(' ').lowercase()
         val rest = body.substringAfter(' ', "").trim()
         when (cmd) {
             "help", "" -> msgs.add(Msg(false,
-                "App-Befehle:\n" +
-                "/task <text> – Hintergrundaufgabe auf dem aktuellen Agenten\n" +
-                "/task every 30m <text> – wiederkehrend (auch: daily 08:00, hourly)\n" +
-                "/agents – Agenten-Verwaltung öffnen\n" +
-                "/help – diese Hilfe\n" +
-                "Andere /-Befehle (z. B. /reset) gehen an den Agenten."))
+                "App commands:\n" +
+                "/task <text> – background task on the current agent\n" +
+                "/task every 30m <text> – recurring (also: daily 08:00, hourly)\n" +
+                "/agents – open agent management\n" +
+                "/help – this help\n" +
+                "Other /-commands (e.g. /reset) go to the agent."))
             "task" -> {
                 val inst = current.instance.ifBlank { prefs.instance }
-                if (inst.isBlank()) { msgs.add(Msg(false, "⚠️ Kein Server-Agent gewählt (oben einen Chip antippen).")); return true }
+                if (inst.isBlank()) { msgs.add(Msg(false, "⚠️ No server agent selected (tap a chip above).")); return true }
                 val m = Regex("^(every\\s+\\d+[mhd]|daily\\s+\\d{1,2}:\\d{2}|hourly)\\s+(.*)", RegexOption.IGNORE_CASE).find(rest)
                 val schedule = m?.groupValues?.get(1)?.trim() ?: ""
                 val message = (m?.groupValues?.get(2) ?: rest).trim()
-                if (message.isBlank()) { msgs.add(Msg(false, "⚠️ Nutzung: /task <text>")); return true }
+                if (message.isBlank()) { msgs.add(Msg(false, "⚠️ Usage: /task <text>")); return true }
                 scope.launch {
                     val r = withContext(Dispatchers.IO) { ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, inst, message, schedule) }
                     msgs.add(Msg(false, if (r != null)
-                        "✅ Aufgabe auf @$inst angelegt${if (schedule.isNotBlank()) " ($schedule)" else " (Hintergrund)"}. Schublade → Tasks."
+                        "✅ Task created on @$inst${if (schedule.isNotBlank()) " ($schedule)" else " (background)"}. Drawer → Tasks."
                         else "⚠️ ${ManagerSync.lastStatus}"))
                     persist()
                 }
             }
-            "agents" -> { msgs.add(Msg(false, "Öffne Server-Agenten…")); showAgents = true }
-            // /login ist gegenstandslos: claudy meldet sich beim Boot über den
-            // Host an, und headless (claude -p) gibt es keinen interaktiven
-            // Login. Abfangen statt an den Agenten zu schicken, wo es nur ins
-            // Leere liefe.
-            "login" -> msgs.add(Msg(false, "Kein Login nötig – der Agent ist über den Host angemeldet."))
-            else -> return false   // durchreichen an den Agenten
+            "agents" -> { msgs.add(Msg(false, "Opening server agents…")); showAgents = true }
+            // /login is moot: claudy signs in at boot via the host, and headless
+            // (claude -p) there is no interactive login. Intercept it instead of
+            // sending it to the agent, where it would only run into nothing.
+            "login" -> msgs.add(Msg(false, "No login needed – the agent is signed in via the host."))
+            else -> return false   // pass through to the agent
         }
         return true
     }
 
-    // ── Sprachbedienung ────────────────────────────────────────────────────
-    // Aufnehmen im Geraet, Erkennen und Sprechen im Manager (Parakeet/Piper).
-    // Vorgelesen wird nur, was per Sprache gefragt wurde — eine lange
-    // Erklaerung ungefragt vorzulesen waere eine Zumutung.
+    // ── Voice control ──────────────────────────────────────────────────────
+    // Record on the device, recognize and speak on the manager (Parakeet/Piper).
+    // Only what was asked by voice is read aloud — reading a long explanation
+    // aloud unprompted would be a nuisance.
     var recording by remember { mutableStateOf(false) }
     var transcribing by remember { mutableStateOf(false) }
     var voiceIn by remember { mutableStateOf(false) }
-    // send() ist weiter unten deklariert; eine lokale Funktion darf man in
-    // Kotlin nicht vorher aufrufen. Der Merker ueberbrueckt das.
+    // send() is declared further down; in Kotlin you can't call a local function
+    // before it. This flag bridges that.
     var pendingVoiceSend by remember { mutableStateOf(false) }
-    // Welche Nachricht gerade gesprochen wird — die Blase zeigt es an und
-    // haelt darueber an. -1 heisst: es spricht niemand.
+    // Which message is currently being spoken — the bubble shows it and stops via
+    // it. -1 means: no one is speaking.
     var speakingIdx by remember { mutableStateOf(-1) }
     val recorder = remember { arrayOfNulls<MediaRecorder>(1) }
     val recFile = remember { arrayOfNulls<java.io.File>(1) }
     val player = remember { arrayOfNulls<MediaPlayer>(1) }
-    // Zaehler statt Flagge: die Sprachsynthese laeuft ueber das Netz, und eine
-    // Antwort, die nach dem Abbruch eintrudelt, darf nicht doch noch losplaerren.
+    // Counter instead of a flag: speech synthesis runs over the network, and a
+    // reply that trickles in after cancellation must not still blare out.
     val speakGen = remember { intArrayOf(0) }
-    // Turn-Generation: erneuter Mikro-Druck erhoeht sie -> laufende Sendung wird
-    // ignoriert und chatStream bricht ab (Korrektur der vorherigen Aussage).
+    // Turn generation: another mic press increments it -> the running send is
+    // ignored and chatStream aborts (correcting the previous statement).
     val turnGen = remember { intArrayOf(0) }
     val cancelHandle = remember { arrayOfNulls<ServerAgent.CancelHandle>(1) }
 
@@ -702,14 +699,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
     fun speakText(text: String, idx: Int = -1) {
         if (text.isBlank() || prefs.serverUrl.isBlank()) return
-        stopSpeak()                       // nie zwei Stimmen uebereinander
+        stopSpeak()                       // never two voices at once
         val gen = speakGen[0]
         speakingIdx = idx
         scope.launch {
             val wav = withContext(Dispatchers.IO) {
                 ManagerSync.tts(prefs.serverUrl, prefs.user, prefs.pass, text.take(4000))
             }
-            if (gen != speakGen[0]) return@launch          // zwischenzeitlich abgebrochen
+            if (gen != speakGen[0]) return@launch          // cancelled in the meantime
             if (wav == null) {
                 speakingIdx = -1
                 status = "⚠️ Speech: ${ManagerSync.lastStatus}"; return@launch
@@ -722,10 +719,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     player[0]?.release()
                     player[0] = MediaPlayer().apply {
                         setDataSource(f.absolutePath)
-                        // MediaPlayer meldet sich auf dem Looper des erzeugenden
-                        // Threads; ein IO-Thread hat keinen, also kommt der
-                        // Rueckruf auf dem Haupt-Looper an — dort darf man den
-                        // Compose-Zustand anfassen.
+                        // MediaPlayer reports back on the looper of the creating
+                        // thread; an IO thread has none, so the callback arrives on
+                        // the main looper — where it's safe to touch the Compose
+                        // state.
                         setOnCompletionListener { mp ->
                             mp.release()
                             if (player[0] === mp) { player[0] = null; speakingIdx = -1 }
@@ -740,8 +737,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     fun stopRec() {
         val r = recorder[0] ?: return
         recorder[0] = null; recording = false
-        // stop() wirft, wenn zu frueh gestoppt wurde (zu kurze Aufnahme) —
-        // dann gibt es schlicht nichts zu erkennen.
+        // stop() throws if stopped too early (recording too short) — then there
+        // is simply nothing to recognize.
         val ok = runCatching { r.stop() }.isSuccess
         runCatching { r.release() }
         val f = recFile[0]; recFile[0] = null
@@ -758,20 +755,20 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (text.isNullOrBlank()) { status = "Didn't catch that (${ManagerSync.lastStatus})"; return@launch }
             input = text
             voiceIn = true
-            pendingVoiceSend = true      // freihaendig: gleich abschicken
+            pendingVoiceSend = true      // hands-free: send right away
         }
     }
 
     fun startRec() {
         if (prefs.serverUrl.isBlank()) { status = "⚠️ Server URL missing (Settings)"; return }
-        stopSpeak()                       // Reinreden heisst: die Ausgabe ist erledigt
+        stopSpeak()                       // speaking over it means: the output is done
         val f = java.io.File(context.cacheDir, "rec.m4a")
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
         val ok = runCatching {
             r.setAudioSource(MediaRecorder.AudioSource.MIC)
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            r.setAudioSamplingRate(16000)      // mehr braucht die Erkennung nicht
+            r.setAudioSamplingRate(16000)      // recognition needs no more
             r.setAudioChannels(1)
             r.setAudioEncodingBitRate(32000)
             r.setOutputFile(f.absolutePath)
@@ -781,15 +778,15 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         recorder[0] = r; recFile[0] = f; recording = true
         status = "Listening… stops on its own"
 
-        // Selbsttaetig beenden, wenn es still wird. Der Schwellwert kommt aus
-        // den ersten Zehnteln Raumgeraeusch: ein fester Wert taugt nicht, ein
-        // Zug ist lauter als ein Buero. Gestoppt wird erst, nachdem ueberhaupt
-        // gesprochen wurde — sonst schneidet es die Denkpause am Anfang ab.
+        // Stop by itself when it goes quiet. The threshold comes from the first
+        // tenths of a second of room noise: a fixed value won't do, a train is
+        // louder than an office. Stopping only happens after something was actually
+        // spoken — otherwise it would cut off the pause for thought at the start.
         scope.launch {
-            // Grundrauschen aus den ersten ~0,6 s als MINIMUM messen (nicht max):
-            // so verfaelscht es sich nicht, wenn der Nutzer sofort losredet —
-            // sonst waere die Sprech-Schwelle unerreichbar und die Aufnahme
-            // braeche MITTEN im Reden ab (genau der Bug). Zusaetzlich gedeckelt.
+            // Measure the noise floor from the first ~0.6 s as a MINIMUM (not max):
+            // so it isn't skewed if the user starts talking immediately — otherwise
+            // the speech threshold would be unreachable and the recording would cut
+            // off MID-speech (exactly the bug). Additionally capped.
             var floor = Int.MAX_VALUE; var probes = 0
             var spoke = false; var quiet = 0L; var total = 0L
             while (recorder[0] === r) {
@@ -798,16 +795,16 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 val amp = runCatching { r.maxAmplitude }.getOrDefault(0)
                 if (probes < 6) { floor = minOf(floor, amp); probes++; continue }
                 val base = (if (floor == Int.MAX_VALUE) 0 else floor).coerceAtMost(3000)
-                // Hysterese: Sprech-START braucht eine deutliche Marge, aber
-                // sobald geredet WIRD, haelt eine viel niedrigere Schwelle die
-                // Aufnahme am Leben. So zaehlen die kurzen Amplituden-Taeler
-                // zwischen Woertern/Silben NICHT als Stille — genau das cuttete
-                // die Aufnahme mitten im fluessigen Reden nach wenigen Sekunden.
+                // Hysteresis: the START of speech needs a clear margin, but once
+                // speaking IS happening a much lower threshold keeps the recording
+                // alive. This way the short amplitude dips between words/syllables do
+                // NOT count as silence — exactly what cut the recording off mid
+                // fluent speech after a few seconds.
                 val loud = if (spoke) amp > base + 350 else amp > base + 1500
                 if (loud) { spoke = true; quiet = 0L } else if (spoke) quiet += VAD_TICK
                 val done = (spoke && quiet >= VAD_HANG) ||
-                    (!spoke && total >= VAD_LEAD) ||       // gar nichts gesagt
-                    total >= VAD_MAX                       // Notbremse
+                    (!spoke && total >= VAD_LEAD) ||       // said nothing at all
+                    total >= VAD_MAX                       // emergency brake
                 if (done) { if (recorder[0] === r) stopRec(); return@launch }
             }
         }
@@ -817,11 +814,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if (granted) startRec() else status = "⚠️ Microphone permission needed"
     }
 
-    // ── Security Gateway ───────────────────────────────────────────────────
-    // Pro Chat, Zustand am Manager. Gefiltert wird auch dort — die App schickt
-    // nur ihre Chat-Kennung mit, damit der Manager weiss, welcher Chat gemeint
-    // ist. Ein Filter im Geraet waere wirkungslos, sobald derselbe Chat vom
-    // Web aus bedient wird.
+    // ── Security gateway ───────────────────────────────────────────────────
+    // Per chat, state on the manager. Filtering happens there too — the app only
+    // sends its chat identifier along, so the manager knows which chat is meant.
+    // A filter on the device would be useless as soon as the same chat is served
+    // from the web.
     var gwIds by remember { mutableStateOf(setOf<String>()) }
     var gwAvailable by remember { mutableStateOf(false) }
     var gwChars by remember { mutableStateOf(mapOf<String, Int>()) }
@@ -841,26 +838,26 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     fun gwToggle() {
         val id = current.id
         val on = id !in gwIds
-        gwIds = if (on) gwIds + id else gwIds - id      // sofort sichtbar
+        gwIds = if (on) gwIds + id else gwIds - id      // visible immediately
         scope.launch {
             withContext(Dispatchers.IO) {
                 ManagerSync.gatewaySet(prefs.serverUrl, prefs.user, prefs.pass, id, on)
             }
-            gwLoad()                                     // und dann der echte Stand
+            gwLoad()                                     // and then the real state
         }
     }
 
     fun cancelTurn() {
-        // Laufende Antwort/Sendung verwerfen: Generation erhoehen (Stream bricht
-        // ab, spaete Chunks werden ignoriert), Auto-Send abschalten, halbe
-        // Antwort als abgebrochen markieren.
+        // Discard the running reply/send: increment the generation (the stream
+        // aborts, late chunks are ignored), turn off auto-send, mark the half
+        // reply as aborted.
         turnGen[0]++
-        runCatching { cancelHandle[0]?.cancel() }   // laufenden Stream sofort trennen
+        runCatching { cancelHandle[0]?.cancel() }   // drop the running stream immediately
         pendingVoiceSend = false
         val msgs = current.messages
         val li = msgs.lastIndex
         if (li >= 0 && !msgs[li].user && msgs[li].text.isBlank())
-            msgs[li] = msgs[li].copy(text = "_(abgebrochen)_")
+            msgs[li] = msgs[li].copy(text = "_(aborted)_")
         busy = false
         stopSpeak()
         persist()
@@ -868,10 +865,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
     fun micToggle() {
         if (recording) { stopRec(); return }
-        // Erneuter Druck waehrend Antwort/Auto-Send: abbrechen und NEU aufnehmen
-        // (Korrektur der vorherigen Aussage), statt die alte Sendung fortzusetzen.
+        // Another press during reply/auto-send: cancel and record ANEW (correcting
+        // the previous statement), instead of continuing the old send.
         if (busy || pendingVoiceSend) cancelTurn()
-        if (speakingIdx >= 0) stopSpeak()   // erst die Ausgabe, dann das Ohr
+        if (speakingIdx >= 0) stopSpeak()   // first the output, then the ear
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) startRec() else micPerm.launch(Manifest.permission.RECORD_AUDIO)
@@ -892,7 +889,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if (current.mode == "server") {
             val botMsg = Msg(false, "")
             msgs.add(botMsg)
-            val botKey = botMsg.key           // per Key ansteuern, NICHT per Index (Interrupt/Sync-fest)
+            val botKey = botMsg.key           // address by key, NOT by index (interrupt/sync-safe)
             val inst = current.instance.ifBlank { prefs.instance }
             val myGen = ++turnGen[0]
             val ch = ServerAgent.CancelHandle(); cancelHandle[0] = ch
@@ -914,7 +911,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         }
                     }
                 }
-                if (myGen != turnGen[0]) return@launch          // abgebrochen -> nichts mehr tun
+                if (myGen != turnGen[0]) return@launch          // aborted -> do nothing more
                 if (err != null) mainHandler.post { appendBot("\n$err") }
                 busy = false; persist(); listState.animateScrollToItem(msgs.size)
                 if (voiceIn) {
@@ -943,12 +940,12 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             try { gemma.load(store.modelFile(prefs.activeModel).absolutePath) } catch (_: Exception) {}
                         }
                         val prompt = if (useWeb && img == null) {
-                            mainHandler.post { status = "🌐 Web-Recherche…" }
+                            mainHandler.post { status = "🌐 Web research…" }
                             val ctx = try { WebSearch.buildContext(text) } catch (e: Exception) { "" }
                             mainHandler.post { status = "" }
                             if (ctx.isNotBlank())
-                                "Beantworte die folgende Frage mit Hilfe dieser aktuellen Web-Informationen. " +
-                                "Nenne die Quelle (URL), wenn möglich.\n\n$ctx\n\nFrage: $text"
+                                "Answer the following question using this current web information. " +
+                                "Cite the source (URL) if possible.\n\n$ctx\n\nQuestion: $text"
                             else text
                         } else text
                         gemma.generateStreaming(prompt, img) { d ->
@@ -969,19 +966,19 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
-    // Wie im Prototyp (componentDidUpdate): die Liste haengt am unteren Rand.
+    // As in the prototype (componentDidUpdate): the list sticks to the bottom edge.
     LaunchedEffect(current.messages.size, currentId) {
         if (current.messages.isNotEmpty()) listState.animateScrollToItem(current.messages.size)
     }
 
-    // ── abgeleitete Beschriftungen ──────────────────────────────────────────
+    // ── derived labels ────────────────────────────────────────────────────────
     LaunchedEffect(pendingVoiceSend) {
         if (pendingVoiceSend) { pendingVoiceSend = false; send() }
     }
 
-    // Ruf ueber die Ein-Aus-Taste (Assistent): sofort zuhoeren. Gesprochen
-    // wird die Antwort danach von allein — stopRec() setzt voiceIn, sobald
-    // die Eingabe wirklich per Stimme kam.
+    // Call via the power button (assistant): listen immediately. The reply is
+    // then spoken automatically — stopRec() sets voiceIn as soon as the input
+    // really came by voice.
     LaunchedEffect(assistCalls) {
         if (assistCalls > 0) {
             val ai = prefs.assistInstance.trim()
@@ -993,7 +990,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (!recording && !busy) micToggle()
         }
     }
-    // Tipp auf eine System-Notification: zum Ziel navigieren.
+    // Tap on a system notification: navigate to the target.
     LaunchedEffect(notifNavCalls) {
         if (notifNavCalls <= 0) return@LaunchedEffect
         when {
@@ -1002,9 +999,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             notifNav.startsWith("chat:") -> {
                 val inst = notifNav.removePrefix("chat:")
                 prefs.mode = "server"; prefs.instance = inst; screen = null
-                // Bestehenden Chat oeffnen statt leerem Fenster: bevorzugt den
-                // Task-Chat (dort landen Task-Ergebnisse), sonst den juengsten
-                // Chat mit dieser Instanz.
+                // Open an existing chat instead of an empty window: prefer the
+                // task chat (where task results land), otherwise the most recent
+                // chat with this instance.
                 val target = conversations.firstOrNull { it.id == "task-$inst" }
                     ?: conversations.filter { it.instance == inst }
                         .maxByOrNull { it.updatedAt }
@@ -1013,18 +1010,18 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
-    // Gateway-Stand holen: beim Start, beim Serverwechsel und nach jeder
-    // fertigen Antwort (dann hat sich der Zaehler bewegt).
+    // Fetch the gateway state: at startup, on server change and after every
+    // finished reply (by then the counter has moved).
     LaunchedEffect(prefs.serverUrl) { gwLoad() }
     LaunchedEffect(busy) { if (!busy) gwLoad() }
 
     val serverModel = instances.firstOrNull { it.name == current.instance }?.model ?: ""
     val modelLabel = if (current.mode == "server")
         serverModel.ifBlank { current.instance.ifBlank { "server" } }
-    else prefs.activeModel.ifBlank { "kein Modell geladen" }
+    else prefs.activeModel.ifBlank { "no model loaded" }
     val agentLabel = agentOf(current)
-    // Der Zaehler gehoert sichtbar dazu: still gefiltert zu werden ist genau
-    // das, was man einem Filter nicht durchgehen lassen sollte.
+    // The counter visibly belongs here: being filtered silently is exactly what
+    // you shouldn't let a filter get away with.
     val gwRemoved = (gwChars[current.id] ?: 0) + (gwImgs[current.id] ?: 0)
     val syncLabel = (if (syncing) "Syncing …" else "Synced · ${conversations.size} chats") +
         (if (gwOn && gwRemoved > 0) " · ${gwChars[current.id] ?: 0} stripped" +
@@ -1058,7 +1055,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     ) {
         Box(Modifier.fillMaxSize().background(Kat.bg)) {
             Column(Modifier.fillMaxSize()) {
-                // ── Kopf: Menue, Titel + Sync-Zeile, Ueberlaufmenue ─────────
+                // ── Header: menu, title + sync line, overflow menu ──────────
                 Row(
                     Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1098,10 +1095,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     RoundIconButton(
                         { menuOpen = !menuOpen },
                         background = if (menuOpen) Kat.hover else Color.Transparent,
-                    ) { Icon(Icons.Filled.MoreVert, "Menü", Modifier.size(18.dp), tint = Kat.textDim) }
+                    ) { Icon(Icons.Filled.MoreVert, "Menu", Modifier.size(18.dp), tint = Kat.textDim) }
                 }
 
-                // ── Agenten-Chips ───────────────────────────────────────────
+                // ── Agent chips ─────────────────────────────────────────────
                 val chips = if (instances.isNotEmpty()) instances
                     else if (prefs.instance.isNotBlank()) listOf(AgentInstance(prefs.instance, false, "", "", "")) else emptyList()
                 Row(
@@ -1128,9 +1125,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 }
                 Hairline()
 
-                // Rueckmeldungen (Download, Modell-Ladefehler, Sync-Probleme).
-                // Steht so nicht im Prototyp, ist aber die einzige Stelle, an der
-                // diese Meldungen ueberhaupt sichtbar werden.
+                // Feedback (download, model load errors, sync problems). Not in
+                // the prototype like this, but the only place these messages
+                // become visible at all.
                 if (status.isNotEmpty()) Text(
                     status,
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1139,7 +1136,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
 
-                // ── Nachrichten ─────────────────────────────────────────────
+                // ── Messages ────────────────────────────────────────────────
                 val bubbleMax = (LocalConfiguration.current.screenWidthDp * 0.78f).dp
                 LazyColumn(
                     state = listState,
@@ -1175,8 +1172,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     }
                 }
 
-                // ── Anhang-Vorschau (nicht im Prototyp, sonst waere der
-                //    angehaengte Schnappschuss unsichtbar) ───────────────────
+                // ── Attachment preview (not in the prototype, otherwise the
+                //    attached snapshot would be invisible) ─────────────────────
                 pendingImage?.let { bmp ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1184,19 +1181,19 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Image(
-                            bmp.asImageBitmap(), "Anhang",
+                            bmp.asImageBitmap(), "Attachment",
                             Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
                             contentScale = ContentScale.Crop,
                         )
-                        Text("Bild angehängt", fontSize = 13.sp, fontFamily = Plex,
+                        Text("Image attached", fontSize = 13.sp, fontFamily = Plex,
                             color = Kat.textDim, modifier = Modifier.weight(1f))
                         RoundIconButton({ pendingImage = null }, size = 32.dp) {
-                            Icon(Icons.Filled.Close, "Entfernen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                            Icon(Icons.Filled.Close, "Remove", Modifier.size(16.dp), tint = Kat.textSubtle)
                         }
                     }
                 }
 
-                // ── Slash-Befehl-Vorschläge (nur beim Tippen des Namens) ────
+                // ── Slash command suggestions (only while typing the name) ──
                 val slashMatches = if (input.startsWith("/") && !input.contains(' '))
                     (SLASH_CMDS + promptCmds).filter { it.cmd.startsWith(input, ignoreCase = true) }.take(5)
                 else emptyList()
@@ -1211,7 +1208,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 Modifier.fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .tap {
-                                        // Argument-Befehle vorbereiten, argfreie direkt senden.
+                                        // Prepare argument commands, send arg-free ones directly.
                                         if (c.arg) input = c.cmd + " " else { input = c.cmd; send() }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 9.dp),
@@ -1228,8 +1225,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     }
                 }
 
-                // ── Eingabekarte: Textfeld oben, Steuerzeile unten (ein
-                //    abgerundeter Container statt Buttons nebeneinander) ───────
+                // ── Input card: text field on top, control row below (one
+                //    rounded container instead of buttons side by side) ────────
                 Hairline()
                 Column(
                     Modifier.fillMaxWidth().background(Kat.bg)
@@ -1259,13 +1256,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 inner()
                             },
                         )
-                        // Steuerzeile: + links, Mikrofon + Senden rechts.
+                        // Control row: + on the left, mic + send on the right.
                         Row(
                             Modifier.fillMaxWidth().padding(top = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RoundIconButton({ attachOpen = true }, enabled = !busy) {
-                                Icon(Icons.Filled.Add, "Anhängen", Modifier.size(20.dp), tint = Kat.textMuted)
+                                Icon(Icons.Filled.Add, "Attach", Modifier.size(20.dp), tint = Kat.textMuted)
                             }
                             Spacer(Modifier.weight(1f))
                             RoundIconButton(
@@ -1274,7 +1271,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             ) {
                                 Icon(
                                     if (transcribing) Icons.Filled.HourglassEmpty else Icons.Filled.Mic,
-                                    if (recording) "Aufnahme beenden" else "Sprechen",
+                                    if (recording) "Stop recording" else "Speak",
                                     Modifier.size(18.dp),
                                     tint = if (recording) Kat.onAccent else Kat.textMuted,
                                 )
@@ -1283,7 +1280,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             val canSend = (input.isNotBlank() || pendingImage != null) || !busy
                             fun sendOrSteer() {
                                 if (busy && input.isNotBlank()) {
-                                    // Steering: dem laufenden Turn reinrufen statt warten.
+                                    // Steering: call into the running turn instead of waiting.
                                     val t = input.trim(); input = ""
                                     current.messages.add(current.messages.size - 1,
                                         Msg(user = true, text = t))
@@ -1292,7 +1289,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                             ManagerSync.steer(prefs.serverUrl, prefs.user, prefs.pass,
                                                 prefs.instance, t)
                                         }
-                                        if (!ok) status = "Kein laufender Turn — bitte normal senden."
+                                        if (!ok) status = "No running turn — please send normally."
                                     }
                                 } else send()
                             }
@@ -1301,7 +1298,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 background = if (canSend) Kat.accent else Kat.tile,
                             ) {
                                 Icon(
-                                    Icons.AutoMirrored.Filled.Send, "Senden", Modifier.size(18.dp),
+                                    Icons.AutoMirrored.Filled.Send, "Send", Modifier.size(18.dp),
                                     tint = if (canSend) Kat.onAccent else Kat.textSubtle,
                                 )
                             }
@@ -1310,7 +1307,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 }
             }
 
-            // ── Ueberlaufmenue ──────────────────────────────────────────────
+            // ── Overflow menu ───────────────────────────────────────────────
             if (menuOpen) {
                 Box(Modifier.fillMaxSize().tap { menuOpen = false })
                 Column(
@@ -1327,7 +1324,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     if (current.mode == "local") {
                         val models = remember(menuOpen) { store.models() }
                         if (models.isEmpty()) Text(
-                            "Kein Modell geladen", Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            "No model loaded", Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                             fontSize = 12.5.sp, fontFamily = PlexMono, color = Kat.textMuted,
                         )
                         models.forEach { f ->
@@ -1336,8 +1333,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             }
                         }
                     } else {
-                        // Das Modell eines Server-Agenten setzt der Manager, nicht
-                        // die App — die Zeile zeigt es, schaltet aber nicht um.
+                        // A server agent's model is set by the manager, not the
+                        // app — the row shows it but doesn't switch it.
                         MenuModelRow(modelLabel, true, null)
                     }
                     Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
@@ -1351,7 +1348,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 }
             }
 
-            // ── Anhang-Blatt ────────────────────────────────────────────────
+            // ── Attachment sheet ────────────────────────────────────────────
             AnimatedVisibility(attachOpen, enter = fadeIn(), exit = fadeOut()) {
                 Box(Modifier.fillMaxSize().background(Kat.scrim).tap { attachOpen = false })
             }
@@ -1384,7 +1381,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 }
             }
 
-            // ── Vollbilder Tasks / Settings ─────────────────────────────────
+            // ── Full screens Tasks / Settings ───────────────────────────────
             AnimatedVisibility(
                 screen == "missions",
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
@@ -1401,10 +1398,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     onClose = { screen = null },
                     onStatus = { status = it },
                     onOpenChat = { instance ->
-                        // Der Manager fuehrt je Instanz EINEN Aufgaben-Verlauf
-                        // unter der festen id "task-<instanz>" (chat_log_append,
-                        // kind="task"). Dieselbe id lokal verwenden, damit der
-                        // Sync beide Seiten zusammenfuehrt statt zu doppeln.
+                        // The manager keeps ONE task history per instance under the
+                        // fixed id "task-<instance>" (chat_log_append, kind="task").
+                        // Use the same id locally, so the sync merges both sides
+                        // instead of duplicating.
                         val cid = "task-$instance"
                         if (conversations.none { it.id == cid }) {
                             conversations.add(0, Conversation(
@@ -1434,7 +1431,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     onDeleteModel = { f -> f.delete(); if (prefs.activeModel == f.name) { prefs.activeModel = ""; gemma.close() } },
                     onPickModel = { picker.launch(arrayOf("application/octet-stream", "*/*")) },
                     onDownload = { url, token ->
-                        DownloadService.start(context, url, token); status = "Download startet… (Hintergrund)"
+                        DownloadService.start(context, url, token); status = "Download starting… (background)"
                     },
                     onManageAgents = { showAgents = true },
                     onSync = { sync() },
@@ -1448,7 +1445,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 }
 
-// ── Chat-Bausteine ──────────────────────────────────────────────────────────
+// ── Chat building blocks ────────────────────────────────────────────────────
 
 @Composable
 private fun AgentChip(
@@ -1540,7 +1537,7 @@ private fun AttachTile(
     }
 }
 
-/** 28-dp-Kachel links neben der Agenten-Nachricht. */
+/** 28-dp tile to the left of the agent message. */
 @Composable
 private fun AgentAvatar(mode: String, size: androidx.compose.ui.unit.Dp = 28.dp) {
     Box(
@@ -1615,7 +1612,7 @@ fun Bubble(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text(if (show) "\u25BE" else "\u25B8", fontSize = 11.sp, color = Kat.textSubtle)
-                    Text(if (th.streaming) "Denken \u2026" else "Denken", fontSize = 11.5.sp,
+                    Text(if (th.streaming) "Thinking \u2026" else "Thinking", fontSize = 11.5.sp,
                         fontFamily = Plex, color = Kat.textSubtle)
                 }
                 if (show) SelectionContainer {
@@ -1633,12 +1630,12 @@ fun Bubble(
                     .widthIn(max = maxWidth)
                     .clip(shape)
                     .background(if (m.user) Kat.accent else Kat.surface)
-                    // Waehrend gesprochen wird, ist die ganze Blase die
-                    // Stopptaste — das 15-dp-Lautsprechersymbol trifft man
-                    // nicht, wenn man das Vorlesen schnell loswerden will.
-                    // Waehrend gesprochen wird: ganze Blase = Stopptaste. Sonst
-                    // KEIN Tap auf die Blase -> der Text bleibt markierbar
-                    // (Sprechen laeuft ohnehin ueber das Lautsprechersymbol unten).
+                    // While speaking, the whole bubble is the stop button — the
+                    // 15-dp speaker icon is hard to hit when you want to get rid
+                    // of the read-aloud quickly.
+                    // While speaking: whole bubble = stop button. Otherwise NO tap
+                    // on the bubble -> the text stays selectable (speaking runs via
+                    // the speaker icon below anyway).
                     .then(
                         if (speaking) Modifier.border(1.dp, Kat.accent, shape).tap { onStopSpeak() }
                         else if (m.user) Modifier
@@ -1656,7 +1653,7 @@ fun Bubble(
                         }
                         thumb?.let {
                             Image(
-                                it.asImageBitmap(), "Bild",
+                                it.asImageBitmap(), "Image",
                                 Modifier.heightIn(max = 180.dp).widthIn(max = maxWidth).clip(RoundedCornerShape(10.dp)),
                                 contentScale = ContentScale.Fit,
                             )
@@ -1675,9 +1672,9 @@ fun Bubble(
                     }
                 }
             }
-            // Der Prototyp setzt hier "Uhrzeit · Agent". Msg traegt keine
-            // Uhrzeit (und darf keine bekommen, sonst bricht der Chat-Sync),
-            // deshalb bleibt der Agentenname.
+            // The prototype puts "time · agent" here. Msg carries no time (and
+            // must not get one, otherwise the chat sync breaks), so the agent
+            // name stays.
             if (!m.user) Row(
                 Modifier.padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1696,7 +1693,7 @@ fun Bubble(
     }
 }
 
-// ── Schublade ───────────────────────────────────────────────────────────────
+// ── Drawer ──────────────────────────────────────────────────────────────────
 
 @Composable
 fun KatDrawer(
@@ -1711,8 +1708,8 @@ fun KatDrawer(
     onMissions: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    // Aus dem Paket statt aus BuildConfig: so steht dort immer die Version,
-    // die auch wirklich installiert ist — genau wie in den Einstellungen.
+    // From the package rather than BuildConfig: this way it always shows the
+    // version actually installed — just like in the settings.
     val ctx = LocalContext.current
     val appVersion = remember {
         try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
@@ -1740,8 +1737,8 @@ fun KatDrawer(
                     verticalAlignment = Alignment.Bottom,
                 ) {
                     Text("KatAgent", style = MaterialTheme.typography.titleLarge, color = Kat.text)
-                    // Kleiner und gedaempft: die Version soll ablesbar sein,
-                    // ohne dem Namen die Zeile streitig zu machen.
+                    // Smaller and muted: the version should be readable without
+                    // competing with the name for the line.
                     if (appVersion.isNotBlank()) Text(
                         appVersion, fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint,
                         modifier = Modifier.padding(bottom = 2.dp),
@@ -1787,7 +1784,7 @@ fun KatDrawer(
                         )
                     }
                     RoundIconButton({ onDelete(c) }, size = 32.dp) {
-                        Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                        Icon(Icons.Outlined.DeleteOutline, "Delete", Modifier.size(16.dp), tint = Kat.textSubtle)
                     }
                 }
             }
@@ -1795,7 +1792,7 @@ fun KatDrawer(
         Hairline()
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
-            DrawerAction("Missionen", Icons.Outlined.Flag, onMissions)
+            DrawerAction("Missions", Icons.Outlined.Flag, onMissions)
             DrawerAction("Settings", Icons.Outlined.Settings, onSettings)
         }
     }
@@ -1821,7 +1818,7 @@ private fun DrawerAction(
     }
 }
 
-/** Kopf der beiden Vollbilder: Zurueck-Pfeil + Titel + Haarlinie. */
+/** Header of the two full screens: back arrow + title + hairline. */
 @Composable
 private fun ScreenHeader(title: String, onClose: () -> Unit) {
     Column {
@@ -1831,7 +1828,7 @@ private fun ScreenHeader(title: String, onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RoundIconButton(onClose) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück", Modifier.size(20.dp), tint = Kat.textDim)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.size(20.dp), tint = Kat.textDim)
             }
             Text(
                 title, Modifier.weight(1f).padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
@@ -1858,7 +1855,7 @@ private fun MissionsScreen(
     LaunchedEffect(reload) {
         withContext(Dispatchers.IO) { ManagerSync.listMissions(prefs.serverUrl, prefs.user, prefs.pass) }
             ?.let { missions = it }
-            ?: onStatus("⚠️ Missionen nicht ladbar: ${ManagerSync.lastStatus}")
+            ?: onStatus("⚠️ Could not load missions: ${ManagerSync.lastStatus}")
     }
     LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
 
@@ -1886,8 +1883,8 @@ private fun MissionsScreen(
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f))
                 Text(when (m.status) {
-                    "paused" -> "pausiert"; "done" -> "fertig"; "failed" -> "gescheitert"
-                    else -> "aktiv"
+                    "paused" -> "paused"; "done" -> "done"; "failed" -> "failed"
+                    else -> "active"
                 }, fontSize = 11.sp, fontFamily = Plex,
                     color = if (m.status == "active") Kat.accentText else Kat.textFaint)
             }
@@ -1902,7 +1899,7 @@ private fun MissionsScreen(
                 Text("$done/$total", fontSize = 11.5.sp, fontFamily = Plex, color = Kat.textFaint)
             }
             if (!closed) cur?.let {
-                Text("Schritt ${it.n}: ${it.text}", fontSize = 12.5.sp,
+                Text("Step ${it.n}: ${it.text}", fontSize = 12.5.sp,
                     fontFamily = Plex, color = Kat.textDim,
                     maxLines = if (mExpanded == m.id) 4 else 1,
                     overflow = TextOverflow.Ellipsis)
@@ -1930,12 +1927,12 @@ private fun MissionsScreen(
                         }
                     }
                     if (m.status == "active")
-                        Text("Pausieren", fontSize = 12.5.sp, fontFamily = Plex,
+                        Text("Pause", fontSize = 12.5.sp, fontFamily = Plex,
                             color = Kat.accentText, modifier = Modifier.tap { act("pause") })
                     if (m.status == "paused")
-                        Text("Fortsetzen", fontSize = 12.5.sp, fontFamily = Plex,
+                        Text("Resume", fontSize = 12.5.sp, fontFamily = Plex,
                             color = Kat.accentText, modifier = Modifier.tap { act("resume") })
-                    Text("Abbrechen", fontSize = 12.5.sp, fontFamily = Plex,
+                    Text("Cancel", fontSize = 12.5.sp, fontFamily = Plex,
                         color = Kat.textFaint, modifier = Modifier.tap { act("abort") })
                 }
             }
@@ -1943,7 +1940,7 @@ private fun MissionsScreen(
     }
 
     Column(Modifier.fillMaxSize().background(Kat.bg)) {
-        ScreenHeader("Missionen", onClose)
+        ScreenHeader("Missions", onClose)
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -1952,13 +1949,13 @@ private fun MissionsScreen(
             val open = missions.filter { it.status == "active" || it.status == "paused" }
             val closed = missions.filter { it.status == "done" || it.status == "failed" }.takeLast(5)
             if (missions.isEmpty()) Text(
-                "Keine Missionen. Der Orchestrator legt sie bei mehrstufigen Aufträgen " +
-                "selbst an — z. B. per Chat: \"… — als Mission\".",
+                "No missions. The orchestrator creates them itself for multi-step jobs " +
+                "— e.g. via chat: \"… — as a mission\".",
                 fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
             )
             open.forEach { MissionCard(it) }
             if (closed.isNotEmpty()) {
-                Kicker("Zuletzt abgeschlossen")
+                Kicker("Recently completed")
                 closed.reversed().forEach { MissionCard(it) }
             }
         }
@@ -1988,7 +1985,7 @@ fun TasksScreen(
         loading = true
         val j = withContext(Dispatchers.IO) { ManagerSync.listTasks(prefs.serverUrl, prefs.user, prefs.pass) }
         loading = false
-        if (j == null) onStatus("⚠️ Aufgaben nicht ladbar: ${ManagerSync.lastStatus}")
+        if (j == null) onStatus("⚠️ Could not load tasks: ${ManagerSync.lastStatus}")
         else { tasks = ManagerSync.parseTasks(j); onStatus("") }
     }
     LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
@@ -2000,12 +1997,12 @@ fun TasksScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // Der Prototyp zeigt nur die Liste. Ohne dieses Feld liesse sich in
-            // der App aber keine Aufgabe mehr anlegen (nur noch per /task).
+            // The prototype only shows the list. But without this field no task
+            // could be created in the app anymore (only via /task).
             KatCard {
-                Kicker("Neue Aufgabe")
+                Kicker("New task")
                 if (targets.isEmpty()) {
-                    Text("Kein Server-Agent verfügbar.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
+                    Text("No server agent available.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
                 } else {
                     Row(
                         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -2017,14 +2014,14 @@ fun TasksScreen(
                             }
                         }
                     }
-                    KatField(message, { message = it }, placeholder = "Auftrag")
-                    KatField(schedule, { schedule = it }, placeholder = "Zeitplan (leer = einmalig)", mono = true)
+                    KatField(message, { message = it }, placeholder = "Task")
+                    KatField(schedule, { schedule = it }, placeholder = "Schedule (empty = one-off)", mono = true)
                     FilledPill(
-                        if (schedule.isBlank()) "Im Hintergrund starten" else "Zeitplan anlegen",
+                        if (schedule.isBlank()) "Start in background" else "Create schedule",
                         {
                             val m = message.trim()
                             if (m.isNotBlank() && target.isNotBlank()) {
-                                onStatus("Aufgabe wird angelegt…")
+                                onStatus("Creating task…")
                                 scope.launch {
                                     val r = withContext(Dispatchers.IO) {
                                         ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, target, m, schedule.trim())
@@ -2042,7 +2039,7 @@ fun TasksScreen(
             }
 
             if (tasks.isEmpty() && !loading) Text(
-                "Noch keine Aufgaben.", Modifier.padding(top = 4.dp),
+                "No tasks yet.", Modifier.padding(top = 4.dp),
                 fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
             )
             tasks.forEach { t ->
@@ -2053,9 +2050,9 @@ fun TasksScreen(
                         .clip(RoundedCornerShape(14.dp))
                         .background(Kat.surface)
                         .border(1.dp, Kat.hairlineStrong, RoundedCornerShape(14.dp))
-                        // Erster Tipp klappt auf, zweiter springt in den
-                        // Aufgaben-Chat der Instanz — dort laesst sich das
-                        // Ergebnis direkt weiterverhandeln.
+                        // First tap expands, the second jumps into the instance's
+                        // task chat — where the result can be discussed further
+                        // directly.
                         .tap { if (expanded == t.id) onOpenChat(t.instance) else expanded = t.id }
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                 ) {
@@ -2063,8 +2060,8 @@ fun TasksScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // Anzeige, kein Schalter: der Manager kennt kein
-                        // "abhaken", nur den Status des Laufs.
+                        // Display, not a toggle: the manager has no "check off",
+                        // only the status of the run.
                         Box(
                             Modifier.size(24.dp).clip(CircleShape)
                                 .background(if (done) Kat.green else Color.Transparent)
@@ -2081,7 +2078,7 @@ fun TasksScreen(
                                 maxLines = 2, overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                t.instance + " · " + t.schedule.ifBlank { "einmalig" },
+                                t.instance + " · " + t.schedule.ifBlank { "one-off" },
                                 Modifier.padding(top = 3.dp),
                                 fontSize = 12.sp, fontFamily = PlexMono, color = Kat.agent(t.instance),
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -2101,12 +2098,12 @@ fun TasksScreen(
                                 reload++
                             }
                         }, size = 32.dp) {
-                            Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(16.dp), tint = Kat.textSubtle)
+                            Icon(Icons.Outlined.DeleteOutline, "Delete", Modifier.size(16.dp), tint = Kat.textSubtle)
                         }
                     }
                     if (expanded == t.id) {
-                        // Oben ist der Auftrag auf zwei Zeilen gekuerzt —
-                        // aufgeklappt gehoert er vollstaendig hin.
+                        // Above, the task is truncated to two lines — expanded it
+                        // belongs in full.
                         if (t.message.length > 90) Text(
                             t.message, Modifier.padding(top = 10.dp),
                             fontSize = 13.sp, fontFamily = Plex, color = Kat.textSubtle,
@@ -2123,7 +2120,7 @@ fun TasksScreen(
                             Icon(Icons.Outlined.ChatBubbleOutline, null,
                                 Modifier.size(14.dp), tint = Kat.accentText)
                             Text(
-                                "Nochmal tippen: im Chat mit @${t.instance} weiterreden",
+                                "Tap again: continue in the chat with @${t.instance}",
                                 fontSize = 12.sp, fontFamily = Plex, color = Kat.accentText,
                             )
                         }
@@ -2134,7 +2131,7 @@ fun TasksScreen(
     }
 }
 
-// ── Einstellungen ───────────────────────────────────────────────────────────
+// ── Settings ────────────────────────────────────────────────────────────────
 
 @Composable
 fun SettingsScreen(
@@ -2169,9 +2166,9 @@ fun SettingsScreen(
     var modelUrl by remember { mutableStateOf(prefs.modelUrl) }
     var models by remember { mutableStateOf(store.models()) }
     var copied by remember { mutableStateOf(false) }
-    // Der Prototyp hat keinen Speichern-Knopf: die Felder schreiben direkt.
+    // The prototype has no save button: the fields write directly.
     LaunchedEffect(copied) { if (copied) { delay(2000); copied = false } }
-    // Nach einem fertigen Download taucht das Modell in der Liste auf.
+    // After a finished download the model appears in the list.
     LaunchedEffect(dl) { models = store.models() }
 
     Column(Modifier.fillMaxSize().background(Kat.bg)) {
@@ -2180,12 +2177,12 @@ fun SettingsScreen(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            // ── Modelle (On-Device) ────────────────────────────────────────
+            // ── Models (on-device) ─────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Kicker("Modelle (On-Device)", Modifier.padding(horizontal = 4.dp))
+                Kicker("Models (on-device)", Modifier.padding(horizontal = 4.dp))
                 KatCard(padding = PaddingValues(4.dp), spacing = 0.dp) {
                     if (models.isEmpty()) Text(
-                        "Noch kein Modell geladen.", Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                        "No model loaded yet.", Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
                         fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
                     )
                     models.forEach { f ->
@@ -2212,7 +2209,7 @@ fun SettingsScreen(
                                 )
                             }
                             RoundIconButton({ onDeleteModel(f); models = store.models() }, size = 36.dp) {
-                                Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(17.dp), tint = Kat.textSubtle)
+                                Icon(Icons.Outlined.DeleteOutline, "Delete", Modifier.size(17.dp), tint = Kat.textSubtle)
                             }
                         }
                     }
@@ -2239,12 +2236,12 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Server-Verbindung ──────────────────────────────────────────
+            // ── Server connection ──────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Kicker("Server-Verbindung", Modifier.padding(horizontal = 4.dp))
+                Kicker("Server connection", Modifier.padding(horizontal = 4.dp))
                 KatCard {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LabeledField("Server-URL", url, { url = it; prefs.serverUrl = it.trim() },
+                        LabeledField("Server URL", url, { url = it; prefs.serverUrl = it.trim() },
                             Modifier.weight(1f), mono = true)
                         StatusBadge(
                             if (online) "connected" else "offline",
@@ -2255,12 +2252,12 @@ fun SettingsScreen(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LabeledField("Benutzer", user, { user = it; prefs.user = it.trim() }, Modifier.weight(1f))
-                        LabeledField("Passwort", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)
+                        LabeledField("User", user, { user = it; prefs.user = it.trim() }, Modifier.weight(1f))
+                        LabeledField("Password", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)
                     }
-                    LabeledField("Aktive Instanz", instance, { instance = it; prefs.instance = it.trim() }, mono = true)
+                    LabeledField("Active instance", instance, { instance = it; prefs.instance = it.trim() }, mono = true)
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("Assist-Taste \u00f6ffnet Instanz", fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint)
+                        Text("Assist button opens instance", fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint)
                         var assistMenu by remember { mutableStateOf(false) }
                         Box {
                             Row(
@@ -2270,7 +2267,7 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    assistInstance.ifBlank { "\u2014 aktive Instanz \u2014" },
+                                    assistInstance.ifBlank { "\u2014 active instance \u2014" },
                                     fontSize = 13.sp, fontFamily = PlexMono,
                                     color = if (assistInstance.isBlank()) Kat.textFaint else Kat.textStrong,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
@@ -2279,7 +2276,7 @@ fun SettingsScreen(
                             }
                             DropdownMenu(expanded = assistMenu, onDismissRequest = { assistMenu = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("\u2014 aktive Instanz \u2014", fontFamily = Plex, fontSize = 13.sp) },
+                                    text = { Text("\u2014 active instance \u2014", fontFamily = Plex, fontSize = 13.sp) },
                                     onClick = { assistInstance = ""; prefs.assistInstance = ""; assistMenu = false },
                                 )
                                 instances.forEach { inst ->
@@ -2292,13 +2289,13 @@ fun SettingsScreen(
                         }
                     }
                     FilledPill(
-                        "Server-Agenten verwalten", onManageAgents, Modifier.fillMaxWidth(),
+                        "Manage server agents", onManageAgents, Modifier.fillMaxWidth(),
                         trailing = {
                             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(15.dp), tint = Kat.onAccent)
                         },
                     )
                     Text(
-                        "Alle Agenten auflisten, aktiven wählen, anlegen, starten/stoppen/löschen.",
+                        "List all agents, select the active one, create, start/stop/delete.",
                         fontSize = 11.5.sp, lineHeight = 17.sp, fontFamily = Plex, color = Kat.textSubtle,
                     )
                     Hairline(color = Kat.hairline)
@@ -2323,20 +2320,20 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Diagnose ────────────────────────────────────────────────────
+            // ── Diagnostics ─────────────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Kicker("Diagnose", Modifier.padding(horizontal = 4.dp))
+                Kicker("Diagnostics", Modifier.padding(horizontal = 4.dp))
                 var crash by remember { mutableStateOf(
                     runCatching { java.io.File(ctx.filesDir, "crash.log").takeIf { it.exists() }?.readText() }.getOrNull() ?: "") }
                 KatCard(padding = PaddingValues(12.dp), spacing = 8.dp) {
                     if (crash.isBlank()) {
-                        Text("Kein Absturz protokolliert.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
+                        Text("No crash logged.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
                     } else {
                         Text(crash.take(4000), fontSize = 11.sp, fontFamily = PlexMono,
                             color = Kat.textStrong, maxLines = 16, overflow = TextOverflow.Ellipsis)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilledPill("Kopieren", { clipboard.setText(AnnotatedString(crash)) }, height = 36.dp)
-                            FilledPill("Löschen", {
+                            FilledPill("Copy", { clipboard.setText(AnnotatedString(crash)) }, height = 36.dp)
+                            FilledPill("Delete", {
                                 runCatching { java.io.File(ctx.filesDir, "crash.log").delete() }; crash = ""
                             }, height = 36.dp)
                         }
@@ -2355,10 +2352,10 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Web-Zugriff", fontSize = 14.5.sp, fontFamily = Plex,
+                            Text("Web access", fontSize = 14.5.sp, fontFamily = Plex,
                                 fontWeight = FontWeight.Medium, color = Kat.text)
                             Text(
-                                "Suchergebnisse als Kontext für das Gerätemodell", Modifier.padding(top = 2.dp),
+                                "Search results as context for the device model", Modifier.padding(top = 2.dp),
                                 fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textFaint,
                             )
                         }
@@ -2367,23 +2364,23 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Modell herunterladen ───────────────────────────────────────
+            // ── Download model ─────────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Kicker("Modell herunterladen", Modifier.padding(horizontal = 4.dp))
+                Kicker("Download model", Modifier.padding(horizontal = 4.dp))
                 KatCard {
                     LabeledField("HuggingFace-Token", token, { token = it; prefs.hfToken = it.trim() },
                         mono = true, password = true)
-                    LabeledField("Modell-URL (.litertlm)", modelUrl, { modelUrl = it; prefs.modelUrl = it.trim() },
+                    LabeledField("Model URL (.litertlm)", modelUrl, { modelUrl = it; prefs.modelUrl = it.trim() },
                         mono = true, fontSize = 12f)
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                "Modell-Katalog (litert-community)", Modifier.weight(1f),
+                                "Model catalog (litert-community)", Modifier.weight(1f),
                                 fontSize = 12.sp, fontFamily = Plex, color = Kat.textSubtle,
                             )
                             Text(
-                                if (copied) "Link kopiert ✓" else "Link zum Katalog kopieren",
+                                if (copied) "Link copied ✓" else "Copy catalog link",
                                 Modifier.tap {
                                     clipboard.setText(AnnotatedString("https://huggingface.co/models?library=litert-lm"))
                                     copied = true
@@ -2415,7 +2412,7 @@ fun SettingsScreen(
                                     }
                                     val (tbg, tfg) = when (p.tag) {
                                         "multimodal" -> Color(0x1F7FB0E8) to Kat.accentText
-                                        "klein" -> Color(0x1F4CC38A) to Kat.green
+                                        "small" -> Color(0x1F4CC38A) to Kat.green
                                         else -> Kat.hairline to Kat.textMuted
                                     }
                                     MiniTag(p.tag, tbg, tfg)
@@ -2426,13 +2423,13 @@ fun SettingsScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         FilledPill(
-                            "Herunterladen",
+                            "Download",
                             { onDownload(modelUrl.trim(), token.trim()) },
                             Modifier.weight(1f),
                             enabled = modelUrl.isNotBlank(),
                             leading = { Icon(Icons.Outlined.Download, null, Modifier.size(15.dp), tint = Kat.onAccent) },
                         )
-                        OutlinePill("Datei wählen", onPickModel, Modifier.weight(1f))
+                        OutlinePill("Choose file", onPickModel, Modifier.weight(1f))
                     }
                 }
             }
@@ -2447,7 +2444,7 @@ fun SettingsScreen(
     }
 }
 
-// ── Server-Agenten (im Prototyp nicht gezeichnet — unveraendert uebernommen) ─
+// ── Server agents (not drawn in the prototype — carried over unchanged) ──────
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -2469,7 +2466,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
             loading = true
             val j = withContext(Dispatchers.IO) { ManagerSync.listInstances(prefs.serverUrl, prefs.user, prefs.pass) }
             loading = false
-            if (j == null) { onStatus("⚠️ Server nicht erreichbar: ${ManagerSync.lastStatus}"); return@launch }
+            if (j == null) { onStatus("⚠️ Server unreachable: ${ManagerSync.lastStatus}"); return@launch }
             instances = ManagerSync.parseInstances(j)
         }
     }
@@ -2482,23 +2479,23 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Kat.surface,
-        confirmButton = { TextButton(onDismiss) { Text("Schließen") } },
-        dismissButton = { TextButton({ refresh() }, enabled = !loading) { Text("Aktualisieren") } },
-        title = { Text("Server-Agenten") },
+        confirmButton = { TextButton(onDismiss) { Text("Close") } },
+        dismissButton = { TextButton({ refresh() }, enabled = !loading) { Text("Refresh") } },
+        title = { Text("Server agents") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!loading && instances.isEmpty()) Text("Keine Instanzen gefunden.", style = MaterialTheme.typography.bodySmall)
+                if (!loading && instances.isEmpty()) Text("No instances found.", style = MaterialTheme.typography.bodySmall)
                 instances.forEach { inst ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(active == inst.name, {
-                            active = inst.name; prefs.instance = inst.name; onStatus("Aktiv: ${inst.name}")
+                            active = inst.name; prefs.instance = inst.name; onStatus("Active: ${inst.name}")
                         })
                         Column(Modifier.weight(1f).padding(end = 4.dp)) {
                             Text(inst.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis)
                             val sub = buildString {
-                                append(if (inst.running) "● läuft" else "○ aus")
+                                append(if (inst.running) "● running" else "○ off")
                                 if (inst.template.isNotEmpty()) append(" · ${inst.template}")
                             }
                             Text(sub, style = MaterialTheme.typography.labelMedium,
@@ -2538,13 +2535,13 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                                     if (active == inst.name) { active = ""; prefs.instance = "" }
                                     refresh()
                                 }
-                            }) { Icon(Icons.Outlined.DeleteOutline, "Löschen", Modifier.size(20.dp)) }
+                            }) { Icon(Icons.Outlined.DeleteOutline, "Delete", Modifier.size(20.dp)) }
                         }
                     }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Kat.hairline)
-                Text("Neuen Agenten anlegen", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(name, { name = it }, label = { Text("Name (z. B. gemma4)") },
+                Text("Create new agent", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(name, { name = it }, label = { Text("Name (e.g. gemma4)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth())
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("openrouter", "prime", "pi", "claude").forEach { tpl ->
@@ -2552,13 +2549,13 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                     }
                 }
                 if (template != "claude") {
-                    OutlinedTextField(model, { model = it }, label = { Text("Modell") },
+                    OutlinedTextField(model, { model = it }, label = { Text("Model") },
                         singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
                 if (personas.isNotEmpty()) {
-                    Text("Persona (System-Prompt)", style = MaterialTheme.typography.labelMedium)
+                    Text("Persona (system prompt)", style = MaterialTheme.typography.labelMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(persona == "", { persona = "" }, { Text("Standard", maxLines = 1) })
+                        FilterChip(persona == "", { persona = "" }, { Text("Default", maxLines = 1) })
                         personas.forEach { p ->
                             FilterChip(persona == p.name, { persona = p.name }, { Text(p.name, maxLines = 1) })
                         }
@@ -2568,7 +2565,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                     onClick = {
                         val n = name.trim()
                         if (n.isBlank()) return@Button
-                        busyName = n; onStatus("Agent '$n' wird angelegt…")
+                        busyName = n; onStatus("Creating agent '$n'…")
                         scope.launch {
                             val cfg = JSONObject().put("TRANSPORT", "web")
                             when (template) {
@@ -2583,7 +2580,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                         }
                     },
                     enabled = name.isNotBlank() && busyName.isEmpty(),
-                ) { Text("Anlegen & starten") }
+                ) { Text("Create & start") }
             }
         }
     )
@@ -2591,7 +2588,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
 
 private fun copyModel(context: Context, dir: File, uri: Uri): String? {
     return try {
-        val name = "modell-gewaehlt.litertlm"
+        val name = "model-selected.litertlm"
         val out = File(dir.apply { mkdirs() }, name)
         context.contentResolver.openInputStream(uri)?.use { inp -> out.outputStream().use { o -> inp.copyTo(o, 1 shl 20) } }
         out.absolutePath

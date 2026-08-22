@@ -15,12 +15,12 @@ docker run --rm \
   -v katfs_node_target:/work/target \
   rust:latest bash -eux -c '
     cargo build --release
-    # Aus dem gecachten Volume herauskopieren, damit das Ergebnis auf dem Host
-    # liegt und nicht im Volume verschwindet.
+    # Copy out of the cached volume so the result sits on the host and does
+    # not disappear into the volume.
     mkdir -p /work/.out
     cp target/release/katfs-node /work/.out/katfs-node
     chmod 0755 /work/.out/katfs-node
-    # Sonst gehoert das Ergebnis root und der Host kann es nicht wegbewegen.
+    # Otherwise the result belongs to root and the host cannot move it.
     chown -R '"$(id -u)":"$(id -g)"' /work/.out
   '
 

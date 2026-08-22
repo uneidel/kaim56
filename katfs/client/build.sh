@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Baut katfs-share fuer Linux in Docker (kein lokales Rust noetig).
+# Builds katfs-share for Linux in Docker (no local Rust needed).
 # Output: ../dist/katfs-share
 #
-# Fuer macOS gibt es von hier aus kein Cross-Compile (Apple-SDK fehlt) — dort
-# auf dem Rechner selbst bauen:
+# For macOS there is no cross-compile from here (Apple SDK missing) — there
+# build on the machine itself:
 #   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 #   cd client && cargo build --release && ./target/release/katfs-share ...
 set -euo pipefail

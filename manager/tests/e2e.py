@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-End- und Unit-Tests fuer kAIm56 (Manager + openrouter-Agent).
+"""End-to-end and unit tests for kAIm56 (manager + openrouter agent).
 
-Stdlib-only (unittest), passend zur Philosophie des Projekts — keine Test-
-Dependency. Drei Stufen, je nach Umgebung:
+Stdlib-only (unittest), in line with the project's philosophy — no test
+dependency. Three tiers, depending on the environment:
 
-  * OFFLINE  — Agent-/Manager-Funktionen direkt (Import), ohne VM, ohne Netz.
-               Laufen IMMER.
-  * HTTP     — gegen den laufenden Manager auf 127.0.0.1:8700. Werden
-               uebersprungen, wenn der Manager nicht erreichbar ist.
-  * LIVE     — Roundtrip zu einer laufenden Agent-VM (Orchestrator). Nur der
-               kostenlose /goal-Pfad (kein Modellaufruf). Uebersprungen, wenn
-               die Instanz nicht laeuft.
+  * OFFLINE  — agent/manager functions directly (import), no VM, no network.
+               Always run.
+  * HTTP     — against the running manager on 127.0.0.1:8700. Skipped when
+               the manager is not reachable.
+  * LIVE     — round-trip to a running agent VM (orchestrator). Only the free
+               /goal path (no model call). Skipped when the instance is not
+               running.
 
-Aufruf:  python3 tests/e2e.py            (oder ./run-tests.sh)
-Nur eine Stufe:  python3 tests/e2e.py AgentLogic
+Run:  python3 tests/e2e.py            (or ./run-tests.sh)
+One tier only:  python3 tests/e2e.py AgentLogic
 """
 import importlib.util
 import io
@@ -26,20 +26,20 @@ import urllib.error
 import urllib.request
 import zipfile
 
-# --- Pfade zu den zu testenden Modulen --------------------------------------
+# --- paths to the modules under test ----------------------------------------
 FC_DIR = os.environ.get("FC_DIR", "/home/ulrich/firecracker")
 AGENT_PATH = os.environ.get("AGENT_PATH", "/home/ulrich/openrouter-agent/agent.py")
 MANAGER_PATH = os.path.join(FC_DIR, "manager.py")
 MANAGER_URL = os.environ.get("MANAGER_URL", "http://127.0.0.1:8700")
 
-# manager.py importiert das Nachbarmodul `chatui` -> dessen Verzeichnis muss auf
-# den Suchpfad, sonst schlaegt der Import in den Manager-Unit-Tests fehl.
+# manager.py imports the sibling module `chatui` -> its directory must be on the
+# search path, otherwise the import fails in the manager unit tests.
 if FC_DIR not in sys.path:
     sys.path.insert(0, FC_DIR)
 
 
 def _load(name, path, env=None):
-    """Ein Modul aus einer Datei laden; optional vorher os.environ setzen."""
+    """Load a module from a file; optionally set os.environ first."""
     if env:
         os.environ.update(env)
     spec = importlib.util.spec_from_file_location(name, path)
@@ -49,7 +49,7 @@ def _load(name, path, env=None):
 
 
 def _http(path, method="GET", body=None, timeout=8):
-    """(status, text) gegen den Manager. Wirft bei Verbindungsfehler."""
+    """(status, text) against the manager. Raises on a connection error."""
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(MANAGER_URL + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"})
@@ -95,11 +95,11 @@ class AgentLogic(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(prefix="e2e-agent-")
         cls.a = _load("agent_e2e", AGENT_PATH,
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
-        cls.a.report_usage = lambda *a, **k: None   # kein Netz zum Manager
+        cls.a.report_usage = lambda *a, **k: None   # no network to the manager
 
     def test_llama_tool_json_500_falls_back_to_no_tools(self):
-        """llama.cpp 500 wegen kaputtem Tool-Call-JSON -> Runde ohne Tools
-        wiederholen (Text-Antwort) statt den Turn zu verlieren."""
+        """llama.cpp 500 due to broken tool-call JSON -> retry the round without
+        tools (text reply) instead of losing the turn."""
         import io, urllib.error
         a = self.a
         calls = []
@@ -126,18 +126,18 @@ class AgentLogic(unittest.TestCase):
                                    toks.append)
         finally:
             (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
-        self.assertEqual(calls, ["tools", "notools"])     # erst mit, dann ohne Tools
-        self.assertIn("ok", "".join(toks))                # Text-Antwort kam durch
+        self.assertEqual(calls, ["tools", "notools"])     # first with, then without tools
+        self.assertIn("ok", "".join(toks))                # text reply came through
         self.assertEqual(msg["content"], "ok")
 
     def test_reasoning_content_streamed(self):
-        """llama.cpp/Qwen3 sendet Denken als reasoning_content — muss gestreamt
-        werden; content bleibt die eigentliche Antwort."""
+        """llama.cpp/Qwen3 sends thinking as reasoning_content — must be streamed;
+        content stays the actual reply."""
         a = self.a
         lines = [
             b'data: {"choices":[{"delta":{"role":"assistant","content":null}}]}\n',
-            b'data: {"choices":[{"delta":{"reasoning_content":"denke nach"}}]}\n',
-            b'data: {"choices":[{"delta":{"content":"Hallo"}}]}\n',
+            b'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n',
             b'data: [DONE]\n',
         ]
         class FakeResp:
@@ -153,15 +153,15 @@ class AgentLogic(unittest.TestCase):
         finally:
             (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
         out = "".join(toks)
-        self.assertIn("denke nach", out)          # reasoning_content nicht verworfen
-        self.assertIn("Hallo", out)               # content gestreamt
-        self.assertEqual(msg["content"], "Hallo")
+        self.assertIn("thinking", out)            # reasoning_content not dropped
+        self.assertIn("Hello", out)               # content streamed
+        self.assertEqual(msg["content"], "Hello")
 
     def test_reasoning_only_no_empty_reply(self):
-        """Nur Denken, kein content -> Fallback auf das Denken statt leerer Antwort."""
+        """Thinking only, no content -> fall back to the thinking instead of an empty reply."""
         a = self.a
         lines = [
-            b'data: {"choices":[{"delta":{"reasoning_content":"nur gedacht"}}]}\n',
+            b'data: {"choices":[{"delta":{"reasoning_content":"only thought"}}]}\n',
             b'data: [DONE]\n',
         ]
         class FakeResp:
@@ -175,26 +175,26 @@ class AgentLogic(unittest.TestCase):
             msg = a.or_chat_stream([{"role": "user", "content": "hi"}], None, lambda t: None)
         finally:
             (a.urllib.request.urlopen, a._llm_headers, a._llm_url) = saved
-        self.assertEqual(msg["content"], "nur gedacht")   # kein None -> kein _(empty reply)_
+        self.assertEqual(msg["content"], "only thought")  # no None -> no _(empty reply)_
 
     def test_steps_unlimited(self):
-        """/steps akzeptiert Zahl 1..x und 'unlimited' (0 = unbegrenzt)."""
+        """/steps accepts a number 1..x and 'unlimited' (0 = unlimited)."""
         import itertools
         a = self.a; saved = a.MAX_STEPS
         try:
             a._set_steps("/steps 5"); self.assertEqual(a.MAX_STEPS, 5)
             self.assertEqual(list(a._step_iter()), [0, 1, 2, 3, 4])
-            a._set_steps("/steps 999"); self.assertEqual(a.MAX_STEPS, 999)   # kein 60-Cap mehr
+            a._set_steps("/steps 999"); self.assertEqual(a.MAX_STEPS, 999)   # no more 60-cap
             r = a._set_steps("/steps unlimited")
             self.assertLessEqual(a.MAX_STEPS, 0); self.assertIn("unlimited", r)
-            self.assertIsInstance(a._step_iter(), itertools.count)           # unbegrenzt
+            self.assertIsInstance(a._step_iter(), itertools.count)           # unlimited
         finally:
             a.MAX_STEPS = saved
 
     def test_tool_heartbeat_keeps_stream_alive(self):
-        """Waehrend eines langsamen Tools muss der Stream ein sichtbares Tool-
-        Status-Token (🔧) und periodische Heartbeats (·) senden, sonst kappt ein
-        Idle-Timeout die Verbindung mitten im Satz (langsame lokale Modelle)."""
+        """During a slow tool the stream must send a visible tool-status token
+        (🔧) and periodic heartbeats (·), otherwise an idle timeout cuts the
+        connection mid-sentence (slow local models)."""
         import time as _t
         a = self.a
         toks = []; calls = {"n": 0}
@@ -218,18 +218,18 @@ class AgentLogic(unittest.TestCase):
         out = "".join(toks)
         self.assertIn("\U0001f527", out)   # Tool-Status
         self.assertIn("\u00b7", out)        # Heartbeat waehrend Tool-Lauf
-        self.assertIn("done", out)           # finale Antwort danach
+        self.assertIn("done", out)           # final reply afterwards
 
     # --- Backend-Auswahl (Kernstueck orcarouter/llama/openrouter) -----------
     def _select(self, env):
-        """Den Backend-Auswahlblock aus agent.py mit env ausfuehren und die
-        entstehenden Variablen zurueckgeben (isoliert, ohne Re-Import)."""
+        """Run the backend-selection block from agent.py with env and return
+        the resulting variables (isolated, without re-import)."""
         src = open(AGENT_PATH).read()
         block = src[src.index("LLAMA_ENDPOINT = os.environ"):src.index("WORKDIR = os.environ")]
         g = {"os": type("O", (), {"environ": dict(env)})(),
              "OR_URL": "https://openrouter.ai/api/v1/chat/completions",
              "OR_MODEL": env.get("OPENROUTER_MODEL", "openai/gpt-4o")}
-        # Der Block ruft os.environ.get(...) -> wir brauchen ein echtes Mapping.
+        # The block calls os.environ.get(...) -> we need a real mapping.
         g["os"].environ = dict(env)
         exec(block, g)
         return g
@@ -272,7 +272,7 @@ class AgentLogic(unittest.TestCase):
         self.assertEqual(self.a._finalize_output("bash", "kurz"), "kurz")
 
     def test_offload_read_missing(self):
-        self.assertIn("nicht gefunden", self.a.t_offload_read(id="gibtsnicht"))
+        self.assertIn("not found", self.a.t_offload_read(id="gibtsnicht"))
 
     def test_offload_read_always_enabled(self):
         old = self.a._TOOL_ALLOW
@@ -298,7 +298,7 @@ class AgentLogic(unittest.TestCase):
         self.assertTrue(allow)
 
     def test_hitl_default_off(self):
-        self.assertFalse(self.a.HITL)   # opt-in, sonst blockiert es nichts
+        self.assertFalse(self.a.HITL)   # opt-in, otherwise it blocks nothing
 
     def test_notify_tool_registered(self):
         self.assertIn("notify", self.a.BUILTIN)
@@ -308,13 +308,13 @@ class AgentLogic(unittest.TestCase):
         a = self.a
         old = (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET, a.LLM_BACKEND, a.OR_KEY)
         try:
-            self.assertIn("Modell:", a._set_model("/model"))
+            self.assertIn("Model:", a._set_model("/model"))
             a._set_model("/model orcarouter:foo/bar")
             self.assertEqual(a.OR_MODEL, "foo/bar")
             self.assertIn("orcarouter.ai", a.OR_URL)
             self.assertEqual(a.LLM_KEY_SECRET, "ORCAROUTER_API_KEY")
-            a._set_model("/model nur-modell-id")          # ohne Provider: nur Modell
-            self.assertEqual(a.OR_MODEL, "nur-modell-id")
+            a._set_model("/model only-model-id")           # without provider: model only
+            self.assertEqual(a.OR_MODEL, "only-model-id")
             self.assertIn("orcarouter.ai", a.OR_URL)       # Backend unveraendert
         finally:
             (a.OR_MODEL, a.OR_URL, a.LLM_NAME, a.LLM_KEY_SECRET, a.LLM_BACKEND, a.OR_KEY) = old
@@ -322,30 +322,30 @@ class AgentLogic(unittest.TestCase):
     # --- Steering -------------------------------------------------------------
     def test_steering_queue(self):
         a = self.a
-        self.assertFalse(a.steer_push("x"))               # idle -> ablehnen
+        self.assertFalse(a.steer_push("x"))               # idle -> reject
         a._busy[0] = True
         try:
-            self.assertTrue(a.steer_push("kurs halten"))
+            self.assertTrue(a.steer_push("hold course"))
             hist = []
             self.assertTrue(a._drain_steer(hist))
             self.assertEqual(hist[0]["role"], "user")
-            self.assertIn("kurs halten", hist[0]["content"])
-            self.assertIn("[Steuerung", hist[0]["content"])
-            self.assertFalse(a._drain_steer(hist))         # Queue leer
+            self.assertIn("hold course", hist[0]["content"])
+            self.assertIn("[Steering", hist[0]["content"])
+            self.assertFalse(a._drain_steer(hist))         # queue empty
         finally:
             a._busy[0] = False
 
     # --- Prompt-Templates -----------------------------------------------------
     def test_prompt_expansion(self):
         a = self.a
-        a._prompts_cache["map"] = {"daily": "Erstelle das Tagesbriefing."}
+        a._prompts_cache["map"] = {"daily": "Write the daily briefing."}
         a._prompts_cache["ts"] = __import__("time").time()
-        self.assertEqual(a._expand_prompt("/daily"), "Erstelle das Tagesbriefing.")
-        self.assertEqual(a._expand_prompt("/daily nur kurz"),
-                         "Erstelle das Tagesbriefing. nur kurz")
-        self.assertEqual(a._expand_prompt("/reset"), "/reset")     # eingebaut hat Vorrang
+        self.assertEqual(a._expand_prompt("/daily"), "Write the daily briefing.")
+        self.assertEqual(a._expand_prompt("/daily just short"),
+                         "Write the daily briefing. just short")
+        self.assertEqual(a._expand_prompt("/reset"), "/reset")     # built-in takes precedence
         self.assertEqual(a._expand_prompt("/gibtsnicht"), "/gibtsnicht")
-        self.assertEqual(a._expand_prompt("normaler text"), "normaler text")
+        self.assertEqual(a._expand_prompt("normal text"), "normal text")
 
     # --- Plugin-Loader ----------------------------------------------------------
     def test_plugin_loader(self):
@@ -354,8 +354,8 @@ class AgentLogic(unittest.TestCase):
         with open(os.path.join(tmp, "echoplug.py"), "w") as fh:
             fh.write('DESC="Echo"\nPARAMS={"t":{"type":"string"}}\nREQUIRED=["t"]\n'
                      'def run(t):\n    return "ECHO:" + t\n')
-        with open(os.path.join(tmp, "bash.py"), "w") as fh:      # Kollision -> ignorieren
-            fh.write('DESC="boese"\ndef run():\n    return "nein"\n')
+        with open(os.path.join(tmp, "bash.py"), "w") as fh:      # collision -> ignore
+            fh.write('DESC="evil"\ndef run():\n    return "no"\n')
         old_dir = a.PLUGIN_DIR
         try:
             a.PLUGIN_DIR = tmp
@@ -363,7 +363,7 @@ class AgentLogic(unittest.TestCase):
             self.assertIn("echoplug", a.BUILTIN)
             self.assertIn("echoplug", a.PLUGIN_TOOLS)
             self.assertEqual(a.BUILTIN["echoplug"][0]("hi"), "ECHO:hi")
-            self.assertNotIn("bash", a.PLUGIN_TOOLS)              # Kollision abgewehrt
+            self.assertNotIn("bash", a.PLUGIN_TOOLS)              # collision blocked
         finally:
             a.PLUGIN_DIR = old_dir
             a.BUILTIN.pop("echoplug", None)
@@ -376,24 +376,24 @@ class AgentLogic(unittest.TestCase):
         old_chat = a.or_chat
         try:
             a._history[:] = [{"role": "system", "content": "s"},
-                             {"role": "user", "content": "Hauptthema"}]
+                             {"role": "user", "content": "main topic"}]
             a.or_chat = lambda msgs, tools, model=None: {"role": "assistant",
-                                                         "content": "Essenz der Rueckfrage"}
+                                                         "content": "essence of the follow-up"}
             out = a._branch_open("/branch piper")
-            self.assertIn("Tiefe 1", out)
+            self.assertIn("depth 1", out)
             self.assertEqual(a._branch_depth(), 1)
-            a._history.append({"role": "user", "content": "Rueckfrage?"})
-            a._history.append({"role": "assistant", "content": "Antwort im Ast"})
+            a._history.append({"role": "user", "content": "follow-up?"})
+            a._history.append({"role": "assistant", "content": "reply in the branch"})
             out = a._branch_close("/back")
             self.assertEqual(a._branch_depth(), 0)
-            self.assertIn("Hauptthema", out)
-            # Ast-Inhalt weg, Randnotiz da, Ursprung intakt
+            self.assertIn("main topic", out)
+            # branch content gone, sidenote present, origin intact
             joined = " | ".join(str(m.get("content")) for m in a._history)
-            self.assertNotIn("Antwort im Ast", joined)
+            self.assertNotIn("reply in the branch", joined)
             self.assertIn(a.NOTE_TAG, joined)
-            self.assertIn("Hauptthema", joined)
-            # /back ohne Ast
-            self.assertIn("Kein offener", a._branch_close("/back"))
+            self.assertIn("main topic", joined)
+            # /back without a branch
+            self.assertIn("No open", a._branch_close("/back"))
         finally:
             a.or_chat = old_chat
             a._history[:] = old_hist
@@ -415,7 +415,7 @@ class AgentLogic(unittest.TestCase):
     # --- Goal-Kommando ------------------------------------------------------
     def test_goal_set_show_off(self):
         try:
-            self.assertIn("Kein Ziel", self.a._set_goal("/goal show"))
+            self.assertIn("No goal", self.a._set_goal("/goal show"))
             self.a._set_goal("/goal Antworte knapp.")
             self.assertEqual(self.a._goal, "Antworte knapp.")
             self.a._set_goal("/goal off")
@@ -492,9 +492,9 @@ class AgentLogic(unittest.TestCase):
 
     # --- Key-Injection-Proxy (Keys verlassen den Host nie) -------------------
     def test_key_proxy_url_and_no_bearer(self):
-        """Mit KEY_PROXY=1 zeigt _llm_url() auf den Manager-Proxy-Pfad und
-        or_chat schickt KEINEN Authorization-Bearer mit — sonst laege der Key
-        doch wieder im Gast-Request und der ganze Umweg waere witzlos."""
+        """With KEY_PROXY=1, _llm_url() points at the manager proxy path and
+        or_chat sends NO Authorization bearer — otherwise the key would end up
+        in the guest request again and the whole detour would be pointless."""
         a = self.a
         captured = {}
 
@@ -538,7 +538,7 @@ class AgentLogic(unittest.TestCase):
              a.LLM_BACKEND, a.OR_KEY) = old
 
     def test_key_proxy_off_keeps_direct_url(self):
-        """Ohne KEY_PROXY bleibt alles beim Alten: direkte Backend-URL."""
+        """Without KEY_PROXY everything stays as before: direct backend URL."""
         a = self.a
         os.environ.pop("KEY_PROXY", None)
         self.assertEqual(a._llm_url(), a.OR_URL)
@@ -553,8 +553,8 @@ class ManagerFunctions(unittest.TestCase):
         cls.m = _load("manager_e2e", MANAGER_PATH)
 
     def test_resource_stats_shape(self):
-        """resource_stats liefert je Instanz Groesse + Live-Felder; eine Instanz
-        ohne PID gilt als nicht laufend (Live-Werte None)."""
+        """resource_stats returns per instance size + live fields; an instance
+        without a PID counts as not running (live values None)."""
         m = self.m
         old_load = m.load_instances
         m.load_instances = lambda: [{"name": "e2e-res-xyz", "vcpus": 4, "mem_mib": 2048, "config": {}}]
@@ -570,20 +570,20 @@ class ManagerFunctions(unittest.TestCase):
             m.load_instances = old_load
 
     def test_gateway_strips_noncharacters(self):
-        """Layer-A-Erweiterung (watermarks-remover): Unicode-Noncharacters und
-        permanent-reservierte default-ignorable Codepoints werden entfernt;
-        normaler Text und Emoji bleiben unangetastet."""
+        """Layer-A extension (watermarks-remover): Unicode noncharacters and
+        permanently reserved default-ignorable code points are removed; normal
+        text and emoji are left untouched."""
         import text_unicode as tu
         for cp in (0xFDD0, 0xFFFE, 0x1FFFE, 0x2065, 0xFFF5, 0xE0000):
             out, _st = tu.clean_text("A" + chr(cp) + "B")
-            self.assertEqual(out, "AB", "U+%04X nicht entfernt" % cp)
+            self.assertEqual(out, "AB", "U+%04X not removed" % cp)
         self.assertEqual(tu.clean_text("Hallo Welt")[0], "Hallo Welt")
         self.assertEqual(tu.clean_text("x" + chr(0x2764) + chr(0xFE0F) + "y")[0],
                          "x" + chr(0x2764) + chr(0xFE0F) + "y")
 
     def test_plugin_hash_pinning(self):
-        """Content-Hash-Pinning: Upload pinnt automatisch; direkte Datei-Aenderung
-        -> modified=True; Approve pinnt neu -> modified=False; delete entfernt Pin."""
+        """Content-hash pinning: upload pins automatically; a direct file change
+        -> modified=True; approve re-pins -> modified=False; delete removes the pin."""
         m = self.m
         import tempfile, os
         tmp = tempfile.mkdtemp(prefix="e2e-pin-")
@@ -608,9 +608,9 @@ class ManagerFunctions(unittest.TestCase):
             m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
 
     def test_set_instance_tools_roundtrip(self):
-        """Policy-Tools speichern: Subset bleibt (tools_all=False), ALLE Tools
-        entfernt das Feld (tools_all=True), unbekannte Namen werden gefiltert.
-        Regression fuer 'nach dem Speichern sind wieder alle Tools aktiv'."""
+        """Saving policy tools: a subset persists (tools_all=False), ALL tools
+        removes the field (tools_all=True), unknown names are filtered out.
+        Regression for 'after saving, all tools are active again'."""
         m = self.m
         import tempfile, os
         tmp = tempfile.mkdtemp(prefix="e2e-tools-")
@@ -639,8 +639,8 @@ class ManagerFunctions(unittest.TestCase):
             m.INST_DIR, m.load_instances, m.is_running = old_dir, old_load, old_run
 
     def test_plugin_zip_and_slip_guard(self):
-        """Multi-File-Zip landet im Tool-Ordner; ein ../-Pfad (zip-slip) darf NICHT
-        ausserhalb entpackt werden; Zip ohne Entry-Datei wird abgelehnt."""
+        """A multi-file zip lands in the tool folder; a ../ path (zip-slip) must NOT
+        be extracted outside; a zip without an entry file is rejected."""
         m = self.m
         import tempfile, os, io, zipfile
         tmp = tempfile.mkdtemp(prefix="e2e-plug-")
@@ -664,22 +664,22 @@ class ManagerFunctions(unittest.TestCase):
             m.PLUGINS_SRC = old
 
     def test_playbook_add_imports_present(self):
-        """Regression: mgr/rules.pb_add nutzt uuid+time -> muessen importiert sein,
-        sonst crasht /api/playbook-add und der Agent sieht RemoteDisconnected."""
+        """Regression: mgr/rules.pb_add uses uuid+time -> they must be imported,
+        otherwise /api/playbook-add crashes and the agent sees RemoteDisconnected."""
         import mgr.rules as rules, tempfile, os
         tmp = tempfile.mkdtemp(prefix="e2e-pb-")
         old = rules.PLAYBOOKS_FILE
         rules.PLAYBOOKS_FILE = os.path.join(tmp, "pb.json")
         try:
-            pid = rules.pb_add("inst", "eine Regel")     # NameError bei fehlendem Import
+            pid = rules.pb_add("inst", "a rule")         # NameError on missing import
             self.assertTrue(pid and pid != "exists")
             self.assertEqual(len(rules.pb_list("inst")), 1)
         finally:
             rules.PLAYBOOKS_FILE = old
 
     def test_merge_chats_tombstones(self):
-        """Loeschung propagiert und resurrected nicht — ausser bei echter,
-        NEUERER Bearbeitung (dann faellt der Tombstone weg)."""
+        """A deletion propagates and does not resurrect — except on a genuine,
+        NEWER edit (then the tombstone is dropped)."""
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-tomb-")
         oc, ot = m.CHATS_FILE, m.TOMBSTONES_FILE
@@ -691,7 +691,7 @@ class ManagerFunctions(unittest.TestCase):
             m.merge_chats([{"id": "x", "updatedAt": NOW - 5000,
                             "messages": [{"user": True, "text": "hi"}]}])
             self.assertTrue(has())
-            m.merge_chats({"chats": [], "tombstones": {"x": NOW}})       # loeschen
+            m.merge_chats({"chats": [], "tombstones": {"x": NOW}})       # delete
             self.assertFalse(has())
             self.assertIn("x", m.load_tombstones())
             m.merge_chats([{"id": "x", "updatedAt": NOW - 1000,          # Re-Push alt
@@ -722,7 +722,7 @@ class ManagerFunctions(unittest.TestCase):
             m.INST_DIR, m.load_instances = old_dir, old_load
 
     def test_provider_switch_ignores_free_suffix(self):
-        """':free'-Modellvarianten duerfen NICHT als Provider gelesen werden."""
+        """':free' model variants must NOT be read as a provider."""
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-inst2-")
         with open(os.path.join(tmp, "e2e-free.json"), "w") as fh:
@@ -749,14 +749,14 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m.hitl_status(hid), "pending")
             self.assertTrue(m.hitl_resolve(hid, True))
             self.assertEqual(m.hitl_status(hid), "approved")
-            self.assertFalse(m.hitl_resolve(hid, True))     # nicht doppelt aufloesbar
-            self.assertEqual(m.hitl_status("unbekannt"), "unknown")
+            self.assertFalse(m.hitl_resolve(hid, True))     # not resolvable twice
+            self.assertEqual(m.hitl_status("nonexistent"), "unknown")
         finally:
             sigmod.signal_send = old_send
 
     def test_hitl_no_signal_no_block(self):
-        """Kann der Signal-Versand nicht (kein Empfaenger), gibt hitl_create None
-        zurueck -> der Agent blockiert dann nicht."""
+        """If the Signal send fails (no recipient), hitl_create returns None
+        -> the agent then does not block."""
         m = self.m
         import mgr.signal as sigmod
         old_send = sigmod.signal_send
@@ -793,10 +793,10 @@ class ManagerFunctions(unittest.TestCase):
             kmod.katfs_proxy_fs = old
 
     def test_tool_catalog_matches_agent(self):
-        """Drift-Wache: jedes Tool im Agenten (BUILTIN) muss im Manager-Katalog
-        (AGENT_TOOLS_CATALOG) stehen — sonst fehlt es im Create-Formular und
-        eine Tool-Allowlist blockiert es stumm (passiert bei mission_start und
-        offload_read). Und umgekehrt: kein Katalog-Eintrag ohne echtes Tool."""
+        """Drift guard: every tool in the agent (BUILTIN) must be in the manager
+        catalog (AGENT_TOOLS_CATALOG) — otherwise it is missing from the create
+        form and a tool allowlist blocks it silently (happened with mission_start
+        and offload_read). And vice versa: no catalog entry without a real tool."""
         m = self.m
         a = _load("agent_cat_e2e", AGENT_PATH,
                   {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-cat-"),
@@ -805,10 +805,10 @@ class ManagerFunctions(unittest.TestCase):
         catalog = set(m.AGENT_TOOL_NAMES)
         missing_in_catalog = agent_tools - catalog
         self.assertFalse(missing_in_catalog,
-                         f"Tools im Agenten, aber nicht im Manager-Katalog: {sorted(missing_in_catalog)}")
+                         f"tools in the agent but not in the manager catalog: {sorted(missing_in_catalog)}")
         ghost_in_catalog = catalog - agent_tools
         self.assertFalse(ghost_in_catalog,
-                         f"Katalog-Eintraege ohne echtes Agenten-Tool: {sorted(ghost_in_catalog)}")
+                         f"catalog entries without a real agent tool: {sorted(ghost_in_catalog)}")
 
     def test_provider_model_key_covers_all(self):
         m = self.m
@@ -816,9 +816,9 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(k, m.MODEL_KEYS)
 
     def test_llm_proxy_route_registered(self):
-        """Injection-Gateway: der Pfad muss in der Gast-Positivliste stehen
-        (sonst 403 fuer die VM), die Upstreams muessen zu den Secret-Namen
-        passen und der Settings-Schalter muss im Schema auftauchen."""
+        """Injection gateway: the path must be in the guest allowlist (otherwise
+        403 for the VM), the upstreams must match the secret names, and the
+        settings toggle must appear in the schema."""
         m = self.m
         self.assertIn("/api/llm/", m.GUEST_POST_PREFIXES)
         self.assertEqual(set(m.LLM_PROXY_UPSTREAMS), {"openrouter", "orcarouter"})
@@ -844,7 +844,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(os.path.exists(p))
             size1 = os.path.getsize(p)
             self.assertEqual(size1, m.UPPER_PERSIST_SIZE_MB * 1024 * 1024)
-            # persist: zweiter Aufruf nutzt die vorhandene Datei (kein Reset)
+            # persist: second call uses the existing file (no reset)
             with open(p, "r+b") as fh:
                 fh.seek(0); marker = fh.read(4)
             self.assertEqual(m.make_upper(inst), p)
@@ -856,10 +856,10 @@ class ManagerFunctions(unittest.TestCase):
         inst = next((i for i in m.load_instances()
                      if i.get("rootfs") in m.OVERLAY_ROOTFS), None)
         if not inst:
-            self.skipTest("keine Overlay-Instanz vorhanden")
+            self.skipTest("no overlay instance available")
         old_mk = m.make_upper
         try:
-            m.make_upper = lambda i: "/tmp/fake-upper.ext4"   # kein echtes mkfs im Test
+            m.make_upper = lambda i: "/tmp/fake-upper.ext4"   # no real mkfs in the test
             cfg = m.gen_config(inst)
         finally:
             m.make_upper = old_mk
@@ -876,7 +876,7 @@ class ManagerFunctions(unittest.TestCase):
         old_notify = mmod.notify_add
         try:
             mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
-            mmod.notify_add = lambda *a, **k: ("x", "ok")   # kein echter Push im Test
+            mmod.notify_add = lambda *a, **k: ("x", "ok")   # no real push in the test
             mid, note = m.mission_start("orchestrator", "Testziel", ["s1", "s2"])
             self.assertTrue(mid)
             self.assertEqual(m.mission_start("orchestrator", "", [])[0], None)
@@ -886,7 +886,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((inst, mi["id"], st["n"]), ("orchestrator", mid, 1))
             self.assertEqual(m.mission_update("orchestrator", mid, step=1,
                                               status="done", result="ok"), "ok")
-            self.assertIsNone(m.mission_for_task("t-1")[1])   # done -> kein Trigger mehr
+            self.assertIsNone(m.mission_for_task("t-1")[1])   # done -> no more trigger
             self.assertEqual(m.mission_admin("orchestrator", mid, "pause"), "ok")
             self.assertEqual(m.mission_admin("orchestrator", mid, "resume"), "ok")
             self.assertEqual(m.mission_finish("orchestrator", mid, "fertig"), "ok")
@@ -911,8 +911,8 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
 
     def test_tasks_file_wired(self):
-        """Regression: TASKS_FILE muss in store.configure() gesetzt sein — sonst
-        crasht load_tasks (Bug vom 20.08., /api/tasks lieferte nichts)."""
+        """Regression: TASKS_FILE must be set in store.configure() — otherwise
+        load_tasks crashes (bug from 2026-08-20, /api/tasks returned nothing)."""
         import mgr.store as st
         self.assertTrue(st.TASKS_FILE and st.TASKS_FILE.endswith("tasks.json"))
         self.assertIsInstance(st.load_tasks(), list)
@@ -937,11 +937,11 @@ class ManagerFunctions(unittest.TestCase):
 
     def test_leak_filter(self):
         import mgr.gateway as g
-        red, n = g.redact_secrets("key sk-or-v1-abcdef0123456789xyz und ptr_ABCDEFGHIJ1234567890")
+        red, n = g.redact_secrets("key sk-or-v1-abcdef0123456789xyz and ptr_ABCDEFGHIJ1234567890")
         self.assertEqual(n, 2)
         self.assertNotIn("sk-or-v1", red)
         self.assertNotIn("ptr_ABCD", red)
-        # HuggingFace-Token wird maskiert
+        # HuggingFace token is masked
         self.assertEqual(g.redact_secrets("tok hf_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 x")[1], 1)
         self.assertEqual(g.redact_secrets("normaler Text")[1], 0)
         # git-SHA (40 hex) darf NICHT als Secret gelten
@@ -950,7 +950,7 @@ class ManagerFunctions(unittest.TestCase):
     def test_guard_rate_limit(self):
         m = self.m
         inst = {"name": "e2e-guard-r", "config": {"LLM_RATE_MIN": "2", "BUDGET_TOKENS": "0"}}
-        import mgr.store  # nur zur Sicherheit geladen
+        import mgr.store  # loaded just to be safe
         r1 = m._guard_check(inst)[0]
         r2 = m._guard_check(inst)[0]
         r3, why = m._guard_check(inst)
@@ -964,7 +964,7 @@ class ManagerFunctions(unittest.TestCase):
         d = m.usage_for("orchestrator", 0)
         self.assertEqual(set(d.keys()), {"calls", "in", "out", "cost"})
         self.assertIsInstance(d["calls"], int)
-        z = m.usage_for("gibtsnichtxyz", 0)     # unbekannte Instanz -> Nullen
+        z = m.usage_for("gibtsnichtxyz", 0)     # unknown instance -> zeros
         self.assertEqual(z["calls"], 0)
 
     def test_prompt_store(self):
@@ -976,9 +976,9 @@ class ManagerFunctions(unittest.TestCase):
             rmod.PROMPTS_FILE = os.path.join(tmp, "prompts.json")
             self.assertEqual(m.prompt_upsert("Daily!", "Text"), "saved")   # Name normalisiert
             self.assertEqual(m.load_prompts()[0]["name"], "daily")
-            self.assertEqual(m.prompt_upsert("daily", "Neu"), "saved")     # Update
-            self.assertEqual(m.load_prompts()[0]["text"], "Neu")
-            self.assertIn("eingebaut", m.prompt_upsert("reset", "x"))      # reserviert
+            self.assertEqual(m.prompt_upsert("daily", "New"), "saved")     # update
+            self.assertEqual(m.load_prompts()[0]["text"], "New")
+            self.assertIn("built-in", m.prompt_upsert("reset", "x"))       # reserved
             self.assertEqual(m.prompt_delete("daily"), "deleted")
             self.assertEqual(m.prompt_delete("daily"), "unknown")
         finally:
@@ -992,11 +992,11 @@ class ManagerFunctions(unittest.TestCase):
         try:
             nmod.NOTIF_FILE = os.path.join(tmp, "notifications.json")
             nmod._notif_sent.clear()
-            nid, note = m.notify_add("orchestrator", "Titel", "Text")
+            nid, note = m.notify_add("orchestrator", "Title", "Text")
             self.assertTrue(nid)
             lst = m.load_notifications()
             self.assertEqual(len(lst), 1)
-            self.assertEqual(lst[0]["title"], "Titel")
+            self.assertEqual(lst[0]["title"], "Title")
             self.assertFalse(lst[0]["read"])
             self.assertEqual(m.notif_mark_read(mark_all=True), 1)
             self.assertTrue(m.load_notifications()[0]["read"])
@@ -1007,9 +1007,9 @@ class ManagerFunctions(unittest.TestCase):
 
 
 # ===========================================================================
-# HTTP: gegen den laufenden Manager
+# HTTP: against the running manager
 # ===========================================================================
-@unittest.skipUnless(_manager_up(), "Manager auf 127.0.0.1:8700 nicht erreichbar")
+@unittest.skipUnless(_manager_up(), "manager on 127.0.0.1:8700 not reachable")
 class ManagerHTTP(unittest.TestCase):
     def test_root_page(self):
         st, _ = _http("/")
@@ -1022,20 +1022,20 @@ class ManagerHTTP(unittest.TestCase):
         self.assertTrue(agents)
         known = {"openrouter", "orcarouter", "anthropic", "pi", "prime", "llama"}
         for a in agents:
-            self.assertIn("backend", a, f"{a.get('name')} ohne backend-Feld")
+            self.assertIn("backend", a, f"{a.get('name')} without a backend field")
             self.assertIn("model", a)
             self.assertIn(a["backend"], known, f"unbekanntes backend {a['backend']}")
 
     def test_orchestrator_reports_orcarouter(self):
-        """Der zuletzt behobene Bug: orcarouter-Agent darf nicht als
-        'openrouter, ohne Modell' erscheinen. Nur pruefen, WENN der
-        Orchestrator per ORCAROUTER_MODEL laeuft."""
+        """The most recently fixed bug: the orcarouter agent must not appear as
+        'openrouter, no model'. Only checked WHEN the orchestrator runs via
+        ORCAROUTER_MODEL."""
         st, txt = _http("/api/agents")
         orch = next((a for a in json.loads(txt)["agents"] if a["name"] == "orchestrator"), None)
         if not orch:
-            self.skipTest("kein orchestrator")
+            self.skipTest("no orchestrator")
         if orch["backend"] == "orcarouter":
-            self.assertTrue(orch["model"], "orcarouter-Backend, aber leeres Modell (der alte Bug)")
+            self.assertTrue(orch["model"], "orcarouter backend but empty model (the old bug)")
 
     def test_hitl_status_route(self):
         st, txt = _http("/api/hitl/deadbeef")
@@ -1076,8 +1076,8 @@ class ManagerHTTP(unittest.TestCase):
         self.assertIsInstance(d["unread"], int)
 
     def test_notify_route_rejects_empty(self):
-        # Leere Benachrichtigung -> 429, id null: Route existiert, ohne den
-        # Live-Store zu verschmutzen (kein Ping aufs Geraet).
+        # Empty notification -> 429, id null: the route exists, without
+        # polluting the live store (no ping to the device).
         st, txt = _http("/api/notify", "POST", {"title": "", "message": ""})
         self.assertEqual(st, 429)
         self.assertIsNone(json.loads(txt).get("id"))
@@ -1089,14 +1089,14 @@ class ManagerHTTP(unittest.TestCase):
 
 
 # ===========================================================================
-# LIVE: Roundtrip zur Agent-VM (nur kostenloser /goal-Pfad)
+# LIVE: round-trip to the agent VM (free /goal path only)
 # ===========================================================================
-@unittest.skipUnless(_orchestrator_running(), "Orchestrator-VM laeuft nicht")
+@unittest.skipUnless(_orchestrator_running(), "orchestrator VM not running")
 class LiveAgent(unittest.TestCase):
     @staticmethod
     def _reply(txt):
-        # Der Manager-Proxy liefert die Antwort als Klartext; faellt auf JSON
-        # {"reply": ...} zurueck, falls sich das je aendert.
+        # The manager proxy returns the reply as plain text; falls back to JSON
+        # {"reply": ...} in case that ever changes.
         txt = txt.strip()
         if txt.startswith("{"):
             try:
@@ -1106,23 +1106,23 @@ class LiveAgent(unittest.TestCase):
         return txt
 
     def test_goal_command_roundtrip(self):
-        """Beweist, dass der neue Agent-Code in der VM lebt — ohne Modellaufruf,
-        also ohne Token-Kosten."""
+        """Proves the new agent code is live in the VM — without a model call,
+        so without token cost."""
         st, txt = _http("/i/orchestrator/api/chat", "POST",
                         {"message": "/goal show"}, timeout=30)
         self.assertEqual(st, 200)
-        self.assertIn("Ziel", self._reply(txt))
+        self.assertIn("goal", self._reply(txt))
 
     def test_reasoning_command_roundtrip(self):
         st, txt = _http("/i/orchestrator/api/chat", "POST",
                         {"message": "/reasoning"}, timeout=30)
         self.assertEqual(st, 200)
-        # /reasoning ohne Argument zeigt den Status -> irgendein Text kommt zurueck
+        # /reasoning without an argument shows the status -> some text comes back
         self.assertTrue(self._reply(txt))
 
 
 if __name__ == "__main__":
-    # Kurzer Umgebungs-Report, dann unittest.
-    print(f"Manager erreichbar: {_manager_up()} | Orchestrator laeuft: {_orchestrator_running()}",
+    # Short environment report, then unittest.
+    print(f"manager reachable: {_manager_up()} | orchestrator running: {_orchestrator_running()}",
           file=sys.stderr)
     unittest.main(verbosity=2)

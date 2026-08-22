@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Startet die microVM. Braucht Zugriff auf /dev/kvm (root oder Gruppe 'kvm') und tap0.
+# Starts the microVM. Needs access to /dev/kvm (root or the 'kvm' group) and tap0.
 set -euo pipefail
 cd "$(dirname "$0")"
 SOCK=/tmp/fc-claude.sock

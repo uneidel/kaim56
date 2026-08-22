@@ -753,7 +753,7 @@ footer{border-top:1px solid var(--color-divider)}
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Harness patterns (context, goals, guardrails)</span>
   <p class=card-body>Ported from strands-agents/harness-sdk (Apache-2.0) into the stdlib agent, no new deps.
   <b>Summarizing context:</b> on overflow the oldest turns are folded into a pinned
-  <code>[Zusammenfassung]</code> block instead of being dropped &#8212; last ~10 turns stay verbatim.
+  <code>[Summary]</code> block instead of being dropped &#8212; last ~10 turns stay verbatim.
   <b>Context offloader:</b> tool output over <code>OFFLOAD_MIN</code> is written to <code>.offload/</code>
   whole; the model sees a preview + reference and pages the rest via <code>offload_read</code>.
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
@@ -855,7 +855,7 @@ footer{border-top:1px solid var(--color-divider)}
   Gives agents a controlled window into user files without mounting anything into a VM.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Memory &#8212; short &amp; long term</span>
-  <p class=card-body><b>Short term</b> is the conversation itself &#8212; the agent&#8217;s <code>_history</code> in VM RAM; <code>/reset</code> clears it, a restart too. <b>Long term is semantic:</b> <code>memory_store</code> embeds each note (multilingual-e5 on the CPU, <code>embed</code> container behind the manager) and stores text+vector in <code>history.db</code>. Every turn the agent embeds the user&#8217;s message and the manager returns the meaning-nearest notes (cosine), injected as a fresh <code>[Gedaechtnis]</code> block &#8212; only what fits the question, not the whole store. No LLM and no graph DB needed, so it runs on this host today; degrades to no recall (never an error) if the embedder is down. A richer knowledge-graph memory (Graphiti/Cognee) stays a possible upgrade.</p></div>
+  <p class=card-body><b>Short term</b> is the conversation itself &#8212; the agent&#8217;s <code>_history</code> in VM RAM; <code>/reset</code> clears it, a restart too. <b>Long term is semantic:</b> <code>memory_store</code> embeds each note (multilingual-e5 on the CPU, <code>embed</code> container behind the manager) and stores text+vector in <code>history.db</code>. Every turn the agent embeds the user&#8217;s message and the manager returns the meaning-nearest notes (cosine), injected as a fresh <code>[Memory]</code> block &#8212; only what fits the question, not the whole store. No LLM and no graph DB needed, so it runs on this host today; degrades to no recall (never an error) if the embedder is down. A richer knowledge-graph memory (Graphiti/Cognee) stays a possible upgrade.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Playbooks &#8212; rules the agent learns</span>
   <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
@@ -866,7 +866,7 @@ footer{border-top:1px solid var(--color-divider)}
   plans (<code>mission_start</code>: goal + steps), delegates each step via <code>create_task</code>
   and records the task-id; when that task finishes, the worker <b>immediately</b> re-triggers the
   orchestrator to advance (event-driven, heartbeat only as fallback). Active missions are injected
-  every turn as a <code>[Missionen]</code> block. Guardrails: max 5 active / 20 steps, 7-day TTL
+  every turn as a <code>[Missions]</code> block. Guardrails: max 5 active / 20 steps, 7-day TTL
   auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
   tab (web) / screen (app) with progress, current step and pause/abort.</p></div>
 
@@ -1215,8 +1215,8 @@ async function loadMissions(){
           ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort')">Cancel</button>`:''}
         </span>
       </div>
-      ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">aktueller Schritt ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
-      ${m.summary?`<div class=text-muted style="font-size:12.5px;margin-top:4px">Fazit: ${escT(m.summary)}</div>`:''}
+      ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">current step ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
+      ${m.summary?`<div class=text-muted style="font-size:12.5px;margin-top:4px">Summary: ${escT(m.summary)}</div>`:''}
       ${log?`<div class=text-muted style="font-size:11.5px;margin-top:3px;opacity:.75">${escT(log)}</div>`:''}
     </div>`};
   document.getElementById('missions').innerHTML=cor+
@@ -1442,10 +1442,10 @@ function saveSkill(){
 async function delSkill(n){if(confirm('Delete skill '+n+'?')){await fetch('/api/skills/'+encodeURIComponent(n)+'/delete',{method:'POST'});location.reload()}}
 
 function renderSettings(){
-  // Key-Felder werden per CSS maskiert (-webkit-text-security) statt mit
-  // type=password: ein echtes Passwortfeld laesst Chromes Passwort-Manager
-  // beim Wegnavigieren "Save password?" anbieten — mit der katfs node-id als
-  // vermeintlichem Nutzernamen. autocomplete=off ignoriert Chrome dabei.
+  // Key fields are masked via CSS (-webkit-text-security) instead of
+  // type=password: a real password field makes Chrome's password manager
+  // offer "Save password?" on navigating away — with the katfs node-id as a
+  // supposed username. Chrome ignores autocomplete=off there.
   document.getElementById('settings').innerHTML=SETTINGS_SCHEMA.map(s=>{
     if(s.options)return `<div class=field><label>${escT(s.label)}</label><select class=input data-s="${esc(s.key)}">`+
       s.options.map(o=>`<option value="${esc(o.value)}"${(SETTINGS[s.key]||'')===o.value?' selected':''}>${escT(o.label)}</option>`).join('')+`</select></div>`;
@@ -1672,7 +1672,7 @@ async function editModel(name){
   const p=(tpl.params||[]).find(x=>x.key===key)||{key:key};
   MODELDLG=name;
   document.getElementById('modeldlgname').textContent=name;
-  // fieldFor nimmt p.default als Vorbelegung — Kopie mit dem aktuellen Modell.
+  // fieldFor takes p.default as the preset — a copy with the current model.
   document.getElementById('modeldlgbox').innerHTML=
     fieldFor(Object.assign({},p,{default:cfg[key]||''}));
   document.getElementById('modeldlg').style.display='grid';
@@ -1791,7 +1791,7 @@ function saveModels(){
     body:JSON.stringify({curated:[...PICKED]})})
     .then(r=>r.json()).then(d=>{
       document.getElementById('mdlmsg').textContent=(d.msg||'saved')+' ✓';
-      renderParams();   // Modell-Dropdown im Anlege-Formular sofort nachziehen
+      renderParams();   // refresh the model dropdown in the create form immediately
     });
 }
 
@@ -1847,7 +1847,7 @@ function renderShareSel(){
     r.classList.toggle('sel',on);
   });
 }
-/* Aktuellen Ordner der gewaehlten Freigabe als ZIP herunterladen. */
+/* Download the current folder of the selected share as a ZIP. */
 function fbZip(){ window.location.href='/api/katfs/zip?'+fbQ(FB.path); }
 async function fbGo(p){
   FB.path=p||'.';

@@ -1,16 +1,16 @@
-//! katfs-share — gibt einen lokalen Ordner an einen katfs-Host-Knoten frei.
+//! katfs-share — shares a local folder to a katfs host node.
 //!
-//! Dieselbe Rolle wie der freigebende Browser-Tab (PROVIDER im Sinne von
-//! PROTOCOL.md), nur nativ: kein Browser, keine File System Access API — und
-//! deshalb **lesen und schreiben**, auch dort, wo Firefox und Safari nur lesen
-//! koennten. Laeuft auf Linux und macOS.
+//! The same role as the sharing browser tab (PROVIDER in the sense of
+//! PROTOCOL.md), only native: no browser, no File System Access API — and
+//! therefore **read and write**, even where Firefox and Safari can only read.
+//! Runs on Linux and macOS.
 //!
 //! Usage:
-//!   katfs-share <node-id> <ordner> [--name <label>] [--id <share-id>] [--ro]
+//!   katfs-share <node-id> <folder> [--name <label>] [--id <share-id>] [--ro]
 //!
-//! Die share-id ist standardmaessig aus Hostname + absolutem Pfad abgeleitet,
-//! also ueber Neustarts hinweg stabil — eine Instanz, die auf sie zeigt, findet
-//! die Freigabe wieder. Mit --id laesst sie sich fest vorgeben.
+//! The share-id is by default derived from hostname + absolute path, so it is
+//! stable across restarts — an instance pointing at it finds the share again.
+//! With --id it can be fixed explicitly.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -40,9 +40,9 @@ async fn read_frame(recv: &mut RecvStream) -> Result<Vec<u8>> {
 }
 
 // --- Pfadsicherheit ---------------------------------------------------------
-// Wie im Browser-Provider: relativ zur Wurzel, kein ".." und keine absoluten
-// Pfade. Zusaetzlich wird das Ergebnis gegen die Wurzel geprueft, damit auch
-// ein Symlink nicht herausfuehrt.
+// Like the browser provider: relative to the root, no ".." and no absolute
+// paths. Additionally the result is checked against the root, so that even a
+// symlink cannot lead out.
 fn resolve(root: &Path, rel: &str) -> Result<PathBuf> {
     let mut out = root.to_path_buf();
     for comp in Path::new(rel).components() {
@@ -55,8 +55,8 @@ fn resolve(root: &Path, rel: &str) -> Result<PathBuf> {
             }
         }
     }
-    // Existierende Pfade hart pruefen; neue Dateien pruefen wir ueber ihr
-    // Elternverzeichnis, das es geben muss.
+    // Check existing paths hard; new files we check via their parent
+    // directory, which must exist.
     let probe = if out.exists() { out.clone() } else { out.parent().unwrap_or(root).to_path_buf() };
     if let (Ok(r), Ok(p)) = (root.canonicalize(), probe.canonicalize()) {
         if !p.starts_with(&r) {
@@ -109,8 +109,8 @@ fn op_delete(root: &Path, rel: &str, recursive: bool) -> Result<()> {
     let p = resolve(root, rel)?;
     let md = std::fs::symlink_metadata(&p).with_context(|| format!("stat {}", p.display()))?;
     if md.is_dir() {
-        // Ohne recursive scheitert das an nicht-leeren Verzeichnissen — gewollt,
-        // damit ein Agent nicht aus Versehen einen ganzen Baum abraeumt.
+        // Without recursive this fails on non-empty directories — intentional,
+        // so an agent doesn't accidentally wipe a whole tree.
         if recursive {
             std::fs::remove_dir_all(&p)
         } else {
@@ -140,11 +140,11 @@ struct Cfg {
     readonly: bool,
 }
 
-/// Eine Verbindung bedienen, bis der Stream schliesst.
+/// Serve a connection until the stream closes.
 async fn serve_once(ep: &Endpoint, node_id: &str, cfg: &Cfg) -> Result<()> {
     let id: iroh::EndpointId = node_id.parse().context("parse node-id")?;
     let conn = ep.connect(id, ALPN).await.context("connect")?;
-    // Der HOST oeffnet den Stream und sendet zuerst (PROTOCOL.md).
+    // The HOST opens the stream and sends first (PROTOCOL.md).
     let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
     eprintln!("[katfs-share] connected — serving {}", cfg.root.display());
 
@@ -259,8 +259,8 @@ async fn main() -> Result<()> {
     );
     eprintln!("[katfs-share] pick it by that id when creating an instance");
 
-    // Auto-Reconnect wie im Browser-Tab: die Freigabe soll einen Neustart des
-    // Knotens oder einen Netzwechsel ueberleben, ohne dass jemand hinlaeuft.
+    // Auto-reconnect like the browser tab: the share should survive a restart
+    // of the node or a network change without anyone walking over to it.
     let mut fails = 0u32;
     loop {
         match serve_once(&ep, &node_id, &cfg).await {

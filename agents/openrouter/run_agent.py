@@ -3,7 +3,7 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Transport-Layer fuer den OpenRouter-Agent: TRANSPORT=signal | web."""
+"""Transport layer for the OpenRouter agent: TRANSPORT=signal | web."""
 import json
 import os
 import time
@@ -60,7 +60,7 @@ def sig_receive():
 
 def signal_loop():
     sig_receive()
-    sig_send(f"🤖 openrouter-agent online (model {agent.OR_MODEL}). /reset für neuen Kontext.",
+    sig_send(f"🤖 openrouter-agent online (model {agent.OR_MODEL}). /reset for a new context.",
              ALLOWED_SENDERS[0])
     while True:
         for env in sig_receive() or []:
@@ -102,7 +102,7 @@ textarea{flex:1;padding:.6rem;font-size:1rem;border:1px solid #ccc;border-radius
 button{padding:.6rem 1rem;border:none;border-radius:10px;background:#0a7cff;color:#fff;cursor:pointer}
 @media(prefers-color-scheme:dark){body{background:#111;color:#e2e2e2}header,form{background:#1a1a1a;border-color:#333}.bot{background:#242424}textarea{background:#1b1b1b;color:#e2e2e2;border-color:#444}}</style></head><body>
 <header>🤖 openrouter-agent</header><div id=log></div>
-<form id=f><textarea id=t placeholder="Nachricht… (Enter sendet)" autofocus></textarea><button>➤</button></form>
+<form id=f><textarea id=t placeholder="Message… (Enter sends)" autofocus></textarea><button>➤</button></form>
 <script>const log=document.getElementById('log'),t=document.getElementById('t');
 function add(x,c){const d=document.createElement('div');d.className='msg '+c;d.textContent=x;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 async function send(){const m=t.value.trim();if(!m)return;t.value='';add(m,'me');const b=add('…','bot');
@@ -127,9 +127,9 @@ class H(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             d = {}
         message = d.get("message") or ""
-        image = d.get("image")   # optionales Base64-JPEG (Vision)
-        # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
-        # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
+        image = d.get("image")   # optional base64 JPEG (vision)
+        # Steering: feed a message into a RUNNING turn. queued=false means no
+        # turn is currently active -> the caller sends normally.
         if self.path.rstrip("/").endswith("/steer"):
             ok = agent.steer_push(message) if message else False
             b = json.dumps({"queued": bool(ok)}).encode()
@@ -167,7 +167,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     if not agent.ensure_or_key():
-        log("FATAL: OPENROUTER_API_KEY fehlt — weder in der Umgebung noch vom "
+        log("FATAL: OPENROUTER_API_KEY missing — neither in the environment nor from "
             "Secret-Broker des Managers (Allowlist in secret-policy.json?)")
     agent.init()
     if TRANSPORT == "web":

@@ -1,13 +1,13 @@
-//! Ein minimaler katfs/0-PROVIDER als Testclient — das, was sonst der Browser
-//! ist, nur ohne Browser. Damit laesst sich der Mehrfach-Freigabe-Pfad des
-//! Knotens ohne Chromium pruefen: mehrere Instanzen parallel starten, dann
-//! /shares, ?share=<id> und den Fehlerfall "mehrere aktiv, keine gewaehlt"
-//! gegen die HTTP-API testen.
+//! A minimal katfs/0 PROVIDER as a test client — what the browser normally is,
+//! just without a browser. It lets you check the node's multi-share path
+//! without Chromium: start several instances in parallel, then
+//! test /shares, ?share=<id> and the error case "several active, none chosen"
+//! against the HTTP API.
 //!
 //! Usage: cargo run --example fakeshare -- <node-id> <share-id> <name>
 //!
-//! Beantwortet hello/list/stat/read; write wird abgelehnt. Der Inhalt ist fest
-//! verdrahtet (eine Datei `hello.txt`), es geht nur um das Protokoll.
+//! Answers hello/list/stat/read; write is rejected. The content is hard-wired
+//! (a single file `hello.txt`), it is only about the protocol.
 
 use anyhow::{anyhow, Context, Result};
 use iroh::endpoint::{RecvStream, SendStream};
@@ -49,10 +49,10 @@ async fn main() -> Result<()> {
     let conn = ep.connect(id, ALPN).await.context("connect")?;
     eprintln!("[fakeshare] connected, waiting for the host to open the stream");
 
-    // Der HOST oeffnet den Stream und sendet zuerst (siehe PROTOCOL.md).
+    // The HOST opens the stream and sends first (see PROTOCOL.md).
     let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
 
-    let payload = b"hallo aus der Testfreigabe\n";
+    let payload = b"hello from the test share\n";
     loop {
         let raw = match read_frame(&mut recv).await {
             Ok(b) => b,

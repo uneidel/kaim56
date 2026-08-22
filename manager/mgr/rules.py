@@ -100,7 +100,7 @@ def prompt_upsert(name, text):
     if not name or not text:
         return "error: name/text missing"
     if name in ("reset", "fresh", "reasoning", "goal", "model", "task", "help", "agents"):
-        return f"error: '{name}' ist ein eingebautes Kommando"
+        return f"error: '{name}' is a built-in command"
     with _pr_lock:
         lst = load_prompts()
         cur = next((p for p in lst if p.get("name") == name), None)

@@ -50,8 +50,8 @@ class MockDirHandle {
     if (h.kind !== 'file') throw new Error('TypeMismatchError: ' + name);
     return h;
   }
-  // Wie FileSystemDirectoryHandle.removeEntry: ohne recursive scheitert ein
-  // nicht-leeres Verzeichnis (InvalidModificationError).
+  // Like FileSystemDirectoryHandle.removeEntry: without recursive a non-empty
+  // directory fails (InvalidModificationError).
   async removeEntry(name, opts = {}) {
     const h = this._children.get(name);
     if (!h) throw new Error('NotFoundError: ' + name);
@@ -219,7 +219,7 @@ async function main() {
     assert(res.json.ok === true && res.json.share === '', 'hello without ident -> empty share id');
   }
 
-  // 17) delete: Datei weg, Wurzel geschuetzt, nicht-leerer Ordner nur mit recursive
+  // 17) delete: file gone, root protected, non-empty folder only with recursive
   hostSend(frameJson({ id: 17, op: 'write', path: 'weg.txt', size: 3 }));
   hostSend(frameBytes(te.encode('abc')));
   await hostRecvJson();

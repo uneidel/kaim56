@@ -52,7 +52,7 @@ def configure(base, settings_fn=None, chat_log_fn=None, ping_fn=None):
 SIGNAL_DEFAULT_API = "https://signal-api.example.com"
 SIGNAL_MAX_CHARS = 3500          # signal-cli takes more, readability does not
 SIGNAL_RATE = (10, 300)          # at most 10 messages per 5 minutes
-_signal_sent = []                # Zeitstempel der letzten Sendungen
+_signal_sent = []                # timestamps of the last sends
 _signal_lock = threading.Lock()
 
 
@@ -167,7 +167,7 @@ def _signal_inbound(sender, text):
 # native mode: receiving and sending lock the same account. After an incoming
 # message the receiver pauses briefly — a contention-free window in which the
 # orchestrator can send its reply out promptly.
-# (Sauber loesen wuerde das der json-rpc-Modus des Gateways.)
+# (The gateway's json-rpc mode would solve this cleanly.)
 SIGNAL_REPLY_WINDOW = int(os.environ.get("SIGNAL_REPLY_WINDOW", "60"))
 
 
@@ -208,7 +208,7 @@ def _handle_signal_envelope(env, allowed):
     _signal_inbound(src or uuid_, text)
 
 
-# --- minimaler WebSocket-Client (stdlib) fuer den json-rpc-Empfang -----------
+# --- minimal WebSocket client (stdlib) for the json-rpc receive -------------
 def _recvn(sock, n):
     buf = b""
     while len(buf) < n:
@@ -266,7 +266,7 @@ def _ws_connect(host, path, port=443):
     while b"\r\n\r\n" not in resp:
         chunk = sock.recv(1024)
         if not chunk:
-            raise RuntimeError("handshake abgebrochen")
+            raise RuntimeError("handshake aborted")
         resp += chunk
         if len(resp) > 8192:
             break
@@ -296,7 +296,7 @@ def _signal_receiver():
             _slog(f"ws-connect-fehler: {e!r:.150}")
             time.sleep(10)
             continue
-        sock.settimeout(300)          # laengere Stille -> reconnect, haelt frisch
+        sock.settimeout(300)          # longer silence -> reconnect, keeps it fresh
         try:
             while True:
                 opcode, data = _ws_frame(sock)

@@ -21,9 +21,9 @@ function setConn(state, text) {
   $('conn-text').textContent = text;
 }
 
-// Kennung dieser Freigabe. Bleibt im localStorage, damit ein Reload oder ein
-// Reconnect wieder dieselbe Freigabe ist — eine Instanz, die auf diese id
-// zeigt, laeuft sonst nach jedem Neuladen ins Leere.
+// Id of this share. Stays in localStorage so a reload or reconnect is the
+// same share again — an instance pointing at this id would otherwise run into
+// nothing after every reload.
 function shareId() {
   let v = null;
   try { v = localStorage.getItem('katfs-share-id'); } catch (_) { /* private mode */ }
@@ -63,9 +63,9 @@ async function loadWasm() {
   }
 }
 
-// Warum fehlt showDirectoryPicker? Zwei ganz verschiedene Gruende, die man
-// nicht verwechseln darf: unsicherer Kontext (behebbar durch HTTPS) oder ein
-// Browser ohne die Picker-Haelfte der File System Access API (nicht behebbar).
+// Why is showDirectoryPicker missing? Two quite different reasons that must
+// not be confused: an insecure context (fixable with HTTPS) or a browser
+// without the picker half of the File System Access API (not fixable).
 function pickerDiagnosis() {
   const bits = [];
   if (!window.isSecureContext) {
@@ -135,14 +135,14 @@ async function connectAndServeLoop(nodeId) {
       const provider = new KatfsProvider(dirHandle, log, { share: shareId(), device: deviceName() });
       serving = true;
       log('Stream open — serving requests.');
-      await provider.serve(stream); // läuft bis der Stream schließt
+      await provider.serve(stream); // runs until the stream closes
       serving = false;
       log('Stream closed.');
     } catch (e) {
       serving = false;
       fails++;
       log('Connection lost (' + fails + '): ' + (e && e.message ? e.message : e));
-      // Nach 2 Fehlschlägen den Endpoint komplett neu aufsetzen.
+      // After 2 failures, set up the endpoint from scratch.
       if (fails >= 2) {
         endpoint = null;
         log('resetting endpoint…');
@@ -182,8 +182,8 @@ log('Page loaded. 1) Choose folder  2) Connect & serve.');
   if (v && !v.startsWith('%%')) log('Host node-id injected by server: ' + v);
   else log('No node-id injected — please enter it manually.');
   log('This share: ' + shareId() + ' (' + deviceName() + ') — pick it by that id when creating an instance.');
-  // Gleich beim Laden sagen, ob "Ordner waehlen" ueberhaupt gehen kann —
-  // statt den Nutzer erst klicken zu lassen.
+  // Say right on load whether "pick folder" can work at all — instead of
+  // making the user click first.
   if (!window.showDirectoryPicker) {
     log('⚠ Folder sharing will not work here — ' + pickerDiagnosis());
   } else {

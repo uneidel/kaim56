@@ -1,16 +1,15 @@
 """Layer A: invisible Unicode / homoglyph space detection and cleaning.
 
-Basiert auf guillaumemeyer/watermarks-remover (MIT), service/scripts/text_unicode.py;
-fuer kAIm56 uebernommen und um Unicode-Noncharacters + permanent-reservierte
-default-ignorable Codepoints erweitert (Layer A vollstaendig). Nur diese eine Datei: sie ist reine
-Standardbibliothek und macht das, was ein Chat-Eingang braucht — unsichtbare
-Zeichen, Tag-Zeichen (U+E0020..E007F), Bidi-Overrides und Homoglyphen
-entfernen. Der Rest jenes Projekts entfernt statistische Wasserzeichen und
-C2PA-Herkunftsdaten; das ist bewusst NICHT uebernommen (siehe SECURITY-
-GATEWAY.md).
+Based on guillaumemeyer/watermarks-remover (MIT), service/scripts/text_unicode.py;
+adopted for kAIm56 and extended with Unicode noncharacters + permanently
+reserved default-ignorable code points (Layer A complete). Just this one file: it is
+pure standard library and does what a chat input needs — remove invisible
+characters, tag chars (U+E0020..E007F), bidi overrides and homoglyphs. The rest
+of that project removes statistical watermarks and C2PA provenance data; that is
+deliberately NOT adopted (see SECURITY-GATEWAY.md).
 
-Verwendet von manager.py: clean_text() am Chat-Ein- und -Ausgang, wenn fuer
-den Chat das Gateway angehakt ist.
+Used by manager.py: clean_text() at the chat input and output, when the gateway
+is ticked on for that chat.
 """
 
 from __future__ import annotations
@@ -210,9 +209,9 @@ def _is_private_use(cp: int) -> bool:
 
 
 # Unicode noncharacters + permanently-reserved default-ignorable code points.
-# Beide sind fuer den internen Gebrauch reserviert und im Austauschtext
-# verboten -> als Wasserzeichen-Traeger "Schmuggelware", ohne Zukunftsrisiko
-# beim Entfernen. (guillaumemeyer/watermarks-remover, Layer A.)
+# Both are reserved for internal use and forbidden in interchange text -> as
+# watermark carriers they are "contraband", with no future risk when removed.
+# (guillaumemeyer/watermarks-remover, Layer A.)
 def _is_noncharacter(cp: int) -> bool:
     return 0xFDD0 <= cp <= 0xFDEF or (cp & 0xFFFE) == 0xFFFE
 

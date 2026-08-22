@@ -15,14 +15,14 @@ android {
         versionCode = 69
         versionName = "5.19"
         ndk {
-            // Xiaomi 15 = arm64-v8a. Nur diese ABI -> deutlich kleinere APK.
+            // Xiaomi 15 = arm64-v8a. Only this ABI -> significantly smaller APK.
             abiFilters += "arm64-v8a"
         }
     }
 
     signingConfigs {
-        // Fester Schluessel -> jede APK hat dieselbe Signatur -> Update-in-place,
-        // App-Speicher (Modell) bleibt erhalten. Bewusst simples Dev-Passwort.
+        // Fixed key -> every APK has the same signature -> update in place,
+        // app storage (model) is preserved. Deliberately a simple dev password.
         create("stable") {
             storeFile = file("../keystore/katagent.jks")
             storePassword = "katagent"
@@ -54,9 +54,9 @@ android {
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        // Native Libs KOMPRIMIERT in die APK (statt unkomprimiert) -> APK-Datei
-        // deutlich kleiner (unter dem 30-MB-Sendelimit). Werden beim Install
-        // entpackt (etwas mehr Speicher/langsamerer Erststart, sonst unkritisch).
+        // Native libs COMPRESSED into the APK (instead of uncompressed) -> APK file
+        // significantly smaller (under the 30 MB send limit). Unpacked on install
+        // (a bit more storage / slower first start, otherwise uncritical).
         jniLibs {
             useLegacyPackaging = true
         }
@@ -70,10 +70,10 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    // Ein-/Ausblenden der Vollbilder und des Anhang-Blatts (AnimatedVisibility).
+    // Show/hide the full images and the attachment sheet (AnimatedVisibility).
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
-    // Vollständige Google-Material-Icons (R8 entfernt ungenutzte -> kaum Größenzuwachs).
+    // Full Google Material icons (R8 removes unused ones -> hardly any size increase).
     implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

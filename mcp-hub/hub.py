@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""MCP-Hub fuer kAIm56: haelt die MCP-Serverprozesse am Host statt in den VMs.
+"""MCP hub for kAIm56: keeps the MCP server processes on the host, not in the VMs.
 
-Vorher lief je microVM ein eigener mcp-remote/mcp-portainer — mitsamt der
-Tokens, die dafuer in den Gast mussten, und LAN-Zugang fuer jede VM. Jetzt
-laufen die Prozesse hier, EINMAL je (Instanz, Server), und die Gaeste reden
-nur noch JSON-RPC ueber den Manager. Der Gast sieht weder Token noch LAN.
+Previously each microVM ran its own mcp-remote/mcp-portainer — along with the
+tokens that had to go into the guest for it, and LAN access for every VM. Now
+the processes run here, ONCE per (instance, server), and the guests only speak
+JSON-RPC through the manager. The guest sees neither token nor LAN.
 
-Wie der Sprachdienst: Container bindet 0.0.0.0, die Beschraenkung sitzt auf
-der Host-Seite der Portzuordnung (-p 127.0.0.1:8771:8771). Erreichbar ist der
-Hub damit nur fuer den Manager; eine eigene Rechtepruefung gibt es hier nicht,
-die Autorisierung (welcher Gast darf welchen Server) macht der Manager.
+Like the voice service: the container binds 0.0.0.0, the restriction sits on
+the host side of the port mapping (-p 127.0.0.1:8771:8771). So the hub is only
+reachable by the manager; there is no separate permission check here, the
+authorization (which guest may use which server) is done by the manager.
 
-  POST /rpc    {"key","argv","env","payload"} -> JSON-RPC-Antwort des Servers
-  POST /kill   {"key"} oder {"prefix"}        -> Prozesse beenden
+  POST /rpc    {"key","argv","env","payload"} -> JSON-RPC reply from the server
+  POST /kill   {"key"} or {"prefix"}          -> terminate processes
   GET  /health                                -> {"procs": [...]}
 
-Der Hub merkt sich je key die initialize-Nachricht: stirbt ein Serverprozess,
-wird er beim naechsten Aufruf neu gestartet und die Initialisierung
-wiederholt — der Klient in der VM merkt davon nichts.
+The hub remembers the initialize message per key: if a server process dies, it
+is restarted on the next call and the initialization is replayed — the client
+in the VM notices nothing.
 """
 import json
 import os
@@ -50,8 +50,8 @@ def _entry(key, argv, env):
             e = {"p": _spawn(key, argv, env), "lock": threading.Lock(), "init": []}
             _procs[key] = e
         elif e["p"].poll() is not None:
-            # Prozess ist gestorben -> neu starten und die gemerkte
-            # Initialisierung wiederholen, sonst steht der Server "roh" da.
+            # Process has died -> restart and replay the remembered
+            # initialization, otherwise the server sits there "raw".
             e["p"] = _spawn(key, argv, env)
             for msg in e["init"]:
                 _write(e["p"], msg)
@@ -66,9 +66,9 @@ def _write(p, obj):
 
 
 def _read_until(p, want_id, timeout):
-    """Zeilen lesen, bis die Antwort mit der gesuchten id kommt. Server-eigene
-    Requests/Notifications werden uebersprungen — auf Rueckfragen des Servers
-    (sampling) antwortet hier niemand, dafuer gibt es keinen Menschen."""
+    """Read lines until the reply with the wanted id arrives. The server's own
+    requests/notifications are skipped — no one answers the server's callbacks
+    (sampling) here, there is no human for that."""
     end = time.time() + timeout
     while time.time() < end:
         line = p.stdout.readline()
@@ -80,7 +80,7 @@ def _read_until(p, want_id, timeout):
             continue
         if msg.get("id") == want_id and ("result" in msg or "error" in msg):
             return msg
-    raise TimeoutError(f"keine Antwort auf id {want_id} binnen {timeout}s")
+    raise TimeoutError(f"no reply to id {want_id} within {timeout}s")
 
 
 class H(BaseHTTPRequestHandler):
@@ -138,9 +138,9 @@ class H(BaseHTTPRequestHandler):
                 e = _entry(key, argv, b.get("env"))
             except Exception as ex:
                 return self._json(502, {"error": f"spawn failed: {ex!r}"})
-            with e["lock"]:                      # ein RPC je Prozess zur Zeit
+            with e["lock"]:                      # one RPC per process at a time
                 try:
-                    # initialize-Verkehr fuer den Neustart-Fall aufheben.
+                    # keep the initialize traffic for the restart case.
                     if payload.get("method") in ("initialize",
                                                  "notifications/initialized"):
                         e["init"].append(payload)

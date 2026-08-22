@@ -9,8 +9,8 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 
-/** Server-Modus: chattet mit dem laufenden Agenten ueber den Manager-Proxy
- *  ({base}/i/{instance}/api/chat, Body {"message":..}, Antwort {"reply":..}). */
+/** Server mode: chats with the running agent via the manager proxy
+ *  ({base}/i/{instance}/api/chat, body {"message":..}, response {"reply":..}). */
 object ServerAgent {
     fun chat(
         baseUrl: String,
@@ -33,8 +33,8 @@ object ServerAgent {
                 conn.setRequestProperty("Authorization", "Basic $cred")
             }
             conn.outputStream.use {
-                // chat: nur fuer das Security Gateway im Manager — der Gast
-                // sieht das Feld nie, es wird dort herausgenommen.
+                // chat: only for the security gateway in the manager — the guest
+                // never sees the field, it is stripped out there.
                 val p = JSONObject().put("message", message)
                 if (chatId.isNotEmpty()) p.put("chat", chatId)
                 it.write(p.toString().toByteArray())
@@ -49,16 +49,16 @@ object ServerAgent {
                 body
             }
         } catch (e: Exception) {
-            "⚠️ Fehler: ${e.message}"
+            "⚠️ Error: ${e.message}"
         } finally {
             conn.disconnect()
         }
     }
 
-    /** Streaming: POST /i/{instance}/api/chat/stream -> Tokens als roher Text.
-     *  onPartial wird je Chunk gerufen. Rueckgabe: null=ok, sonst Fehlertext. */
-    /** Abbruch-Handle: cancel() trennt die laufende Verbindung -> der blockierende
-     *  read() bricht sofort ab, egal wie lange das Modell gerade denkt. */
+    /** Streaming: POST /i/{instance}/api/chat/stream -> tokens as raw text.
+     *  onPartial is called per chunk. Return: null=ok, otherwise error text. */
+    /** Cancel handle: cancel() drops the running connection -> the blocking
+     *  read() aborts immediately, no matter how long the model is thinking. */
     class CancelHandle {
         @Volatile var disconnect: (() -> Unit)? = null
         fun cancel() { runCatching { disconnect?.invoke() } }
@@ -77,13 +77,13 @@ object ServerAgent {
     ): String? {
         val url = URL("${baseUrl.trimEnd('/')}/i/$instance/api/chat/stream")
         val conn = url.openConnection() as HttpURLConnection
-        cancel?.disconnect = { runCatching { conn.disconnect() } }   // Abbruch = Verbindung trennen
+        cancel?.disconnect = { runCatching { conn.disconnect() } }   // cancel = drop the connection
         return try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 15000
-            conn.readTimeout = 600000      // lange Modell-Pausen tolerieren; Abbruch laeuft
-            // ueber cancel.disconnect(), NICHT ueber ein kurzes Read-Timeout
-            // (ein Timeout schliesst den Socket -> "Socket is closed").
+            conn.readTimeout = 600000      // tolerate long model pauses; cancellation goes
+            // through cancel.disconnect(), NOT through a short read timeout
+            // (a timeout closes the socket -> "Socket is closed").
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             if (user.isNotEmpty()) {
@@ -91,7 +91,7 @@ object ServerAgent {
                 conn.setRequestProperty("Authorization", "Basic $cred")
             }
             val payload = JSONObject().put("message", message)
-            if (image != null) payload.put("image", image)   // Base64 JPEG (ohne data:-Präfix)
+            if (image != null) payload.put("image", image)   // Base64 JPEG (without data: prefix)
             if (chatId.isNotEmpty()) payload.put("chat", chatId)
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = conn.responseCode
@@ -100,13 +100,13 @@ object ServerAgent {
             val reader = stream.bufferedReader()
             val buf = CharArray(256)
             while (true) {
-                val n = reader.read(buf)     // blockiert; cancel.disconnect() bricht es ab
+                val n = reader.read(buf)     // blocks; cancel.disconnect() aborts it
                 if (n < 0) break
                 if (n > 0) onPartial(String(buf, 0, n))
             }
             if (code !in 200..299) "⚠️ HTTP $code" else null
         } catch (e: Exception) {
-            "⚠️ Fehler: ${e.message}"
+            "⚠️ Error: ${e.message}"
         } finally {
             cancel?.disconnect = null
             conn.disconnect()

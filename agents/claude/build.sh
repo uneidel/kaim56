@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Baut alle Artefakte: firecracker-Binary, Gast-Kernel (vmlinux), rootfs.ext4.
+# Builds all artifacts: firecracker binary, guest kernel (vmlinux), rootfs.ext4.
 # Braucht: docker, curl, e2fsprogs (mkfs.ext4 -d). Als DEIN User ausfuehren
-# (kein root noetig; docker-Gruppe reicht). Legt Anmeldung ins Rootfs.
+# (no root needed; the docker group is enough). Places login into the rootfs.
 set -euo pipefail
 cd "$(dirname "$0")"
 ARCH=x86_64
@@ -19,18 +19,18 @@ if [ ! -x ./firecracker ]; then
   echo "     ${ver}"
 fi
 
-echo "[2/5] Gast-Kernel (vmlinux)..."
+echo "[2/5] Guest kernel (vmlinux)..."
 if [ ! -f ./vmlinux ]; then
-  # direkte, bekannte CI-Kernel-URL (der Listing-Filter war fehleranfaellig)
+  # direct, known CI kernel URL (the listing filter was error-prone)
   curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/${ARCH}/vmlinux-6.1.128" -o vmlinux
   echo "     vmlinux-6.1.128"
 fi
 
-echo "[3/5] Rootfs-Image bauen (docker)..."
+echo "[3/5] Build rootfs image (docker)..."
 cp ../claude-signal-bridge/bridge.py ./bridge.py
 docker build -f Dockerfile.rootfs -t claude-fc-rootfs .
 
-echo "[4/5] Rootfs exportieren + Anmeldung einlegen..."
+echo "[4/5] Export rootfs + insert login..."
 rm -rf rootfs && mkdir -p rootfs
 CID=$(docker create claude-fc-rootfs)
 docker export "$CID" | tar -C rootfs -xf -
@@ -39,9 +39,9 @@ mkdir -p rootfs/root/.claude rootfs/root/workspace
 if [ -f "$HOME/.claude/.credentials.json" ]; then
   cp "$HOME/.claude/.credentials.json" rootfs/root/.claude/
   chmod 600 rootfs/root/.claude/.credentials.json
-  echo "     Anmeldung eingelegt."
+  echo "     login inserted."
 else
-  echo "     WARN: ~/.claude/.credentials.json fehlt -> Gast hat keine Anmeldung."
+  echo "     WARN: ~/.claude/.credentials.json missing -> guest has no login."
 fi
 
 echo "[5/5] ext4-Image erzeugen..."
@@ -51,4 +51,4 @@ truncate -s "${SIZE_MB}M" rootfs.ext4
 mkfs.ext4 -F -q -d rootfs rootfs.ext4
 rm -rf rootfs
 echo "FERTIG: firecracker | vmlinux | rootfs.ext4"
-echo "Weiter: 'sudo ./net.sh' dann 'sudo ./run.sh' (oder systemd-Unit installieren)."
+echo "Next: 'sudo ./net.sh' then 'sudo ./run.sh' (or install the systemd unit)."

@@ -8,8 +8,8 @@ import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-/** Web-Zugriff für den On-Device-Modus: DuckDuckGo-Suche (kein API-Key) +
- *  Seiten-Text abrufen. Ergebnis wird Gemma als Kontext vorangestellt. */
+/** Web access for on-device mode: DuckDuckGo search (no API key) +
+ *  fetching page text. The result is prepended to Gemma as context. */
 object WebSearch {
 
     data class Result(val title: String, val url: String, val snippet: String)
@@ -60,21 +60,21 @@ object WebSearch {
             .replace(Regex("\\s+"), " ").trim().take(maxChars)
     }
 
-    /** Baut den Web-Kontext für einen Prompt: enthält die Nachricht eine URL,
-     *  wird deren Inhalt geholt; sonst wird gesucht (+ Auszug der Top-Seite). */
+    /** Builds the web context for a prompt: if the message contains a URL,
+     *  its content is fetched; otherwise a search runs (+ excerpt of the top page). */
     fun buildContext(message: String): String {
         val urlInMsg = Regex("https?://\\S+").find(message)?.value
         if (urlInMsg != null) {
             val t = fetchText(urlInMsg, 3000)
-            return if (t.isNotBlank()) "Inhalt von $urlInMsg:\n$t" else "(Seite nicht abrufbar)"
+            return if (t.isNotBlank()) "Content of $urlInMsg:\n$t" else "(page not retrievable)"
         }
         val res = search(message, 4)
-        if (res.isEmpty()) return "(keine Web-Ergebnisse)"
+        if (res.isEmpty()) return "(no web results)"
         val sb = StringBuilder()
         res.forEach { sb.append("• ${it.title}\n  ${it.url}\n  ${it.snippet}\n") }
         res.firstOrNull()?.url?.let { top ->
             val body = fetchText(top, 1800)
-            if (body.isNotBlank()) sb.append("\nAuszug (${res.first().title}):\n$body\n")
+            if (body.isNotBlank()) sb.append("\nExcerpt (${res.first().title}):\n$body\n")
         }
         return sb.toString()
     }

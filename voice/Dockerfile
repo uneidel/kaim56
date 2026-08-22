@@ -1,10 +1,10 @@
 FROM python:3.12-slim
-# ffmpeg wandelt Opus/AAC/M4A in 16-kHz-Mono-PCM — ohne das scheitert die
-# Erkennung an allem, was kein WAV ist.
+# ffmpeg converts Opus/AAC/M4A to 16 kHz mono PCM — without it recognition
+# fails on anything that is not WAV.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg curl ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir "onnx-asr[cpu,hub]"
-# Piper: eigenstaendiges Binary, kein Python noetig.
+# Piper: standalone binary, no Python needed.
 RUN mkdir -p /opt/piper && cd /opt/piper && \
     curl -sL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
       | tar xz --strip-components=1 && \

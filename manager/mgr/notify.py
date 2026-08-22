@@ -33,7 +33,7 @@ def configure(base):
 # Global (not per instance), short-lived, capped.
 _notif_lock = threading.Lock()
 NOTIF_MAX = 200
-NOTIF_RATE = (30, 300)          # max 30 in 5 min gegen Spam
+NOTIF_RATE = (30, 300)          # max 30 per 5 min against spam
 _notif_sent = []
 _notif_cv = threading.Condition()
 _notif_rev = 0
@@ -63,8 +63,8 @@ def _bump_notif_rev():
 
 
 def notify_add(instance, title, body, link=""):
-    """link steuert, wohin ein Klick auf die Notification fuehrt:
-    'missions' | 'tasks' | 'chat:<instanz>' | '' (nichts)."""
+    """link controls where a click on the notification leads:
+    'missions' | 'tasks' | 'chat:<instance>' | '' (nothing)."""
     title, h1 = redact_secrets((title or "").strip()[:120])
     body, h2 = redact_secrets((body or "").strip()[:1000])
     if not title and not body:
@@ -78,7 +78,7 @@ def notify_add(instance, title, body, link=""):
         _notif_sent.append(now)
         nid = uuid.uuid4().hex[:10]
         lst = load_notifications()
-        lst.append({"id": nid, "ts": int(now), "title": title or "(ohne Titel)",
+        lst.append({"id": nid, "ts": int(now), "title": title or "(no title)",
                     "body": body, "instance": instance or "", "read": False,
                     "link": str(link or "")[:80]})
         _save_notifications(lst)

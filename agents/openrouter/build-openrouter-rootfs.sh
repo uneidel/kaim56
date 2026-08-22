@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Baut das OpenRouter-Agent-Rootfs -> instances/openrouter-rootfs.ext4.
+# Builds the OpenRouter agent rootfs -> instances/openrouter-rootfs.ext4.
 cd "$(dirname "$0")"
-# mkfs.ext4 liegt in /usr/sbin — das steht in der PATH einer normalen
-# Nutzer-Shell nicht drin, und root braucht es fuer ein Datei-Image nicht.
+# mkfs.ext4 lives in /usr/sbin — that is not on a normal user shell's PATH,
+# and root doesn't need it for a file image.
 export PATH="$PATH:/usr/sbin:/sbin"
 INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/openrouter-rootfs.ext4
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
@@ -24,20 +24,20 @@ truncate -s "${SIZE_MB}M" rootfs.ext4 || fail truncate
 mkfs.ext4 -F -q -d rootfs rootfs.ext4 || fail "mkfs.ext4 -d"
 rm -rf rootfs
 
-echo "== [4] als Instanz-Rootfs ablegen =="
-# NIE per cp in die Zieldatei hineinschreiben: haelt eine laufende microVM sie
-# als Blockgeraet offen, mischen sich altes und neues Image und der Gast faellt
-# beim naechsten Boot in einen ext4-Checksum-Panic. Erst danebenlegen, dann
-# atomar umhaengen — eine laufende VM behaelt ihren alten Inode bis zum Stop.
+echo "== [4] place as instance rootfs =="
+# NEVER cp into the target file: if a running microVM holds it open as a block
+# device, old and new image mix and the guest hits an ext4 checksum panic on
+# the next boot. Write alongside first, then swap in atomically — a running VM
+# keeps its old inode until stop.
 for pid in "${FC_DIR:-/home/ulrich/firecracker}"/run/*.pid; do
   [ -e "$pid" ] || continue
   p=$(cat "$pid" 2>/dev/null)
-  # /proc statt kill -0: firecracker laeuft als root, ein Signal-Test aus einer
-  # Nutzer-Shell schlaegt dort fehl und die Warnung bliebe stumm.
+  # /proc instead of kill -0: firecracker runs as root, a signal test from a
+  # user shell fails there and the warning would stay silent.
   if [ -n "$p" ] && [ -d "/proc/$p" ]; then
     n=$(basename "$pid" .pid)
     grep -q "openrouter-rootfs" ""${FC_DIR:-/home/ulrich/firecracker}"/instances/$n.json" 2>/dev/null &&
-      echo "⚠️  Instanz '$n' laeuft auf diesem Rootfs — sie sieht das neue Image erst nach Stop/Start."
+      echo "⚠️  instance '$n' is running on this rootfs — it sees the new image only after stop/start."
   fi
 done
 cp rootfs.ext4 "$INST.new" || fail "cp -> instances/"

@@ -8,8 +8,8 @@ name = "katfs-share"
 path = "src/main.rs"
 
 [dependencies]
-# Auf die Version des Host-Knotens festgenagelt — beide Seiten muessen sich
-# ueber iroh einig sein, das eigene katfs/0 sitzt nur obendrauf.
+# Pinned to the host node's version — both sides must agree on iroh, the
+# own katfs/0 only sits on top.
 iroh = "=1.0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "io-util"] }
 serde_json = "1"

@@ -3,11 +3,11 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""kAIm56 — Manager (Web-UI + API) für 1..x microVM-Instanzen (Firecracker).
+"""kAIm56 — Manager (web UI + API) for 1..x microVM instances (Firecracker).
 
-Laeuft als root (braucht /dev/kvm, ip, iptables) — z. B. via systemd. Reine
-Standardbibliothek, keine Extra-Pakete. Instanzen liegen als JSON unter
-instances/<name>.json; Netz wird pro Instanz aus 'index' abgeleitet:
+Runs as root (needs /dev/kvm, ip, iptables) — e.g. via systemd. Pure standard
+library, no extra packages. Instances are stored as JSON under
+instances/<name>.json; the network is derived per instance from 'index':
   host  172.30.<index>.1/30   guest 172.30.<index>.2/30   tap fc<index>
 """
 import base64
@@ -36,15 +36,15 @@ import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import chatui   # Chat-Oberflaeche (/chat), liegt neben dieser Datei
+import chatui   # chat interface (/chat), lives next to this file
 
-WEB_GUEST_PORT = 8080   # Port der Web-Bridge in der microVM
-TERM_GUEST_PORT = 7682  # Port des webterm (Browser-Terminal) in der microVM
+WEB_GUEST_PORT = 8080   # port of the web bridge in the microVM
+TERM_GUEST_PORT = 7682  # port of the webterm (browser terminal) in the microVM
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# mgr-Paket frueh laden: Injektionen (notify/sem) passieren weiter unten,
-# sobald die jeweiligen Funktionen definiert sind.
+# Load the mgr package early: injections (notify/sem) happen further down,
+# as soon as the respective functions are defined.
 from mgr import missions as _missions  # noqa: E402
 _missions.configure(BASE)
 from mgr import mcp as _mcp  # noqa: E402
@@ -57,8 +57,8 @@ INST_DIR = os.path.join(BASE, "instances")
 TEMPLATE_DIR = os.path.join(BASE, "templates")
 RUN_DIR = os.path.join(BASE, "run")
 SETTINGS_FILE = os.path.join(BASE, "settings.json")
-# Geteilte Secrets/Defaults, die im Config-UI gepflegt werden und leere
-# Template-Parameter gleichen Namens vorbefuellen.
+# Shared secrets/defaults, maintained in the config UI, which pre-fill empty
+# template parameters of the same name.
 SETTINGS_SCHEMA = [
     {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API key"},
     {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API key"},
@@ -70,32 +70,32 @@ SETTINGS_SCHEMA = [
     {"key": "SIGNAL_API", "label": "Signal REST API URL"},
     {"key": "LLAMA_ENDPOINT", "label": "llama.cpp endpoint (OpenAI-compatible base URL, e.g. http://10.0.0.50:8080/v1)"},
     {"key": "LLAMA_API_KEY", "label": "llama.cpp API key (optional, only if --api-key is set)"},
-    {"key": "LLM_KEY_PROXY", "label": "LLM key injection proxy (1 = Keys bleiben auf dem Host, VMs proxern über den Manager)", "options": [
-        {"value": "", "label": "— aus (Agent holt Key via Broker) —"},
-        {"value": "1", "label": "an — Keys verlassen den Host nie"}]},
+    {"key": "LLM_KEY_PROXY", "label": "LLM key injection proxy (1 = keys stay on the host, VMs proxy through the manager)", "options": [
+        {"value": "", "label": "— off (agent fetches key via broker) —"},
+        {"value": "1", "label": "on — keys never leave the host"}]},
     {"key": "TTS_VOICE", "label": "TTS voice (Piper)", "options": [
         {"value": "", "label": "— default (de-thorsten-medium) —"},
-        {"value": "de-thorsten-medium", "label": "Deutsch · Thorsten (medium)"},
-        {"value": "de-eva_k-x_low", "label": "Deutsch · Eva K (x_low, schneller)"},
+        {"value": "de-thorsten-medium", "label": "German · Thorsten (medium)"},
+        {"value": "de-eva_k-x_low", "label": "German · Eva K (x_low, faster)"},
         {"value": "en-amy-medium", "label": "English · Amy (medium)"}]},
     {"key": "TTS_SPEED", "label": "TTS speed (0.5 slow … 2.0 fast, empty = 1.0)"},
 ]
-# Diese Werte landen NIE in instances/<name>.json und nie auf der Config-Disk
-# der microVM. Der Agent holt sie zur Laufzeit ueber den Secret-Broker
-# (/api/secret/<name>, Gast per Source-IP erkannt, Allowlist per Policy).
+# These values NEVER end up in instances/<name>.json and never on the microVM's
+# config disk. The agent fetches them at runtime via the secret broker
+# (/api/secret/<name>, guest identified by source IP, allowlist per policy).
 SECRET_PARAMS = {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLAMA_API_KEY", "ORCAROUTER_API_KEY"}
-# Schreibende Routen, die eine Agent-VM benutzen DARF. Alles andere ist
-# Verwaltung und gehoert dem Admin. Ohne diese Positivliste kaeme eine
-# kompromittierte VM ueber /api/instances/<n>/mounts an das Host-Dateisystem
-# (der Manager laeuft als root und exportiert den Ordner per NFS in den Gast)
-# oder legte sich ueber /api/create gleich eine neue Instanz an — die
-# Secret-Allowlist, das Tool-Gating und die Egress-Regeln waeren damit egal.
-# Positivliste statt Einzelpruefungen: eine neue Route ist dann standardmaessig
-# zu, nicht standardmaessig offen.
-VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # Sprachdienst, Loopback
-# Abo-Anmeldung des claude-Templates: das Credential des Nutzers auf dem Host.
-# Der Manager laeuft als root und darf die 0600-Datei lesen; der Gast holt sie
-# beim Boot ueber /api/claude-credentials (nur claude-Template, per Source-IP).
+# Write routes that an agent VM IS ALLOWED to use. Everything else is
+# administration and belongs to the admin. Without this allowlist a
+# compromised VM could reach the host filesystem via /api/instances/<n>/mounts
+# (the manager runs as root and exports the folder into the guest via NFS)
+# or create a fresh instance for itself via /api/create — the secret allowlist,
+# the tool gating and the egress rules would then be moot.
+# An allowlist instead of individual checks: a new route is then closed by
+# default, not open by default.
+VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # voice service, loopback
+# Subscription login of the claude template: the user's credential on the host.
+# The manager runs as root and may read the 0600 file; the guest fetches it at
+# boot via /api/claude-credentials (claude template only, by source IP).
 CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", "/home/ulrich/.claude/.credentials.json")
 GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
@@ -104,29 +104,29 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish")
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
-# Credential-Injection-Gateway (OneCLI-Muster): der Agent schickt seine
-# Chat-Requests an /api/llm/<backend>/chat/completions statt direkt zum
-# Router; der Manager haengt beim Weiterleiten den Authorization-Header aus
-# den Settings an. So verlassen die LLM-Keys den Host NIE: eine kompromittierte
-# VM kann hoechstens ueber den Manager Modelle rufen (sichtbar, drosselbar),
-# aber keinen Key exfiltrieren und ausserhalb des Systems weiterbenutzen.
+# Credential injection gateway (OneCLI pattern): the agent sends its chat
+# requests to /api/llm/<backend>/chat/completions instead of directly to the
+# router; when forwarding, the manager appends the Authorization header from
+# the settings. This way the LLM keys NEVER leave the host: a compromised VM
+# can at most call models through the manager (visible, throttleable), but
+# cannot exfiltrate a key and reuse it outside the system.
 LLM_PROXY_UPSTREAMS = {
     "openrouter": ("https://openrouter.ai/api/v1/chat/completions", "OPENROUTER_API_KEY"),
     "orcarouter": ("https://api.orcarouter.ai/v1/chat/completions", "ORCAROUTER_API_KEY"),
 }
-# Gesetzte Geheimnisse verlassen den Manager nie im Klartext — die UI bekommt
-# diesen Marker und schickt ihn beim Speichern unveraendert zurueck, wo er
-# verworfen wird. Ein echter leerer Wert loescht den Eintrag weiterhin.
+# Configured secrets never leave the manager in plain text — the UI gets this
+# marker and sends it back unchanged on save, where it is discarded. A genuinely
+# empty value still deletes the entry.
 SETTINGS_KEEP = "__unchanged__"
-# MCP_CONFIG trug die eingesetzten Secrets im Klartext (z. B. das HA-Bearer-
-# Token). Gespeichert wird stattdessen MCP_SERVERS — nur die Katalognamen; die
-# Werte holt der Agent zur Laufzeit ueber /api/mcp-config.
+# MCP_CONFIG carried the substituted secrets in plain text (e.g. the HA bearer
+# token). Instead MCP_SERVERS is stored — only the catalog names; the agent
+# fetches the values at runtime via /api/mcp-config.
 NEVER_PERSIST = SECRET_PARAMS | {"MCP_CONFIG"}
 
-# ---- Standort-Config (site.json): nicht-geheime, host-spezifische Werte ----
-# Domains/IPs/Interface dieser Installation an EINEM Ort, per .gitignore drau
-# ssen. Fehlt die Datei, greifen oeffentliche Defaults (example.com / 1.1.1.1
-# / eth0) — das Repo bleibt so frei von interner Infrastruktur.
+# ---- Site config (site.json): non-secret, host-specific values ----
+# Domains/IPs/interface of this installation in ONE place, kept out via
+# .gitignore. If the file is missing, public defaults apply (example.com /
+# 1.1.1.1 / eth0) — this keeps the repo free of internal infrastructure.
 SITE_FILE = os.path.join(BASE, "site.json")
 def load_site():
     try:
@@ -140,7 +140,7 @@ SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"
 
 POOL = "172.30.0.0/16"
 def _uplink_iface():
-    """Interface der Default-Route ("… dev eth0 …")."""
+    """Interface of the default route ("… dev eth0 …")."""
     try:
         out = subprocess.run(["ip", "-o", "route", "show", "default"],
                              capture_output=True, text=True, timeout=5).stdout.split()
@@ -150,18 +150,17 @@ def _uplink_iface():
 
 
 def _pick_hostif():
-    """Uplink fuer die MASQUERADE-Regel der Gaeste. Ein fest verdrahteter
-    NIC-Name ist eine stille Falle: benennt ihn der Kernel um (Update, neue
-    Hardware, Reboot), zeigt die NAT-Regel ins Leere — die microVMs erreichen
-    dann weder DNS noch LLM, und nichts protokolliert einen Fehler. Deshalb
-    zaehlt ein gesetzter Name nur, wenn es das Interface wirklich gibt;
-    sonst gewinnt die Default-Route."""
+    """Uplink for the guests' MASQUERADE rule. A hard-wired NIC name is a silent
+    trap: if the kernel renames it (update, new hardware, reboot), the NAT rule
+    points nowhere — the microVMs then reach neither DNS nor the LLM, and nothing
+    logs an error. That's why a configured name only counts if the interface
+    really exists; otherwise the default route wins."""
     want = os.environ.get("HOSTIF") or SITE.get("HOSTIF") or ""
     if want and os.path.exists(f"/sys/class/net/{want}"):
         return want
     auto = _uplink_iface()
     if want and auto:
-        print(f"[net] HOSTIF={want} existiert nicht — nutze {auto} (Default-Route)",
+        print(f"[net] HOSTIF={want} does not exist — using {auto} (default route)",
               flush=True)
     return auto or want or "eth0"
 
@@ -169,12 +168,12 @@ def _pick_hostif():
 HOSTIF = _pick_hostif()
 LISTEN = ("0.0.0.0", int(os.environ.get("PORT", "8700")))
 USER = os.environ.get("MANAGER_USER", "admin")
-PW = os.environ.get("MANAGER_PASS", "")   # leer => keine Auth (nur hinter Traefik!)
+PW = os.environ.get("MANAGER_PASS", "")   # empty => no auth (only behind Traefik!)
 
-# ---- NFS / Host-Ordner -----------------------------------------------------
-# Der Workspace-Ordner ist die NFSv4-Wurzel (fsid=0). Zusaetzliche Host-Ordner
-# werden per bind-mount UNTER diese Wurzel gehaengt (.fcmnt/<instanz>/<idx>),
-# mit 'crossmnt' pro Guest-IP freigegeben und im Gast explizit gemountet.
+# ---- NFS / host folders ----------------------------------------------------
+# The workspace folder is the NFSv4 root (fsid=0). Additional host folders are
+# bind-mounted UNDER this root (.fcmnt/<instance>/<idx>), exported with
+# 'crossmnt' per guest IP and mounted explicitly inside the guest.
 AGENT_ROOT = os.environ.get("AGENT_ROOT", "/home/ulrich/agent")
 AGENT_EXPORTS = "/etc/exports.d/agent.exports"
 EXPORTS_D = "/etc/exports.d"
@@ -200,8 +199,8 @@ def load_instances():
 _ormodels = {"ts": 0.0, "data": []}
 
 
-# "Relevant" = kuratierte Flagship-Modelle (exakte IDs). Es werden nur die
-# angezeigt, die aktuell im OpenRouter-Katalog existieren. Bei Bedarf ergaenzen.
+# "Relevant" = curated flagship models (exact IDs). Only those currently
+# present in the OpenRouter catalog are shown. Extend as needed.
 CURATED = {
     "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1", "openai/gpt-4.1-mini",
     "openai/o3", "openai/o4-mini", "openai/gpt-5", "openai/gpt-5-mini",
@@ -221,7 +220,7 @@ CHANGELOG_FILE = os.path.join(BASE, "CHANGELOG.md")
 SECURITY_FILE = os.path.join(BASE, "security.json")
 
 
-_mcp.configure(BASE, load_instances)   # Injektion (mgr/mcp)
+_mcp.configure(BASE, load_instances)   # injection (mgr/mcp)
 
 def load_changelog():
     try:
@@ -242,8 +241,8 @@ def load_security():
 
 
 def save_security(items):
-    """Nur den Status umschalten — Text und Bewertung kommen aus der Datei, die
-    UI soll keine Befunde umschreiben koennen."""
+    """Only toggle the status — text and assessment come from the file; the UI
+    must not be able to rewrite findings."""
     cur = {i.get("id"): i for i in load_security()}
     n = 0
     for upd in items if isinstance(items, list) else []:
@@ -257,9 +256,9 @@ def save_security(items):
 
 
 def load_curated():
-    """Die kuratierte Auswahl fuers Anlege-Formular. Liegt als Datei vor, damit
-    ein neues Modell ueber den Models-Tab hereinkommt statt ueber einen Edit an
-    CURATED + Neustart. Fehlt die Datei, ist CURATED die Erstbefuellung."""
+    """The curated selection for the create form. Kept as a file so a new model
+    comes in via the Models tab instead of via an edit to CURATED + restart.
+    If the file is missing, CURATED is the initial seed."""
     try:
         with open(MODELS_FILE) as fh:
             data = json.load(fh)
@@ -279,8 +278,8 @@ def save_curated(ids):
 
 
 def openrouter_models(force=False, tools_only=False, relevant_only=False):
-    """OpenRouter-Modelle, preis-aufsteigend. 10 min gecacht; force umgeht Cache.
-    tools_only -> nur Function/Tool-Calling; relevant_only -> nur die kuratierten."""
+    """OpenRouter models, price ascending. Cached for 10 min; force bypasses the
+    cache. tools_only -> only function/tool calling; relevant_only -> only curated."""
     if force or time.time() - _ormodels["ts"] >= 600 or not _ormodels["data"]:
         try:
             req = urllib.request.Request("https://openrouter.ai/api/v1/models",
@@ -294,7 +293,7 @@ def openrouter_models(force=False, tools_only=False, relevant_only=False):
                 except (TypeError, ValueError):
                     continue
                 if pr < 0 or co < 0:
-                    continue  # Auto-Router / dynamische Preise ausblenden
+                    continue  # hide auto-router / dynamic pricing
                 sp = m.get("supported_parameters") or []
                 rows.append((pr + co, pr, co, m.get("id", ""), "tools" in sp,
                              m.get("name", ""), m.get("context_length") or 0))
@@ -347,23 +346,23 @@ def save_settings(d):
     return "saved"
 
 
-# ---- Signal (Versand/HITL/Empfang): ausgelagert nach mgr/signal.py --------
+# ---- Signal (send/HITL/receive): moved out to mgr/signal.py ---------------
 from mgr.signal import (signal_send, signal_recipients, hitl_create, hitl_status,  # noqa: E402,F401
                         hitl_resolve, _signal_receiver, _signal_inbound,
                         SIGNAL_MAX_CHARS, SIGNAL_RATE)
 
 
-# ---- Security Gateway: ausgelagert nach mgr/gateway.py ---------------------
+# ---- Security gateway: moved out to mgr/gateway.py -------------------------
 from mgr import gateway as _gateway  # noqa: E402
 _gateway.configure(BASE)
 from mgr.gateway import (load_gateway, gateway_on, gateway_clean, gateway_count,  # noqa: E402,F401
                          StreamGuard, strip_image_meta, _clean_unicode)
 
 
-# ---- Chat-Verlauf (Sync mit der App) ---------------------------------------
+# ---- Chat history (sync with the app) --------------------------------------
 CHATS_FILE = os.path.join(BASE, "chats.json")
 TOMBSTONES_FILE = os.path.join(BASE, "chats_tombstones.json")
-TOMB_TTL_MS = 60 * 24 * 3600 * 1000   # Loesch-Marker nach 60 Tagen verwerfen
+TOMB_TTL_MS = 60 * 24 * 3600 * 1000   # discard deletion markers after 60 days
 
 
 def load_tombstones():
@@ -377,7 +376,7 @@ def load_tombstones():
 
 def save_tombstones(t):
     now = int(time.time() * 1000)
-    t = {k: v for k, v in t.items() if now - v < TOMB_TTL_MS}   # TTL-Prune
+    t = {k: v for k, v in t.items() if now - v < TOMB_TTL_MS}   # TTL prune
     try:
         with open(TOMBSTONES_FILE, "w") as fh:
             json.dump(t, fh)
@@ -400,17 +399,17 @@ def save_chats(data):
     try:
         with open(CHATS_FILE, "w") as fh:
             json.dump(data, fh)
-        bump_chats_rev()          # wartende Long-Polls (App/Web) sofort wecken
+        bump_chats_rev()          # immediately wake waiting long-polls (app/web)
         return len(data)
     except OSError:
         return -1
 
 
-# Live-Sync: jedes Schreiben am Chat-Store zaehlt eine Revision hoch. App und
-# Web haengen mit ?since=<rev>&wait=<sek> am Long-Poll und sehen die Nachricht
-# der jeweils anderen Seite in Sekundenbruchteilen — ohne Neuladen, ohne
-# Dauer-Polling. Ohne die Parameter antwortet /api/chats wie bisher (Liste),
-# damit aeltere Clients unveraendert weiterlaufen.
+# Live sync: every write to the chat store bumps a revision. App and web hang
+# on the long-poll with ?since=<rev>&wait=<sec> and see the other side's message
+# within fractions of a second — no reload, no constant polling. Without the
+# parameters, /api/chats responds as before (a list), so older clients keep
+# working unchanged.
 _chats_cv = threading.Condition()
 try:
     _chats_rev = int(os.path.getmtime(CHATS_FILE) * 1000)
@@ -421,15 +420,15 @@ except OSError:
 def bump_chats_rev():
     global _chats_rev
     with _chats_cv:
-        # Zeitbasiert, aber streng monoton: ueberlebt einen Manager-Neustart,
-        # ohne dass ein Client mit altem `since` haengen bleibt.
+        # Time-based, but strictly monotonic: survives a manager restart without
+        # leaving a client with an old `since` stuck.
         _chats_rev = max(_chats_rev + 1, int(time.time() * 1000))
         _chats_cv.notify_all()
 
 
 def wait_chats(since, timeout):
-    """(rev, chats|None) — die Liste nur, wenn sich seit `since` etwas getan
-    hat, sonst None (Zeitablauf). Blockiert hoechstens `timeout` Sekunden."""
+    """(rev, chats|None) — the list only if something changed since `since`,
+    otherwise None (timeout). Blocks at most `timeout` seconds."""
     deadline = time.time() + max(0.0, timeout)
     with _chats_cv:
         while _chats_rev <= since:
@@ -441,15 +440,15 @@ def wait_chats(since, timeout):
     return rev, (load_chats() if rev > since else None)
 
 
-# ---- Notifications: ausgelagert nach mgr/notify.py -------------------------
+# ---- Notifications: moved out to mgr/notify.py -----------------------------
 from mgr import notify as _notify  # noqa: E402
 _notify.configure(BASE)
 from mgr.notify import (load_notifications, notify_add, notif_mark_read, notif_clear,  # noqa: E402,F401
                         wait_notifs, NOTIF_MAX, NOTIF_RATE, _notif_sent)
-_missions.notify_add = notify_add   # Injektion (mgr/missions)
+_missions.notify_add = notify_add   # injection (mgr/missions)
 
 
-# ---- Posteingang (Wasserzeichen) — chat-gekoppelt, bleibt hier ---------------
+# ---- Inbox (watermark) — coupled to chat, stays here -----------------------
 INBOX_WM_FILE = os.path.join(BASE, "inbox_wm.json")
 
 
@@ -462,11 +461,11 @@ def _inbox_wm():
 
 
 def inbox_since(peek=False):
-    """Neue Nutzer-Nachrichten aus dem gemeinsamen Chat-Store (Signal/App/Web)
-    seit dem letzten Lauf — als Posteingang fuer den Orchestrator. Wasserzeichen
-    ueber conversation.updatedAt: jede Konversation mit neuer Aktivitaet wird
-    einmal geliefert (letzte Nutzer-Nachricht). Task-Konversationen (Ergebnisse)
-    werden ausgeblendet. peek=True liefert, ohne das Wasserzeichen zu setzen."""
+    """New user messages from the shared chat store (Signal/app/web) since the
+    last run — as an inbox for the orchestrator. Watermark over
+    conversation.updatedAt: every conversation with new activity is delivered
+    once (last user message). Task conversations (results) are hidden.
+    peek=True delivers without setting the watermark."""
     wm = _inbox_wm()
     items, maxts = [], wm
     for c in load_chats():
@@ -491,9 +490,9 @@ def inbox_since(peek=False):
 
 
 def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
-    """Einen Turn (Frage + Antwort) an die gemeinsame Chat-Historie haengen,
-    damit er in App und Web auftaucht. `kind`='signal' -> eine Konversation pro
-    (Instanz,Sender); 'task' -> eine Task-Konversation pro Instanz."""
+    """Append a turn (question + answer) to the shared chat history so it shows
+    up in the app and web. `kind`='signal' -> one conversation per
+    (instance, sender); 'task' -> one task conversation per instance."""
     if kind == "task":
         cid = f"task-{inst_name}"
         title = f"Tasks · {inst_name}"
@@ -517,25 +516,25 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
     return save_chats(chats)
 
 
-# ---- Tool-Plugins verwalten (Drag&Drop im Web-Manager) ---------------------
-# Jedes Tool = ein Ordner plugins/<name>/ mit Entry-Datei tool.py (Konvention
-# DESC/PARAMS/REQUIRED/run). Einzelne .py werden als plugins/<name>/tool.py
-# abgelegt. Der Ordner wird beim Instanz-Start auf die Config-Disk kopiert und
-# in der VM geladen (Sandbox). stdlib-only.
+# ---- Manage tool plugins (drag & drop in the web manager) ------------------
+# Each tool = a folder plugins/<name>/ with an entry file tool.py (convention
+# DESC/PARAMS/REQUIRED/run). Single .py files are stored as plugins/<name>/tool.py.
+# The folder is copied onto the config disk when the instance starts and loaded
+# inside the VM (sandbox). stdlib-only.
 PLUGINS_SRC = os.path.join(BASE, "plugins")
 PLUGIN_MAX_BYTES = 5 * 1024 * 1024
 PLUGIN_BOILERPLATE = (
-    "# Tool-Plugin fuer kAIm56. Konvention: DESC / PARAMS / REQUIRED / run().\n"
-    "# Laeuft in der Agent-VM (Sandbox), stdlib-only. Mehrdatei? Lege weitere\n"
-    "# .py in diesen Ordner und importiere sie hier (z. B. `import helper`).\n"
-    "DESC = \"Kurz: was das Tool tut (wird dem Modell als Tool-Beschreibung gezeigt).\"\n"
+    "# Tool plugin for kAIm56. Convention: DESC / PARAMS / REQUIRED / run().\n"
+    "# Runs in the agent VM (sandbox), stdlib-only. Multiple files? Put more\n"
+    "# .py files in this folder and import them here (e.g. `import helper`).\n"
+    "DESC = \"Short: what the tool does (shown to the model as the tool description).\"\n"
     "PARAMS = {\n"
-    "    \"text\": {\"type\": \"string\", \"description\": \"Beispiel-Parameter\"},\n"
+    "    \"text\": {\"type\": \"string\", \"description\": \"example parameter\"},\n"
     "}\n"
     "REQUIRED = []\n"
     "\n"
     "def run(text=\"\"):\n"
-    "    # ... deine Logik; gib einen String zurueck ...\n"
+    "    # ... your logic; return a string ...\n"
     "    return f\"ok: {text}\"\n"
 )
 
@@ -544,16 +543,16 @@ def _safe_tool_name(name):
     return re.sub(r"[^a-z0-9_-]", "", (name or "").strip().lower())[:40]
 
 
-# ---- Plugin-Integritaet: Content-Hash-Pinning (Idee aus MS "APM") ----------
-# Beim Upload/Anlegen wird der SHA-256 ueber alle Dateien des Tools als
-# "genehmigt" festgehalten. Wird eine Plugin-Datei spaeter direkt (an der UI
-# vorbei) geaendert, weicht der Hash ab -> die UI zeigt "modified" und man muss
-# die Aenderung bewusst per "Approve" neu pinnen. Runtime-State, gitignored.
+# ---- Plugin integrity: content-hash pinning (idea from MS "APM") -----------
+# On upload/creation the SHA-256 over all of the tool's files is recorded as
+# "approved". If a plugin file is later changed directly (bypassing the UI),
+# the hash diverges -> the UI shows "modified" and you must deliberately re-pin
+# the change via "Approve". Runtime state, gitignored.
 PLUGIN_PINS_FILE = os.path.join(PLUGINS_SRC, ".pins.json")
 
 
 def _plugin_hash(name):
-    """SHA-256 ueber (relpath\0inhalt\0) aller Dateien eines Tools, sortiert."""
+    """SHA-256 over (relpath\0content\0) of all a tool's files, sorted."""
     name = _safe_tool_name(name)
     folder = os.path.join(PLUGINS_SRC, name)
     single = os.path.join(PLUGINS_SRC, name + ".py")
@@ -597,7 +596,7 @@ def _save_plugin_pins(d):
 
 
 def plugin_pin(name):
-    """Aktuellen Zustand als genehmigt festhalten (Upload oder 'Approve')."""
+    """Record the current state as approved (upload or 'Approve')."""
     name = _safe_tool_name(name)
     h = _plugin_hash(name)
     pins = load_plugin_pins()
@@ -614,7 +613,7 @@ def list_plugins():
     if not os.path.isdir(PLUGINS_SRC):
         return out
     for entry in sorted(os.listdir(PLUGINS_SRC)):
-        if entry.startswith((".", "__")):        # __pycache__, versteckte
+        if entry.startswith((".", "__")):        # __pycache__, hidden
             continue
         path = os.path.join(PLUGINS_SRC, entry)
         if os.path.isdir(path):
@@ -638,7 +637,7 @@ def list_plugins():
 def plugin_write_py(name, code):
     name = _safe_tool_name(name)
     if not name:
-        return "ungueltiger Name"
+        return "invalid name"
     dest = os.path.join(PLUGINS_SRC, name)
     os.makedirs(dest, exist_ok=True)
     with open(os.path.join(dest, "tool.py"), "w", encoding="utf-8") as fh:
@@ -652,7 +651,7 @@ def plugin_write_zip(name, raw):
     import io
     name = _safe_tool_name(name)
     if not name:
-        return "ungueltiger Name"
+        return "invalid name"
     dest = os.path.join(PLUGINS_SRC, name)
     dest_abs = os.path.abspath(dest)
     shutil.rmtree(dest, ignore_errors=True)
@@ -660,7 +659,7 @@ def plugin_write_zip(name, raw):
     try:
         z = zipfile.ZipFile(io.BytesIO(raw))
     except zipfile.BadZipFile:
-        return "kaputtes Zip"
+        return "broken zip"
     names = [n for n in z.namelist() if not n.endswith("/")]
     tops = {n.split("/", 1)[0] for n in names}
     strip = len(tops) == 1 and any("/" in n for n in names)
@@ -673,13 +672,13 @@ def plugin_write_zip(name, raw):
             continue
         target = os.path.normpath(os.path.join(dest, rel))
         if not (target == dest_abs or target.startswith(dest_abs + os.sep)):
-            continue   # zip-slip-Schutz
+            continue   # zip-slip protection
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with z.open(m) as fsrc, open(target, "wb") as fdst:
             shutil.copyfileobj(fsrc, fdst)
     if not any(os.path.isfile(os.path.join(dest, c))
                for c in ("tool.py", "__init__.py", name + ".py")):
-        return "kein Entry (tool.py/__init__.py) im Zip gefunden"
+        return "no entry (tool.py/__init__.py) found in the zip"
     plugin_pin(name)
     return None
 
@@ -701,12 +700,12 @@ def plugin_delete(name):
 
 
 def merge_chats(incoming):
-    """Chats VEREINEN (neuerer updatedAt gewinnt) plus LOESCH-TOMBSTONES:
-    `incoming` ist entweder eine nackte Liste (alt: nur Chats) oder ein Objekt
-    {chats:[...], tombstones:{id:deletedAt}}. Ein getombsteter Chat kommt nicht
-    zurueck — auch nicht durch Re-Push der App —, solange sein updatedAt nicht
-    NEUER ist als die Loeschung (echte Bearbeitung nach dem Loeschen laesst ihn
-    wieder auferstehen und verwirft den Tombstone). Tombstones haben eine TTL."""
+    """MERGE chats (newer updatedAt wins) plus DELETION TOMBSTONES:
+    `incoming` is either a bare list (old: chats only) or an object
+    {chats:[...], tombstones:{id:deletedAt}}. A tombstoned chat does not come
+    back — not even through a re-push from the app — as long as its updatedAt is
+    not NEWER than the deletion (a genuine edit after the deletion resurrects it
+    and discards the tombstone). Tombstones have a TTL."""
     if isinstance(incoming, dict):
         chats_in = incoming.get("chats") or []
         tombs_in = incoming.get("tombstones") or {}
@@ -734,13 +733,13 @@ def merge_chats(incoming):
         if cur is None or c.get("updatedAt", 0) >= cur.get("updatedAt", 0):
             by_id[cid] = c
 
-    # Tombstones anwenden
+    # Apply tombstones
     for cid, dat in list(tombs.items()):
         c = by_id.get(cid)
         if c is not None and c.get("updatedAt", 0) > dat:
-            tombs.pop(cid, None)        # Chat ist neuer -> Auferstehung ok
+            tombs.pop(cid, None)        # chat is newer -> resurrection ok
         else:
-            by_id.pop(cid, None)        # geloescht bleibt geloescht
+            by_id.pop(cid, None)        # deleted stays deleted
 
     save_tombstones(tombs)
     merged = sorted(by_id.values(), key=lambda x: x.get("updatedAt", 0), reverse=True)
@@ -750,20 +749,20 @@ def merge_chats(incoming):
 
 
 
-# ---- Hintergrundaufgaben (Task-Queue + Scheduler) --------------------------
+# ---- Background jobs (task queue + scheduler) ------------------------------
 
-# ---- store: SQLite-History/Usage/Semantik + Memory -> mgr/store.py --------
+# ---- store: SQLite history/usage/semantics + memory -> mgr/store.py -------
 from mgr import store as _store  # noqa: E402
 _store.configure(BASE)
 from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_lock, _hist_conn,  # noqa: E402,F401
                        usage_add, usage_summary, usage_for, history_add, history_search,
                        load_tasks, save_tasks, add_task, update_task, _next_run,
                        _embed, sem_store, sem_search, load_memory, mem_store, mem_recall)
-_missions.sem_store = sem_store   # Injektion (mgr/missions)
+_missions.sem_store = sem_store   # injection (mgr/missions)
 
 
 def _chat_post(inst, message, timeout=600):
-    """Nicht-streamender Chat-Aufruf an die Bridge einer Instanz."""
+    """Non-streaming chat call to an instance's bridge."""
     url = f"http://{net_of(inst)['guest']}:{WEB_GUEST_PORT}/api/chat"
     data = json.dumps({"message": message}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
@@ -776,14 +775,14 @@ def _chat_post(inst, message, timeout=600):
 
 
 def _run_named(instance, message):
-    """Aufgabe auf einer BESTEHENDEN Instanz ausfuehren (dort leben ihre
-    Tools/MCP/Secrets). Startet sie bei Bedarf und wartet, bis die Bridge da ist."""
+    """Run a task on an EXISTING instance (its tools/MCP/secrets live there).
+    Starts it if needed and waits until the bridge is up."""
     inst = next((i for i in load_instances() if i["name"] == instance), None)
     if not inst:
-        return (False, f"Instanz '{instance}' unbekannt")
+        return (False, f"instance '{instance}' unknown")
     if not is_running(inst):
         if not wait_web(inst, timeout=120):
-            return (False, f"Instanz '{instance}' nicht bereit")
+            return (False, f"instance '{instance}' not ready")
         inst = next((i for i in load_instances() if i["name"] == instance), None)
     try:
         return (True, _chat_post(inst, message))
@@ -792,9 +791,9 @@ def _run_named(instance, message):
 
 
 def _run_ephemeral(message, model=None):
-    """Aufgabe in einer FRISCHEN, isolierten VM ausfuehren, die danach wieder
-    geloescht wird. Fuer isolierte/unabhaengige Arbeit — nicht fuer Aufgaben,
-    die einen bestimmten MCP/Token brauchen (die gehoeren auf ihre Instanz)."""
+    """Run a task in a FRESH, isolated VM that is deleted afterwards. For
+    isolated/independent work — not for tasks that need a specific MCP/token
+    (those belong on their instance)."""
     name = "task-" + uuid.uuid4().hex[:6]
     cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
     if model:
@@ -802,10 +801,10 @@ def _run_ephemeral(message, model=None):
     msg = create_instance(name, "openrouter", cfg)
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
-        return (False, f"Ephemere VM fehlgeschlagen: {msg}")
+        return (False, f"ephemeral VM failed: {msg}")
     try:
         if not wait_web(inst, timeout=120):
-            return (False, "Ephemere VM nicht bereit")
+            return (False, "ephemeral VM not ready")
         return (True, _chat_post(inst, message))
     except Exception as e:
         return (False, f"error: {e!r}")
@@ -818,45 +817,46 @@ def _run_ephemeral(message, model=None):
 
 
 def _run_task_now(instance, message):
-    """Aufgabe ausfuehren — auf einer benannten Instanz (Routing zur Faehigkeit)
-    oder in einer ephemeren VM (target == 'ephemeral')."""
+    """Run a task — on a named instance (routing to the capability) or in an
+    ephemeral VM (target == 'ephemeral')."""
     if instance == "ephemeral":
         return _run_ephemeral(message)
     return _run_named(instance, message)
 
 
-# ---- Sofort-Trigger fuer den Orchestrator ----------------------------------
-# Neue Nutzer-Nachricht (Signal/App/Web) -> Orchestrator laeuft debounced in
-# Sekunden statt erst beim naechsten 2-h-Heartbeat. Coalesct Bursts, ein Lauf
-# zur Zeit; kamen waehrend des Laufs neue Nachrichten, wird direkt nochmal
-# gefeuert. Feuert nur, wenn der Posteingang wirklich Neues hat (peek).
+# ---- Instant trigger for the orchestrator ----------------------------------
+# New user message (Signal/app/web) -> the orchestrator runs debounced within
+# seconds instead of only at the next 2-h heartbeat. Coalesces bursts, one run
+# at a time; if new messages arrived during the run, it fires again right away.
+# Fires only if the inbox really has something new (peek).
 ORCH_INSTANCE = "orchestrator"
 ORCH_HEARTBEAT_MSG = (
-    "/fresh "   # zustandslos: eigener Wegwerf-Kontext, kein Aufblaehen, kein
-                # Wegwischen eines laufenden App-Chats (geteiltes _history).
-    "Heartbeat (Sofort-Trigger): 1) read_inbox — neue Nutzer-Nachrichten. "
-    "2) Fuer jede mit Handlungsbedarf: recall_tasks (keine Dubletten), dann "
-    "list_agents und create_task an die FAEHIGE Instanz (z. B. hass fuer "
-    "HomeAssistant) oder ephemeral. 3) Nachrichten, die mit [Signal] beginnen, "
-    "kamen per Signal: schicke die Antwort bzw. Bestaetigung mit send_signal "
-    "zurueck (kurz) — OHNE Nummer/Empfaenger anzugeben, sie geht automatisch an "
-    "den Nutzer; erfinde KEINE Nummer. 4) missions pruefen: haengt ein Schritt auf "
-    "doing, obwohl sein Task laengst fertig ist (recall_tasks)? Dann mission_update "
-    "und den naechsten Schritt anstossen. Kurz halten. Nichts zu tun? Melde: nichts zu tun.")
+    "/fresh "   # stateless: own throwaway context, no bloat, no wiping out a
+                # running app chat (shared _history).
+    "Heartbeat (instant trigger): 1) read_inbox — new user messages. "
+    "2) For each one that needs action: recall_tasks (no duplicates), then "
+    "list_agents and create_task to the CAPABLE instance (e.g. hass for "
+    "HomeAssistant) or ephemeral. 3) Messages starting with [Signal] came in "
+    "via Signal: send the reply or confirmation back with send_signal "
+    "(briefly) — WITHOUT specifying a number/recipient, it goes to the user "
+    "automatically; do NOT invent a number. 4) Check missions: is a step stuck "
+    "on doing even though its task finished long ago (recall_tasks)? Then "
+    "mission_update and kick off the next step. Keep it short. Nothing to do? "
+    "Report: nothing to do.")
 MISSION_ADVANCE_MSG = (
-    "/fresh Missions-Fortschritt (Sofort-Trigger nach Task-Abschluss): Der Task "
-    "'{task_id}' zu Mission '{mid}' ({goal}) ist fertig. 1) recall_tasks nach dem "
-    "Ergebnis dieses Tasks. 2) mission_update: Schritt {step} auf done/failed "
-    "setzen, Ergebnis knapp eintragen. 3) Den NAECHSTEN offenen Schritt anstossen "
-    "(create_task an die faehige Instanz oder ephemeral, task-id per "
-    "mission_update am Schritt vermerken). 4) Kein offener Schritt mehr? "
-    "mission_finish mit kurzem Fazit. Blockiert? notify an den Nutzer. Kurz halten.")
+    "/fresh Mission progress (instant trigger after task completion): The task "
+    "'{task_id}' for mission '{mid}' ({goal}) is done. 1) recall_tasks for the "
+    "result of this task. 2) mission_update: set step {step} to done/failed, "
+    "record the result briefly. 3) Kick off the NEXT open step "
+    "(create_task to the capable instance or ephemeral, note the task-id on the "
+    "step via mission_update). 4) No open step left? "
+    "mission_finish with a short summary. Blocked? notify the user. Keep it short.")
 
 
 def _mission_advance_fire(task_id):
-    """Nach Task-Abschluss: gehoert der Task zu einem Missionsschritt, den
-    Orchestrator sofort einen Fortschritts-Vorstoss machen lassen (statt auf
-    den naechsten Heartbeat zu warten). Best-effort im Hintergrund-Thread."""
+    """After task completion: if the task belongs to a mission step, have the
+    orchestrator make an immediate progress push (instead of waiting for the
+    next heartbeat). Best-effort in a background thread."""
     inst, m, st = mission_for_task(task_id)
     if not m or inst != ORCH_INSTANCE:
         return
@@ -881,7 +881,7 @@ def orchestrator_ping():
     if not any(i.get("name") == ORCH_INSTANCE for i in load_instances()):
         return
     try:
-        if not inbox_since(peek=True):   # nur feuern, wenn wirklich Neues da ist
+        if not inbox_since(peek=True):   # only fire if there is really something new
             return
     except Exception:
         return
@@ -894,7 +894,7 @@ def orchestrator_ping():
         t.start()
 
 
-# Signal-Modul mit seinen Querbezuegen versorgen (alle jetzt definiert).
+# Supply the signal module with its cross-references (all now defined).
 _signal_mod.load_settings = load_settings
 _signal_mod.chat_log_append = chat_log_append
 _signal_mod.orchestrator_ping = orchestrator_ping
@@ -925,8 +925,9 @@ WORKER_LOG = os.path.join(RUN_DIR, "worker.log")
 
 
 def _wlog(msg):
-    """Worker-Diagnose in eine Datei — journalctl ist nur root zugaenglich,
-    und genau beim Task-Waisen-Bug (20.08.) fehlte dadurch die Exception."""
+    """Worker diagnostics into a file — journalctl is only accessible to root,
+    and that is exactly why the exception was missing in the orphaned-task bug
+    (Aug 20)."""
     line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)
     print("[worker]", msg, flush=True)
     try:
@@ -937,9 +938,9 @@ def _wlog(msg):
 
 
 def reclaim_stuck_tasks():
-    """Beim Start verwaiste 'running'-Tasks zurueckstellen. Genau EIN Worker
-    laeuft — was beim Start noch 'running' ist, gehoert zu einem abgestuerzten
-    Lauf (z. B. der store-Bug am 20.08.) und wuerde sonst nie wieder feuern."""
+    """Reset orphaned 'running' tasks at startup. Exactly ONE worker runs — what
+    is still 'running' at startup belongs to a crashed run (e.g. the store bug
+    on Aug 20) and would otherwise never fire again."""
     tasks = load_tasks()
     n = 0
     for t in tasks:
@@ -948,11 +949,11 @@ def reclaim_stuck_tasks():
             n += 1
     if n:
         save_tasks(tasks)
-        print(f"[worker] {n} verwaiste 'running'-Task(s) zurueckgestellt", flush=True)
+        print(f"[worker] {n} orphaned 'running' task(s) reset", flush=True)
 
 
 def _task_worker():
-    """Verarbeitet fällige/anstehende Tasks sequentiell im Hintergrund."""
+    """Processes due/pending tasks sequentially in the background."""
     reclaim_stuck_tasks()
     while True:
         ran = False
@@ -968,30 +969,30 @@ def _task_worker():
                         continue
                 elif t.get("status") != "pending":
                     continue
-                # Frequenz-Deckel: mehr als 6 Laeufe/h desselben Tasks ist
-                # IMMER ein Defekt (Schleifen-Bug 20.08.) — Stunde aussetzen.
+                # Frequency cap: more than 6 runs/h of the same task is ALWAYS
+                # a defect (loop bug Aug 20) — pause it for an hour.
                 runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
                 if len(runs) >= 6:
                     t["recent_runs"] = runs
                     t["next_run"] = now + 3600
                     save_tasks(tasks)
-                    _wlog(f"{t['id']}: >6 Laeufe/h — 1 h ausgesetzt (Schleifen-Schutz)")
+                    _wlog(f"{t['id']}: >6 runs/h — paused for 1 h (loop protection)")
                     try:
-                        notify_add("guardrail", f"Task-Schleife gebremst: {t['id']}",
-                                   str(t.get("message", ""))[:120] + " — lief >6x/h, pausiert 1 h.",
+                        notify_add("guardrail", f"Task loop throttled: {t['id']}",
+                                   str(t.get("message", ""))[:120] + " — ran >6x/h, paused 1 h.",
                                    link="tasks")
                     except Exception:
                         pass
                     continue
                 t["recent_runs"] = runs + [now]
-                # Task beanspruchen
+                # Claim the task
                 t["status"] = "running"
                 t["updated"] = now
                 save_tasks(tasks)
-                # Ab hier ist ALLES einzeln abgesichert: ein Fehler irgendwo darf
-                # den Task nie mehr als "running"-Waise hinterlassen (Bug 20.08.:
-                # Exception im Nachlauf -> aeusseres except -> Task feuerte nie
-                # wieder und der Chat-Eintrag fehlte).
+                # From here on EVERYTHING is guarded individually: an error
+                # anywhere must never leave the task as a "running" orphan
+                # (bug Aug 20: exception in the follow-up -> outer except ->
+                # the task never fired again and the chat entry was missing).
                 try:
                     ok, res = _run_task_now(t["instance"], t["message"])
                 except Exception as e:
@@ -1010,7 +1011,7 @@ def _task_worker():
                             tt["status"] = "done" if ok else "error"
                         save_tasks(fresh)
                 except Exception as e:
-                    _wlog(f"{t['id']}: Status-Update fehlgeschlagen: {e!r}")
+                    _wlog(f"{t['id']}: status update failed: {e!r}")
                 try:
                     chat_log_append(t.get("instance", "task"), "task",
                                     t.get("message", ""), res, kind="task")
@@ -1031,8 +1032,8 @@ def _task_worker():
             _wlog(f"worker-loop: {e!r}")
         if not ran:
             time.sleep(5)
-            # Waisen-Wache: haengt ein Task laenger als 30 min auf "running",
-            # ist sein Lauf verloren (Timeout ist 10 min) -> zurueckstellen.
+            # Orphan watch: if a task hangs on "running" for more than 30 min,
+            # its run is lost (the timeout is 10 min) -> reset it.
             try:
                 tasks2 = load_tasks()
                 cut = int(time.time()) - 1800
@@ -1040,13 +1041,13 @@ def _task_worker():
                 for t2 in tasks2:
                     if t2.get("status") == "running" and t2.get("updated", 0) < cut:
                         t2["status"] = "scheduled" if t2.get("schedule") else "pending"
-                        _wlog(f"{t2.get('id')}: running-Waise zurueckgestellt")
+                        _wlog(f"{t2.get('id')}: running orphan reset")
                         dirty = True
                 if dirty:
                     save_tasks(tasks2)
             except Exception as e:
-                _wlog(f"waisen-wache: {e!r}")
-            # TTL-Sweep im Leerlauf, hoechstens einmal pro Stunde.
+                _wlog(f"orphan-watch: {e!r}")
+            # TTL sweep while idle, at most once per hour.
             now = time.time()
             if now - _mi_sweep_ts[0] > 3600:
                 _mi_sweep_ts[0] = now
@@ -1073,45 +1074,45 @@ def next_index():
     return n
 
 
-# Werkzeug-Katalog fuer die UI (spiegelt BUILTIN im openrouter-Agenten). Nur
-# Anzeige/Allowlist — die Ausfuehrung filtert der Agent nochmal selbst.
+# Tool catalog for the UI (mirrors BUILTIN in the openrouter agent). Display/
+# allowlist only — the agent filters execution again itself.
 AGENT_TOOLS_CATALOG = [
-    {"name": "bash", "desc": "Shell-Befehle im Workspace ausführen"},
-    {"name": "read_file", "desc": "Datei lesen"},
-    {"name": "write_file", "desc": "Datei schreiben"},
-    {"name": "list_dir", "desc": "Verzeichnis auflisten"},
-    {"name": "offload_read", "desc": "Ausgelagerte (gekuerzte) Tool-Ausgabe nachlesen"},
-    {"name": "http_fetch", "desc": "URL abrufen (HTTP)"},
-    {"name": "read_pdf", "desc": "PDF-Text extrahieren (Datei oder URL)"},
-    {"name": "web_search", "desc": "Websuche (DuckDuckGo) — braucht Internet"},
-    {"name": "spawn_subagent", "desc": "Ephemeren Subagenten starten"},
-    {"name": "create_task", "desc": "Aufgabe einreihen (faehige Instanz oder ephemer)"},
-    {"name": "read_inbox", "desc": "Neue Nutzer-Nachrichten (Signal/App/Web) lesen"},
-    {"name": "list_tasks", "desc": "Laufende/geplante Aufgaben mit IDs auflisten"},
-    {"name": "delete_task", "desc": "Eine laufende/geplante Aufgabe per ID loeschen"},
-    {"name": "edit_task", "desc": "Nachricht/Zeitplan einer Aufgabe per ID aendern"},
-    {"name": "mission_start", "desc": "Mission anlegen: Ziel + Schritte (nur Orchestrator)"},
-    {"name": "missions", "desc": "Offene Missionen mit Status auflisten (nur Orchestrator)"},
-    {"name": "mission_update", "desc": "Missionsschritt fortschreiben (nur Orchestrator)"},
-    {"name": "mission_finish", "desc": "Mission abschliessen (nur Orchestrator)"},
-    {"name": "send_signal", "desc": "Signal-Nachricht an den Nutzer senden (nur erlaubte Nummern)"},
-    {"name": "notify", "desc": "Push-Benachrichtigung an App + Web-Manager (Titel + Text)"},
-    {"name": "oracle", "desc": "Zweitmeinung vor riskanten Aktionen (challenged Annahmen, handelt nie)"},
-    {"name": "list_agents", "desc": "Verfuegbare Agenten + Faehigkeiten (Routing)"},
-    {"name": "recall_tasks", "desc": "Fruehere Aufgaben/Ergebnisse abfragen (Stammwissen)"},
-    {"name": "list_skills", "desc": "Verfügbare Skills auflisten"},
-    {"name": "load_skill", "desc": "Skill in den Kontext laden"},
-    {"name": "memory_store", "desc": "Wert dauerhaft merken"},
-    {"name": "memory_recall", "desc": "Gemerkten Wert abrufen"},
-    {"name": "playbook_add", "desc": "Dauerhafte Regel/Playbook festhalten (gilt immer)"},
-    {"name": "playbooks", "desc": "Playbooks (feste Regeln) auflisten"},
-    {"name": "playbook_forget", "desc": "Playbook per ID entfernen"},
-    {"name": "remote_ls", "desc": "katfs-Freigabe auflisten"},
-    {"name": "remote_read", "desc": "katfs-Datei lesen"},
-    {"name": "remote_write", "desc": "katfs-Datei schreiben"},
-    {"name": "remote_delete", "desc": "katfs-Datei/Ordner löschen"},
-    {"name": "list_secrets", "desc": "Freigegebene Secret-Namen zeigen"},
-    {"name": "get_secret", "desc": "Freigegebenes Secret holen"},
+    {"name": "bash", "desc": "Run shell commands in the workspace"},
+    {"name": "read_file", "desc": "Read a file"},
+    {"name": "write_file", "desc": "Write a file"},
+    {"name": "list_dir", "desc": "List a directory"},
+    {"name": "offload_read", "desc": "Re-read offloaded (truncated) tool output"},
+    {"name": "http_fetch", "desc": "Fetch a URL (HTTP)"},
+    {"name": "read_pdf", "desc": "Extract PDF text (file or URL)"},
+    {"name": "web_search", "desc": "Web search (DuckDuckGo) — needs internet"},
+    {"name": "spawn_subagent", "desc": "Start an ephemeral subagent"},
+    {"name": "create_task", "desc": "Queue a task (capable instance or ephemeral)"},
+    {"name": "read_inbox", "desc": "Read new user messages (Signal/app/web)"},
+    {"name": "list_tasks", "desc": "List running/scheduled tasks with IDs"},
+    {"name": "delete_task", "desc": "Delete a running/scheduled task by ID"},
+    {"name": "edit_task", "desc": "Change a task's message/schedule by ID"},
+    {"name": "mission_start", "desc": "Create a mission: goal + steps (orchestrator only)"},
+    {"name": "missions", "desc": "List open missions with status (orchestrator only)"},
+    {"name": "mission_update", "desc": "Advance a mission step (orchestrator only)"},
+    {"name": "mission_finish", "desc": "Complete a mission (orchestrator only)"},
+    {"name": "send_signal", "desc": "Send a Signal message to the user (allowed numbers only)"},
+    {"name": "notify", "desc": "Push notification to app + web manager (title + text)"},
+    {"name": "oracle", "desc": "Second opinion before risky actions (challenges assumptions, never acts)"},
+    {"name": "list_agents", "desc": "Available agents + capabilities (routing)"},
+    {"name": "recall_tasks", "desc": "Query earlier tasks/results (institutional knowledge)"},
+    {"name": "list_skills", "desc": "List available skills"},
+    {"name": "load_skill", "desc": "Load a skill into the context"},
+    {"name": "memory_store", "desc": "Remember a value permanently"},
+    {"name": "memory_recall", "desc": "Retrieve a remembered value"},
+    {"name": "playbook_add", "desc": "Record a permanent rule/playbook (always applies)"},
+    {"name": "playbooks", "desc": "List playbooks (fixed rules)"},
+    {"name": "playbook_forget", "desc": "Remove a playbook by ID"},
+    {"name": "remote_ls", "desc": "List a katfs share"},
+    {"name": "remote_read", "desc": "Read a katfs file"},
+    {"name": "remote_write", "desc": "Write a katfs file"},
+    {"name": "remote_delete", "desc": "Delete a katfs file/folder"},
+    {"name": "list_secrets", "desc": "Show granted secret names"},
+    {"name": "get_secret", "desc": "Fetch a granted secret"},
 ]
 AGENT_TOOL_NAMES = {t["name"] for t in AGENT_TOOLS_CATALOG}
 
@@ -1125,8 +1126,8 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
     tpl = next((t for t in load_templates() if t.get("template") == template), None)
     if not tpl:
         return f"unknown template '{template}'"
-    # defaults aus template.params, überschrieben von übergebener config,
-    # leere Werte aus den geteilten Settings vorbelegen
+    # defaults from template.params, overridden by the passed config,
+    # empty values pre-filled from the shared settings
     cfg = {p["key"]: p.get("default", "") for p in tpl.get("params", [])}
     cfg.update({k: v for k, v in (config or {}).items() if v != ""})
     settings = load_settings()
@@ -1153,8 +1154,8 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
 
 
 def set_instance_tools(name, tools):
-    """Werkzeug-Allowlist einer Instanz setzen. Leere/alle Liste -> Feld raus
-    (= alle Tools). Wirkt beim naechsten Start (env-basiert)."""
+    """Set an instance's tool allowlist. Empty/all list -> drop the field
+    (= all tools). Takes effect at the next start (env-based)."""
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
@@ -1170,20 +1171,20 @@ def set_instance_tools(name, tools):
     return f"tools for '{name}' saved{running}"
 
 
-# Reihenfolge = Anzeige-Logik in render()/list_agents: der erste vorhandene
-# Schluessel ist das Modell der Instanz.
+# Order = display logic in render()/list_agents: the first present key is the
+# instance's model.
 MODEL_KEYS = ("OPENROUTER_MODEL", "ORCAROUTER_MODEL", "ANTHROPIC_MODEL", "PI_MODEL", "PRIME_MODEL", "LLAMA_MODEL")
-# Fuer den Provider-Wechsel per set_model("provider:model"): Providername -> Key.
+# For switching provider via set_model("provider:model"): provider name -> key.
 PROVIDER_MODEL_KEY = {"openrouter": "OPENROUTER_MODEL", "orcarouter": "ORCAROUTER_MODEL",
                       "anthropic": "ANTHROPIC_MODEL", "pi": "PI_MODEL",
                       "prime": "PRIME_MODEL", "llama": "LLAMA_MODEL"}
 
 
 def set_model(name, model):
-    """Modell einer bestehenden Instanz wechseln. Setzt genau den Schluessel,
-    den die Instanz bereits nutzt (kein neuer wird erfunden — sonst wuesste
-    niemand, welcher Provider gemeint ist). Wirkt beim naechsten Start
-    (env-basiert), wie die Werkzeug-Allowlist."""
+    """Switch an existing instance's model. Sets exactly the key the instance
+    already uses (no new one is invented — otherwise nobody would know which
+    provider is meant). Takes effect at the next start (env-based), like the
+    tool allowlist."""
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
@@ -1191,11 +1192,11 @@ def set_model(name, model):
     if not model:
         return "error: no model given"
     cfg = inst.setdefault("config", {})
-    # Provider-Wechsel: "orcarouter:tencent/hy3" stellt zusaetzlich das Backend
-    # um (setzt dessen MODEL_KEY, entfernt die anderen). Ohne Praefix bleibt es
-    # beim vorhandenen Provider — nur das Modell wechselt. Der Doppelpunkt-Test
-    # greift NUR bei bekanntem Providernamen, damit ":free"-Modellvarianten
-    # (z. B. "mistralai/...:free") nicht faelschlich als Provider gelesen werden.
+    # Provider switch: "orcarouter:tencent/hy3" additionally switches the backend
+    # (sets its MODEL_KEY, removes the others). Without a prefix it stays with
+    # the existing provider — only the model changes. The colon test triggers
+    # ONLY for a known provider name, so ":free" model variants
+    # (e.g. "mistralai/...:free") are not misread as a provider.
     if ":" in model and model.split(":", 1)[0] in PROVIDER_MODEL_KEY:
         prov, mdl = model.split(":", 1)
         key = PROVIDER_MODEL_KEY[prov]
@@ -1223,7 +1224,7 @@ def set_internet(name, on):
     with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
         json.dump(inst, fh, indent=2)
     if is_running(inst):
-        apply_internet(inst, on)   # sofort wirksam, kein Neustart noetig
+        apply_internet(inst, on)   # takes effect immediately, no restart needed
     return f"internet for '{name}': {'on' if on else 'off'}"
 
 
@@ -1233,7 +1234,7 @@ def delete_instance(name):
         return "unknown"
     if is_running(inst):
         stop(inst)
-    teardown_mounts(inst)   # evtl. Reste (Binds/Export) sicher entfernen
+    teardown_mounts(inst)   # safely remove any leftovers (binds/export)
     p = os.path.join(INST_DIR, f"{name}.json")
     if os.path.exists(p):
         os.remove(p)
@@ -1262,7 +1263,7 @@ def is_running(inst):
         return False
 
 
-# ---- Ressourcen-Uebersicht je Instanz (Resources-Tab) ----------------------
+# ---- Resource overview per instance (Resources tab) ------------------------
 def _read_pid(inst):
     try:
         return int(open(pidfile(inst)).read().strip())
@@ -1271,11 +1272,11 @@ def _read_pid(inst):
 
 
 def _proc_cpu_jiffies(pid):
-    """utime+stime aus /proc/<pid>/stat, robust gegen Leerzeichen im comm."""
+    """utime+stime from /proc/<pid>/stat, robust against spaces in comm."""
     try:
         with open("/proc/%d/stat" % pid) as fh:
             after = fh.read().rpartition(")")[2].split()
-        return int(after[11]) + int(after[12])   # utime (Feld14) + stime (Feld15)
+        return int(after[11]) + int(after[12])   # utime (field 14) + stime (field 15)
     except (OSError, ValueError, IndexError):
         return None
 
@@ -1292,9 +1293,9 @@ def _proc_rss_kb(pid):
 
 
 def resource_stats():
-    """Je Instanz: konfigurierte Groesse (vCPU/RAM) + Live-Verbrauch (RSS, CPU%,
-    Overlay-Disk). CPU% ueber ein kurzes Sample; Prozent bezogen auf EINEN Kern
-    (ein 2-vCPU-Gast kann bis ~200 %)."""
+    """Per instance: configured size (vCPU/RAM) + live usage (RSS, CPU%,
+    overlay disk). CPU% via a short sample; percentages relative to ONE core
+    (a 2-vCPU guest can reach up to ~200%)."""
     insts = load_instances()
     clk = os.sysconf("SC_CLK_TCK") or 100
     pids = {i["name"]: _read_pid(i) for i in insts}
@@ -1333,12 +1334,11 @@ def ensure_net_base():
     if r.returncode != 0:
         sh("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", POOL, "-o", HOSTIF,
            "-j", "MASQUERADE", check=False)
-    # Gast-Isolation: microVMs duerfen NICHT untereinander routen. Ein
-    # kompromittierter Agent koennte sonst die Chat-/Term-Ports (8080/7682, an
-    # 0.0.0.0 gebunden, ohne Auth) einer anderen Instanz erreichen. Backstop-
-    # DROP fuer pool->pool; die Tap-ACCEPTs unten sind zusaetzlich so gefasst,
-    # dass sie Gast-zu-Gast gar nicht erst treffen. Gast->Gateway (8700-Broker)
-    # ist host-lokal (INPUT) und davon unberuehrt.
+    # Guest isolation: microVMs must NOT route to each other. A compromised
+    # agent could otherwise reach another instance's chat/term ports (8080/7682,
+    # bound to 0.0.0.0, no auth). Backstop DROP for pool->pool; the tap ACCEPTs
+    # below are additionally scoped so they never even match guest-to-guest.
+    # Guest->gateway (8700 broker) is host-local (INPUT) and unaffected by this.
     if sh("iptables", "-C", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP",
           check=False).returncode != 0:
         sh("iptables", "-A", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP", check=False)
@@ -1350,36 +1350,36 @@ def setup_tap(inst):
     sh("ip", "tuntap", "add", n["tap"], "mode", "tap")
     sh("ip", "addr", "add", f"{n['host']}/30", "dev", n["tap"])
     sh("ip", "link", "set", n["tap"], "up")
-    # Der Host hat FORWARD-Policy DROP + Docker-Ketten davor -> generische Regeln
-    # greifen nicht zuverlässig. Deshalb Tap-Traffic GANZ OBEN (vor DROP/Docker)
-    # erlauben — aber NUR nach/von ausserhalb des Pools. So kommt der Gast ins
-    # Internet (Ziel nicht im Pool) und Antworten zurueck (Quelle nicht im Pool),
-    # waehrend Gast-zu-Gast (beide im Pool) durch keine ACCEPT-Regel faellt und
-    # am pool->pool-DROP bzw. der DROP-Policy haengenbleibt.
-    # Alte, unbeschraenkte ACCEPTs derselben Tap zuerst wegraeumen (Tap-Name wird
-    # bei Neustart wiederverwendet, sonst bliebe das alte Loch offen).
+    # The host has FORWARD policy DROP + Docker chains in front of it -> generic
+    # rules don't apply reliably. So allow tap traffic RIGHT AT THE TOP (before
+    # DROP/Docker) — but ONLY to/from outside the pool. This lets the guest reach
+    # the internet (destination not in the pool) and replies back (source not in
+    # the pool), while guest-to-guest (both in the pool) matches no ACCEPT rule
+    # and gets caught by the pool->pool DROP or the DROP policy.
+    # Clear old, unrestricted ACCEPTs of the same tap first (the tap name is
+    # reused on restart, otherwise the old hole would stay open).
     for spec in (["-i", n["tap"]], ["-o", n["tap"]]):
         while sh("iptables", "-C", "FORWARD", *spec, "-j", "ACCEPT", check=False).returncode == 0:
             sh("iptables", "-D", "FORWARD", *spec, "-j", "ACCEPT", check=False)
     apply_internet(inst, inst.get("internet", True))
 
 
-# Gaeste durften bisher mit internet=on ueberallhin — auch ins ganze LAN.
-# Home Assistant und Portainer waren damit von JEDER VM erreichbar, ob ihr der
-# MCP zugewiesen war oder nicht (die Tokens schuetzt der Broker, die Tuer
-# stand trotzdem offen). Jetzt: Internet ja, LAN nein — ausser den Endpunkten
-# der MCPs, die in MCP_SERVERS der Instanz stehen, und dem DNS der Gaeste.
-# DNS fuer die Gaeste (landet via guest-init in resolv.conf). Site-spezifisch —
-# auf fremden Installationen per Env setzen; 1.1.1.1 funktioniert ueberall.
+# Until now, guests with internet=on could go anywhere — including the whole
+# LAN. Home Assistant and Portainer were thus reachable from EVERY VM, whether
+# the MCP was assigned to it or not (the broker protects the tokens, but the
+# door stood open anyway). Now: internet yes, LAN no — except the endpoints of
+# the MCPs listed in the instance's MCP_SERVERS, and the guests' DNS.
+# DNS for the guests (ends up in resolv.conf via guest-init). Site-specific —
+# set it via env on other installations; 1.1.1.1 works everywhere.
 GUEST_DNS = os.environ.get("GUEST_DNS") or SITE.get("GUEST_DNS") or "1.1.1.1"
 _PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 
 
 def _mcp_endpoints(inst):
-    """LAN-Ziele (ip, port), die diese Instanz laut MCP_SERVERS braucht.
-    Aus dem Katalog gelesen, nicht aus der Instanz — dort stehen nur Namen.
-    Nur IP-Literale: ein Hostname im Katalog, der ins LAN aufloest, wuerde
-    hier NICHT freigeschaltet (bewusst; dann lieber die IP eintragen)."""
+    """LAN targets (ip, port) that this instance needs according to MCP_SERVERS.
+    Read from the catalog, not from the instance — the latter only holds names.
+    IP literals only: a hostname in the catalog that resolves into the LAN would
+    NOT be allowed here (deliberately; enter the IP instead)."""
     names = {x for x in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if x}
     if not names:
         return []
@@ -1392,7 +1392,7 @@ def _mcp_endpoints(inst):
             try:
                 import ipaddress
                 if not ipaddress.ip_address(host).is_private:
-                    continue          # oeffentliche Ziele deckt die Internet-Regel
+                    continue          # public targets are covered by the internet rule
             except ValueError:
                 continue
             out.append((host, int(port or (443 if scheme == "https" else 80))))
@@ -1400,10 +1400,9 @@ def _mcp_endpoints(inst):
 
 
 def _llama_endpoint(inst):
-    """(ip, port) des llama.cpp-Servers, falls die Instanz ihn nutzt UND er im
-    privaten Netz liegt — dann muss das Gating ihn durchlassen. Ein Endpoint
-    auf dem Host (ueber das Gateway erreichbar) oder im Internet braucht keine
-    Sonderregel."""
+    """(ip, port) of the llama.cpp server, if the instance uses it AND it is on
+    the private network — then the gating must let it through. An endpoint on the
+    host (reachable via the gateway) or on the internet needs no special rule."""
     ep = (inst.get("config", {}).get("LLAMA_ENDPOINT") or "").strip()
     if not ep:
         return None
@@ -1425,23 +1424,23 @@ def _fc_chain(inst):
 
 
 def apply_internet(inst, allow):
-    """Egress-Regeln der Instanz setzen/entfernen. `allow=False` heisst: die VM
-    darf ihr eigenes /30 nicht verlassen — kein LAN, kein Internet. Der
-    Manager-Broker am Gateway (8700) bleibt erreichbar (host-lokal, INPUT).
-    Damit auch der LLM-Endpunkt: ein Agent ohne Internet kann NICHT denken.
+    """Set/remove the instance's egress rules. `allow=False` means: the VM may
+    not leave its own /30 — no LAN, no internet. The manager broker at the
+    gateway (8700) stays reachable (host-local, INPUT). And with it the LLM
+    endpoint: an agent without internet CANNOT think.
 
-    Bei allow=True bekommt die Instanz eine eigene FORWARD-Kette:
-      1. ihre MCP-Endpunkte (tcp, gezielt)     -> ACCEPT
-      2. der Gast-DNS (53)                     -> ACCEPT
-      3. private Netze                         -> REJECT (nicht DROP: der
-         Agent soll sofort scheitern, nicht 30 s in einen Timeout laufen)
-      4. alles ausserhalb des Pools (Internet) -> ACCEPT
-    Der Rueckweg bleibt die generische Regel: Antworten sind durch NAT ohnehin
-    nur fuer Verbindungen moeglich, die der Gast selbst geoeffnet hat."""
+    With allow=True the instance gets its own FORWARD chain:
+      1. its MCP endpoints (tcp, targeted)     -> ACCEPT
+      2. the guest DNS (53)                     -> ACCEPT
+      3. private networks                       -> REJECT (not DROP: the
+         agent should fail immediately, not run into a 30 s timeout)
+      4. everything outside the pool (internet) -> ACCEPT
+    The return path stays the generic rule: through NAT, replies are only
+    possible for connections the guest opened itself."""
     n = net_of(inst)
     chain = _fc_chain(inst)
 
-    # Altbestand abraeumen, idempotent: Sprungregel, Kette, alte Direktregel.
+    # Clear out leftovers, idempotent: jump rule, chain, old direct rule.
     sh("iptables", "-D", "FORWARD", "-i", n["tap"], "-j", chain, check=False)
     sh("iptables", "-F", chain, check=False)
     sh("iptables", "-X", chain, check=False)
@@ -1470,10 +1469,10 @@ def apply_internet(inst, allow):
            "-j", "ACCEPT", check=False)
     for net in _PRIVATE_NETS:
         sh("iptables", "-A", chain, "-d", net, "-j", "REJECT", check=False)
-    # Egress-Allowlist (Guardrail): steht EGRESS_ALLOW in der Instanz-Config
-    # (Komma-Liste aus Domains/IPs), darf die VM NUR dorthin — statt "alles
-    # ausser privat". Domains werden beim Start aufgeloest (A-Records); bei
-    # DNS-Wechseln des Ziels ist ein Stop/Start noetig. Leer = wie bisher.
+    # Egress allowlist (guardrail): if EGRESS_ALLOW is in the instance config
+    # (comma list of domains/IPs), the VM may go ONLY there — instead of
+    # "everything except private". Domains are resolved at start (A records); a
+    # stop/start is needed if the target's DNS changes. Empty = as before.
     egress = (inst.get("config", {}).get("EGRESS_ALLOW", "") or "").strip()
     if egress:
         seen = set()
@@ -1482,7 +1481,7 @@ def apply_internet(inst, allow):
                 infos = socket.getaddrinfo(host, None, socket.AF_INET)
                 ips = sorted({i[4][0] for i in infos})
             except OSError:
-                print(f"[egress] {inst['name']}: '{host}' nicht aufloesbar — uebersprungen",
+                print(f"[egress] {inst['name']}: '{host}' not resolvable — skipped",
                       flush=True)
                 continue
             for ip in ips:
@@ -1498,8 +1497,8 @@ def apply_internet(inst, allow):
 
 
 def teardown_tap(inst):
-    # Regeln zeigen auf den Tap-NAMEN und ueberleben das Loeschen des Geraets —
-    # ohne Aufraeumen sammeln sich tote Ketten an.
+    # Rules point at the tap NAME and survive deletion of the device — without
+    # cleanup, dead chains pile up.
     n = net_of(inst)
     chain = _fc_chain(inst)
     sh("iptables", "-D", "FORWARD", "-i", n["tap"], "-j", chain, check=False)
@@ -1508,10 +1507,10 @@ def teardown_tap(inst):
     sh("ip", "link", "del", n["tap"], check=False)
 
 
-# ---- host-ordner (NFS bind-mounts) -----------------------------------------
+# ---- host folders (NFS bind-mounts) ----------------------------------------
 def ensure_agent_crossmnt():
-    """Workspace-Export braucht 'crossmnt', damit die Host-Ordner-Submounts
-    ueber NFSv4 sichtbar sind. Idempotent, mit einmaligem Backup."""
+    """The workspace export needs 'crossmnt' so the host-folder submounts are
+    visible over NFSv4. Idempotent, with a one-time backup."""
     try:
         cur = open(AGENT_EXPORTS).read() if os.path.exists(AGENT_EXPORTS) else ""
     except OSError:
@@ -1531,7 +1530,7 @@ def ensure_agent_crossmnt():
 
 
 def mount_specs(inst):
-    """Normierte Host-Ordner-Mounts: bind-Ziel, NFS-Subpfad, fsid, Modus."""
+    """Normalized host-folder mounts: bind target, NFS subpath, fsid, mode."""
     specs = []
     for j, m in enumerate(inst.get("mounts", []) or []):
         host = str(m.get("host", "")).strip()
@@ -1549,8 +1548,8 @@ def mount_specs(inst):
 
 
 def write_desired(inst):
-    """desired.list unter .fcmnt/<inst>/ schreiben — der Reconciler im Gast liest
-    sie (ueber den Workspace-Mount) und haelt die Mounts live aktuell."""
+    """Write desired.list under .fcmnt/<inst>/ — the reconciler in the guest
+    reads it (via the workspace mount) and keeps the mounts up to date live."""
     d = os.path.join(FCMNT_ROOT, inst["name"])
     try:
         os.makedirs(d, exist_ok=True)
@@ -1570,9 +1569,9 @@ def setup_mounts(inst):
     lines = []
     for s in specs:
         if not os.path.isdir(s["host"]):
-            continue  # fehlender Host-Ordner -> ueberspringen (nicht anlegen)
+            continue  # missing host folder -> skip (do not create)
         os.makedirs(s["target"], exist_ok=True)
-        sh("umount", "-l", s["target"], check=False)   # evtl. alten Bind loesen
+        sh("umount", "-l", s["target"], check=False)   # release any old bind
         if sh("mount", "--bind", s["host"], s["target"], check=False).returncode != 0:
             continue
         if s["ro"]:
@@ -1584,7 +1583,7 @@ def setup_mounts(inst):
         os.makedirs(EXPORTS_D, exist_ok=True)
         open(os.path.join(EXPORTS_D, f"fc-{inst['name']}.exports"), "w").writelines(lines)
         sh("exportfs", "-ra", check=False)
-    write_desired(inst)   # Reconciler im Gast holt sich die Mounts
+    write_desired(inst)   # the reconciler in the guest picks up the mounts
 
 
 def teardown_mounts(inst):
@@ -1594,8 +1593,8 @@ def teardown_mounts(inst):
         sh("exportfs", "-ra", check=False)
     d = os.path.join(FCMNT_ROOT, inst["name"])
     if os.path.isdir(d):
-        # tatsaechlichen Inhalt scannen (robust gegen Reste): Sub-Binds loesen,
-        # dann leere Verzeichnisse entfernen (rmdir schlaegt bei Busy/Mount fehl).
+        # scan the actual contents (robust against leftovers): release
+        # sub-binds, then remove empty directories (rmdir fails on busy/mount).
         for sub in os.listdir(d):
             p = os.path.join(d, sub)
             if os.path.isdir(p):
@@ -1629,7 +1628,7 @@ def set_mounts(name, mounts):
         json.dump(inst, fh, indent=2)
     note = ""
     if is_running(inst):
-        # LIVE anwenden: entfernte Ordner abbauen, aktuelle (neu) exportieren.
+        # apply LIVE: tear down removed folders, export the current (new) ones.
         new_subs = {s["sub"] for s in mount_specs(inst)}
         for s in old_specs:
             if s["sub"] not in new_subs:
@@ -1638,36 +1637,36 @@ def set_mounts(name, mounts):
                     os.rmdir(s["target"])
                 except OSError:
                     pass
-        setup_mounts(inst)            # bind+export der aktuellen Ordner (idempotent)
-        write_desired(inst)           # laufender Gast mountet sie selbst (Reconciler)
+        setup_mounts(inst)            # bind+export of the current folders (idempotent)
+        write_desired(inst)           # the running guest mounts them itself (reconciler)
         note = " (applied live)"
     return f"{len(inst['mounts'])} host folders saved{note}"
 
 
 # ---- firecracker lifecycle -------------------------------------------------
 def make_config_disk(inst):
-    """Kleines ext4-Laufwerk mit der Instanz-Config (key=value) erzeugen -> vdb."""
+    """Create a small ext4 drive with the instance config (key=value) -> vdb."""
     cfg = dict(inst.get("config", {}))
-    # Zweiter Riegel: aeltere Instanz-JSONs koennen Key/MCP_CONFIG noch
-    # enthalten, auf die Disk duerfen sie trotzdem nicht.
+    # Second guard: older instance JSONs may still contain a key/MCP_CONFIG;
+    # they still must not reach the disk.
     for k in NEVER_PERSIST:
         cfg.pop(k, None)
-    # Minimaler VM-Init hat /usr/local/bin nicht im PATH -> injizieren, damit
-    # claude/fabric gefunden werden (guest-init sourced die Config-Disk).
+    # A minimal VM init does not have /usr/local/bin in PATH -> inject it so
+    # claude/fabric are found (guest-init sources the config disk).
     cfg.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-    cfg["FC_INSTANCE"] = inst["name"]   # fuer den Host-Ordner-Reconciler im Gast
-    if inst["name"] == ORCH_INSTANCE:   # nur der Orchestrator darf Tasks verwalten
+    cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
+    if inst["name"] == ORCH_INSTANCE:   # only the orchestrator may manage tasks
         cfg["TASK_ADMIN"] = "1"
-    # Key-Injection-Proxy aktiv? Dann schickt der Agent Chat-Requests an den
-    # Manager statt direkt zum Router — die VM sieht so nie einen LLM-Key
-    # (auch nicht per Secret-Broker). Der Schalter liegt in den geteilten
-    # Settings, damit ALLE Instanzen konsistent umgestellt werden.
+    # Key injection proxy active? Then the agent sends chat requests to the
+    # manager instead of directly to the router — so the VM never sees an LLM key
+    # (not even via the secret broker). The switch lives in the shared settings
+    # so that ALL instances are switched over consistently.
     if load_settings().get("LLM_KEY_PROXY") == "1":
         cfg["KEY_PROXY"] = "1"
     d = os.path.join(RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
-    # Tool-Plugins (firecracker/plugins/*.py) mit auf die Disk — der Agent laedt
-    # sie beim Start aus /config/plugins. Neues Plugin = Datei + Stop/Start.
+    # Put tool plugins (firecracker/plugins/*.py) on the disk too — the agent
+    # loads them at start from /config/plugins. New plugin = file + stop/start.
     pdst = os.path.join(d, "plugins")
     shutil.rmtree(pdst, ignore_errors=True)
     psrc = os.path.join(BASE, "plugins")
@@ -1675,13 +1674,13 @@ def make_config_disk(inst):
         os.makedirs(pdst, exist_ok=True)
         for f0 in sorted(os.listdir(psrc)):
             sp = os.path.join(psrc, f0)
-            if os.path.isdir(sp):                 # Mehrdatei-Tool: ganzer Ordner
+            if os.path.isdir(sp):                 # multi-file tool: whole folder
                 shutil.copytree(sp, os.path.join(pdst, f0), dirs_exist_ok=True)
-            elif f0.endswith(".py"):              # Einzel-.py (abwaertskompatibel)
+            elif f0.endswith(".py"):              # single .py (backwards compatible)
                 shutil.copy2(sp, os.path.join(pdst, f0))
     with open(os.path.join(d, "config.env"), "w") as f:
         for k, v in cfg.items():
-            # Werte quoten (EXTRA_MOUNTS u.a. enthalten Shell-Metazeichen wie | und ;)
+            # quote values (EXTRA_MOUNTS and others contain shell metacharacters like | and ;)
             f.write(f"{k}={shlex.quote(str(v))}\n")
     img = os.path.join(RUN_DIR, f"{inst['name']}.config.ext4")
     with open(img, "wb") as f:
@@ -1690,16 +1689,16 @@ def make_config_disk(inst):
     return img
 
 
-# ---- Overlay-Rootfs ---------------------------------------------------------
-# Fuer Images in OVERLAY_ROOTFS bootet die VM mit der GETEILTEN Basis read-only
-# (Firecracker blockt Schreibzugriffe auf Host-Ebene -> kein Journal-Konflikt)
-# plus einem kleinen rw-Upper-Image je Instanz; der Gast-init legt daraus per
-# overlayfs+pivot_root die Wurzel zusammen. Vorteil: keine 2-GB-Kopie je Start,
-# und mit inst["persist_disk"]=true ueberlebt die Schreibschicht (Installationen!)
-# Stop/Start. Andere Images laufen unveraendert ueber private_rootfs().
+# ---- Overlay rootfs ---------------------------------------------------------
+# For images in OVERLAY_ROOTFS the VM boots with the SHARED base read-only
+# (Firecracker blocks writes at the host level -> no journal conflict) plus a
+# small rw upper image per instance; the guest init assembles the root from
+# them via overlayfs+pivot_root. Advantage: no 2-GB copy per start, and with
+# inst["persist_disk"]=true the write layer (installations!) survives a
+# stop/start. Other images run unchanged via private_rootfs().
 OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/claude-rootfs.ext4"}
-UPPER_SIZE_MB = 1024          # Wegwerf-Schicht je Start
-UPPER_PERSIST_SIZE_MB = 4096  # persistente Schicht (apt/pip brauchen Luft); sparse
+UPPER_SIZE_MB = 1024          # throwaway layer per start
+UPPER_PERSIST_SIZE_MB = 4096  # persistent layer (apt/pip need room); sparse
 
 
 def upper_path(inst):
@@ -1709,13 +1708,13 @@ def upper_path(inst):
 
 
 def make_upper(inst):
-    """Leeres (oder bei persist: vorhandenes) Upper-Image liefern."""
+    """Provide an empty (or, with persist, existing) upper image."""
     p = upper_path(inst)
     if inst.get("persist_disk") and os.path.exists(p):
         return p
     size = UPPER_PERSIST_SIZE_MB if inst.get("persist_disk") else UPPER_SIZE_MB
     tmp = p + ".new"
-    with open(tmp, "wb") as fh:          # sparse, ohne externes truncate
+    with open(tmp, "wb") as fh:          # sparse, without external truncate
         fh.truncate(size * 1024 * 1024)
     mkfs = shutil.which("mkfs.ext4") or "/sbin/mkfs.ext4"
     sh(mkfs, "-F", "-q", "-L", "fcupper", tmp)
@@ -1724,7 +1723,7 @@ def make_upper(inst):
 
 
 def reset_upper(name):
-    """Persistente Schreibschicht loeschen (Factory-Reset). Nur im Stillstand."""
+    """Delete the persistent write layer (factory reset). Only while stopped."""
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
@@ -1754,22 +1753,22 @@ def set_persist_disk(name, on):
 
 
 def private_rootfs(inst):
-    """Frische Rootfs-Kopie fuer genau diese VM anlegen und deren Pfad liefern.
+    """Create a fresh rootfs copy for exactly this VM and return its path.
 
-    Alle Instanzen eines Templates zeigten auf DASSELBE ext4-Image, beschreibbar.
-    Zwei gleichzeitig laufende VMs teilen sich dann ein Journal — das ging so
-    lange gut, wie kaum geschrieben wurde, und endete am 15.08. mit 'error
-    loading journal' beim Boot. Deshalb: je Start eine eigene Kopie (sparse,
-    ~sekundenschnell). Nebeneffekt, und zwar der gewollte: ein Neustart bootet
-    immer das aktuelle Template-Image, Rootfs-Updates greifen wie bisher mit
-    Stop/Start. Zustand, der bleiben soll, liegt ohnehin nicht hier, sondern
-    zentral (memory.json, chats.json, katfs)."""
+    All instances of a template pointed at the SAME ext4 image, writable. Two
+    VMs running simultaneously then share one journal — that worked as long as
+    barely anything was written, and ended on Aug 15 with 'error loading
+    journal' at boot. Hence: a separate copy per start (sparse, ~seconds fast).
+    Side effect, and a deliberate one: a restart always boots the current
+    template image, rootfs updates take effect as before with stop/start. State
+    that should persist doesn't live here anyway, but centrally (memory.json,
+    chats.json, katfs)."""
     src = os.path.join(BASE, inst["rootfs"])
     dst = os.path.join(RUN_DIR, f"{inst['name']}.rootfs.ext4")
     tmp = dst + ".new"
-    # --sparse=always: das 2-GB-Image traegt ~550 MB; die Kopie soll ebenso
-    # wenig belegen. Erst .new, dann umbenennen — eine halbe Kopie darf nie
-    # als Rootfs starten.
+    # --sparse=always: the 2-GB image carries ~550 MB; the copy should occupy
+    # just as little. First .new, then rename — a half copy must never start as
+    # a rootfs.
     sh("cp", "--sparse=always", src, tmp)
     os.replace(tmp, dst)
     return dst
@@ -1794,8 +1793,8 @@ def gen_config(inst):
         drives.append({"drive_id": f"data{j}", "path_on_host": d["path"],
                        "is_root_device": False, "is_read_only": d.get("readonly", False)})
     if overlay:
-        # Letztes Drive = Upper; Geraetename ergibt sich aus der Position
-        # (virtio-blk: vda, vdb, ...). Der Gast liest ihn aus /proc/cmdline.
+        # Last drive = upper; the device name follows from the position
+        # (virtio-blk: vda, vdb, ...). The guest reads it from /proc/cmdline.
         drives.append({"drive_id": "upper", "path_on_host": make_upper(inst),
                        "is_root_device": False, "is_read_only": False})
         boot += f" fc_upper=/dev/vd{chr(ord('a') + len(drives) - 1)}"
@@ -1840,8 +1839,8 @@ def stop(inst):
     teardown_tap(inst)
     teardown_mounts(inst)
     mcp_hub_kill(inst["name"])
-    # Die private Rootfs-Kopie ist nach dem Stop wertlos (der naechste Start
-    # zieht eine frische) — nur Plattenplatz, also weg damit.
+    # The private rootfs copy is worthless after stopping (the next start pulls
+    # a fresh one) — just disk space, so remove it.
     for f in (f"{inst['name']}.rootfs.ext4", f"{inst['name']}.upper.ext4"):
         try:
             os.remove(os.path.join(RUN_DIR, f))
@@ -1850,22 +1849,22 @@ def stop(inst):
     return "stopped"
 
 
-# ---- Personas / System-Prompts --------------------------------------------
+# ---- Personas / system prompts --------------------------------------------
 PERSONAS_FILE = os.path.join(BASE, "personas.json")
 _DEFAULT_PERSONAS = [
-    {"name": "assistent",
-     "prompt": "Du bist ein hilfreicher Agent mit Tools (Shell, Dateien, Web, MCP). "
-               "Nutze Tools wenn nötig, antworte sonst direkt. Fasse dich kurz."},
+    {"name": "assistant",
+     "prompt": "You are a helpful agent with tools (shell, files, web, MCP). "
+               "Use tools when needed, otherwise answer directly. Keep it brief."},
     {"name": "researcher",
-     "prompt": "Du bist ein gründlicher Rechercheur. Nutze web_search und http_fetch, prüfe mehrere "
-               "Quellen und nenne URLs als Belege. Fasse strukturiert zusammen. Bei umfangreichen "
-               "Aufgaben nutze spawn_subagent, um Teilfragen parallel zu recherchieren."},
+     "prompt": "You are a thorough researcher. Use web_search and http_fetch, check multiple "
+               "sources and cite URLs as evidence. Summarize in a structured way. For large "
+               "tasks, use spawn_subagent to research sub-questions in parallel."},
     {"name": "coder",
-     "prompt": "Du bist ein erfahrener Software-Entwickler. Nutze bash/read_file/write_file im "
-               "Workspace, arbeite in kleinen Schritten, teste dein Ergebnis und erkläre knapp, was du tust."},
-    {"name": "uebersetzer",
-     "prompt": "Du bist ein präziser Übersetzer. Übersetze natürlich und idiomatisch, ohne Kommentare, "
-               "außer der Nutzer fragt ausdrücklich danach."},
+     "prompt": "You are an experienced software developer. Use bash/read_file/write_file in the "
+               "workspace, work in small steps, test your result and briefly explain what you do."},
+    {"name": "translator",
+     "prompt": "You are a precise translator. Translate naturally and idiomatically, without "
+               "comments, unless the user explicitly asks for them."},
 ]
 
 
@@ -1907,7 +1906,7 @@ def delete_persona(name):
     return f"persona '{name}' deleted"
 
 
-# ---- Skills-Bibliothek (Experten-Wissen, on-demand vom Agenten geladen) -----
+# ---- Skills library (expert knowledge, loaded on demand by the agent) -------
 SKILLS_FILE = os.path.join(BASE, "skills.json")
 
 
@@ -1948,21 +1947,21 @@ def delete_skill(name):
     return f"skill '{name}' deleted"
 
 
-# ---- Playbooks + Prompt-Templates: ausgelagert nach mgr/rules.py -----------
+# ---- Playbooks + prompt templates: moved out to mgr/rules.py ---------------
 from mgr import rules as _rules  # noqa: E402
 _rules.configure(BASE)
 from mgr.rules import (load_playbooks, pb_list, pb_add, pb_remove, PB_MAX,  # noqa: E402,F401
                        load_prompts, prompt_upsert, prompt_delete, PROMPTS_MAX)
 
 
-# ---- Missionen: ausgelagert nach mgr/missions.py (Import frueh, siehe oben) -
+# ---- Missions: moved out to mgr/missions.py (imported early, see above) ----
 from mgr.missions import (load_missions, mission_list, mission_start,  # noqa: E402,F401
                           mission_update, mission_finish, mission_admin,
                           mission_ttl_sweep, mission_for_task,
                           MISSION_MAX_ACTIVE, MISSION_MAX_STEPS, MISSION_TTL_DAYS)
 
 
-# ---- Secrets-Broker (on-demand, Allowlist pro Template/Instanz) ------------
+# ---- Secrets broker (on-demand, allowlist per template/instance) -----------
 SECRETS_FILE = os.environ.get("SECRETS_FILE", "/home/ulrich/.config/kat56/secrets.env")
 SECRET_POLICY_FILE = os.path.join(BASE, "secret-policy.json")
 
@@ -1983,10 +1982,10 @@ def load_secrets_file():
 
 
 def secret_store():
-    """Alle brokerbaren Geheimnisse. Quelle 1 ist der Secret-Store (0600).
-    Quelle 2 sind die Manager-Settings — dort werden die LLM-Keys gepflegt, und
-    seit sie nicht mehr in die Instanz-Config wandern, muss der Broker sie
-    ausliefern. Der Store gewinnt bei Namensgleichheit."""
+    """All brokerable secrets. Source 1 is the secret store (0600). Source 2 is
+    the manager settings — the LLM keys are maintained there, and since they no
+    longer flow into the instance config, the broker has to deliver them. The
+    store wins on a name collision."""
     out = dict(load_secrets_file())
     for k, v in load_settings().items():
         if k in SECRET_PARAMS and v and not out.get(k):
@@ -2016,7 +2015,7 @@ def instance_by_ip(ip):
 
 
 def allowed_secret_keys(inst):
-    """Effektive Allowlist = by_template[template] ∪ by_instance[name]. Default deny."""
+    """Effective allowlist = by_template[template] ∪ by_instance[name]. Default deny."""
     if not inst:
         return set()
     pol = load_secret_policy()
@@ -2026,7 +2025,7 @@ def allowed_secret_keys(inst):
 
 
 def save_secret_policy(pol):
-    """Policy speichern (nur {by_template,by_instance} mit String-Listen)."""
+    """Save the policy (only {by_template,by_instance} with string lists)."""
     if not isinstance(pol, dict):
         return "invalid"
     clean = {"by_template": {}, "by_instance": {}}
@@ -2044,40 +2043,40 @@ def save_secret_policy(pol):
         return f"error: {e}"
 
 
-# ---- MCP-Katalog + Hub: ausgelagert nach mgr/mcp.py ------------------------
+# ---- MCP catalog + hub: moved out to mgr/mcp.py ----------------------------
 from mgr.mcp import (MCP_HUB, MCP_CATALOG_FILE, load_mcps, save_mcps, upsert_mcp,  # noqa: E402,F401
                      delete_mcp, mcp_required_secrets, mcp_hub_call, mcp_hub_kill,
                      build_mcp_config)
 
 
-# ---- Host-Ordner durchsuchen (Folder-Picker der UI) ------------------------
-# Nur Verzeichnisnamen, nie Dateiinhalte. Der Manager laeuft als root, sieht
-# also alles — die Route ist wie /api/secret-keys admin-only (Gaeste per
-# Source-IP gesperrt) und liegt hinter derselben Auth wie die UI.
+# ---- Browse host folders (the UI's folder picker) --------------------------
+# Directory names only, never file contents. The manager runs as root and thus
+# sees everything — the route is admin-only like /api/secret-keys (guests
+# blocked by source IP) and sits behind the same auth as the UI.
 
 def list_dirs(path, show_hidden=False):
     p = os.path.abspath(path or "/") or "/"
     parent = "" if p == "/" else os.path.dirname(p)
     if not os.path.isdir(p):
-        return {"path": p, "parent": parent, "dirs": [], "error": "kein Verzeichnis"}
+        return {"path": p, "parent": parent, "dirs": [], "error": "not a directory"}
     try:
         dirs = sorted((e.name for e in os.scandir(p)
                        if e.is_dir(follow_symlinks=False)
                        and (show_hidden or not e.name.startswith("."))),
                       key=str.lower)
     except OSError as e:
-        return {"path": p, "parent": parent, "dirs": [], "error": f"kein Zugriff ({e.strerror})"}
+        return {"path": p, "parent": parent, "dirs": [], "error": f"no access ({e.strerror})"}
     return {"path": p, "parent": parent, "dirs": dirs}
 
 
-# ---- katfs: ausgelagert nach mgr/katfs.py ----------------------------------
+# ---- katfs: moved out to mgr/katfs.py --------------------------------------
 from mgr.katfs import (KATFS_HOST, KATFS_PORT, KATFS_BASE, KATFS_MAX_WRITE,  # noqa: E402,F401
                        katfs_share_for, katfs_proxy_fs, katfs_zip, katfs_status,
                        KATFS_ZIP_MAX_FILES, KATFS_ZIP_MAX_BYTES)
 
-# ---- Audit-Log pro Instanz (Tool-Aufrufe, URLs) ----------------------------
-# Liegt auf dem Host (ueberlebt VM-Neustarts). JSONL, pro Instanz eine Datei,
-# hart auf die letzten N Zeilen begrenzt.
+# ---- Audit log per instance (tool calls, URLs) -----------------------------
+# Lives on the host (survives VM restarts). JSONL, one file per instance,
+# hard-capped to the last N lines.
 AUDIT_DIR = os.path.join(BASE, "audit")
 AUDIT_MAX_LINES = 2000
 
@@ -2089,7 +2088,7 @@ def audit_append(inst_name, tool, target, ok):
            "target": str(target)[:400], "ok": bool(ok)}
     with open(p, "a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    # gelegentlich kappen, damit die Datei nicht unbegrenzt waechst
+    # trim occasionally so the file doesn't grow without bound
     try:
         with open(p) as fh:
             lines = fh.readlines()
@@ -2101,12 +2100,12 @@ def audit_append(inst_name, tool, target, ok):
 
 
 def effective_policy(inst):
-    """Alles, was eine Instanz DARF, an einer Stelle: Netz, Werkzeuge, Secrets,
-    MCP-Server, Modell. Zieht die verstreuten Kontrollen (Instanz-Config,
-    secret-policy) zu einer Ansicht zusammen."""
+    """Everything an instance IS ALLOWED to do in one place: network, tools,
+    secrets, MCP servers, model. Pulls the scattered controls (instance config,
+    secret-policy) together into one view."""
     cfg = inst.get("config") or {}
     at = cfg.get("AGENT_TOOLS", "")
-    tools_allowed = [t.strip() for t in at.split(",") if t.strip()] if at else None  # None = alle
+    tools_allowed = [t.strip() for t in at.split(",") if t.strip()] if at else None  # None = all
     model = cfg.get("OPENROUTER_MODEL") or cfg.get("PI_MODEL") or cfg.get("PRIME_MODEL") or ""
     mcps = [n for n in (cfg.get("MCP_SERVERS", "") or "").split(",") if n]
     return {
@@ -2136,17 +2135,17 @@ def audit_read(inst_name, limit=200):
             out.append(json.loads(ln))
         except ValueError:
             pass
-    return list(reversed(out))   # neueste zuerst
+    return list(reversed(out))   # newest first
 
 
 # ---- web -------------------------------------------------------------------
-# PAGE (HTML/JS der Manager-Oberflaeche) liegt jetzt in mgr/ui.py.
+# PAGE (HTML/JS of the manager UI) now lives in mgr/ui.py.
 from mgr.ui import PAGE  # noqa: E402
 
-# ---- Marke ------------------------------------------------------------------
-# logo.svg liegt als Datei vor (Favicon, Freigabe an andere Stellen). Fuers
-# Kopfzeilen-Zeichen erbt das Navy die Textfarbe, damit es im hellen wie im
-# dunklen Theme traegt; das Tuerkis bleibt der Akzent.
+# ---- Brand ------------------------------------------------------------------
+# logo.svg is kept as a file (favicon, shared elsewhere). For the header mark
+# the navy inherits the text color so it carries in both the light and the dark
+# theme; the turquoise stays the accent.
 BRAND = "kAIm56"
 LOGO_FILE = os.path.join(BASE, "logo.svg")
 try:
@@ -2159,7 +2158,7 @@ LOGO_INLINE = (LOGO_SVG.replace("#1D2A4D", "currentColor")
                                 'width="26" height="26" class=mark')
                        .replace("\n", "").strip())
 
-# Icons für die serverseitig gerenderten Instanz-Zeilen (Feather-Stil, 14px).
+# Icons for the server-side rendered instance rows (Feather style, 14px).
 _SVG = ('<svg width=14 height=14 viewBox="0 0 24 24" fill=none stroke=currentColor '
         'stroke-width=1.5 stroke-linecap=round stroke-linejoin=round>%s</svg>')
 IC_TERM = _SVG % '<polyline points="4 17 10 11 4 5"></polyline><line x1=12 y1=19 x2=20 y2=19></line>'
@@ -2168,7 +2167,7 @@ IC_FILES = _SVG % ('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0
                    'A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>')
 IC_DEL = _SVG % ('<path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>'
                  '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>')
-# kleines Ordner-Icon (12px) fuer die Mount-Zeilen — statt 📁 (Emoji tofut ohne Emoji-Schrift)
+# small folder icon (12px) for the mount rows — instead of 📁 (emoji tofus without an emoji font)
 IC_AUDIT = _SVG % ('<path d="M4 5h16M4 12h16M4 19h10"></path>'
                    '<circle cx="19" cy="19" r="2.4"></circle><path d="M22 22l-1.3-1.3"></path>')
 IC_FILES2 = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 '
@@ -2178,11 +2177,11 @@ IC_FILES2 = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=curre
 
 
 def h(v):
-    """HTML-Escape fuers serverseitige Rendern. Der Instanzname ist beim Anlegen
-    auf [a-z0-9-_] beschnitten, alles andere kommt aber frei aus Formularen oder
-    Vorlagen — Modell-ID (freies Textfeld), Beschreibung, Mount-Pfade, Werkzeug-
-    Liste. Ohne Escape landet das roh im Markup: wer eine Mount-Zeile oder eine
-    eigene Modell-ID setzt, schreibt sonst Skript in die Admin-Seite."""
+    """HTML escape for server-side rendering. The instance name is trimmed to
+    [a-z0-9-_] on creation, but everything else comes freely from forms or
+    templates — model ID (free text field), description, mount paths, tool
+    list. Without escaping it lands raw in the markup: anyone who sets a mount
+    row or a custom model ID would otherwise write script into the admin page."""
     return html.escape(str(v if v is not None else ""), quote=True)
 
 
@@ -2215,7 +2214,7 @@ def render():
                  'stroke-width=1.6 stroke-linecap=round stroke-linejoin=round style="vertical-align:-1px">'
                  '<rect x=6 y=6 width=12 height=12 rx=1/><path d="M9 2v2M15 2v2M9 20v2M15 20v2'
                  'M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>')
-        # Chip ist klickbar: oeffnet den Modellwechsel-Dialog (editModel im PAGE-JS).
+        # The chip is clickable: opens the model-switch dialog (editModel in PAGE JS).
         model_line = (f"<button class='mono' style=\"font-size:12px;color:var(--color-accent-700);"
                       f"display:inline-flex;align-items:center;gap:5px;background:none;border:none;"
                       f"padding:0;cursor:pointer;text-align:left\" title=\"Change model\" "
@@ -2227,11 +2226,11 @@ def render():
         if ut.get("calls"):
             usage_line = (
                 f"<span class='text-muted' style='font-size:12px' data-usage='{name}' "
-                f"title='Von diesem Agenten gemeldeter LLM-Verbrauch "
-                f"({ut['calls']} Aufrufe gesamt)'>"
-                f"Tokens heute {_fmt_tok(ud.get('in'))}&nbsp;/&nbsp;{_fmt_tok(ud.get('out'))}"
+                f"title='LLM usage reported by this agent "
+                f"({ut['calls']} calls total)'>"
+                f"Tokens today {_fmt_tok(ud.get('in'))}&nbsp;/&nbsp;{_fmt_tok(ud.get('out'))}"
                 f" · {_fmt_cost(ud.get('cost'))}"
-                f" &nbsp;·&nbsp; gesamt {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
+                f" &nbsp;·&nbsp; total {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
                 f" · {_fmt_cost(ut['cost'])}</span>")
         st = (f"<span class='tag tag-accent'>● running</span>" if run
               else f"<span class='tag tag-neutral'>○ off</span>")
@@ -2248,11 +2247,11 @@ def render():
             pers = bool(inst.get("persist_disk"))
             ptag = (f"<button class='tag {'tag-accent' if pers else 'tag-neutral'}' "
                     f"style='border:none;cursor:pointer' "
-                    f"title='Persistente Disk: Installationen ueberleben Stop/Start"
-                    f"{' — Rechtsklick: Disk zuruecksetzen' if pers else ''}' "
+                    f"title='Persistent disk: installations survive stop/start"
+                    f"{' — right-click: reset disk' if pers else ''}' "
                     f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
                     f"oncontextmenu=\"return diskReset('{name}')\">"
-                    f"{'💾 persistent' if pers else '↺ frisch je Start'}</button>")
+                    f"{'💾 persistent' if pers else '↺ fresh per start'}</button>")
         btn = ""
         if run:
             btn += (f"<a href=\"/i/{name}/term/\" target=_blank class=\"btn btn-secondary btn-sm\""
@@ -2307,12 +2306,12 @@ def render():
                 )
 
 
-# ---- Chat (Oberflaeche unter /chat, siehe chatui.py) ------------------------
-# Chatbar ist jede Instanz mit TRANSPORT=web: die Bridge in der microVM haelt
-# unter :8080 /api/chat (und ggf. /api/chat/stream) bereit.
+# ---- Chat (UI under /chat, see chatui.py) ----------------------------------
+# Chattable is every instance with TRANSPORT=web: the bridge in the microVM
+# serves /api/chat (and optionally /api/chat/stream) on :8080.
 
 def web_instances():
-    """Instanzen, mit denen man chatten kann (+ Laufzustand fuer die UI)."""
+    """Instances you can chat with (+ running state for the UI)."""
     return [{"name": i["name"], "running": is_running(i),
              "description": i.get("description", "")}
             for i in load_instances()
@@ -2320,7 +2319,7 @@ def web_instances():
 
 
 def wait_web(inst, timeout=120):
-    """Startet die Instanz bei Bedarf und wartet, bis die Bridge annimmt."""
+    """Starts the instance if needed and waits until the bridge accepts."""
     if not is_running(inst):
         start(inst)
     ip = net_of(inst)["guest"]
@@ -2335,7 +2334,7 @@ def wait_web(inst, timeout=120):
 
 
 def guest_chat(inst, message, image=None, timeout=620):
-    """Nicht-streamender Aufruf der Bridge in der microVM."""
+    """Non-streaming call to the bridge in the microVM."""
     payload = {"message": message}
     if image:
         payload["image"] = image
@@ -2351,8 +2350,8 @@ def guest_chat(inst, message, image=None, timeout=620):
 
 
 def guest_stream(inst, message, image, on_token, timeout=620):
-    """Streamt Tokens von /api/chat/stream. Bridges ohne Streaming antworten auf
-    demselben Pfad mit JSON — das kommt dann als ein Stueck."""
+    """Streams tokens from /api/chat/stream. Bridges without streaming answer on
+    the same path with JSON — that then arrives as a single piece."""
     payload = {"message": message}
     if image:
         payload["image"] = image
@@ -2385,26 +2384,26 @@ def guest_stream(inst, message, image, on_token, timeout=620):
         on_token(tail)
 
 
-# ---- Guardrails: Budget + Rate-Limit fuer LLM-Aufrufe -----------------------
-# Enforcement am Key-Injection-Proxy: dort laufen alle Router-Calls der VMs
-# durch. Budget je Instanz und Tag (Tokens, aus llm_usage) und ein Frequenz-
-# Deckel je Minute. Override je Instanz via Config: BUDGET_TOKENS (0 = aus),
-# LLM_RATE_MIN. Bei Ueberschreitung: 429 + hoechstens stuendlich eine notify.
+# ---- Guardrails: budget + rate limit for LLM calls --------------------------
+# Enforcement at the key injection proxy: all of the VMs' router calls pass
+# through there. Budget per instance and day (tokens, from llm_usage) and a
+# frequency cap per minute. Override per instance via config: BUDGET_TOKENS
+# (0 = off), LLM_RATE_MIN. On exceedance: 429 + at most one notify per hour.
 GUARD_BUDGET_TOKENS = int(os.environ.get("GUARD_BUDGET_TOKENS", "5000000"))
 GUARD_LLM_RATE_MIN = int(os.environ.get("GUARD_LLM_RATE_MIN", "60"))
 _guard_lock = threading.Lock()
 _guard_calls = {}          # instance -> [timestamps]
-_guard_notified = {}       # instance -> ts der letzten Budget-notify
+_guard_notified = {}       # instance -> ts of the last budget notify
 
 
 def _guard_check(inst):
-    """(erlaubt, grund). inst = Instanz-Dict oder None (Admin/Host: immer ok)."""
+    """(allowed, reason). inst = instance dict or None (admin/host: always ok)."""
     if inst is None:
         return True, ""
     name = inst["name"]
     cfg = inst.get("config") or {}
     now = time.time()
-    # 1) Frequenz je Minute
+    # 1) Frequency per minute
     try:
         rate = int(cfg.get("LLM_RATE_MIN", GUARD_LLM_RATE_MIN))
     except ValueError:
@@ -2413,9 +2412,9 @@ def _guard_check(inst):
         lst = _guard_calls.setdefault(name, [])
         lst[:] = [t for t in lst if now - t < 60]
         if rate > 0 and len(lst) >= rate:
-            return False, f"rate limit: {rate} LLM-Aufrufe/min erreicht"
+            return False, f"rate limit: {rate} LLM calls/min reached"
         lst.append(now)
-    # 2) Tages-Budget (Tokens seit lokaler Mitternacht)
+    # 2) Daily budget (tokens since local midnight)
     try:
         budget = int(cfg.get("BUDGET_TOKENS", GUARD_BUDGET_TOKENS))
     except ValueError:
@@ -2432,21 +2431,21 @@ def _guard_check(inst):
                     _guard_notified[name] = now
             if fire:
                 try:
-                    notify_add("guardrail", f"Budget erreicht: {name}",
-                               f"{used:,} Tokens heute (Limit {budget:,}). LLM-Aufrufe "
-                               f"pausieren bis Mitternacht. Override: BUDGET_TOKENS in der "
-                               f"Instanz-Config.", link="tasks")
+                    notify_add("guardrail", f"Budget reached: {name}",
+                               f"{used:,} tokens today (limit {budget:,}). LLM calls "
+                               f"pause until midnight. Override: BUDGET_TOKENS in the "
+                               f"instance config.", link="tasks")
                 except Exception:
                     pass
-            return False, f"budget: {used:,}/{budget:,} Tokens heute verbraucht"
+            return False, f"budget: {used:,}/{budget:,} tokens used today"
     return True, ""
 
 
 class H(BaseHTTPRequestHandler):
-    # Schutzschicht: eine unbehandelte Exception in einer Route darf NICHT die
-    # Verbindung hart abreissen (Agent saehe sonst "RemoteDisconnected"). Wurde
-    # noch kein Header gesendet, antworten wir sauber mit HTTP 500; sonst wird
-    # die Antwort nur beendet. Der Fehler landet im Journal.
+    # Protection layer: an unhandled exception in a route must NOT tear the
+    # connection down hard (the agent would otherwise see "RemoteDisconnected").
+    # If no header has been sent yet, we respond cleanly with HTTP 500; otherwise
+    # the response is just ended. The error lands in the journal.
     def end_headers(self):
         self._sent = True
         return super().end_headers()
@@ -2499,7 +2498,7 @@ class H(BaseHTTPRequestHandler):
         pass
 
     def _chat_stream(self, name):
-        """POST /api/chat/<instanz> -> Antwort-Tokens als roher Text (Stream)."""
+        """POST /api/chat/<instance> -> response tokens as raw text (stream)."""
         try:
             ln = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(ln) or b"{}")
@@ -2520,9 +2519,9 @@ class H(BaseHTTPRequestHandler):
                 pass
 
         if not inst:
-            return emit(f"⚠️ Keine Web-Instanz '{name}'.")
+            return emit(f"⚠️ No web instance '{name}'.")
         if not wait_web(inst):
-            return emit(f"⚠️ Instanz '{name}' startet nicht (Port {WEB_GUEST_PORT}).")
+            return emit(f"⚠️ Instance '{name}' does not start (port {WEB_GUEST_PORT}).")
 
         chat_id = body.get("chat")
         msg, img = body.get("message", ""), body.get("image")
@@ -2567,10 +2566,10 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"terminal connect failed: {e!r}".encode())
             return
-        # Das Connect-Timeout bleibt sonst als READ-Timeout auf dem Socket —
-        # nach 10 s Leerlauf riss recv() den Tunnel ab ("connection closed").
-        # Ein Terminal darf beliebig lange still sein: Timeouts runter, dafuer
-        # TCP-Keepalive, damit halbtote Verbindungen trotzdem sterben.
+        # Otherwise the connect timeout stays as a READ timeout on the socket —
+        # after 10 s of idling recv() tore the tunnel down ("connection closed").
+        # A terminal may be silent arbitrarily long: timeouts off, but TCP
+        # keepalive instead, so half-dead connections still die.
         up.settimeout(None)
         down_sock = self.connection
         try:
@@ -2615,14 +2614,14 @@ class H(BaseHTTPRequestHandler):
                 pass
 
     def _katfs_proxy(self):
-        """Freigabe-Seite des katfs-Knotens unter /katfs/ durchreichen. Nur GET —
-        die Seite laedt Assets relativ und spricht danach P2P (WASM/iroh), sie
-        braucht vom Knoten sonst nichts. Zweck: gleiche Herkunft wie der Manager,
-        also HTTPS hinter Traefik → File System Access API funktioniert."""
+        """Pass through the katfs node's share page under /katfs/. GET only —
+        the page loads assets relatively and then speaks P2P (WASM/iroh), it
+        needs nothing else from the node. Purpose: same origin as the manager,
+        i.e. HTTPS behind Traefik → the File System Access API works."""
         rest, _, qs = (self.path[len("/katfs"):] or "/").partition("?")
-        # ?key=… ersetzt die vom Knoten eingesetzte node-id im Feld #nodeid —
-        # so kann dieser Browser einen Ordner auch an einen *fremden* katfs-
-        # Knoten liefern. Streng gefiltert, der Wert landet in einem Attribut.
+        # ?key=… replaces the node-id inserted by the node in the #nodeid field —
+        # so this browser can also deliver a folder to a *foreign* katfs node.
+        # Strictly filtered, the value lands in an attribute.
         key = re.sub(r"[^A-Za-z0-9._-]", "",
                      urllib.parse.parse_qs(qs).get("key", [""])[0])[:200]
         try:
@@ -2637,7 +2636,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(502)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(f"<h3>katfs-Knoten nicht erreichbar</h3>"
+            self.wfile.write(f"<h3>katfs node not reachable</h3>"
                              f"<p>{KATFS_BASE} — {e}</p>".encode())
             return
         self.send_response(200)
@@ -2647,7 +2646,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _proxy(self, method, port=WEB_GUEST_PORT, tail_override=None):
-        rest = self.path[3:]  # "/i/" strippen
+        rest = self.path[3:]  # strip "/i/"
         name, _, tail = rest.partition("/")
         if tail_override is not None:
             tail = tail_override
@@ -2663,9 +2662,8 @@ class H(BaseHTTPRequestHandler):
         if method == "POST":
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
 
-        # Die App chattet nicht ueber /api/chat/<inst>, sondern hier durch —
-        # das Gateway muss also an beiden Eingaengen sitzen, nicht nur am
-        # bequemeren.
+        # The app doesn't chat via /api/chat/<inst> but through here — so the
+        # gateway has to sit at both entrances, not just the more convenient one.
         guard = None
         if method == "POST" and tail.split("?", 1)[0] in ("api/chat", "api/chat/stream"):
             try:
@@ -2673,7 +2671,7 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 b = None
             if isinstance(b, dict):
-                chat_id = b.pop("chat", None)      # kennt der Gast nicht, bleibt hier
+                chat_id = b.pop("chat", None)      # the guest doesn't know it, stays here
                 if gateway_on(chat_id):
                     b["message"] = gateway_clean(b.get("message", ""), chat_id, "in")
                     if b.get("image"):
@@ -2688,12 +2686,12 @@ class H(BaseHTTPRequestHandler):
             req.add_header("Content-Type", self.headers["Content-Type"])
         try:
             r = urllib.request.urlopen(req, timeout=620)
-            # Bridges ohne Streaming (das claude-Template) antworten mit
-            # {"reply": …} und Content-Type application/json — auch auf
-            # /api/chat/stream. Die App liest den Body aber als rohen Text und
-            # zeigt sonst das nackte JSON samt \uXXXX. Also hier auspacken und
-            # als text/plain weiterreichen, wie es guest_stream fuer den
-            # Web-Chat laengst tut. Der Content-Type steht VOR dem Senden fest.
+            # Bridges without streaming (the claude template) answer with
+            # {"reply": …} and Content-Type application/json — even on
+            # /api/chat/stream. But the app reads the body as raw text and would
+            # otherwise show the bare JSON including \uXXXX. So unpack it here and
+            # forward it as text/plain, as guest_stream has long done for the web
+            # chat. The Content-Type is fixed BEFORE sending.
             chat_path = tail.split("?", 1)[0] in ("api/chat", "api/chat/stream")
             is_json = "json" in (r.headers.get("Content-Type") or "").lower()
             if chat_path and is_json:
@@ -2714,9 +2712,9 @@ class H(BaseHTTPRequestHandler):
             self.send_response(r.status)
             self.send_header("Content-Type", r.headers.get("Content-Type", "text/html; charset=utf-8"))
             self.end_headers()
-            # Chunk-weise durchreichen + flushen -> Token-Streaming vom Agenten.
-            # Mit Gateway laeuft dazwischen ein Dekodierer: 4-KB-Schnitte fallen
-            # sonst mitten in ein Mehrbyte-Zeichen.
+            # Pass through chunk by chunk + flush -> token streaming from the
+            # agent. With the gateway a decoder runs in between: otherwise 4-KB
+            # cuts would fall in the middle of a multi-byte character.
             dec = codecs.getincrementaldecoder("utf-8")() if guard is not None else None
             while True:
                 chunk = r.read(4096)
@@ -2732,8 +2730,8 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     break
             if guard is not None:
-                # Erst den Dekodierer leeren, dann den Puffer — umgekehrt kaeme
-                # das letzte Zeichen ungefiltert durch.
+                # Flush the decoder first, then the buffer — the other way round
+                # the last character would come through unfiltered.
                 rest = (guard.feed(dec.decode(b"", True)) + guard.flush()).encode("utf-8")
                 if rest:
                     try:
@@ -2760,8 +2758,8 @@ class H(BaseHTTPRequestHandler):
             body = chatui.render(web_instances(), want, LOGO_INLINE).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            # Nicht cachen: sonst haelt der Browser eine alte Version fest (das
-            # war die Ursache der grauen Emoji-Kaestchen nach dem Icon-Fix).
+            # Don't cache: otherwise the browser holds on to an old version (that
+            # was the cause of the gray emoji boxes after the icon fix).
             self.send_header("Cache-Control", "no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
@@ -2778,7 +2776,7 @@ class H(BaseHTTPRequestHandler):
             if tail.split("?", 1)[0].rstrip("/").split("/")[0] == "term":
                 return self._term_route(name, tail.split("?", 1)[0])
             return self._proxy("GET")
-        # Secrets-Broker: nur für Gäste (Instanz per Source-IP erkannt), Allowlist.
+        # Secrets broker: guests only (instance identified by source IP), allowlist.
         if self.path == "/api/secrets":
             inst = instance_by_ip(self.client_address[0])
             keys = sorted(allowed_secret_keys(inst)) if inst else []
@@ -2789,11 +2787,11 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b)
             return
         if self.path == "/api/claude-credentials":
-            # Abo-Anmeldung fuer das claude-Template: der Gast holt beim Boot
-            # das LEBENDE Credential des Hosts (folgt also dem naechsten /login
-            # des Nutzers). Nur der claudeAiOauth-Block — die mcpOAuth-Tokens
-            # (Atlassian usw.) gehen die VM nichts an. Streng gegated: nur ein
-            # echter Gast, dessen Instanz das claude-Template faehrt.
+            # Subscription login for the claude template: the guest fetches the
+            # LIVE credential of the host at boot (so it follows the user's next
+            # /login). Only the claudeAiOauth block — the mcpOAuth tokens
+            # (Atlassian etc.) are none of the VM's business. Strictly gated:
+            # only a real guest whose instance runs the claude template.
             inst = instance_by_ip(self.client_address[0])
             ok = inst is not None and (inst.get("template") == "claude")
             if not ok:
@@ -2824,7 +2822,7 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": "nicht erlaubt"}).encode())
+                self.wfile.write(json.dumps({"error": "not allowed"}).encode())
                 return
             val = secret_store().get(name, "")
             self.send_response(200)
@@ -2839,8 +2837,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        # Agenten-Roster fuer Routing (Orchestrator/list_agents). Gast-erlaubt,
-        # nur Faehigkeiten — keine Secrets. Ephemere Kinder ausgeblendet.
+        # Agent roster for routing (orchestrator/list_agents). Guest-allowed,
+        # capabilities only — no secrets. Ephemeral children hidden.
         if self.path == "/api/agents":
             roster = []
             for i in load_instances():
@@ -2848,9 +2846,9 @@ class H(BaseHTTPRequestHandler):
                     continue
                 cfg = i.get("config") or {}
                 mkey = next((k for k in MODEL_KEYS if cfg.get(k)), "")
-                # Backend aus dem gesetzten Model-Key ableiten (NICHT aus dem
-                # Template — das bleibt z. B. "openrouter", auch wenn per
-                # set_model auf orcarouter/llama gewechselt wurde).
+                # Derive the backend from the set model key (NOT from the
+                # template — that stays e.g. "openrouter" even after switching to
+                # orcarouter/llama via set_model).
                 backend = {v: k for k, v in PROVIDER_MODEL_KEY.items()}.get(
                     mkey, i.get("template", ""))
                 if cfg.get("LLAMA_ENDPOINT"):
@@ -2867,8 +2865,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"agents": roster}, ensure_ascii=False).encode())
             return
-        # Posteingang fuer den Orchestrator: neue Nutzer-Nachrichten (Signal/App/
-        # Web) seit dem letzten Lauf. Gast-erlaubt; ?peek=1 setzt kein Wasserzeichen.
+        # Inbox for the orchestrator: new user messages (Signal/app/web) since
+        # the last run. Guest-allowed; ?peek=1 sets no watermark.
         if self.path.startswith("/api/inbox"):
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             data = {"messages": inbox_since(peek=(q.get("peek", ["0"])[0] == "1"))}
@@ -2877,10 +2875,10 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
-        # LAUFENDE Aufgaben (nicht die History) — fuer list_tasks/delete_task des
-        # Agenten. Gast-offen; Tasks tragen keine Secrets.
+        # RUNNING tasks (not the history) — for the agent's list_tasks/delete_task.
+        # Guest-open; tasks carry no secrets.
         if self.path.startswith("/api/missions"):
-            # Gast: nur die eigenen (Orchestrator). Admin: ?instance= oder alle.
+            # Guest: only its own (orchestrator). Admin: ?instance= or all.
             g = instance_by_ip(self.client_address[0])
             if g is not None and g.get("name") != ORCH_INSTANCE:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
@@ -2916,8 +2914,8 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
-        # Abfragbare Aufgaben-History (Stammwissen). Fuer Gaeste (recall_tasks)
-        # UND Admin/UI offen — enthaelt operatives Wissen, keine Secrets.
+        # Queryable task history (institutional knowledge). Open to guests
+        # (recall_tasks) AND admin/UI — holds operational knowledge, no secrets.
         if self.path.startswith("/api/history"):
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             data = {"rows": history_search(q.get("q", [""])[0], q.get("limit", ["20"])[0])}
@@ -2926,7 +2924,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
-        # Admin-only: konsolidierte Policy je Instanz + Audit-Log lesen.
+        # Admin-only: read the consolidated policy per instance + audit log.
         if self.path.startswith("/api/usage/"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
@@ -2962,18 +2960,18 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        # Gegenstueck zu /api/secret/<name>, aber fuer MCP: nur der Gast selbst,
-        # nur seine eigenen Server, und Secrets nur soweit die Policy sie ihm
-        # erlaubt. Damit muss MCP_CONFIG nicht mehr in der Instanz liegen.
-        # katfs-Dateizugriff fuer Gaeste: nur die eigene Instanz, nur die ihr
-        # zugewiesene Freigabe. Der Knoten selbst ist seit dem Fix loopback-only,
-        # also fuehrt der einzige Weg fuer Gaeste hier durch — mit erzwungener
-        # Freigabe, keine Enumeration, kein Fremdzugriff.
+        # Counterpart to /api/secret/<name>, but for MCP: only the guest itself,
+        # only its own servers, and secrets only as far as the policy allows it.
+        # This way MCP_CONFIG no longer has to live in the instance.
+        # katfs file access for guests: only the own instance, only the share
+        # assigned to it. The node itself is loopback-only since the fix, so the
+        # only path for guests leads through here — with an enforced share, no
+        # enumeration, no foreign access.
         if self.path.split("?", 1)[0] in ("/api/katfs/ls", "/api/katfs/read"):
             inst = instance_by_ip(self.client_address[0])
             if inst is None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"nur fuer Gaeste"}'); return
+                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             op = "ls" if self.path.split("?", 1)[0].endswith("/ls") else "read"
             try:
@@ -2991,15 +2989,15 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"error":"nur fuer Gaeste"}')
+                self.wfile.write(b'{"error":"guests only"}')
                 return
             names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
             allowed = allowed_secret_keys(inst)
-            # allowed=set(): seit dem MCP-Hub laufen die Serverprozesse am
-            # Host — der Gast braucht nur noch die NAMEN. Secrets bleiben als
-            # ${PLATZHALTER} stehen und verlassen den Manager nicht mehr.
-            # (Der lokale Rueckfall im Gast startet damit ohne Zugangsdaten
-            # und scheitert am Ziel — sichtbar im Log, nicht still.)
+            # allowed=set(): since the MCP hub the server processes run on the
+            # host — the guest only needs the NAMES anymore. Secrets stay as
+            # ${PLACEHOLDER} and no longer leave the manager.
+            # (The local fallback in the guest thus starts without credentials
+            # and fails at the target — visible in the log, not silently.)
             blob = build_mcp_config(names, allowed=set()) if names else ""
             missing = sorted(mcp_required_secrets(names) - allowed)
             data = json.loads(blob) if blob else {"mcpServers": {}}
@@ -3010,10 +3008,10 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
             return
-        # Admin-only (Gäste per Source-IP gesperrt): Ordner-Browser + katfs-Status.
+        # Admin-only (guests blocked by source IP): folder browser + katfs status.
         if self.path.startswith("/api/katfs/zip"):
-            # "Alles herunterladen": den aktuellen Ordner einer Freigabe als ZIP.
-            # Admin-only wie der Browser darunter.
+            # "Download everything": the current folder of a share as a ZIP.
+            # Admin-only like the browser below it.
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3036,8 +3034,8 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers(); self.wfile.write(data); return
         if self.path.startswith("/api/katfs/browse") or self.path.startswith("/api/katfs/file"):
-            # Datei-Browser im Sharing-Tab. Admin-only (Gaeste per Source-IP
-            # gesperrt); der Knoten adressiert die aktuell verbundene Freigabe.
+            # File browser in the Sharing tab. Admin-only (guests blocked by
+            # source IP); the node addresses the currently connected share.
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3052,7 +3050,7 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
             if op == "read" and st == 200:
-                # Bilder/Text sollen im neuen Tab anzeigbar sein, sonst Download.
+                # Images/text should be viewable in the new tab, otherwise download.
                 ct = mimetypes.guess_type(path)[0] or "application/octet-stream"
                 disp = "attachment" if q.get("dl", [""])[0] == "1" else "inline"
                 fn = os.path.basename(path) or "file"
@@ -3111,7 +3109,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
-        # Admin-only (Gäste per Source-IP gesperrt): Secret-Namen + Policy fürs UI.
+        # Admin-only (guests blocked by source IP): secret names + policy for the UI.
         if self.path in ("/api/changelog", "/api/security"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403)
@@ -3144,8 +3142,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
             return
-        # Nur fuer die Admin-UI: Gaeste haben hier nichts zu suchen. /api/settings
-        # trug bis eben die API-Keys im Klartext aus — an Broker und Policy vorbei.
+        # Admin UI only: guests have no business here. /api/settings served the
+        # API keys in plain text until just now — bypassing broker and policy.
         _p = self.path.split("?", 1)[0]
         if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks", "/api/usage",
                   "/api/gateway", "/api/notifications"):
@@ -3212,13 +3210,13 @@ class H(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/skills/"):
             nm = re.sub(r"[^a-z0-9_-]", "", self.path.split("/api/skills/", 1)[1].lower())
             s = next((x for x in load_skills() if x.get("name") == nm), None)
-            body = (s.get("content", "") if s else f"Skill '{nm}' nicht gefunden").encode()
+            body = (s.get("content", "") if s else f"Skill '{nm}' not found").encode()
             ct = "text/plain; charset=utf-8"
         elif self.path.startswith("/api/memory/"):
             seg = self.path[len("/api/memory/"):].split("/")
-            # Ein Gast darf nur sein EIGENES Gedaechtnis lesen — der Name kommt
-            # dann aus der Source-IP, nicht aus dem Pfad. Nur der Host (Admin,
-            # keine Instanz) darf einen fremden Namen im Pfad angeben.
+            # A guest may only read its OWN memory — the name then comes from the
+            # source IP, not from the path. Only the host (admin, not an instance)
+            # may specify a foreign name in the path.
             guest = instance_by_ip(self.client_address[0])
             inst = guest["name"] if guest else seg[0]
             if len(seg) >= 2 and seg[1]:
@@ -3240,20 +3238,19 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ct)
         if ct.startswith("text/html"):
-            # Nie cachen: eine veraltete Manager-Seite nach einem Update erzeugt
-            # Geister-Fehler (alte JS-Logik gegen neue API).
+            # Never cache: a stale manager page after an update produces ghost
+            # errors (old JS logic against a new API).
             self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
     def _llm_proxy(self, _pp):
-        """POST /api/llm/<backend>/chat/completions — Credential-Injection-
-        Gateway. Der Body geht unveraendert zum Router; der Manager injiziert
-        den Authorization-Header aus den Settings, damit der Key die VM nie
-        erreicht. Streams (SSE) werden zeilenweise durchgereicht, Upstream-
-        Fehler transparent (Status + Body). Bewusst KEINE Logs von Key oder
-        Body — genau die sollen den Host ja nicht verlassen bzw. nirgends
-        liegenbleiben."""
+        """POST /api/llm/<backend>/chat/completions — credential injection
+        gateway. The body goes unchanged to the router; the manager injects the
+        Authorization header from the settings so the key never reaches the VM.
+        Streams (SSE) are passed through line by line, upstream errors
+        transparently (status + body). Deliberately NO logs of key or body —
+        those are exactly what should not leave the host or linger anywhere."""
         parts = _pp.strip("/").split("/")      # api/llm/<backend>/chat/completions
         backend = parts[2] if len(parts) > 2 else ""
         if backend not in LLM_PROXY_UPSTREAMS or parts[3:] != ["chat", "completions"]:
@@ -3271,9 +3268,9 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(out); return
         url, keyname = LLM_PROXY_UPSTREAMS[backend]
         st = load_settings()
-        # Selbstgehostetes OrcaRouter-Lite: die geteilte Basis-URL gilt auch
-        # fuer den Proxy — sonst liefe der Umweg ploetzlich gegen die Cloud,
-        # waehrend der Direktmodus den eigenen Server spricht.
+        # Self-hosted OrcaRouter-Lite: the shared base URL applies to the proxy
+        # too — otherwise the detour would suddenly run against the cloud while
+        # direct mode talks to the own server.
         if backend == "orcarouter" and (st.get("ORCAROUTER_URL") or "").strip():
             u = st["ORCAROUTER_URL"].strip().rstrip("/")
             if not u.endswith("/chat/completions"):
@@ -3300,8 +3297,8 @@ class H(BaseHTTPRequestHandler):
         try:
             r = urllib.request.urlopen(req, timeout=600)
         except urllib.error.HTTPError as e:
-            # Upstream-Fehler 1:1 durchreichen: der Agent hat eigene Retry-
-            # Logik fuer 429/5xx und zeigt 4xx-Bodies als Fehlermeldung an.
+            # Pass upstream errors through 1:1: the agent has its own retry
+            # logic for 429/5xx and shows 4xx bodies as an error message.
             data = e.read()
             self.send_response(e.code)
             self.send_header("Content-Type", e.headers.get("Content-Type", "application/json"))
@@ -3317,11 +3314,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(r.status)
             self.send_header("Content-Type", r.headers.get("Content-Type", "application/json"))
             if want_stream:
-                # SSE zeilenweise weiterschreiben und flushen — Voll-Puffern
-                # wuerde das Token-Streaming im Agenten toeten. readline()
-                # blockiert nur bis zur naechsten Event-Zeile, nie bis zum
-                # Stream-Ende. Ohne Content-Length endet die Antwort mit dem
-                # Verbindungsschluss (HTTP/1.0), urllib im Gast liest bis EOF.
+                # Write SSE on line by line and flush — full buffering would kill
+                # the token streaming in the agent. readline() blocks only until
+                # the next event line, never until the end of the stream. Without
+                # Content-Length the response ends with the connection close
+                # (HTTP/1.0), urllib in the guest reads until EOF.
                 self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
                 try:
@@ -3332,7 +3329,7 @@ class H(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
-                    pass               # Client weg -> Upstream schliesst via with
+                    pass               # client gone -> upstream closes via with
             else:
                 data = r.read()
                 self.send_header("Content-Length", str(len(data)))
@@ -3351,20 +3348,20 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b'{"error":"forbidden"}')
             return
         if _pp.startswith("/api/llm/"):
-            # LLM-Key-Injection: eigener Zweig ganz vorn, weil die Antwort
-            # gestreamt sein kann und nicht ins JSON-Schema der uebrigen
-            # Routen passt.
+            # LLM key injection: its own branch right up front, because the
+            # response may be streamed and doesn't fit the JSON schema of the
+            # other routes.
             return self._llm_proxy(_pp)
-        # Sprache: der Dienst lauscht auf dem Loopback und ist von aussen nicht
-        # erreichbar. Der Manager ist die einzige Tuer — er kennt den Anrufer
-        # bereits (Basic-Auth bzw. Quell-IP) und reicht Roh-Audio bzw. WAV
-        # unveraendert durch, statt es umzupacken.
+        # Voice: the service listens on loopback and is not reachable from
+        # outside. The manager is the only door — it already knows the caller
+        # (basic auth or source IP) and passes raw audio or WAV through unchanged
+        # instead of repackaging it.
         if _pp in ("/api/stt", "/api/tts"):
             ln = int(self.headers.get("Content-Length", 0) or 0)
             payload = self.rfile.read(ln) if ln else b""
             if _pp == "/api/tts":
-                # Stimme/Tempo aus den geteilten Settings einmischen — App und
-                # Web schicken nur {"text"}; explizite Client-Werte gewinnen.
+                # Mix in voice/speed from the shared settings — app and web send
+                # only {"text"}; explicit client values win.
                 try:
                     b = json.loads(payload or b"{}")
                     st = load_settings()
@@ -3397,9 +3394,9 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         if self.path == "/api/usage":
-            # Verbrauchsmeldung eines Agenten. Wie /api/audit nur fuer echte
-            # Gaeste: die Instanz kommt aus der Quell-IP, nicht aus dem Body —
-            # sonst koennte eine VM den Verbrauch einer anderen faelschen.
+            # An agent's usage report. Like /api/audit, only for real guests:
+            # the instance comes from the source IP, not from the body —
+            # otherwise a VM could forge another one's usage.
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
@@ -3409,9 +3406,9 @@ class H(BaseHTTPRequestHandler):
                           body.get("cost"))
             self.send_response(204); self.end_headers(); return
         if self.path == "/api/mcp":
-            # MCP-Aufruf eines Gastes -> Hub. Nur echte Gaeste: die Instanz
-            # kommt aus der Quell-IP; der Admin kann zum Testen "instance"
-            # im Body mitgeben.
+            # A guest's MCP call -> hub. Real guests only: the instance comes
+            # from the source IP; the admin can pass "instance" in the body for
+            # testing.
             ln = int(self.headers.get("Content-Length", 0) or 0)
             b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             inst = instance_by_ip(self.client_address[0])
@@ -3477,9 +3474,9 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data))); self.end_headers()
             self.wfile.write(data); return
         if self.path == "/api/memory-search":
-            # Semantische Suche im Langzeitgedaechtnis. Wie /api/memory ist die
-            # Instanz die des Gastes (Quell-IP); der Admin darf "instance" im
-            # Body angeben (zum Testen).
+            # Semantic search in long-term memory. Like /api/memory, the instance
+            # is the guest's (source IP); the admin may specify "instance" in the
+            # body (for testing).
             ln = int(self.headers.get("Content-Length", 0) or 0)
             b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             guest = instance_by_ip(self.client_address[0])
@@ -3492,7 +3489,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(out); return
         if self.path in ("/api/mission-start", "/api/mission-update",
                          "/api/mission-finish"):
-            # Missions-Schreibzugriff: nur der Orchestrator (Gast) oder Admin.
+            # Mission write access: only the orchestrator (guest) or admin.
             g = instance_by_ip(self.client_address[0])
             if g is not None and g.get("name") != ORCH_INSTANCE:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
@@ -3519,7 +3516,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
         if self.path.startswith("/api/mission-admin"):
-            # UI: pause/resume/abort — Admin only (Gaeste geblockt).
+            # UI: pause/resume/abort — admin only (guests blocked).
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3532,7 +3529,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
         if self.path.split("?", 1)[0].startswith("/api/plugins"):
-            # Tool-Plugins verwalten (Upload/Boilerplate/Delete): Admin only.
+            # Manage tool plugins (upload/boilerplate/delete): admin only.
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3540,7 +3537,7 @@ class H(BaseHTTPRequestHandler):
             ln = int(self.headers.get("Content-Length", 0) or 0)
             raw_body = self.rfile.read(ln) if ln else b""
             if ln > PLUGIN_MAX_BYTES:
-                out = json.dumps({"error": "Datei zu gross (max 5 MB)"}).encode()
+                out = json.dumps({"error": "file too large (max 5 MB)"}).encode()
             else:
                 try:
                     b = json.loads(raw_body or b"{}")
@@ -3574,7 +3571,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
         if self.path == "/api/prompts":
-            # Verwaltung der Prompt-Templates: Admin only.
+            # Management of prompt templates: admin only.
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3589,7 +3586,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
         if self.path == "/api/notify":
-            # Agent schickt eine Push-Benachrichtigung an App + Web. Instanz per IP.
+            # The agent sends a push notification to app + web. Instance by IP.
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             inst = instance_by_ip(self.client_address[0])
@@ -3608,7 +3605,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
         if self.path == "/api/notifications/read":
-            # App/Web quittieren gelesene Benachrichtigungen (Admin, kein Gast).
+            # App/web acknowledge read notifications (admin, not guest).
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -3623,7 +3620,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
         if self.path == "/api/hitl":
-            # Agent bittet um Freigabe eines riskanten Tools. Instanz per IP.
+            # The agent asks for approval of a risky tool. Instance by IP.
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             inst = instance_by_ip(self.client_address[0])
@@ -3634,9 +3631,9 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
         if self.path == "/api/signal":
-            # Signal-Versand fuer Agenten. Der Empfaenger wird gegen
-            # ALLOWED_SENDERS geprueft, die Bot-Nummer kommt aus den
-            # Einstellungen — die VM kennt beides nicht.
+            # Signal send for agents. The recipient is checked against
+            # ALLOWED_SENDERS, the bot number comes from the settings — the VM
+            # knows neither.
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             ok, note = signal_send(body.get("text") or body.get("message"), body.get("to"))
@@ -3655,33 +3652,33 @@ class H(BaseHTTPRequestHandler):
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if inst is not None:   # nur echte Gaeste protokollieren, still verwerfen sonst
+            if inst is not None:   # only log real guests, silently discard otherwise
                 try:
                     audit_append(inst["name"], body.get("tool", ""),
                                  body.get("target", ""), body.get("ok", True))
                 except Exception:
                     pass
             self.send_response(204); self.end_headers(); return
-        # Aufgabe aus einer VM heraus einreihen (create_task-Tool). Der Aufrufer
-        # wird per Source-IP erkannt; er waehlt das TARGET (faehige Instanz oder
-        # 'ephemeral'), aber nicht die eigene Identitaet. Ephemere Kinder
-        # (task-*/sub-*) duerfen selbst KEINE Tasks anlegen (kein Runaway).
+        # Queue a task from within a VM (create_task tool). The caller is
+        # identified by source IP; it chooses the TARGET (capable instance or
+        # 'ephemeral'), but not its own identity. Ephemeral children
+        # (task-*/sub-*) may NOT create tasks themselves (no runaway).
         if self.path == "/api/task":
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)
             body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             if inst is None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"nur fuer Gaeste"}'); return
+                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
             if inst["name"].startswith(("task-", "sub-")):
-                out = {"error": "ephemere VMs duerfen keine Tasks anlegen"}
+                out = {"error": "ephemeral VMs may not create tasks"}
             else:
                 target = (body.get("target") or "ephemeral").strip()
                 message = str(body.get("message", "")).strip()
                 schedule = str(body.get("schedule", "")).strip()
                 wait = bool(body.get("wait"))
                 if not message:
-                    out = {"error": "message fehlt"}
+                    out = {"error": "message missing"}
                 elif wait and not schedule:
                     ok, res = _run_task_now(target, message)
                     history_add(target, message, res, ok, origin=inst["name"])
@@ -3692,8 +3689,8 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.end_headers(); self.wfile.write(json.dumps(out, ensure_ascii=False).encode())
             return
-        # Signal-Turn in die gemeinsame Chat-Historie (App+Web). Nur Gaeste, die
-        # Instanz kommt aus der Source-IP — der Gast waehlt sie nicht selbst.
+        # Signal turn into the shared chat history (app+web). Guests only, the
+        # instance comes from the source IP — the guest doesn't choose it.
         if self.path == "/api/chat-log":
             inst = instance_by_ip(self.client_address[0])
             ln = int(self.headers.get("Content-Length", 0) or 0)
@@ -3705,7 +3702,7 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 try:
-                    orchestrator_ping()   # Signal-Nachricht -> Orchestrator sofort
+                    orchestrator_ping()   # Signal message -> orchestrator immediately
                 except Exception:
                     pass
             self.send_response(204); self.end_headers(); return
@@ -3713,7 +3710,7 @@ class H(BaseHTTPRequestHandler):
             inst = instance_by_ip(self.client_address[0])
             if inst is None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"nur fuer Gaeste"}'); return
+                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             path = q.get("path", [""])[0]
             share = katfs_share_for(inst)
@@ -3721,7 +3718,7 @@ class H(BaseHTTPRequestHandler):
             if self.path.split("?", 1)[0].endswith("/write"):
                 if ln > KATFS_MAX_WRITE:
                     self.send_response(413); self.send_header("Content-Type", "application/json")
-                    self.end_headers(); self.wfile.write(b'{"error":"zu gross"}'); return
+                    self.end_headers(); self.wfile.write(b'{"error":"too large"}'); return
                 body = self.rfile.read(ln) if ln else b""
                 args = ("write", share, path, False, body)
             else:
@@ -3753,8 +3750,8 @@ class H(BaseHTTPRequestHandler):
                 b = json.loads(self.rfile.read(ln) or b"{}")
                 msg = save_security(b.get("issues") or [])
             elif parts == ["api", "gateway"]:
-                # {"chat": "<id>", "on": true} — Gaeste haben hier nichts zu
-                # suchen, sonst haengt eine VM ihren eigenen Filter ab.
+                # {"chat": "<id>", "on": true} — guests have no business here,
+                # otherwise a VM could switch off its own filter.
                 if instance_by_ip(self.client_address[0]) is not None:
                     msg = "forbidden (admin only)"
                 else:
@@ -3780,7 +3777,7 @@ class H(BaseHTTPRequestHandler):
                 n = merge_chats(json.loads(self.rfile.read(ln) or b"[]"))
                 msg = f"{n} chats saved" if n >= 0 else "error while saving"
                 try:
-                    orchestrator_ping()   # neue App/Web-Nachricht -> Orchestrator sofort
+                    orchestrator_ping()   # new app/web message -> orchestrator immediately
                 except Exception:
                     pass
             elif parts == ["api", "tasks"]:
@@ -3836,8 +3833,8 @@ class H(BaseHTTPRequestHandler):
                 target = guest["name"] if guest else parts[2]
                 key, value = b.get("key", ""), b.get("value", "")
                 msg = mem_store(target, key, value)
-                # Dasselbe zusaetzlich semantisch ablegen. Faellt der Embedder
-                # aus, bleibt das flache Gedaechtnis oben trotzdem geschrieben.
+                # Additionally store the same thing semantically. If the embedder
+                # fails, the flat memory above stays written anyway.
                 sem = sem_store(target, value, key)
                 msg += " (+semantic)" if sem else " (semantic off)"
             elif parts == ["api", "create"]:
@@ -3847,8 +3844,8 @@ class H(BaseHTTPRequestHandler):
                 mcps = [str(m) for m in (body.get("mcps") or []) if m]
                 if mcps:
                     cfg["MCP_SERVERS"] = ",".join(mcps)
-                # Werkzeug-Allowlist: nur setzen, wenn es eine echte Teilmenge ist
-                # (alle ausgewaehlt -> weglassen = alle). Unbekannte Namen raus.
+                # Tool allowlist: only set it if it's a real subset (all
+                # selected -> omit = all). Drop unknown names.
                 tools = [t for t in (body.get("tools") or []) if t in AGENT_TOOL_NAMES]
                 if tools and set(tools) != AGENT_TOOL_NAMES:
                     cfg["AGENT_TOOLS"] = ",".join(tools)
@@ -3872,8 +3869,8 @@ class H(BaseHTTPRequestHandler):
                     body = json.loads(self.rfile.read(ln) or b"{}")
                     msg = set_instance_tools(name, body.get("tools") or [])
                 elif action == "config":
-                    # Einzelnen Config-Schluessel setzen/loeschen (Admin; Secrets
-                    # bleiben draussen — die gehen nur ueber den Broker).
+                    # Set/delete a single config key (admin; secrets stay out —
+                    # those only go through the broker).
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")
                     key = str(body.get("key", "")).strip()
@@ -3882,7 +3879,7 @@ class H(BaseHTTPRequestHandler):
                     if not inst2:
                         msg = "unknown"
                     elif not re.fullmatch(r"[A-Z][A-Z0-9_]{1,40}", key) or key in NEVER_PERSIST:
-                        msg = f"error: key '{key}' nicht erlaubt"
+                        msg = f"error: key '{key}' not allowed"
                     else:
                         cfg2 = inst2.setdefault("config", {})
                         if val in ("", None):
@@ -3899,8 +3896,8 @@ class H(BaseHTTPRequestHandler):
                 elif action == "diskreset":
                     msg = reset_upper(name)
                 elif action == "model":
-                    # Nicht in GUEST_POST_PATHS — Gast-VMs kommen hier nie an
-                    # (Positivliste am Anfang von do_POST blockt sie mit 403).
+                    # Not in GUEST_POST_PATHS — guest VMs never reach here
+                    # (the allowlist at the start of do_POST blocks them with 403).
                     ln = int(self.headers.get("Content-Length", 0))
                     body = json.loads(self.rfile.read(ln) or b"{}")
                     msg = set_model(name, body.get("model", ""))
@@ -3917,10 +3914,10 @@ class H(BaseHTTPRequestHandler):
 
 
 def migrate_mcp_config_out_of_instances():
-    """MCP_CONFIG enthielt die eingesetzten Secrets im Klartext. Die Servernamen
-    stehen als Schluessel darin, lassen sich also verlustfrei nach MCP_SERVERS
-    heben; die dafuer noetigen Secrets werden der Instanz gezielt freigegeben,
-    damit nichts stehenbleibt, was vorher lief."""
+    """MCP_CONFIG contained the substituted secrets in plain text. The server
+    names are its keys, so they can be lifted losslessly into MCP_SERVERS; the
+    secrets needed for that are granted to the instance specifically, so nothing
+    that worked before stops working."""
     pol = load_secret_policy()
     by_inst = pol.setdefault("by_instance", {})
     touched = False
@@ -3935,7 +3932,7 @@ def migrate_mcp_config_out_of_instances():
         except (ValueError, AttributeError):
             names = []
         if not blob:
-            names = []          # leerer Rest aus alten Anlagen — nur wegraeumen
+            names = []          # empty remnant from old setups — just clean up
         if names:
             cfg["MCP_SERVERS"] = ",".join(names)
             need = mcp_required_secrets(names)
@@ -3958,10 +3955,10 @@ def migrate_mcp_config_out_of_instances():
 
 
 def migrate_secrets_out_of_instances():
-    """Einmalige Bereinigung des Altbestands: Instanz-JSONs, die noch einen
-    API-Key tragen, verlieren ihn hier. Der Agent holt ihn seit dem Umbau ueber
-    den Broker; ein Key in der Instanz-Datei waere nur noch eine Kopie, die auf
-    jede Config-Disk mitwandert. Laeuft als root, dem die Dateien gehoeren."""
+    """One-time cleanup of the legacy state: instance JSONs that still carry an
+    API key lose it here. Since the rework the agent fetches it via the broker;
+    a key in the instance file would only be a copy that travels onto every
+    config disk. Runs as root, who owns the files."""
     for inst in load_instances():
         cfg = inst.get("config") or {}
         hit = [k for k in SECRET_PARAMS if k in cfg]

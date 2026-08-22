@@ -1,21 +1,24 @@
 # Changelog
 
-## 2026-08-20 (UI: Changelog + Architecture in den Footer)
+## 2026-08-22 (Full German→English pass)
+- The entire codebase is now English: comments, docstrings, and user-facing strings across the manager (`manager.py` + all `mgr/` modules), the web chat (`chatui.py`) and web UI (incl. the new Resources tab), the OpenRouter agent (`agent.py`), the Android app (all Kotlin + gradle/manifest/theme/README), the host services (voice/embed/mcp-hub), the Claude bridges, katfs (Rust node/client + web JS), all shell/build/guest-init scripts, Dockerfiles, systemd units, `install.sh`, `personas.json`, the CHANGELOG, and the READMEs. Behaviour is unchanged. Prompt-block tags the agent injects are now English too (`[Missions]`, `[Summary]`, `[Memory]`, `[Branch]`, `[Sidenote]`), and the default personas `assistent`/`uebersetzer` were renamed `assistant`/`translator`. Deliberately kept as input-tolerance literals (matched against user input, not source language): the Signal HITL `ja/nein` keywords, `/steps unbegrenzt`, `/reasoning aus`, `/back verwerfen`, and Indeed.de German date words in `indeed_filter`. The `ManagerSync` create-error detection in the app was updated to the manager's new English tokens (`exists`/`invalid`/`unknown`). All 69 tests green (test fixtures asserting on now-English agent output updated to match).
+
+## 2026-08-20 (UI: Changelog + Architecture in the footer)
 - New Resources tab: per-instance sizing (vCPU, configured RAM) plus live usage — actual RSS, CPU% (from /proc, per-core basis), and written overlay-disk size, with bars. Backed by a new /api/resources endpoint; test added.
 - Android app v5.19: uploaded photos now show a real thumbnail in the message bubble (Msg gained an image field, persisted + synced) instead of just a 📷 icon; plus an on-device crash log — uncaught exceptions are written to crash.log and viewable/copyable under Settings › Diagnose.
 - Security gateway (Layer A completed): the invisible-Unicode scrubber now also removes Unicode noncharacters (U+FDD0–FDEF, U+xFFFE/xFFFF per plane) and permanently-reserved default-ignorable code points (U+2065, U+FFF0–FFF8, U+E0000, tag/ignorable ranges) — the remaining deterministic watermark carriers from guillaumemeyer/watermarks-remover. Emoji/variation-selectors preserved; test added. Also: `manager/text_unicode.py` is now tracked (was missing, breaking the gateway on a fresh clone).
-- Tool-plugin integrity: content-hash pinning (idea from Microsoft's APM). Uploading/creating a plugin records a SHA-256 over its files; if a plugin is later edited out-of-band the Plugins tab flags it 'geändert seit Approve' with an Approve button to re-pin. Pins in gitignored manager/plugins/.pins.json; test covers upload→tamper→approve→delete.
+- Tool-plugin integrity: content-hash pinning (idea from Microsoft's APM). Uploading/creating a plugin records a SHA-256 over its files; if a plugin is later edited out-of-band the Plugins tab flags it 'changed since approve' with an Approve button to re-pin. Pins in gitignored manager/plugins/.pins.json; test covers upload→tamper→approve→delete.
 - Policy tab: the 15s auto-refresh no longer wipes unsaved tool-checkbox changes (a dirty guard skips the re-render while you have pending edits), and Save shows real errors instead of a false '✓'. Added a set_instance_tools round-trip test (subset persists, all→cleared, unknown filtered).
 - Chat sync robustness (web + Android v5.18): when two devices' histories DIVERGE (from an earlier corruption or an out-of-band edit) the prefix-append merge used to stall forever, leaving one side on an older state. Now, if the remote conversation is newer and not shorter, the client adopts the server state as the merge point instead of getting stuck.
 - Android app v5.17: assistant messages now render basic Markdown (bold **, italic *, `code`, #-headings as bold, - / * bullets) via AnnotatedString — previously the app showed raw asterisks (only the web chat rendered Markdown).
 - Android app v5.16: fix streamed reply landing in the USER bubble (raw ⟦think⟧ markers visible) after a mic-interrupt+re-record — chunks now target the assistant message by a stable key instead of a positional index that could drift. Msg gained a `key` (excluded from equals so multi-device merge is unaffected).
 - Android app v5.15: FIX 'Socket is closed' on server chats (regression from v5.12). The 2s read-timeout used for interrupt-polling closed the socket whenever a model took >2s for the first token (e.g. gemini-2.5-pro thinking). Read-timeout is back to 600s and the mic interrupt now cancels via a disconnect handle instead — responsive AND no false timeouts.
-- Android app v5.14: the 'Assist-Taste öffnet Instanz' setting is now a dropdown of the live server instances (with '— aktive Instanz —' for the default) instead of a free-text field.
-- Android app v5.13: new setting 'Assist-Taste öffnet Instanz' — the device assistant button (ACTION_ASSIST) now opens/records against a configurable server instance (empty = current). Set it in Settings › Server-Verbindung.
+- Android app v5.14: the 'Assist button opens instance' setting is now a dropdown of the live server instances (with '— active instance —' for the default) instead of a free-text field.
+- Android app v5.13: new setting 'Assist button opens instance' — the device assistant button (ACTION_ASSIST) now opens/records against a configurable server instance (empty = current). Set it in Settings › Server connection.
 - Android app v5.12 (voice): (1) recording no longer cuts off mid-sentence during natural pauses — silence hang raised 2.2s→3.5s and the keep-alive threshold lowered; (2) tapping the mic again while the agent is answering now cancels that turn (stream aborted within ~2s) and starts a fresh recording, so you can correct your previous statement. The mic button is enabled during a response.
 - Tool plugins now support multi-file projects (each tool its own folder, put on sys.path) next to single .py files, plus a Plugins tab in the web UI: drag-and-drop a .py or .zip, generate a boilerplate, list/delete. Zip extraction is zip-slip-guarded and 5 MB-capped, admin-only. README documents the plugin convention (adapted from pi.dev).
 - Web chat: your own messages now have a Copy button too (previously only assistant messages did) and bubble text is explicitly selectable — a background redraw during streaming/long-poll no longer forces you to re-select to copy.
-- New tool plugin `indeed_filter` (adapted from gvfullstack/JobSearchAutomation): stdlib-only post-filter that narrows a found job list to genuinely NEW postings (parses 'today'/'vor N Tagen'/ISO dates, filters by since_date) plus include/exclude keywords — no scraping. Wired into the jobresearcher task for precise dedup.
+- New tool plugin `indeed_filter` (adapted from gvfullstack/JobSearchAutomation): stdlib-only post-filter that narrows a found job list to genuinely NEW postings (parses 'today'/'N days ago'/ISO dates, filters by since_date) plus include/exclude keywords — no scraping. Wired into the jobresearcher task for precise dedup.
 - Hardening: unhandled exceptions in a GET/POST route now return a clean HTTP 500 (and log a traceback) instead of dropping the connection — so a future route bug surfaces as an error the agent can read/retry, not a silent RemoteDisconnected.
 - Fix: `playbook_add` failed with RemoteDisconnected in every agent — `mgr/rules.py` used `uuid`/`time` without importing them, so `/api/playbook-add` crashed mid-request and the manager dropped the connection (memory/list worked as they don't use those). Added the imports; regression test covers it.
 - Slash typeahead: Esc now reliably closes the picker whenever it's visible and keeps it closed while you keep typing the same /command (reopens on a fresh /).
@@ -31,862 +34,862 @@
 - Externalised all site-specific values (domains, LAN IPs, uplink NIC, guest DNS) into gitignored `site.json` + `mcp-catalog.json`; source now uses neutral placeholders (example.com / 1.1.1.1 / eth0). Repo HEAD is free of internal infrastructure.
 - Leak-filter now also masks HuggingFace tokens (hf_…).
 - Scrubbed phone-number defaults from templates/agent configs (now empty); merged the two page footers into a single row.
-- Die Topbar-Nav war ueberladen (Glocke + „Missions" draengten Changelog und
-    Architecture aus der sichtbaren Zeile — Scrollbar ist ausgeblendet, wirkte
-    „verschwunden"). Beide jetzt in einem Footer; Topbar endet bei „Settings",
-    passt wieder in eine Zeile. showTab hebt auch die Footer-Links hervor.
+- The topbar nav was overloaded (the bell + "Missions" pushed Changelog and
+    Architecture out of the visible row — the scrollbar is hidden, so they looked
+    "gone"). Both are now in a footer; the topbar ends at "Settings" and
+    fits on one line again. showTab now also highlights the footer links.
 
 
 ## 2026-08-20 (Guardrails: Budget, Rate-Limit, Egress-Allowlist, Leak-Filter)
-- **Kosten-/Frequenz-Circuit-Breaker** am Key-Injection-Proxy (dort laufen
-    alle LLM-Calls durch): Tages-Token-Budget je Instanz (Default 2 Mio, aus
-    llm_usage; Override `BUDGET_TOKENS`) + Frequenz-Deckel (Default 60/min,
-    `LLM_RATE_MIN`). Ueberschreitung -> 429 + max. stuendlich eine notify.
-    Motivation: die naechtliche Heartbeat-Schleife lief voellig ungebremst.
-- **Task-Frequenz-Deckel im Worker**: >6 Laeufe/h desselben Tasks -> 1 h
-    ausgesetzt + notify (fangt Schleifen jeder Ursache).
-- **Egress-Allowlist je Instanz** (`EGRESS_ALLOW` = Domains/IPs): die VM darf
-    dann NUR dorthin (A-Records beim Start aufgeloest, sonst wie bisher „alles
-    ausser privat"). Netz-Ebene via iptables-FC-Kette.
-- **Leak-Filter** auf ausgehende Kanaele (notify, send_signal): bekannte
-    Key-Muster (sk-or-/sk-ant-/sk-/ptr_/gh*_/AKIA/xox*/JWT) werden ersetzt,
-    NICHT ein generisches 40-hex (git-SHAs bleiben unberuehrt — getestet).
-- 57 Tests gruen.
+- **Cost/frequency circuit breaker** at the key-injection proxy (where all
+    LLM calls pass through): daily token budget per instance (default 2M, from
+    llm_usage; override `BUDGET_TOKENS`) + frequency cap (default 60/min,
+    `LLM_RATE_MIN`). Exceeding it -> 429 + at most one notify per hour.
+    Motivation: the nightly heartbeat loop ran completely unthrottled.
+- **Task-frequency cap in the worker**: >6 runs/h of the same task -> suspended
+    for 1 h + notify (catches loops of any cause).
+- **Egress allowlist per instance** (`EGRESS_ALLOW` = domains/IPs): the VM may
+    then reach ONLY those (A-records resolved at start, otherwise as before "everything
+    except private"). Network level via an iptables FC chain.
+- **Leak-filter** on outbound channels (notify, send_signal): known
+    key patterns (sk-or-/sk-ant-/sk-/ptr_/gh*_/AKIA/xox*/JWT) are replaced,
+    NOT a generic 40-hex (git SHAs stay untouched — tested).
+- 57 tests green.
 
 
-## 2026-08-20 (Refactoring-Nachbeben: drei Worker-Bugs + Notification-Klick + UI)
-- **Wurzel gefunden dank neuem worker.log**: (1) `chat_log_append` war nach
-    mgr/notify.py gerutscht und fand `load_chats` nicht (NameError) -> Task-
-    Ergebnisse erreichten den Chat nie (das Jobsuche-Symptom). Zurueck nach
-    manager.py (Chat-Domaene). (2) mgr/store.py fehlte `import re` ->
-    `_next_run` crashte, next_run blieb in der Vergangenheit -> **Scheduled-
-    Tasks liefen in Dauerschleife** (Heartbeat seit dem Abend, Jobsuche
-    mehrfach). (3) Worker hinterliess bei Nachlauf-Fehlern „running"-Waisen.
-- **Worker gehaertet**: jeder Nachlauf-Schritt einzeln abgesichert (Status-
-    Garantie), Waisen-Wache zur Laufzeit (>30 min running -> zurueckstellen),
-    Diagnose-Log run/worker.log (journal ist root-only).
-- **Notification-Klick oeffnet echten Chat** (App 5.10 + Web): bevorzugt den
-    Task-Chat des Agenten, sonst den juengsten — statt leerem Fenster.
-- **Glocke: „Leeren"** entfernt Notifications wirklich (`{clear:true}`);
-    Oeffnen markiert weiterhin nur als gelesen.
-- **UI**: klobige System-Scrollbars im Manager entfernt (Dialoge overflow-x
-    hidden, schlanke theme-konforme Scrollbars global).
+## 2026-08-20 (Refactoring aftershocks: three worker bugs + notification click + UI)
+- **Root cause found thanks to the new worker.log**: (1) `chat_log_append` had slipped
+    into mgr/notify.py and couldn't find `load_chats` (NameError) -> task
+    results never reached the chat (the job-search symptom). Moved back into
+    manager.py (chat domain). (2) mgr/store.py was missing `import re` ->
+    `_next_run` crashed, next_run stayed in the past -> **scheduled
+    tasks ran in an endless loop** (heartbeat since that evening, job search
+    multiple times). (3) On post-run errors the worker left "running" orphans.
+- **Worker hardened**: each post-run step individually guarded (status
+    guarantee), a runtime orphan watch (>30 min running -> requeue),
+    diagnostic log run/worker.log (the journal is root-only).
+- **Notification click opens the real chat** (App 5.10 + Web): prefers the
+    agent's task chat, otherwise the most recent — instead of an empty window.
+- **Bell: "Clear"** actually removes notifications (`{clear:true}`);
+    opening still only marks them as read.
+- **UI**: clunky system scrollbars in the manager removed (dialogs overflow-x
+    hidden, slim theme-conform scrollbars globally).
 
 
-## 2026-08-20 (App 5.9: Fehlermeldungen verfallen + Lizenz-Header)
-- Status-/Fehlermeldungen in der App klebten dauerhaft (z. B. DNS-Fehler
-    „Unable to resolve agents.example.com", wenn das Handy nicht im Heimnetz/VPN
-    ist). Jetzt: Fehler verfallen nach 8 s, Hinweise nach 4 s, und ein
-    erfolgreicher Task-Load raeumt einen frueheren Fehler sofort weg.
-- AGPL/SPDX-Header in allen Kotlin-Quellen der App (Lizenz-Nachzug).
+## 2026-08-20 (App 5.9: error messages expire + license header)
+- Status/error messages in the app stuck around permanently (e.g. DNS error
+    "Unable to resolve agents.example.com" when the phone isn't on the home network/VPN).
+    Now: errors expire after 8 s, hints after 4 s, and a
+    successful task load clears an earlier error immediately.
+- AGPL/SPDX header in all of the app's Kotlin sources (license catch-up).
 
 
-## 2026-08-20 (Fix: App/Tasks leer nach dem mgr/-Refactoring)
-- Regression aus der Paket-Aufteilung: `load_tasks`/`save_tasks` zogen nach
-    mgr/store.py, die Konstante `TASKS_FILE` blieb aber undefiniert (configure
-    setzte sie nicht). Folge: `/api/tasks` crashte -> App zeigte „keine Tasks",
-    und der Task-Worker starb, sodass zwei Scheduled-Tasks (Heartbeat, Jobsuche)
-    auf „running" haengenblieben und nie wieder feuerten.
-- Fix: `TASKS_FILE` in `store.configure()` + Re-Export. Dazu **Crash-Recovery**
-    `reclaim_stuck_tasks()` beim Worker-Start: verwaiste „running"-Tasks werden
-    auf scheduled/pending zurueckgestellt (heilt sich kuenftig selbst).
-- Regression-Tests: TASKS_FILE verdrahtet, reclaim-Logik. 55 gruen.
+## 2026-08-20 (Fix: App/Tasks empty after the mgr/ refactoring)
+- Regression from the package split: `load_tasks`/`save_tasks` moved into
+    mgr/store.py, but the constant `TASKS_FILE` stayed undefined (configure
+    didn't set it). Consequence: `/api/tasks` crashed -> the app showed "no tasks",
+    and the task worker died, so two scheduled tasks (heartbeat, job search)
+    hung on "running" and never fired again.
+- Fix: `TASKS_FILE` in `store.configure()` + re-export. Plus **crash recovery**
+    `reclaim_stuck_tasks()` at worker start: orphaned "running" tasks are
+    requeued to scheduled/pending (self-healing from now on).
+- Regression tests: TASKS_FILE wired up, reclaim logic. 55 green.
 
 
-## 2026-08-19 (manager.py -> Paket mgr/ — Refactoring abgeschlossen)
-- Strangler-Fig-Refactoring durch: **manager.py von 6.705 auf ~1.400 Zeilen
-    Kernlogik** (3.388 gesamt inkl. HTTP-Handler + main). Neun Module unter
-    `mgr/`: ui (Weboberflaeche), store (SQLite History/Usage/Semantik + Memory +
-    Task-Datei), signal (Versand/HITL/Empfang), missions, notify, rules
-    (Playbooks+Prompts), mcp, katfs, gateway.
-- Muster konsequent: manager.py bleibt systemd-Einstieg + Fassade (Re-Exports)
-    und Kompositions-Schicht (VM-Lifecycle, Networking, Secrets/instance_by_ip,
-    der HTTP-Handler `class H` und main verdrahten die Module — bleiben bewusst
-    hier). mgr-Module importieren NIE aus manager (Zyklen-Check sauber);
-    Querbezuege (notify_add, sem_store, load_settings, chat_log_append,
-    orchestrator_ping, load_instances) per configure()/Injektion.
-- Nach JEDER Scheibe: Import-Check, 53 Tests gruen, Dienst neu gestartet und
-    live geprueft (Signal-Empfaenger verbunden, katfs/gateway/hitl antworten).
-    install.sh kopiert mgr/ mit. Vier Stolperer unterwegs sauber gefixt
-    (Import-Reihenfolge, verirrte Injektionszeilen, zu grosser Schnitt, fehlender
-    uuid-Import) — genau wofuer das Test-Netz da ist.
-## 2026-08-19 (Tree-Chat + Key-Injection-Gateway AKTIV)
-- **Tree-Chat (Aeste)**: Rueckfragen verschmutzen das Hauptthema nicht mehr.
-    `/branch [thema]` oeffnet einen Nebenast (voller geerbter Kontext,
-    verschachtelbar); `/back` schliesst ihn: der Ast wird zu EINER
-    `[Randnotiz]`-Zeile verdichtet (oder mit `/back drop` spurlos verworfen),
-    der Kontext steht wieder auf dem Verzweigungspunkt. Web-Chat: ⑂-Button,
-    Ruecksprung-Leiste, Ast-Nachrichten eingerueckt + einklappbar; Ast-Tiefe
-    synct in den Shared-Store. Trim pausiert bei offenem Ast. E2E bewiesen:
-    Hauptthema intakt, Ast nur als Randnotiz.
-- **Key-Injection-Gateway (OneCLI-Muster), gebaut vom Fable-Subagenten und
-    AKTIVIERT**: LLM-Keys verlassen den Host nicht mehr. Agenten senden Chat-
-    Completions an den Manager (`/api/llm/<backend>/chat/completions`), der
-    injiziert Authorization beim Weiterleiten (echtes SSE-Streaming, Fehler
-    transparent). Schalter `LLM_KEY_PROXY` in den Settings (an); Agent-Boot
-    zeigt `url=http://172.30.x.1:8700/api/llm/...`. `/model`-Wechsel bleibt
-    proxy-faehig; llama weiterhin direkt. Der Secret-Broker bleibt fuer
-    andere Secrets bestehen.
-- Tests: 53 gruen (Tree-Chat open/close/drop, Proxy-URL/kein Bearer, Route).
+## 2026-08-19 (manager.py -> mgr/ package — refactoring complete)
+- Strangler-Fig refactoring done: **manager.py from 6,705 down to ~1,400 lines
+    of core logic** (3,388 total incl. HTTP handler + main). Nine modules under
+    `mgr/`: ui (web interface), store (SQLite history/usage/semantics + memory +
+    task file), signal (send/HITL/receive), missions, notify, rules
+    (playbooks+prompts), mcp, katfs, gateway.
+- Pattern applied consistently: manager.py stays the systemd entry point + facade (re-exports)
+    and composition layer (VM lifecycle, networking, secrets/instance_by_ip,
+    the HTTP handler `class H` and main wire the modules together — deliberately kept
+    here). mgr modules NEVER import from manager (cycle check clean);
+    cross-references (notify_add, sem_store, load_settings, chat_log_append,
+    orchestrator_ping, load_instances) via configure()/injection.
+- After EVERY slice: import check, 53 tests green, service restarted and
+    verified live (Signal receiver connected, katfs/gateway/hitl responding).
+    install.sh copies mgr/ along too. Four stumbles fixed cleanly along the way
+    (import order, stray injection lines, too large a cut, missing
+    uuid import) — exactly what the test net is there for.
+## 2026-08-19 (Tree chat + key-injection gateway ACTIVE)
+- **Tree chat (branches)**: side questions no longer pollute the main topic.
+    `/branch [topic]` opens a side branch (full inherited context,
+    nestable); `/back` closes it: the branch is condensed into ONE
+    `[side note]` line (or discarded without a trace with `/back drop`),
+    and the context is back at the branch point. Web chat: ⑂ button,
+    return bar, branch messages indented + collapsible; branch depth
+    syncs into the shared store. Trimming pauses while a branch is open. Proven E2E:
+    main topic intact, branch only as a side note.
+- **Key-injection gateway (OneCLI pattern), built by the Fable subagent and
+    ACTIVATED**: LLM keys no longer leave the host. Agents send chat
+    completions to the manager (`/api/llm/<backend>/chat/completions`), which
+    injects Authorization when forwarding (real SSE streaming, errors
+    transparent). Toggle `LLM_KEY_PROXY` in the settings (on); agent boot
+    shows `url=http://172.30.x.1:8700/api/llm/...`. `/model` switching stays
+    proxy-capable; llama still direct. The secret broker remains for
+    other secrets.
+- Tests: 53 green (tree chat open/close/drop, proxy URL/no bearer, route).
 
 
-## 2026-08-19 (Oracle-Tool + Playbooks-Panel)
-- **oracle** (pi.dev-Idee "second opinion before acting"): Zweitmeinung vor
-    riskanten Aktionen — eigener LLM-Aufruf ohne Tools, challenged die
-    Annahmen, handelt nie selbst; via ORACLE_MODEL optional staerkeres Modell.
-    Playbook zwingt den Orchestrator, es vor delete_task & Co. zu nutzen; bei
-    "EINWAND" wird nicht gehandelt. Live mit dem realen MSFT-Loesch-Fehlszenario
-    verifiziert: Oracle erhob den korrekten Einwand, Agent verweigerte + fragte nach.
-- **Playbooks-Panel** im Personas-Tab: Regeln je Agent einsehen, ergaenzen,
-    entfernen (bisher nur per Chat/API moeglich).
+## 2026-08-19 (Oracle tool + Playbooks panel)
+- **oracle** (pi.dev idea "second opinion before acting"): a second opinion before
+    risky actions — its own LLM call without tools, challenges the
+    assumptions, never acts itself; via ORACLE_MODEL optionally a stronger model.
+    A playbook forces the orchestrator to use it before delete_task & co.; on
+    "OBJECTION" it does not act. Verified live with the real MSFT-deletion failure scenario:
+    Oracle raised the correct objection, the agent refused + asked back.
+- **Playbooks panel** in the Personas tab: view, add, and
+    remove rules per agent (previously only possible via chat/API).
 
 
-## 2026-08-19 (Installer END-TO-END verifiziert — QEMU-Rig mit nested KVM)
-- Test-Rig: QEMU-VM (Debian 12 Cloud, seed.iso statt SMBIOS — der war der
-    Haenger), nested KVM bestaetigt (/dev/kvm in der VM).
-- **install.sh lief auf der frischen Maschine komplett durch**: Preflight,
-    Layout, Firecracker-Download, rootfs-Build via Docker IN der VM,
-    embed+mcp-hub-Container, systemd-Dienst mit generiertem Passwort.
-- **Finaler Beweis: eine Firecracker-microVM bootete INNERHALB der Test-VM**
-    (Overlay-Boot inkl. Upper, web-bridge antwortet 200). Einzige erwartete
-    Abweichung: NFS-WARN (kein NFS im Rig) — degradiert korrekt weiter.
-- Ein Installer-Bug gefunden+gefixt: Smoke-Test scheiterte an 401, weil er
-    ohne das frisch generierte Passwort curlte — 401 zaehlt jetzt als „lebt".
+## 2026-08-19 (Installer verified END-TO-END — QEMU rig with nested KVM)
+- Test rig: QEMU VM (Debian 12 Cloud, seed.iso instead of SMBIOS — that was the
+    hang-up), nested KVM confirmed (/dev/kvm in the VM).
+- **install.sh ran all the way through on the fresh machine**: preflight,
+    layout, Firecracker download, rootfs build via Docker IN the VM,
+    embed+mcp-hub containers, systemd service with a generated password.
+- **Final proof: a Firecracker microVM booted INSIDE the test VM**
+    (overlay boot incl. upper, web-bridge answers 200). The only expected
+    deviation: NFS WARN (no NFS in the rig) — degrades correctly and continues.
+- One installer bug found+fixed: the smoke test failed with 401 because it
+    curled without the freshly generated password — 401 now counts as "alive".
 
 
-## 2026-08-19 (Fix: „Denken" klappte beim Streamen immer wieder auf)
-- paint() ersetzt beim Streamen die letzte Nachricht je Token komplett — und
-    setzte das details-Element dabei stets wieder auf `open`. Jetzt wird der
-    vom Nutzer gewaehlte Auf/Zu-Zustand vor dem Repaint gemerkt und danach
-    wiederhergestellt; zugeklappt bleibt zugeklappt.
+## 2026-08-19 (Fix: "Thinking" kept popping open during streaming)
+- paint() replaces the last message on every token completely during streaming — and
+    always set the details element back to `open`. Now the
+    user-chosen open/closed state is remembered before the repaint and restored
+    afterwards; collapsed stays collapsed.
 
 
-## 2026-08-19 (/steps + jobresearcher-Fix + Config-Route)
-- **/steps [n]** — max. Tool-Schritte je Turn zur Laufzeit aendern (1-60,
-    bis Neustart; dauerhaft via AGENT_MAX_STEPS). Grund: Recherche-Laeufe des
-    jobresearcher endeten mit "(max. Tool-Schritte erreicht)" bei Standard-12.
-- **Neue Admin-Route** POST /api/instances/<n>/config {key,value} — einzelnen
-    Config-Wert setzen/loeschen (Secrets ausgeschlossen). Damit jobresearcher
-    dauerhaft auf AGENT_MAX_STEPS=30; Duplikat-Task (daily 08:00) geloescht.
-- /steps in Web-Slash-Hint und App-Picker (App-Eintrag kommt mit naechstem APK).
+## 2026-08-19 (/steps + jobresearcher fix + config route)
+- **/steps [n]** — change the max tool steps per turn at runtime (1-60,
+    until restart; permanently via AGENT_MAX_STEPS). Reason: research runs of the
+    jobresearcher ended with "(max tool steps reached)" at the default 12.
+- **New admin route** POST /api/instances/<n>/config {key,value} — set/delete a single
+    config value (secrets excluded). Used to put jobresearcher
+    permanently on AGENT_MAX_STEPS=30; duplicate task (daily 08:00) deleted.
+- /steps in the web slash hint and app picker (app entry comes with the next APK).
 
 
-## 2026-08-19 (pi.dev-Ideen uebernommen: /model, Steering, Prompts, Plugins)
-- **/model** — Modell (und Backend) mitten in der Session wechseln, ohne
-    Neustart, Kontext bleibt: `/model orcarouter:anthropic/claude-sonnet-4.6`,
-    `/model <id>` (nur Modell), `/model` (anzeigen). Wirkt bis zum Neustart.
-    Live verifiziert inkl. Backend-Wechsel OrcaRouter->OpenRouter->zurueck.
-- **Steering** — dem laufenden Agenten reinrufen: neue Nachricht wird zwischen
-    zwei Tool-Schritten als `[Steuerung]`-User-Nachricht eingespeist statt zu
-    warten. Web: Enter mit Text waehrend einer Antwort (Button ■ bricht weiter
-    ab); App 5.8: Senden waehrend busy. Guest-Endpunkt `POST /api/steer`
-    (queued=false wenn kein Turn laeuft -> normal senden).
-- **Prompt-Templates** — wiederkehrende Auftraege als Slash-Kommando: im
-    Personas-Tab pflegen, im Chat `/name [zusatz]`; Expansion passiert im
-    Agenten -> funktioniert in Web, App UND Signal. Store prompts.json,
-    `GET/POST /api/prompts`. Slash-Vorschlaege jetzt auch im Web-Chat.
-- **Tool-Plugins** (pi.dev-Extension-Idee, uebersetzt) — eine .py-Datei je Tool
-    in `firecracker/plugins/` (DESC/PARAMS/REQUIRED + run()); der Manager legt
-    sie auf die Config-Disk, der Agent laedt sie beim Start (/config/plugins).
-    Kollisionen mit eingebauten Tools werden abgewehrt. Beispiel `wuerfel.py`;
-    live: „tools=36", Aufruf funktioniert. Neues Tool = Datei + Stop/Start.
-- 48 Tests gruen (neu: model-switch, steering-queue, prompt-expansion+store,
-    plugin-loader inkl. Kollisionsschutz).
+## 2026-08-19 (pi.dev ideas adopted: /model, steering, prompts, plugins)
+- **/model** — switch model (and backend) mid-session, without
+    restart, context preserved: `/model orcarouter:anthropic/claude-sonnet-4.6`,
+    `/model <id>` (model only), `/model` (show). Effective until restart.
+    Verified live incl. backend switch OrcaRouter->OpenRouter->back.
+- **Steering** — call in to the running agent: a new message is injected between
+    two tool steps as a `[steering]` user message instead of
+    waiting. Web: Enter with text during a response (button ■ still aborts);
+    App 5.8: send while busy. Guest endpoint `POST /api/steer`
+    (queued=false if no turn is running -> send normally).
+- **Prompt templates** — recurring jobs as a slash command:
+    maintain them in the Personas tab, in chat `/name [extra]`; expansion happens in the
+    agent -> works in Web, App AND Signal. Store prompts.json,
+    `GET/POST /api/prompts`. Slash suggestions now in the web chat too.
+- **Tool plugins** (pi.dev extension idea, translated) — one .py file per tool
+    in `firecracker/plugins/` (DESC/PARAMS/REQUIRED + run()); the manager puts
+    them on the config disk, the agent loads them at start (/config/plugins).
+    Collisions with built-in tools are rejected. Example `wuerfel.py`;
+    live: "tools=36", the call works. New tool = file + stop/start.
+- 48 tests green (new: model-switch, steering-queue, prompt-expansion+store,
+    plugin-loader incl. collision protection).
 
 
-## 2026-08-19 (pi/prime stillgelegt)
-- Nutzungsanalyse (llm_usage, task_runs, Instanzen): pi und prime wurden **nie**
-    verwendet; ihr Zweck (Multi-Provider) ist durch openrouter/orcarouter/llama
-    besser abgedeckt, und die Bridges hatten keinen Zugriff auf das kAIm56-
-    Oekosystem (Tools/Memory/Missionen). Entfernt: Templates, rootfs-Images
-    (~7 GB), Docker-Images, Secret-Policy-Eintraege, OVERLAY_ROOTFS, Installer-
-    Verweise, Repo-Verzeichnisse. Quellcode bleibt in der Git-History.
+## 2026-08-19 (pi/prime decommissioned)
+- Usage analysis (llm_usage, task_runs, instances): pi and prime were **never**
+    used; their purpose (multi-provider) is better covered by openrouter/orcarouter/llama,
+    and the bridges had no access to the kAIm56
+    ecosystem (tools/memory/missions). Removed: templates, rootfs images
+    (~7 GB), Docker images, secret-policy entries, OVERLAY_ROOTFS, installer
+    references, repo directories. The source code stays in the git history.
 
 
 ## 2026-08-19 (Installer: curl | sh)
-- **install.sh** im kaim56-Repo: installiert die ganze Loesung auf einer
-    frischen Maschine (Preflight inkl. KVM-Check, Laufzeit-Layout, Firecracker
-    v1.16.1 von GitHub, Gast-Kernel via VMLINUX_URL, Rootfs+embed+mcp-hub-
-    Builds, systemd-Unit mit generiertem Passwort, Offline-Tests als Smoke).
+- **install.sh** in the kaim56 repo: installs the whole solution on a
+    fresh machine (preflight incl. KVM check, runtime layout, Firecracker
+    v1.16.1 from GitHub, guest kernel via VMLINUX_URL, rootfs+embed+mcp-hub
+    builds, systemd unit with a generated password, offline tests as a smoke test).
     Flags: --check/--files-only/--no-build/--with-voice/--with-agents; idempotent.
-- Portabilitaet dafuer: GUEST_DNS, CLAUDE_CRED_SRC, AGENT_DIR (NFS), FC_DIR
-    (Build-Skripte), Test-Pfade jetzt per Env; Folder-Picker-HOME dynamisch.
-- Repo vervollstaendigt: embed/, mcp-hub/, tests/, run-tests.sh eingecheckt;
-    kompletter Live-Stand gesynct.
-- Verifiziert: --check gruen; --files-only baute ein frisches Ziel-Layout, aus
-    dem manager.py importiert und **30 Offline-Tests gruen** laufen; das echte
-    Firecracker-Release wurde von GitHub geladen. Offen fuer curl|sh: Repo auf
-    GitHub pushen + vmlinux als Release-Asset (VMLINUX_URL).
+- Portability for that: GUEST_DNS, CLAUDE_CRED_SRC, AGENT_DIR (NFS), FC_DIR
+    (build scripts), test paths now via env; folder-picker HOME dynamic.
+- Repo completed: embed/, mcp-hub/, tests/, run-tests.sh checked in;
+    the complete live state synced.
+- Verified: --check green; --files-only built a fresh target layout from
+    which manager.py imports and **30 offline tests run green**; the real
+    Firecracker release was fetched from GitHub. Open for curl|sh: push the repo to
+    GitHub + vmlinux as a release asset (VMLINUX_URL).
 
 
-## 2026-08-19 (Fix: Tool-Katalog-Drift + Drift-Wache)
-- Die vier Missions-Tools und `offload_read` fehlten im Manager-Werkzeugkatalog
-    (`AGENT_TOOLS_CATALOG`) — dadurch tauchten sie nicht im Create-Instance-
-    Formular auf und eine Tool-Allowlist haette sie stumm blockiert. Ergaenzt.
-- **Neuer Drift-Test** (`test_tool_catalog_matches_agent`): Agent-BUILTIN und
-    Manager-Katalog muessen deckungsgleich sein — ein kuenftig vergessener
-    Katalog-Eintrag (oder Geister-Eintrag ohne Tool) laesst die Suite rot werden.
+## 2026-08-19 (Fix: tool-catalog drift + drift guard)
+- The four mission tools and `offload_read` were missing from the manager tool catalog
+    (`AGENT_TOOLS_CATALOG`) — so they didn't show up in the create-instance
+    form and a tool allowlist would have silently blocked them. Added.
+- **New drift test** (`test_tool_catalog_matches_agent`): agent BUILTIN and
+    manager catalog must be congruent — a forgotten
+    catalog entry (or a ghost entry without a tool) turns the suite red.
 
 
-## 2026-08-19 (Fix: Browser-Terminal brach nach ~10 s Leerlauf ab)
-- Der WS-Tunnel des Terminals oeffnete den Guest-Socket mit
-    `create_connection(timeout=10)` — das Connect-Timeout blieb als READ-
-    Timeout auf dem Socket, nach 10 s Stille riss `recv()` den Tunnel ab
-    („connection closed"). Fix: Timeout nach dem Connect auf None, dazu
-    TCP-Keepalive auf beiden Seiten (halbtote Verbindungen sterben trotzdem).
-    Verifiziert: 16 s idle am offenen WS ueberstanden.
+## 2026-08-19 (Fix: browser terminal broke after ~10 s idle)
+- The terminal's WS tunnel opened the guest socket with
+    `create_connection(timeout=10)` — the connect timeout stayed as a READ
+    timeout on the socket, and after 10 s of silence `recv()` tore down the tunnel
+    ("connection closed"). Fix: timeout set to None after connect, plus
+    TCP keepalive on both sides (half-dead connections die anyway).
+    Verified: survived 16 s idle on the open WS.
 
 
-## 2026-08-19 (Overlay fuer pi/prime/claude nachgezogen)
-- Der Overlay-Boot-Block (fc_upper -> /mnt sync-Mount -> overlayfs ->
-    pivot_root, mit ro-Basis-Fallback) ist jetzt auch in den Gast-inits von
-    **pi, prime und claude**; alle drei Images neu gebacken und per
-    Wegwerf-Testinstanz verifiziert (Bridge bootet, kein Overlay-WARN).
-- `OVERLAY_ROOTFS` umfasst damit alle vier Images — **jede** Instanz bootet
-    von der geteilten ro-Basis + eigenem Upper, und der Persist-Schalter
-    („💾 persistent") steht ueberall zur Verfuegung. private_rootfs() bleibt
-    nur noch als Fallback fuer unbekannte Images.
-- Diskgewinn je laufender Instanz: pi ~3 GB, prime ~4 GB, claude ~3 GB
-    Kopie entfallen (jetzt ~35 MB Upper).
+## 2026-08-19 (Overlay added for pi/prime/claude)
+- The overlay boot block (fc_upper -> /mnt sync mount -> overlayfs ->
+    pivot_root, with ro-base fallback) is now also in the guest inits of
+    **pi, prime and claude**; all three images rebaked and verified via a
+    throwaway test instance (bridge boots, no overlay WARN).
+- `OVERLAY_ROOTFS` thus covers all four images — **every** instance boots
+    from the shared ro base + its own upper, and the persist toggle
+    ("💾 persistent") is available everywhere. private_rootfs() remains
+    only as a fallback for unknown images.
+- Disk savings per running instance: pi ~3 GB, prime ~4 GB, claude ~3 GB
+    copy avoided (now ~35 MB upper).
 
 
-## 2026-08-19 (Overlay-Rootfs + persistente Disk pro Instanz)
-- **Overlay-Boot** fuer das openrouter-Rootfs: die Basis haengt READ-ONLY an
-    allen Instanzen (Firecracker blockt Schreibzugriffe -> der Journal-Sharing-
-    Bug vom 15.08. ist strukturell weg), dazu je Instanz ein kleines rw-Upper-
-    Image; der Gast-init baut overlayfs + pivot_root. KEINE 2-GB-Kopie je Start
-    mehr. Faellt der Overlay-Aufbau aus, bootet die VM degradiert auf der
-    ro-Basis weiter (Fallback, nie Boot-Verweigerung).
-- **Persistente Disk, pro Instanz waehlbar (Default aus):** Tag in der
-    Instanz-Tabelle („frisch je Start" / „persistent"). An = die Schreibschicht
-    (4 GB sparse, instances/<n>-upper.ext4) ueberlebt Stop/Start — apt/pip/npm-
-    Installationen bleiben. Rechtsklick = Factory-Reset der Schicht.
-    Routen: /api/instances/<n>/persist + /diskreset.
-- **Gelernt & gefixt:** (1) ro-Wurzel braucht existierenden Mountpoint (/mnt
-    statt mkdir /ov). (2) stop() ist ein Stromstecker (SIGTERM an Firecracker)
-    — ohne sync-Mount verlor der Upper die letzten Schreibungen (0-Byte-Datei
-    im debugfs-Beweis); Upper mountet jetzt mit -o sync.
-- **E2E bewiesen:** Datei schreiben -> Stop/Start -> Inhalt „UEBERLEBT-
-    NEUSTART" noch da. Kernel-Check vorab: alle Container-/Overlay-Features
-    im Gast-Kernel aktiv (Docker/podman IN der VM damit moeglich; podman
-    waere der naechste Schritt). orchestrator+hass laufen auf Overlay
-    (tools=35, tencent/hy3). 42 Tests gruen. Andere Templates (claude/pi/
-    prime/llama) unveraendert auf dem alten Kopier-Pfad.
+## 2026-08-19 (Overlay rootfs + persistent disk per instance)
+- **Overlay boot** for the openrouter rootfs: the base attaches READ-ONLY to
+    all instances (Firecracker blocks writes -> the journal-sharing
+    bug from 08-15 is structurally gone), plus per instance a small rw upper
+    image; the guest init builds overlayfs + pivot_root. NO more 2-GB copy per start.
+    If the overlay build fails, the VM boots degraded on the
+    ro base and continues (fallback, never a boot refusal).
+- **Persistent disk, selectable per instance (default off):** a tag in the
+    instance table ("fresh each start" / "persistent"). On = the write layer
+    (4 GB sparse, instances/<n>-upper.ext4) survives stop/start — apt/pip/npm
+    installations persist. Right-click = factory reset of the layer.
+    Routes: /api/instances/<n>/persist + /diskreset.
+- **Learned & fixed:** (1) the ro root needs an existing mountpoint (/mnt
+    instead of mkdir /ov). (2) stop() is a power plug (SIGTERM to Firecracker)
+    — without a sync mount the upper lost the last writes (0-byte file
+    in the debugfs proof); the upper now mounts with -o sync.
+- **Proven E2E:** write a file -> stop/start -> content "SURVIVED-
+    RESTART" still there. Kernel check beforehand: all container/overlay features
+    active in the guest kernel (Docker/podman IN the VM thus possible; podman
+    would be the next step). orchestrator+hass run on overlay
+    (tools=35, tencent/hy3). 42 tests green. Other templates (claude/pi/
+    prime/llama) unchanged on the old copy path.
 
 
-## 2026-08-19 (Settings-Pane fuer TTS/STT)
-- **Voice-Sektion im Settings-Tab**: Statuszeile (Dienst up? STT-Modell,
-    verfuegbare TTS-Stimmen via neuem `GET /api/voice-health`) + zwei neue
-    Einstellungen: **TTS-Stimme** (Auswahl) und **TTS-Tempo** (0.5–2.0).
-- **Voice-Dienst erweitert**: `/tts` akzeptiert `voice` + `speed`
-    (Piper `--length_scale`, geklemmt), `/health` listet die Stimmen.
-    Zwei neue Stimmen eingebacken: `de-eva_k-x_low` (dt., weiblich) und
-    `en-amy-medium` (engl.) neben `de-thorsten-medium`.
-- **Injektion im Manager-Proxy**: App und Web schicken weiter nur `{"text"}` —
-    der Manager mischt Stimme/Tempo aus den Settings in den `/api/tts`-Body
-    (explizite Client-Werte gewinnen). Kein Client-Update noetig.
-- Settings-UI kann jetzt Auswahl-Felder (options im SETTINGS_SCHEMA).
-- STT (Parakeet v3) hat nichts sinnvoll Einstellbares (Sprache automatisch) —
-    darum nur Status-Anzeige.
+## 2026-08-19 (Settings pane for TTS/STT)
+- **Voice section in the Settings tab**: a status line (service up? STT model,
+    available TTS voices via new `GET /api/voice-health`) + two new
+    settings: **TTS voice** (selection) and **TTS speed** (0.5–2.0).
+- **Voice service extended**: `/tts` accepts `voice` + `speed`
+    (Piper `--length_scale`, clamped), `/health` lists the voices.
+    Two new voices baked in: `de-eva_k-x_low` (German, female) and
+    `en-amy-medium` (English) next to `de-thorsten-medium`.
+- **Injection in the manager proxy**: app and web still send only `{"text"}` —
+    the manager mixes voice/speed from the settings into the `/api/tts` body
+    (explicit client values win). No client update needed.
+- The settings UI can now do selection fields (options in the SETTINGS_SCHEMA).
+- STT (Parakeet v3) has nothing meaningfully configurable (language automatic) —
+    so only a status display.
 
 
-## 2026-08-19 (Missions eigener Tab/Screen + klickbare Notifications)
-- **Missions separat**: eigener Tab „Missions" im Web-Manager (statt im
-    Tasks-Tab; abgeschlossene direkt sichtbar) und eigener Screen „Missionen"
-    in der App 5.7 (Drawer-Eintrag mit Flaggen-Icon).
-- **Notifications fuehren zur Aktion**: Notification-Eintraege tragen jetzt
-    ein `link`-Feld (missions | tasks | chat:<instanz>). Web: Klick im
-    Glocken-Dropdown springt zum Tab bzw. oeffnet den Chat der Instanz
-    (Pfeil-Indikator). App: Tipp auf die System-Notification oeffnet die App
-    direkt am Ziel (PendingIntent + notifLink-Extra, Muster wie Assist-Intent).
-    Quellen: Agent-notify -> chat:<instanz>, Missions-Abschluss/TTL -> missions.
+## 2026-08-19 (Missions get their own tab/screen + clickable notifications)
+- **Missions separated out**: their own "Missions" tab in the web manager (instead of in the
+    Tasks tab; completed ones directly visible) and their own "Missions" screen
+    in App 5.7 (drawer entry with a flag icon).
+- **Notifications lead to action**: notification entries now carry
+    a `link` field (missions | tasks | chat:<instance>). Web: a click in the
+    bell dropdown jumps to the tab or opens the instance's chat
+    (arrow indicator). App: tapping the system notification opens the app
+    directly at the target (PendingIntent + notifLink extra, same pattern as the Assist intent).
+    Sources: agent notify -> chat:<instance>, mission completion/TTL -> missions.
 
 
-## 2026-08-19 (Missionen — Plan-/Fortschritts-Speicher fuer mehrstufige Auftraege)
-- **Missionen**: Der Orchestrator legt fuer mehrstufige Auftraege selbst einen
-    Plan an (`mission_start`: Ziel + Schritte), arbeitet ihn per `create_task`
-    ab und haelt den Fortschritt im Manager (`missions.json`) — der Arbeitsstand
-    ueberlebt /reset, VM-Neustart und den zustandslosen Heartbeat (Injektion als
-    `[Missionen]`-Block je Turn).
-- **Sofort-Trigger**: Ist ein Task fertig, auf den ein Missionsschritt wartet
-    (task_id am Schritt), stoesst der Task-Worker den Orchestrator direkt zum
-    naechsten Vorstoss an (`_mission_advance_fire`) — kein Warten auf den
-    Heartbeat; der prueft nur noch als Fallback haengende Schritte.
-- **Leitplanken**: max. 5 aktive Missionen / 20 Schritte / Log gekappt;
-    TTL-Sweep pausiert 7 Tage inaktive Missionen + Notification; Abschluss ->
-    Fazit ins semantische Gedaechtnis + Push (`notify`).
-- **Tools** (nur Orchestrator, TASK_ADMIN): `mission_start/missions/
-    mission_update/mission_finish`. Routen `/api/missions`, `/api/mission-*`
-    (Gast source-IP-gated), `/api/mission-admin` (UI: Pause/Weiter/Abbrechen).
-- **UI**: Missions-Panel im Tasks-Tab (Web: Fortschrittsbalken, aktueller
-    Schritt, Log, Pause/Abbruch) und in der **App 5.6** (Tasks-Screen:
-    Missions-Karten, aufklappbar mit allen Schritten + Aktionen).
-- **Live verifiziert**: 2-Schritt-Mission lief in ~40 s vollautonom durch —
-    Task fertig -> Trigger -> Schritt done -> naechster Task -> Trigger ->
-    mission_finish + Abschluss-Notification. 39 Tests gruen (Lifecycle, Caps,
+## 2026-08-19 (Missions — plan/progress store for multi-step jobs)
+- **Missions**: for multi-step jobs the orchestrator lays out its own
+    plan (`mission_start`: goal + steps), works through it via `create_task` and
+    keeps the progress in the manager (`missions.json`) — the working state
+    survives /reset, VM restart and the stateless heartbeat (injected as a
+    `[missions]` block per turn).
+- **Instant trigger**: once a task a mission step is waiting on finishes
+    (task_id on the step), the task worker pokes the orchestrator directly toward the
+    next push (`_mission_advance_fire`) — no waiting for the
+    heartbeat; that now only checks stalled steps as a fallback.
+- **Guardrails**: max 5 active missions / 20 steps / log capped;
+    a TTL sweep pauses missions inactive for 7 days + notification; completion ->
+    conclusion into the semantic memory + push (`notify`).
+- **Tools** (orchestrator only, TASK_ADMIN): `mission_start/missions/
+    mission_update/mission_finish`. Routes `/api/missions`, `/api/mission-*`
+    (guest source-IP gated), `/api/mission-admin` (UI: pause/continue/abort).
+- **UI**: a missions panel in the Tasks tab (Web: progress bar, current
+    step, log, pause/abort) and in **App 5.6** (Tasks screen:
+    mission cards, expandable with all steps + actions).
+- **Verified live**: a 2-step mission ran fully autonomously in ~40 s —
+    task done -> trigger -> step done -> next task -> trigger ->
+    mission_finish + completion notification. 39 tests green (lifecycle, caps,
     mission_for_task, HTTP).
 
 
-## 2026-08-19 (Chat-UI im Industry-Design verschoenert)
-- Chat-Oberflaeche (/chat) sauber auf das Design-System **Industry**
-    (claude.ai/design, Projekt-styles.css als Quelle) gezogen:
-  - **Blueprint-Objekte**: Composer und Welcome-Panel mit Haarlinie +
-    Registrierungs-Ecken (Ecken faerben sich beim Fokus akzentblau).
-  - **Typografie**: Barlow Condensed fuer Headline, Buttons, Chips,
-    Agent-Select; Kicker-Labels (MICROVM AGENT, CHATS) in Uppercase.
-  - **Token-Rampen** statt Ad-hoc-Werte (accent-100…800, color-mix-Divider);
-    Dark Mode aus denselben Rampen abgeleitet.
-  - **Feinschliff**: Agent-Chips als tag-accent, aktiver Chat mit Akzent-
-    Inset-Balken, Bubbles mit Haarlinie + Elevation, running-Dot mit Glow,
-    gestylte Scrollbars, ::selection, Denken-Block als Uppercase-Summary.
-  - Verifiziert per Headless-Chrome-Screenshots (hell/dunkel/Konversation).
-    JS-Logik unveraendert; Backup chatui.py.bak-design-*.
+## 2026-08-19 (Chat UI beautified in the Industry design)
+- The chat interface (/chat) cleanly pulled onto the **Industry** design system
+    (claude.ai/design, project styles.css as the source):
+  - **Blueprint objects**: composer and welcome panel with a hairline +
+    registration corners (corners turn accent-blue on focus).
+  - **Typography**: Barlow Condensed for headline, buttons, chips,
+    agent select; kicker labels (MICROVM AGENT, CHATS) in uppercase.
+  - **Token ramps** instead of ad-hoc values (accent-100…800, color-mix dividers);
+    dark mode derived from the same ramps.
+  - **Finishing touches**: agent chips as tag-accent, the active chat with an accent
+    inset bar, bubbles with a hairline + elevation, a running dot with glow,
+    styled scrollbars, ::selection, the Thinking block as an uppercase summary.
+  - Verified via headless-Chrome screenshots (light/dark/conversation).
+    JS logic unchanged; backup chatui.py.bak-design-*.
 
 
-## 2026-08-19 (Fix: "Save password?"-Popup beim Chat-Wechsel)
-- Chrome bot beim Navigieren zu /chat an, ein "Passwort fuer example.com" zu
-    speichern — mit der katfs node-id als vermeintlichem Nutzernamen und dem
-    Maskierungs-Marker `__unchanged__` als Passwort. Ursache: die API-Key-Felder
-    im Settings-Tab waren `type=password`; Chromes Passwort-Manager paart so ein
-    Feld mit dem naechsten Textfeld (katfs-Key) zu einem "Login" und ignoriert
-    `autocomplete=off`. Fix: Maskierung per CSS (`-webkit-text-security:disc`,
-    Klasse `seckey`) statt Passwort-Semantik — kein Popup mehr, Werte bleiben
-    verdeckt; echte Keys verlassen den Manager ohnehin nie (Marker statt Wert).
+## 2026-08-19 (Fix: "Save password?" popup on chat switch)
+- Chrome offered, when navigating to /chat, to save a "password for example.com" —
+    with the katfs node-id as the supposed username and the
+    masking marker `__unchanged__` as the password. Cause: the API-key fields
+    in the Settings tab were `type=password`; Chrome's password manager pairs such a
+    field with the next text field (katfs key) into a "login" and ignores
+    `autocomplete=off`. Fix: masking via CSS (`-webkit-text-security:disc`,
+    class `seckey`) instead of password semantics — no more popup, values stay
+    hidden; the real keys never leave the manager anyway (marker instead of value).
 
 
-## 2026-08-19 (Fix: Dropdown-Reset im New-Instance-Formular)
-- Gemeldet als "Template-Dropdown springt beim Transport-Wechsel zurueck".
-    Instrumentierter Headless-Chrome-Test (CDP, Setter-Falle auf #tpl, 35 s mit
-    allen Intervallen): das Template-Select selbst wird nie zurueckgesetzt.
-    Gefunden wurde stattdessen ein **Async-Race in loadModels**: der Fetch der
-    OpenRouter-Modellliste (Upstream, Sekunden bei kaltem Cache) merkte sich den
-    Wert vom Fetch-START und baute das Modell-Dropdown beim Eintreffen damit neu
-    — eine inzwischen getroffene Auswahl sprang sichtbar auf den Anfangswert
-    zurueck (zeitlich zufaellig mit dem Transport-Klick). Fix: Wert beim RESOLVE
-    lesen, abgehaengte Selects nicht mehr anfassen.
-- **Cache-Control: no-store** fuer die Manager-Seite: veraltete Seiten nach
-    Updates erzeugten Geister-Fehler (alte JS-Logik gegen neue API).
+## 2026-08-19 (Fix: dropdown reset in the new-instance form)
+- Reported as "template dropdown jumps back on transport switch".
+    An instrumented headless-Chrome test (CDP, setter trap on #tpl, 35 s with
+    all intervals): the template select itself is never reset.
+    What was found instead was an **async race in loadModels**: the fetch of the
+    OpenRouter model list (upstream, seconds on a cold cache) remembered the
+    value from the fetch START and rebuilt the model dropdown with it on arrival
+    — a selection made in the meantime visibly jumped back to the initial value
+    (coincidentally timed with the transport click). Fix: read the value on RESOLVE,
+    no longer touch detached selects.
+- **Cache-Control: no-store** for the manager page: stale pages after
+    updates produced ghost errors (old JS logic against a new API).
 
 
-## 2026-08-19 (Fix: Modell-Dialog fuer orcarouter/llama)
-- Klick auf das Modell einer orcarouter-Instanz meldete "This instance has no
-    model setting": die Key-Liste im Modell-Dialog (editModel) kannte nur
-    OPENROUTER/ANTHROPIC/PI/PRIME. `ORCAROUTER_MODEL` und `LLAMA_MODEL`
-    ergaenzt — der Dialog oeffnet jetzt mit dem aktuellen Modell als Freitext.
+## 2026-08-19 (Fix: model dialog for orcarouter/llama)
+- Clicking the model of an orcarouter instance reported "This instance has no
+    model setting": the key list in the model dialog (editModel) only knew
+    OPENROUTER/ANTHROPIC/PI/PRIME. `ORCAROUTER_MODEL` and `LLAMA_MODEL`
+    added — the dialog now opens with the current model as free text.
 
 
-## 2026-08-19 (Activity-Panel: Zeitfilter + Verbrauch)
-- **Zeitfilter** im Activity-Dialog (1h / 24h / 7d / Alle) — filtert die
-    Audit-Aktionen clientseitig nach `ts` (Fetch-Limit 1000).
-- **Verbrauchs-Summe fuer den Zeitraum** in derselben Kopfzeile: Aktionen,
-    LLM-Aufrufe, Tokens (rein->raus) und Kosten aus `llm_usage` via neuem
-    `GET /api/usage/<name>?since=` + Helper `usage_for`. Bewusst als SUMME,
-    nicht pro Audit-Zeile: Tokens fallen pro LLM-Turn an, nicht pro Tool-Aufruf
-    (ein Turn loest 0..N Tool-Aufrufe aus) — eine Zuordnung waere erfunden.
+## 2026-08-19 (Activity panel: time filter + usage)
+- **Time filter** in the Activity dialog (1h / 24h / 7d / All) — filters the
+    audit actions client-side by `ts` (fetch limit 1000).
+- **Usage total for the period** in the same header: actions,
+    LLM calls, tokens (in->out) and cost from `llm_usage` via new
+    `GET /api/usage/<name>?since=` + helper `usage_for`. Deliberately as a SUM,
+    not per audit row: tokens accrue per LLM turn, not per tool call
+    (one turn triggers 0..N tool calls) — an attribution would be invented.
 
 
-## 2026-08-19 (App 5.5 — VAD-Fix Sprachaufnahme)
-- **Aufnahme brach mitten im Reden nach ~4 s ab.** Ursache: das Grundrauschen
-    wurde als MAXIMUM der ersten 400 ms gemessen — redete man sofort los, floss
-    Sprache in den "Floor" und die Schwelle `floor*3` wurde unerreichbar, jede
-    weitere Messung galt als Stille. Fixes: Floor als MINIMUM ueber ~0,6 s
-    (gedeckelt), absolute Marge statt Faktor, und **Hysterese** — sobald geredet
-    wird, haelt eine viel niedrigere Schwelle die Aufnahme am Leben, sodass die
-    Amplituden-Taeler zwischen Woertern nicht als Stille zaehlen. `VAD_HANG`
-    1800->2200 ms. Max. Aufnahmedauer unveraendert `VAD_MAX = 120 s` (Notbremse).
+## 2026-08-19 (App 5.5 — VAD fix for voice recording)
+- **Recording cut off mid-speech after ~4 s.** Cause: the background noise
+    was measured as the MAXIMUM of the first 400 ms — if you started talking immediately, speech flowed
+    into the "floor" and the threshold `floor*3` became unreachable, every
+    further measurement counted as silence. Fixes: floor as the MINIMUM over ~0.6 s
+    (capped), an absolute margin instead of a factor, and **hysteresis** — once speaking
+    is detected, a much lower threshold keeps the recording alive, so the
+    amplitude valleys between words don't count as silence. `VAD_HANG`
+    1800->2200 ms. Max recording duration unchanged `VAD_MAX = 120 s` (emergency brake).
 
 
 ## 2026-08-19 (Notifications)
-- **Notification-Kanal App + Web + Tool.** Neuer Push-Kanal neben Signal:
-  - **Agent-Tool `notify(title, message)`** -> `POST /api/notify` (Gast, per
-    Source-IP; rate-limit 30/5min, Audit). Im Werkzeugkatalog.
-  - **Manager-Store** `notifications.json` (rev + Long-Poll wie chats, Cap 200):
-    `GET /api/notifications?since=&wait=` (Admin, mit `unread`),
+- **Notification channel App + Web + Tool.** A new push channel next to Signal:
+  - **Agent tool `notify(title, message)`** -> `POST /api/notify` (guest, by
+    source IP; rate-limit 30/5min, audit). In the tool catalog.
+  - **Manager store** `notifications.json` (rev + long-poll like chats, cap 200):
+    `GET /api/notifications?since=&wait=` (admin, with `unread`),
     `POST /api/notifications/read` (`{id}`|`{all:true}`).
-  - **Web-Manager:** Glocke in der Topbar mit Unread-Badge + Dropdown, Long-Poll,
-    optional Browser-Notification (Permission on Klick); Oeffnen quittiert.
-  - **App (5.4):** eigener Poll-Loop -> Android-Systemnotification (Channel
-    `kaim56_agent`, nutzt die bestehende POST_NOTIFICATIONS-Permission) fuer neue,
-    ungelesene Eintraege ab App-Start. `ManagerSync.pollNotifications/markNotifRead`.
-  - E2E verifiziert: Orchestrator ruft `notify` -> landet im Store (`tools=31`).
+  - **Web manager:** a bell in the topbar with an unread badge + dropdown, long-poll,
+    optional browser notification (permission on click); opening acknowledges.
+  - **App (5.4):** its own poll loop -> Android system notification (channel
+    `kaim56_agent`, uses the existing POST_NOTIFICATIONS permission) for new,
+    unread entries since app start. `ManagerSync.pollNotifications/markNotifRead`.
+  - Verified E2E: the orchestrator calls `notify` -> lands in the store (`tools=31`).
 
 
-## 2026-08-18 (Playbooks, Reasoning-Anzeige, Task-Verwaltung, Signal-Empfang, katfs)
-- **Harness-Muster uebernommen** (angelehnt an strands-agents/harness-sdk,
-  Apache-2.0; portiert, keine neue Dependency — der Agent bleibt stdlib-only):
-  - **Summarizing Context:** `_trim_history` wirft alte Nachrichten nicht mehr
-    weg, sondern fasst die aeltesten zu einem `[Zusammenfassung]`-Block zusammen
-    (System gepinnt, letzte `CTX_PRESERVE_RECENT`=10 woertlich, bestehende
-    Zusammenfassung wird eingefaltet). Gegen Token-Runaway UND Kontextverlust.
-  - **Context-Offloader:** Tool-Ausgaben > `OFFLOAD_MIN` werden komplett in
-    `.offload/` ausgelagert; im Kontext bleibt Vorschau + Referenz, der Rest ist
-    per neuem Tool `offload_read(id, offset)` nachladbar. Statt hartem Cut.
-  - **Goal-Loop:** `/goal <Kriterium>` setzt ein Ziel; ein Judge prueft die
-    Antwort und laesst bis `GOAL_MAX_ATTEMPTS`=3 nachbessern. `/goal off` aus.
-  - **Tool-Hook + HITL:** harte Denylist (rm -rf /, Forkbomb, mkfs …) immer aktiv;
-    optionale Freigabe riskanter Tools per Signal (opt-in `HITL=1`,
-    `HITL_TOOLS`) — Manager fragt „ok <id>/nein <id>", Agent pollt
-    `/api/hitl`/`/api/hitl/<id>`. Kein Signal-Empfaenger -> blockiert nicht.
-  - **Aktiviert:** rootfs neu gebacken, orchestrator + hass neu gestartet
-    (`tools=30`, offload_read live). **App 5.2:** `/goal` im Slash-Picker.
-  - **Retry mit Backoff** um jeden Modellaufruf (429/5xx, 0.5→8s), leere
-    tools-Liste wird nicht mehr mitgeschickt (verhinderte 400 beim Summarizer/Judge).
-- **E2E-Testsuite** (`tests/e2e.py`, `./run-tests.sh`) — stdlib-unittest, keine
-  Dependency. Drei Stufen: OFFLINE (Agent-/Manager-Funktionen per Import —
-  Backend-Wahl, Summarizing, Offloader, Hook-Denylist, Goal, leere-Tools-Fix,
-  Provider-Switch inkl. ":free"-Fallstrick, HITL-Store, katfs-ZIP-Walk),
-  HTTP (gegen den laufenden Manager: /api/agents backend+model, /api/hitl,
-  katfs-status, Template-Registrierung), LIVE (kostenloser /goal-Roundtrip
-  zur Orchestrator-VM). Fehlende Stufen werden sauber uebersprungen. 30 Tests.
-  Laeuft ab jetzt bei jeder Aenderung mit (wie Changelog/Architecture).
-- **Fix Modell-Selbstauskunft:** `/api/agents` kannte nur OPENROUTER/PI/PRIME
-  als Modell-Key und meldete das *Template* als Provider — ein orcarouter-
-  Agent erschien so als "openrouter, ohne Modell". Jetzt: alle MODEL_KEYS +
-  echtes `backend`-Feld. Zusaetzlich kennt der Agent sein eigenes Backend/
-  Modell aus dem SYSTEM-Prompt (nennt es direkt statt via list_agents).
-- **Provider-Wechsel per set_model** ("orcarouter:tencent/hy3" stellt Backend UND
-  Modell um, entfernt die anderen MODEL_KEYS). **Orchestrator produktiv auf
-  OrcaRouter `tencent/hy3` umgestellt** (backend=orcarouter verifiziert, Tool-
-  Calling + Key-Broker ok).
-- **OrcaRouter als zweites LLM-Backend neben OpenRouter.** OpenAI-kompatibles
-  Gateway (`https://api.orcarouter.ai/v1`, Key-Format `sk-orca-…`; oder
-  selbstgehostet via OrcaRouter-Lite). Derselbe Agent-Code wie OpenRouter —
-  gewaehlt wird per Env: ist `ORCAROUTER_MODEL` (bzw. `ORCAROUTER_URL`)
-  gesetzt, spricht der Agent OrcaRouter an, sonst OpenRouter. Neu: Template
-  `orcarouter.json` (gleiches rootfs), Settings-Felder `ORCAROUTER_API_KEY`
-  (Secret, 0600, ueber den Broker) + `ORCAROUTER_URL`, `ORCAROUTER_MODEL` in
-  MODEL_KEYS, Secret-Policy-Eintrag. **Key setzen: Settings-Tab.**
-- **Playbooks — feste Regeln, die der Orchestrator selbst lernt.** Anders als
-  das semantische Gedaechtnis (bedeutungsbasiert eingeblendet) gelten Playbooks
-  IMMER. Sagt der Nutzer WIE etwas zu tun ist / korrigiert den Ansatz, legt der
-  Agent das per `playbook_add` ab; alle Regeln werden jeden Turn in den Prompt
-  gehoben. Werkzeuge `playbook_add`/`playbooks`/`playbook_forget`, Speicher
-  `playbooks.json` (je Instanz, Cap 40), Gast-Routen. Belegt: Regel „Aktienkurse
-  per http_fetch von Yahoo" → /reset → vage Frage → korrekt beantwortet, ohne
-  die Quelle erneut zu nennen.
-- **Reasoning steuerbar + sichtbar.** Slash `/reasoning [low|medium|high|off]`
-  schaltet den OpenRouter-reasoning-Parameter live (Default aus, per Env
-  `OPENROUTER_REASONING` als Dauer-Default). Das Denken wird getrennt gestreamt
-  (Marker im Token-Strom, aus dem Kontext rausgehalten) und in Web und App als
-  aufklappbarer „Denken"-Block gezeigt. Kopieren/Vorlesen nehmen nur die Antwort.
-- **Task-Verwaltung fuer den Orchestrator.** `list_tasks`/`delete_task`/
-  `edit_task` (auflisten mit IDs, loeschen, Nachricht/Zeitplan aendern). Nur der
-  Orchestrator bekommt sie — ueber ein Flag `TASK_ADMIN`, das der Manager gezielt
-  injiziert; gated im Menue UND an der Route (403 „orchestrator only").
-- **Signal: Empfang + json-rpc.** Gateway von `native` auf `json-rpc` umgestellt
-  (Empfang und Versand koennen jetzt gleichzeitig — im native-Modus sperrte ein
-  Long-Poll das Konto und blockierte den Versand). Empfaenger im Manager auf
-  einen stdlib-WebSocket-Client umgebaut (Echtzeit-Push). Neue Signal-Nachricht
-  → Orchestrator sofort getriggert, Antwort per send_signal zurueck.
-- **katfs Datei-Browser** im Sharing-Tab (Ordner durchklicken, ansehen,
-  herunterladen; read-only, Admin-Routen). Jetzt mit **Freigabe-Auswahl**: bei
-  mehreren aktiven Browser-Freigaben eine im Status-Panel anklicken → der Baum
-  darunter wechselt auf genau diese Freigabe (adressiert per `share`-Id). Neu
-  ausserdem **„Download all"** — der aktuelle Ordner wird rekursiv eingesammelt
-  und als ZIP geliefert (Route `/api/katfs/zip`, Helper `katfs_zip`, Deckel
-  2000 Dateien / 512 MB). Der eigenstaendige **CLI-Share**
-  (`dist/katfs-share`) existierte bereits — teilt einen Ordner ohne Browser.
-  Knoten-Pfade/Bind per Env konfigurierbar; portables Standalone-Buendel unter
-  `katfs-standalone/` vorbereitet.
-- **App 4.9–5.1:** Text in Blasen markier-/kopierbar (SelectionContainer),
-  Slash-Befehl-Auswahl ueber der Eingabezeile (tippt man „/"), Denken-Anzeige.
-- **MSFT-Task repariert:** die taegliche Aufgabe scheiterte, weil das Modell
-  `http_fetch` nicht nutzte und faelschlich „kann keine Seiten lesen" sagte.
-  Jetzt konkrete Anweisung mit fester Yahoo-URL + Feld — liefert einen echten
-  Kurs.
+## 2026-08-18 (Playbooks, reasoning display, task management, Signal receiving, katfs)
+- **Harness pattern adopted** (based on strands-agents/harness-sdk,
+  Apache-2.0; ported, no new dependency — the agent stays stdlib-only):
+  - **Summarizing Context:** `_trim_history` no longer throws old messages
+    away, but condenses the oldest into a `[summary]` block
+    (system pinned, the last `CTX_PRESERVE_RECENT`=10 verbatim, an existing
+    summary folded in). Against both token runaway AND context loss.
+  - **Context offloader:** tool outputs > `OFFLOAD_MIN` are moved entirely into
+    `.offload/`; in the context a preview + reference remain, the rest is
+    reloadable via the new tool `offload_read(id, offset)`. Instead of a hard cut.
+  - **Goal loop:** `/goal <criterion>` sets a goal; a judge checks the
+    answer and lets it improve up to `GOAL_MAX_ATTEMPTS`=3. `/goal off` turns it off.
+  - **Tool hook + HITL:** a hard denylist (rm -rf /, fork bomb, mkfs …) always active;
+    optional approval of risky tools via Signal (opt-in `HITL=1`,
+    `HITL_TOOLS`) — the manager asks "ok <id>/no <id>", the agent polls
+    `/api/hitl`/`/api/hitl/<id>`. No Signal receiver -> doesn't block.
+  - **Activated:** rootfs rebaked, orchestrator + hass restarted
+    (`tools=30`, offload_read live). **App 5.2:** `/goal` in the slash picker.
+  - **Retry with backoff** around every model call (429/5xx, 0.5→8s), an empty
+    tools list is no longer sent along (which caused a 400 at the summarizer/judge).
+- **E2E test suite** (`tests/e2e.py`, `./run-tests.sh`) — stdlib unittest, no
+  dependency. Three tiers: OFFLINE (agent/manager functions via import —
+  backend choice, summarizing, offloader, hook denylist, goal, empty-tools fix,
+  provider switch incl. the ":free" pitfall, HITL store, katfs ZIP walk),
+  HTTP (against the running manager: /api/agents backend+model, /api/hitl,
+  katfs-status, template registration), LIVE (a free /goal round-trip
+  to the orchestrator VM). Missing tiers are cleanly skipped. 30 tests.
+  Runs from now on with every change (like Changelog/Architecture).
+- **Fix model self-report:** `/api/agents` only knew OPENROUTER/PI/PRIME
+  as a model key and reported the *template* as the provider — an orcarouter
+  agent thus appeared as "openrouter, without a model". Now: all MODEL_KEYS +
+  a real `backend` field. Additionally the agent knows its own backend/
+  model from the SYSTEM prompt (names it directly instead of via list_agents).
+- **Provider switch via set_model** ("orcarouter:tencent/hy3" sets both backend AND
+  model, removes the other MODEL_KEYS). **Orchestrator moved to production on
+  OrcaRouter `tencent/hy3`** (backend=orcarouter verified, tool
+  calling + key broker ok).
+- **OrcaRouter as a second LLM backend next to OpenRouter.** An OpenAI-compatible
+  gateway (`https://api.orcarouter.ai/v1`, key format `sk-orca-…`; or
+  self-hosted via OrcaRouter-Lite). The same agent code as OpenRouter —
+  chosen via env: if `ORCAROUTER_MODEL` (or `ORCAROUTER_URL`)
+  is set, the agent talks to OrcaRouter, otherwise OpenRouter. New: template
+  `orcarouter.json` (same rootfs), settings fields `ORCAROUTER_API_KEY`
+  (secret, 0600, via the broker) + `ORCAROUTER_URL`, `ORCAROUTER_MODEL` in
+  MODEL_KEYS, a secret-policy entry. **Set the key: Settings tab.**
+- **Playbooks — fixed rules the orchestrator learns itself.** Unlike
+  the semantic memory (surfaced by meaning), playbooks apply
+  ALWAYS. When the user says HOW something is to be done / corrects the approach, the
+  agent stores it via `playbook_add`; all rules are lifted into the prompt every turn.
+  Tools `playbook_add`/`playbooks`/`playbook_forget`, store
+  `playbooks.json` (per instance, cap 40), guest routes. Proven: rule "stock prices
+  via http_fetch from Yahoo" → /reset → vague question → answered correctly, without
+  naming the source again.
+- **Reasoning controllable + visible.** Slash `/reasoning [low|medium|high|off]`
+  toggles the OpenRouter reasoning parameter live (default off, via env
+  `OPENROUTER_REASONING` as a persistent default). The thinking is streamed separately
+  (markers in the token stream, kept out of the context) and shown in Web and App as
+  an expandable "Thinking" block. Copy/read-aloud take only the answer.
+- **Task management for the orchestrator.** `list_tasks`/`delete_task`/
+  `edit_task` (list with IDs, delete, change message/schedule). Only the
+  orchestrator gets them — via a flag `TASK_ADMIN` that the manager injects
+  deliberately; gated in the menu AND at the route (403 "orchestrator only").
+- **Signal: receiving + json-rpc.** The gateway switched from `native` to `json-rpc`
+  (receiving and sending can now happen simultaneously — in native mode a
+  long-poll locked the account and blocked sending). The receiver in the manager rebuilt onto
+  a stdlib WebSocket client (real-time push). A new Signal message
+  → orchestrator triggered immediately, reply back via send_signal.
+- **katfs file browser** in the Sharing tab (click through folders, view,
+  download; read-only, admin routes). Now with a **share selector**: with
+  multiple active browser shares, click one in the status panel → the tree
+  below switches to exactly that share (addressed via a `share` id). Also new
+  is **"Download all"** — the current folder is collected recursively
+  and delivered as a ZIP (route `/api/katfs/zip`, helper `katfs_zip`, cap
+  2000 files / 512 MB). The standalone **CLI share**
+  (`dist/katfs-share`) already existed — it shares a folder without a browser.
+  Node paths/bind configurable via env; a portable standalone bundle under
+  `katfs-standalone/` prepared.
+- **App 4.9–5.1:** text in bubbles selectable/copyable (SelectionContainer),
+  a slash-command picker above the input line (when you type "/"), thinking display.
+- **MSFT task repaired:** the daily task failed because the model
+  didn't use `http_fetch` and wrongly said "can't read pages".
+  Now a concrete instruction with a fixed Yahoo URL + field — delivers a real
+  quote.
 
-## 2026-08-17 (Orchestrator-Token-Runaway behoben)
-- **Ursache:** Der Heartbeat lief `every 1m` (1.440 Laeufe/Tag), und der
-  Orchestrator setzte seinen Gespraechskontext nie zurueck — Heartbeat und
-  App-Chats teilen sich EIN `_history`, das monoton wuchs. Jeder Call schickte
-  das ganze angesammelte Transkript erneut: im Schnitt 73k Input-Token, groesster
-  Call 183k, bei ~5 Token Output. Summe: 249 Mio Token, ~14 USD.
-- **Fix 1 — Takt:** Heartbeat von `every 1m` auf `every 30m` (Faktor 30).
-- **Fix 2 — zustandslos:** Heartbeats laufen jetzt mit `/fresh` in einem
-  WEGWERF-Kontext (`_tool_loop` auf einer lokalen Liste), das Gespraechs-
-  `_history` bleibt unangetastet. Ein harter Reset schied aus, weil er einen
-  laufenden App-Chat weggewischt haette (geteiltes `_history`). Beides
-  umgestellt: der geplante Task UND der Sofort-Trigger (`ORCH_HEARTBEAT_MSG`).
-- **Fix 3 — Deckel:** allgemeiner gleitender Kontext-Deckel (`CTX_MAX_MSGS=20`,
-  nur an sauberen Turn-Grenzen geschnitten, nie mitten im Tool-Zyklus) — bindet
-  die Kosten auch fuer lange direkte Chats.
-- Belegt: 42+8=50 → /fresh-Heartbeat ("nichts zu tun") → "voriges Ergebnis mal
-  zwei" = 100 (Kontext ueberlebt den Heartbeat, der laeuft trotzdem zustandslos).
-- Gedaechtnis-Anweisung entschaerft: sie stellte den Orchestrator zu meta
-  ("mein Gedaechtnis wird nach jeder Interaktion zurueckgesetzt" — irrefuehrend,
-  die Kurzzeit funktioniert). Jetzt: innerhalb eines Gespraechs normal erinnern
-  und nicht ungefragt die Gedaechtnis-Mechanik erklaeren; still mit
-  memory_store nur das Dauerhafte ablegen. Belegt: "merk dir Testwort Alpha" →
-  bestaetigt ohne Vortrag; "wie war mein Testwort?" → "Alpha".
+## 2026-08-17 (Orchestrator token runaway fixed)
+- **Cause:** the heartbeat ran `every 1m` (1,440 runs/day), and the
+  orchestrator never reset its conversation context — heartbeat and
+  app chats share ONE `_history`, which grew monotonically. Every call resent
+  the whole accumulated transcript: on average 73k input tokens, largest
+  call 183k, at ~5 tokens output. Total: 249M tokens, ~14 USD.
+- **Fix 1 — cadence:** heartbeat from `every 1m` to `every 30m` (factor 30).
+- **Fix 2 — stateless:** heartbeats now run with `/fresh` in a
+  THROWAWAY context (`_tool_loop` on a local list), the conversation
+  `_history` stays untouched. A hard reset was out of the question because it would have wiped
+  a running app chat (shared `_history`). Both switched
+  over: the scheduled task AND the instant trigger (`ORCH_HEARTBEAT_MSG`).
+- **Fix 3 — cap:** a general sliding context cap (`CTX_MAX_MSGS=20`,
+  cut only at clean turn boundaries, never mid tool cycle) — binds
+  the cost for long direct chats too.
+- Proven: 42+8=50 → /fresh heartbeat ("nothing to do") → "previous result times
+  two" = 100 (context survives the heartbeat, which still runs stateless).
+- Memory instruction defused: it made the orchestrator too meta
+  ("my memory is reset after every interaction" — misleading,
+  the short-term works). Now: remember normally within a conversation
+  and don't explain the memory mechanics unprompted; quietly store
+  only the durable via memory_store. Proven: "remember the test word Alpha" →
+  confirmed without a lecture; "what was my test word?" → "Alpha".
 
-## 2026-08-16 (Semantisches Gedaechtnis: Kurzzeit + Langzeit)
-- **Kurzzeit** bleibt das laufende Gespraech (`_history` im VM-RAM, `/reset`
-  leert es). **Langzeit** ist jetzt **semantisch** statt flaches key/value:
-  `memory_store` bettet jede Notiz ein (Modell multilingual-e5 auf der CPU,
-  neuer `embed`-Container hinter dem Manager auf :8772) und legt Text+Vektor in
-  `history.db` ab. Bei jeder Frage bettet der Agent die Nutzernachricht ein,
-  der Manager liefert die **bedeutungsnaechsten** Notizen (Cosinus), die als
-  frischer `[Gedaechtnis]`-Block in den Prompt kommen — nur was zur Frage
-  passt, nicht der ganze Speicher.
-- **Kein LLM, keine Graph-DB noetig** — Embeddings laufen gut auf dem i5, also
-  ohne Warten auf die llama-Box und ohne Neo4j & Co. (Graphiti/Cognee bleiben
-  ein moeglicher spaeterer Ausbau.) Faellt der Embedder aus, gibt es diesen
-  Turn keinen Langzeit-Kontext statt eines Fehlers; die Notizen bleiben
-  gespeichert.
-- Manager: Tabelle `semantic_memory`, `sem_store`/`sem_search`, Gast-Route
-  `POST /api/memory-search`; `memory_store` schreibt zusaetzlich semantisch.
-  Agent: Injektion pro Turn statt Voll-Dump beim ersten Turn; Anweisung, den
-  value als vollstaendigen Satz zu merken (sonst taugt der abgerufene Fetzen
-  nichts — "… ist der Watzmann", nicht bloss "Watzmann").
-- Ende-zu-Ende belegt: Fakt merken → /reset (Kurzzeit weg) → mit anderen Worten
-  fragen → korrekt erinnert (Score 0.856, rein aus dem Langzeitspeicher).
+## 2026-08-16 (Semantic memory: short-term + long-term)
+- **Short-term** stays the running conversation (`_history` in VM RAM, `/reset`
+  clears it). **Long-term** is now **semantic** instead of flat key/value:
+  `memory_store` embeds every note (model multilingual-e5 on the CPU,
+  a new `embed` container behind the manager on :8772) and stores text+vector in
+  `history.db`. On every question the agent embeds the user message,
+  the manager returns the **semantically nearest** notes (cosine), which come into the prompt as a
+  fresh `[memory]` block — only what fits the question,
+  not the whole store.
+- **No LLM, no graph DB needed** — embeddings run well on the i5, so
+  without waiting for the llama box and without Neo4j & co. (Graphiti/Cognee remain
+  a possible later expansion.) If the embedder fails, there is no
+  long-term context this turn instead of an error; the notes stay
+  stored.
+- Manager: table `semantic_memory`, `sem_store`/`sem_search`, guest route
+  `POST /api/memory-search`; `memory_store` additionally writes semantically.
+  Agent: injection per turn instead of a full dump on the first turn; an instruction to remember
+  the value as a complete sentence (otherwise the retrieved snippet is
+  useless — "… is the Watzmann", not just "Watzmann").
+- Proven end-to-end: remember a fact → /reset (short-term gone) → ask in different words
+  → correctly recalled (score 0.856, purely from long-term storage).
 
-## 2026-08-16 (Slash-Befehle durchreichen — App 4.8 + claude-Bridge)
-- Die App fing bisher JEDEN /-Befehl ab und wies Unbekanntes als "Unbekannter
-  Befehl" zurueck — die eigenen Befehle der Agenten waren so unerreichbar.
-  Jetzt behaelt die App nur ihre eigenen (`/task`, `/agents`, `/help`), faengt
-  `/login` mit einem Hinweis ab (nicht noetig, der Agent ist ueber den Host
-  angemeldet) und **reicht alles andere an den Agenten durch**.
-- Damit greift `/reset` (neuer Kontext ohne VM-Neustart) sofort fuer die
-  OpenRouter/llama-Agenten (koennen es laengst) — und neu auch fuer das
-  claude-Template: `/reset` in die Web-Bridge nachgeruestet (leert die
-  Claude-Code-Sitzung). Belegt: Codewort setzen → /reset → Agent kennt es
-  nicht mehr; claudy antwortet "Neue Unterhaltung", orchestrator "Kontext
-  zurueckgesetzt".
-- `/help` der App nennt jetzt, dass andere /-Befehle an den Agenten gehen.
+## 2026-08-16 (Passing slash commands through — App 4.8 + claude bridge)
+- The app used to intercept EVERY /command and rejected unknown ones as "unknown
+  command" — the agents' own commands were thus unreachable.
+  Now the app keeps only its own (`/task`, `/agents`, `/help`), intercepts
+  `/login` with a hint (not needed, the agent is logged in via the host)
+  and **passes everything else through to the agent**.
+- With that `/reset` (a new context without a VM restart) takes effect immediately for the
+  OpenRouter/llama agents (they've long been able to) — and now also for the
+  claude template: `/reset` retrofitted into the web bridge (clears the
+  Claude Code session). Proven: set a code word → /reset → the agent no longer knows it;
+  claudy answers "New conversation", orchestrator "Context
+  reset".
+- The app's `/help` now states that other /commands go to the agent.
 
-## 2026-08-16 (Verhaltensleitplanken aus Anthropics System-Prompts)
-- Sinngemaess das Modell-agnostische aus Anthropics veroeffentlichten
-  System-Prompts in den Basis-Prompt der OpenRouter/llama-Agenten uebernommen
-  (`agent.py`, gilt fuer jedes Modell und auch fuer Personas):
-  - **Nicht halluzinieren:** bei Unsicherheit offen sagen und mit web_search/
-    http_fetch pruefen statt raten; keine erfundenen Quellen/Zitate/Links.
-  - **Erst Werkzeuge, dann "geht nicht":** bevor der Agent Unvermoegen oder
-    fehlenden Zugriff behauptet, prueft er, ob ein Tool dafuer da ist — selbst
-    handeln vor Nachfragen.
-  - **Unklare Anfragen:** sinnvolle Annahme treffen und loslegen, nur bei
-    echtem Blocker zurueckfragen; begonnene Aufgaben zu Ende fuehren.
-  - **Ton:** sachlich, keine Schmeichelei/uebertriebenen Entschuldigungen,
-    freundlich begruendeter Widerspruch statt Nachgeben, keine leeren
-    Fuellwoerter ("ehrlich gesagt", "tatsaechlich").
-  - **Form:** knapp und in Fliesstext; Listen/Fettung/Ueberschriften nur bei
-    echtem Bedarf oder auf Wunsch; keine Spekulation ueber fremde Absichten.
-- Nicht angefasst: die Coding-Agenten claude/pi/prime — die haben eigene, gut
-  abgestimmte Prompts. Belegt an einer Halluzinationsprobe (fiktive Praemisse
-  wird benannt, nicht bestaetigt).
+## 2026-08-16 (Behavior guardrails from Anthropic's system prompts)
+- Adopted, in spirit, the model-agnostic parts of Anthropic's published
+  system prompts into the base prompt of the OpenRouter/llama agents
+  (`agent.py`, applies to every model and to personas too):
+  - **Don't hallucinate:** on uncertainty say so openly and check with web_search/
+    http_fetch instead of guessing; no invented sources/citations/links.
+  - **Tools first, then "can't":** before the agent claims incapacity or
+    a lack of access, it checks whether a tool exists for it — act
+    yourself before asking.
+  - **Unclear requests:** make a reasonable assumption and get going, ask back only on
+    a real blocker; finish tasks that were started.
+  - **Tone:** factual, no flattery/exaggerated apologies,
+    friendly reasoned disagreement instead of caving, no empty
+    filler words ("honestly", "actually").
+  - **Form:** concise and in prose; lists/bolding/headings only on
+    real need or on request; no speculation about others' intentions.
+- Not touched: the coding agents claude/pi/prime — they have their own, well-
+  tuned prompts. Proven on a hallucination test (a fictional premise
+  is named, not confirmed).
 
-## 2026-08-16 (Selbst gehostetes LLM via llama.cpp)
-- **Settings-Tab:** neue Felder `LLAMA_ENDPOINT` (OpenAI-kompatible Basis-URL,
-  z. B. `http://10.0.0.50:8080/v1`) und `LLAMA_API_KEY` (optional, nur wenn
-  der Server mit `--api-key` laeuft). Der Key ist ein Secret (maskiert, ueber
-  den Broker, nie in die Instanz-Config).
-- **Neues Template `llama`** (nutzt das vorhandene openrouter-Rootfs — llama.cpp
-  ist OpenAI-kompatibel, gleicher Agent-Code). Der Endpoint wird aus den
-  Settings vorbefuellt, der Modellname ist ein Freitextfeld (was der Server
-  bedient). Modell-Chip und Modellwechsel funktionieren (`LLAMA_MODEL` in
+## 2026-08-16 (Self-hosted LLM via llama.cpp)
+- **Settings tab:** new fields `LLAMA_ENDPOINT` (OpenAI-compatible base URL,
+  e.g. `http://10.0.0.50:8080/v1`) and `LLAMA_API_KEY` (optional, only if
+  the server runs with `--api-key`). The key is a secret (masked, via
+  the broker, never into the instance config).
+- **New template `llama`** (uses the existing openrouter rootfs — llama.cpp
+  is OpenAI-compatible, same agent code). The endpoint is prefilled from the
+  settings, the model name is a free-text field (whatever the server
+  serves). Model chip and model switching work (`LLAMA_MODEL` in
   MODEL_KEYS).
-- **Agent:** ist `LLAMA_ENDPOINT` gesetzt, spricht er den lokalen Server statt
-  OpenRouter an — gleiche Tool-Schleife, andere Basis-URL/Modell/Key.
-  URL-Normalisierung akzeptiert `host:8080`, `…/v1` und `…/v1/chat/completions`.
-  Fehlt der Key, laeuft er ohne Auth (fuer llama.cpp ohne `--api-key` der
-  Normalfall, kein Fehler). Fehlermeldungen und Startlog nennen jetzt das
-  aktive Backend.
-- **LAN-Gating:** liegt der llama-Server auf einer privaten LAN-IP, gibt der
-  Manager genau dieses Ziel in der FORWARD-Kette der Instanz frei — wie die
-  MCP-Endpunkte. Ende-zu-Ende gegen einen OpenAI-kompatiblen Stub belegt
-  (Settings → Vorbefuellung → Agent → Backend → SSE-Streaming, App- und
-  Web-Pfad).
+- **Agent:** if `LLAMA_ENDPOINT` is set, it talks to the local server instead of
+  OpenRouter — same tool loop, different base URL/model/key.
+  URL normalization accepts `host:8080`, `…/v1` and `…/v1/chat/completions`.
+  If the key is missing, it runs without auth (for llama.cpp without `--api-key` the
+  normal case, not an error). Error messages and the startup log now name the
+  active backend.
+- **LAN gating:** if the llama server is on a private LAN IP, the
+  manager opens exactly that target in the instance's FORWARD chain — like the
+  MCP endpoints. Proven end-to-end against an OpenAI-compatible stub
+  (settings → prefill → agent → backend → SSE streaming, app and
+  web path).
 
-## 2026-08-15 (claudy: Abo-Anmeldung + rohes JSON im Chat behoben)
-- **"Not logged in":** Das claude-Template laesst intern Claude Code laufen und
-  hatte keine Anmeldung. Neue Gast-Route `GET /api/claude-credentials` (nur
-  claude-Template, per Source-IP): der Gast holt beim Boot den **lebenden**
-  `claudeAiOauth`-Block vom Host — folgt damit automatisch dem naechsten
-  `/login` des Nutzers; der kurzlebige accessToken wird pro Sitzung von Claude
-  Code selbst erneuert (Refresh-Token 20 Tage stabil). Nur der Abo-Block wird
-  ausgeliefert, nicht die mcpOAuth-Tokens des Nutzers; die Host-Datei bleibt
-  unangetastet. Fuer Nicht-Gaeste 403.
-- **Rohes `{"reply": …}` im App-Chat:** Die claude-Bridge kann kein Streaming
-  und antwortet mit JSON — die App zeigte das nackt samt `\u00b7`. Der
-  Manager-Proxy packt jetzt bei JSON-Antworten auf `api/chat[/stream]` das
-  `reply` aus und reicht es als text/plain weiter (wie es der Web-Chat laengst
-  tat). Belegt: App-Pfad und Web-Pfad liefern sauberen Text, claudy antwortet
-  angemeldet ("Ja, ich bin angemeldet und einsatzbereit").
+## 2026-08-15 (claudy: subscription login + raw JSON in chat fixed)
+- **"Not logged in":** the claude template runs Claude Code internally and
+  had no login. A new guest route `GET /api/claude-credentials` (claude
+  template only, by source IP): the guest fetches the **live**
+  `claudeAiOauth` block from the host at boot — thereby automatically following the user's next
+  `/login`; the short-lived accessToken is renewed per session by Claude
+  Code itself (refresh token stable for 20 days). Only the subscription block is
+  delivered, not the user's mcpOAuth tokens; the host file stays
+  untouched. For non-guests 403.
+- **Raw `{"reply": …}` in the app chat:** the claude bridge can't stream
+  and answers with JSON — the app showed it bare including `·`. The
+  manager proxy now, on JSON responses to `api/chat[/stream]`, unpacks the
+  `reply` and passes it on as text/plain (as the web chat has long
+  done). Proven: app path and web path deliver clean text, claudy answers
+  logged in ("Yes, I am logged in and ready").
 
-## 2026-08-15 (MCP-Hub am Host + LAN-Gating fuer die Gaeste)
-- **Fund vorab:** mit `internet=on` durfte jede VM ins ganze LAN — Home
-  Assistant und Portainer waren von jedem Agenten erreichbar, ob ihm der MCP
-  zugewiesen war oder nicht. Jetzt je Instanz eine eigene FORWARD-Kette:
-  MCP-Endpunkte der zugewiesenen Server (aus dem Katalog) → ACCEPT, Gast-DNS
-  (1.1.1.1:53) → ACCEPT, private Netze → **REJECT** (sofortiges
-  Scheitern statt 30-s-Timeout), Internet → ACCEPT. In vier Richtungen
-  belegt (orchestrator↛HA, orchestrator→Internet, hass→HA, hass↛Portainer).
-- **MCP-Hub** (`mcp-hub/`, Docker, 127.0.0.1:8771): die MCP-Serverprozesse
-  laufen jetzt EINMAL je (Instanz, Server) am Host statt in jeder VM. Gaeste
-  sprechen nur noch JSON-RPC ueber `POST /api/mcp`; der Manager autorisiert
-  per Quell-IP gegen `MCP_SERVERS`, setzt die Secrets host-seitig ein und
-  reicht an den Hub durch. **Tokens und LAN erreichen die VM nicht mehr**;
-  `/api/mcp-config` liefert Secrets nur noch als Platzhalter aus. Jeder
-  `tools/call` steht im Audit (Gast- und Manager-Seite). Der Hub startet tote
-  Prozesse neu und wiederholt deren Initialisierung; beim Instanz-Stop werden
-  ihre Prozesse beendet.
-- Gast-Image: `mcp-portainer` entfernt (−104 MB); `mcp-remote` bleibt als
-  Rueckfall fuer Manager ohne `/api/mcp`. Ende-zu-Ende belegt: hass fragt
-  ueber den Hub den Live-Zustand ab ("Ein Licht ist gerade eingeschaltet"),
-  orchestrator bekommt fuer nicht zugewiesene Server eine Ablehnung.
+## 2026-08-15 (MCP hub on the host + LAN gating for the guests)
+- **Finding first:** with `internet=on` every VM could reach the whole LAN — Home
+  Assistant and Portainer were reachable by every agent, whether or not the MCP
+  was assigned to it. Now a dedicated FORWARD chain per instance:
+  MCP endpoints of the assigned servers (from the catalog) → ACCEPT, guest DNS
+  (1.1.1.1:53) → ACCEPT, private networks → **REJECT** (immediate
+  failure instead of a 30-s timeout), internet → ACCEPT. Proven in four directions
+  (orchestrator↛HA, orchestrator→internet, hass→HA, hass↛Portainer).
+- **MCP hub** (`mcp-hub/`, Docker, 127.0.0.1:8771): the MCP server processes
+  now run ONCE per (instance, server) on the host instead of in every VM. Guests
+  only speak JSON-RPC via `POST /api/mcp`; the manager authorizes
+  by source IP against `MCP_SERVERS`, injects the secrets host-side and
+  passes through to the hub. **Tokens and the LAN no longer reach the VM**;
+  `/api/mcp-config` now delivers secrets only as placeholders. Every
+  `tools/call` is in the audit (guest and manager side). The hub restarts dead
+  processes and repeats their initialization; on instance stop their
+  processes are terminated.
+- Guest image: `mcp-portainer` removed (−104 MB); `mcp-remote` stays as a
+  fallback for managers without `/api/mcp`. Proven end-to-end: hass queries
+  the live state via the hub ("One light is currently on"),
+  orchestrator gets a rejection for unassigned servers.
 
-## 2026-08-15 (Architektur-Tab + eine SVG-Parserfalle)
-- Neuer Tab **Architecture** neben dem Changelog: Diagramm (SVG, folgt dem
-  hellen/dunklen Thema) plus 15 Referenzkarten zu allen Komponenten samt
-  Sicherheitsgrenzen.
-- Zwei Fallen dabei, beide erst im echten Chromium sichtbar (jsdom verzeiht
-  sie): ein `<style>`-Element **im** Inline-SVG beendet beim HTML-Parsen den
-  SVG-Kontext — alles danach faellt unsichtbar heraus; und bei unzitierten
-  Attributen frisst `height=56/>` den Schraegstrich mit in den Wert
-  (`height="56/"` → Element malt nichts). Regeln ins Seiten-CSS, Attribute
-  zitiert, per Headless-Screenshot verifiziert.
+## 2026-08-15 (Architecture tab + one SVG parser trap)
+- New tab **Architecture** next to the changelog: a diagram (SVG, follows the
+  light/dark theme) plus 15 reference cards for all components including
+  security boundaries.
+- Two traps along the way, both only visible in real Chromium (jsdom forgives
+  them): a `<style>` element **inside** the inline SVG ends the SVG context on HTML
+  parsing — everything after it falls out invisibly; and with unquoted
+  attributes `height=56/>` eats the slash into the value
+  (`height="56/"` → the element draws nothing). Rules into the page CSS, attributes
+  quoted, verified via headless screenshot.
 
-## 2026-08-15 (Gedaechtnis: Anweisung + Injektion; ein ext4-Vorfall mit Folgen)
-- **Jeder Systemprompt** (auch Personas) bekommt in agent.py eine stehende
-  Gedaechtnis-Anweisung angehaengt: Wichtiges sofort per `memory_store` merken,
-  Bestehendes aktualisieren, kein Protokoll fuehren. Beim **ersten Turn nach
-  einem Neustart** injiziert der Agent seine gemerkten Fakten selbst in den
-  Prompt (nicht beim Boot — da steht das Gast-Netz u. U. noch nicht).
-  Ende-zu-Ende belegt: merken → VM-Neustart → korrekt erinnert.
-- **Vorfall beim Verifizieren:** `EXT4 error loading journal` beim Boot.
-  Ursache: alle Instanzen eines Templates teilten sich **dieselbe**
-  beschreibbare Rootfs-Datei — zwei laufende VMs, ein Journal. Behoben: jede VM
-  bekommt beim Start eine **eigene frische Kopie** (sparse, ~550 MB, beim Stop
-  geloescht); Master-Image mit e2fsck repariert. Nebeneffekt: ein Neustart
-  bootet garantiert das aktuelle Template-Image.
+## 2026-08-15 (Memory: instruction + injection; an ext4 incident with consequences)
+- **Every system prompt** (personas too) gets a standing memory instruction
+  appended in agent.py: remember important things immediately via `memory_store`,
+  update existing ones, keep no log. On the **first turn after
+  a restart** the agent injects its remembered facts into the
+  prompt itself (not at boot — the guest network may not be up yet).
+  Proven end-to-end: remember → VM restart → correctly recalled.
+- **Incident during verification:** `EXT4 error loading journal` at boot.
+  Cause: all instances of a template shared **the same**
+  writable rootfs file — two running VMs, one journal. Fixed: each VM
+  gets its own **fresh copy** at start (sparse, ~550 MB, deleted on stop);
+  master image repaired with e2fsck. Side effect: a restart
+  boots the current template image for sure.
 
-## 2026-08-15 (Modellwechsel fuer bestehende Instanzen)
-- Der Modell-Chip in der Instanzzeile ist jetzt ein Knopf: Dialog mit demselben
-  Picker wie beim Anlegen (OpenRouter-Shortlist, ⟳, Freitext). Neue Route
-  `POST /api/instances/<n>/model` + `set_model()`; wirksam nach Stop/Start.
-  Fuer Gast-VMs automatisch gesperrt (nicht in der POST-Positivliste).
+## 2026-08-15 (Model switch for existing instances)
+- The model chip in the instance row is now a button: a dialog with the same
+  picker as at creation (OpenRouter shortlist, ⟳, free text). New route
+  `POST /api/instances/<n>/model` + `set_model()`; effective after stop/start.
+  Automatically locked for guest VMs (not in the POST allowlist).
 
-## 2026-08-15 (Signal-Versand fuer Agenten)
-- Neues Werkzeug **send_signal**: Agenten koennen dem Nutzer schreiben
-  (fertige Aufgabe, Fund, Rueckfrage). Versand laeuft im **Manager**
-  (`/api/signal` → signal-cli REST); Bot-Nummer und API bleiben im Host.
-- **Fessel:** Empfaenger muessen in `ALLOWED_SENDERS` stehen — ein Agent kann
-  nur an Leute schreiben, die ihm ohnehin Befehle geben duerfen. Dazu Drossel
-  (10 je 5 min, Ablehnungen zaehlen nicht) und Audit-Eintrag je Aufruf.
-  `SIGNAL_API` neu in den Settings.
+## 2026-08-15 (Signal sending for agents)
+- New tool **send_signal**: agents can write to the user
+  (finished task, finding, follow-up question). Sending runs in the **manager**
+  (`/api/signal` → signal-cli REST); the bot number and API stay in the host.
+- **Leash:** recipients must be in `ALLOWED_SENDERS` — an agent can
+  only write to people who are allowed to give it commands anyway. Plus throttling
+  (10 per 5 min, rejections don't count) and an audit entry per call.
+  `SIGNAL_API` new in the settings.
 
-## 2026-08-15 (Security Gateway, je Chat zuschaltbar)
-- Schild-Symbol in App und Web, Zustand am Manager (`gateway.json`), Filterung
-  ebenfalls — eine Gast-VM kann ihn nicht abschalten. Entfernt in **beide**
-  Richtungen unsichtbare Unicode-Zeichen (Tag-Zeichen U+E0020–E007F,
-  Zero-Width, Bidi-Overrides, Homoglyph-Leerzeichen) und aus Uploads
-  EXIF/XMP/C2PA (JPEG/PNG/WEBP, byte-chirurgisch, Bilddaten unangetastet).
-- Der Strom-Filter schneidet an Wortgrenzen — Emoji-ZWJ-Ketten ueberleben,
-  ein ueber Chunks verteilter Schmuggelbefehl nicht (Test: 67 Zeichen
-  entfernt, Modell beantwortet die sichtbare Frage). Entferntes wird sichtbar
-  gezaehlt. Grundlage: `text_unicode.py` aus watermarks-remover (MIT),
-  **nur** die Unicode-Schicht — die Wasserzeichen-/C2PA-Entfernung des
-  Projekts bleibt bewusst draussen (SECURITY-GATEWAY.md).
-- Ohne `chat`-Feld im Request bleibt alles beim Alten — aeltere Clients laufen
-  unveraendert.
+## 2026-08-15 (Security gateway, toggleable per chat)
+- A shield icon in App and Web, state at the manager (`gateway.json`), filtering
+  too — a guest VM can't turn it off. Removes, in **both**
+  directions, invisible Unicode characters (tag characters U+E0020–E007F,
+  zero-width, bidi overrides, homoglyph spaces) and from uploads
+  EXIF/XMP/C2PA (JPEG/PNG/WEBP, byte-surgical, image data untouched).
+- The stream filter cuts at word boundaries — emoji ZWJ chains survive,
+  a smuggled command spread across chunks does not (test: 67 characters
+  removed, the model answers the visible question). What was removed is counted
+  visibly. Basis: `text_unicode.py` from watermarks-remover (MIT),
+  **only** the Unicode layer — the project's watermark/C2PA removal
+  stays deliberately out (SECURITY-GATEWAY.md).
+- Without a `chat` field in the request everything stays as before — older clients run
+  unchanged.
 
-## 2026-08-15 (KatAgent 4.3–4.7: freihaendige Sprache, Assistent, Kleinigkeiten)
-- **4.3:** Sprechpausen-Erkennung — Aufnahme endet von selbst (Schwellwert aus
-  dem Raumgeraeusch der ersten Zehntel, Stopp erst nachdem gesprochen wurde);
-  Blase antippen stoppt die Ausgabe (waehrenddessen ist die ganze Blase die
-  Stopptaste), neue Spracheingabe bricht sie ab (Generationszaehler gegen
-  nachtraeglich eintreffende Synthese).
-- **4.4:** Gateway-Schalter in der Kopfzeile, Zaehler in der Sync-Zeile.
-- **4.5:** Versionsnummer neben dem Namen im Schubladenkopf (aus dem
-  installierten Paket, nicht BuildConfig).
-- **4.6:** App meldet sich als **digitaler Assistent** (ASSIST/VOICE_COMMAND,
-  singleTask): langer Druck auf die Ein-Aus-Taste startet sofort die Aufnahme.
-  Bewusst nicht ueber dem Sperrbildschirm. Zuweisung unter Einstellungen →
-  Standard-Apps → Digitaler Assistent.
-- **4.7:** Nachlaufzeit vor dem Senden 1,2 → 1,8 s.
+## 2026-08-15 (KatAgent 4.3–4.7: hands-free voice, assistant, small things)
+- **4.3:** speech-pause detection — recording ends by itself (threshold from
+  the room noise of the first tenths, stop only after speech has occurred);
+  tapping the bubble stops the output (during which the whole bubble is the
+  stop button), new voice input aborts it (a generation counter against
+  synthesis arriving late).
+- **4.4:** gateway toggle in the header, counter in the sync line.
+- **4.5:** the version number next to the name in the drawer header (from the
+  installed package, not BuildConfig).
+- **4.6:** the app registers as a **digital assistant** (ASSIST/VOICE_COMMAND,
+  singleTask): a long press on the power button starts recording immediately.
+  Deliberately not over the lock screen. Assign it under Settings →
+  Default apps → Digital assistant.
+- **4.7:** trailing time before sending 1.2 → 1.8 s.
 
-## 2026-08-15 (Sprache Stufe 2: die App hoert und spricht — KatAgent 4.2)
-- Mikrofonknopf in der Eingabezeile: aufnehmen (AAC/M4A, 16 kHz mono), zum
-  Manager schicken, erkannten Text **freihaendig direkt abschicken**. Neue
-  Berechtigung `RECORD_AUDIO` samt Laufzeitabfrage.
-- Lautsprecher unter jeder Agentenantwort; **automatisch vorgelesen wird nur,
-  was per Sprache gefragt wurde**.
-- `ManagerSync.stt()` und `.tts()` sprechen die Manager-Routen von Stufe 1 an
-  (Basic-Auth wie der uebrige Verkehr, 120 s Lesetimeout).
-- Aufnahmen unter 2 KB werden verworfen ("zu kurz") statt eine leere Erkennung
-  zu schicken.
-- Zwei Kotlin-Fallen beim Bau: `send()` ist eine lokale Funktion und darf nicht
-  vor ihrer Deklaration aufgerufen werden (jetzt ueber einen Merker, den ein
-  LaunchedEffect abarbeitet), und `VolumeUp` liegt nicht unter `AutoMirrored`.
+## 2026-08-15 (Voice stage 2: the app hears and speaks — KatAgent 4.2)
+- Microphone button in the input line: record (AAC/M4A, 16 kHz mono), send to the
+  manager, **submit the recognized text directly, hands-free**. New
+  permission `RECORD_AUDIO` with a runtime request.
+- A speaker under every agent response; **only what was asked by voice is
+  read aloud automatically**.
+- `ManagerSync.stt()` and `.tts()` talk to the manager routes from stage 1
+  (basic auth like the rest of the traffic, 120 s read timeout).
+- Recordings under 2 KB are discarded ("too short") instead of sending an empty
+  recognition.
+- Two Kotlin traps during the build: `send()` is a local function and must not be
+  called before its declaration (now via a flag that a
+  LaunchedEffect processes), and `VolumeUp` is not under `AutoMirrored`.
 
-## 2026-08-15 (Sprache: Stufe 1 — Dienst, Manager-Routen, Mikrofon im Web)
-- Neuer **Sprachdienst** (`voice/`): Parakeet TDT v3 (ONNX int8) fuer die
-  Erkennung, Piper mit der Stimme Thorsten fuer die Ausgabe, dazu ffmpeg fuer
-  die Formatwandlung. Ein Host-Container, Loopback, ~700 MB Modelle einmal im
-  Speicher statt je microVM.
-- Manager reicht als `/api/stt` und `/api/tts` durch — die einzige Tuer nach
-  aussen. Beide stehen in der Gast-Positivliste, damit spaeter auch Agenten
-  (z. B. die Signal-Bridge) transkribieren koennen.
-- Weboberflaeche: Mikrofonknopf in der Eingabezeile (Aufnahme im Browser,
-  Erkennung im Manager, wird freihaendig direkt abgeschickt) und ein
-  "Vorlesen" je Antwort. **Vorgelesen wird nur, was per Sprache gefragt
-  wurde** — sonst liest er ungefragt lange Erklaerungen vor.
-- Gemessen ueber den Manager: sprechen 0,38 s, erkennen 0,31 s; im Rundlauf
-  6,5 s Audio in 0,67 s erzeugt und in 0,61 s wieder erkannt.
-- Falle dabei: im Container auf 127.0.0.1 zu binden macht den Dienst
-  unerreichbar — Dockers Portweiterleitung kennt das Container-Loopback nicht.
-  Die Beschraenkung gehoert auf die Host-Seite der Zuordnung.
+## 2026-08-15 (Voice: stage 1 — service, manager routes, microphone in the web)
+- A new **voice service** (`voice/`): Parakeet TDT v3 (ONNX int8) for
+  recognition, Piper with the Thorsten voice for output, plus ffmpeg for
+  format conversion. One host container, loopback, ~700 MB of models once in
+  memory instead of per microVM.
+- The manager passes it through as `/api/stt` and `/api/tts` — the only door to the
+  outside. Both are in the guest allowlist, so that later agents
+  (e.g. the Signal bridge) can transcribe too.
+- Web interface: a microphone button in the input line (recording in the browser,
+  recognition in the manager, submitted directly hands-free) and a
+  "Read aloud" per response. **Only what was asked by voice is read
+  aloud** — otherwise it reads long explanations unprompted.
+- Measured through the manager: speaking 0.38 s, recognizing 0.31 s; in the round trip
+  6.5 s of audio produced in 0.67 s and recognized again in 0.61 s.
+- A trap along the way: binding to 127.0.0.1 inside the container makes the service
+  unreachable — Docker's port forwarding doesn't know the container loopback.
+  The restriction belongs on the host side of the mapping.
 
-## 2026-08-14 (Sicherheitsreview: VM konnte sich das Host-Dateisystem einhaengen)
-- **Kritisch, behoben.** Die GET-Routen waren gegen Gaeste gesperrt, die
-  schreibenden **nicht**: eine Agent-VM erreicht den Broker am Gateway (dort
-  holt sie ihre Secrets) und konnte damit u. a.
-  `POST /api/instances/<n>/mounts` aufrufen. Der Manager laeuft als root und
-  exportiert den gewuenschten Ordner per NFS in den Gast — eine kompromittierte
-  VM haette sich so `/` schreibbar einhaengen koennen. Ebenso offen:
-  `/api/create` (neue Instanz mit beliebigen Mounts), `/api/settings`
-  (ALLOWED_SENDERS/SIGNAL_NUMBER = Steuerkanal), `/api/tasks`, `/api/personas`,
-  `/api/instances/<n>/{delete,internet,tools,start,stop}`. Secret-Allowlist,
-  Tool-Gating und Egress-Regeln waren damit umgehbar.
-- Fix: **Positivliste** ganz oben in `do_POST` — Gaeste duerfen nur `/api/usage`,
-  `/api/audit`, `/api/task`, `/api/chat-log` und `/api/memory/…`, alles andere
-  403. Bewusst als Allowlist statt Einzelpruefungen: eine neue Route ist dann
-  standardmaessig zu, nicht standardmaessig offen.
-- Verifiziert: Admin-Routen unveraendert 200, echte Gast-Meldung kommt weiter an
-  (Verbrauchszaehler 45 -> 46 nach einem Prompt).
-- **Stored XSS, behoben.** Im serverseitigen Rendering gab es kein einziges
-  HTML-Escape. Modell-ID (seit dem freien Textfeld beliebig), Beschreibung,
-  Mount-Pfade und Werkzeugliste landeten roh im Markup der Admin-Seite. Neues
-  `h()` (html.escape) davor; mit praeparierter Instanz nachgewiesen: 0 rohe,
-  4 entschaerfte Vorkommen.
-- **Offen (Konfiguration, kein Code):** `MANAGER_PASS` ist leer, `_auth()` laesst
-  dann jeden durch. Der Schutz haengt allein an Traefik — wer 10.0.0.10:8700
-  direkt erreicht, ist Admin. Siehe Hinweis unten.
+## 2026-08-14 (Security review: a VM could mount the host file system)
+- **Critical, fixed.** The GET routes were locked against guests, the
+  writing ones **not**: an agent VM reaches the broker at the gateway (where
+  it fetches its secrets) and could thereby call, among others,
+  `POST /api/instances/<n>/mounts`. The manager runs as root and
+  exports the requested folder via NFS into the guest — a compromised
+  VM could thus mount `/` writable. Likewise open:
+  `/api/create` (new instance with arbitrary mounts), `/api/settings`
+  (ALLOWED_SENDERS/SIGNAL_NUMBER = control channel), `/api/tasks`, `/api/personas`,
+  `/api/instances/<n>/{delete,internet,tools,start,stop}`. The secret allowlist,
+  tool gating and egress rules were thereby circumventable.
+- Fix: an **allowlist** right at the top of `do_POST` — guests may only reach `/api/usage`,
+  `/api/audit`, `/api/task`, `/api/chat-log` and `/api/memory/…`, everything else
+  403. Deliberately an allowlist instead of individual checks: a new route is then
+  closed by default, not open by default.
+- Verified: admin routes still 200, a real guest message still arrives
+  (usage counter 45 -> 46 after a prompt).
+- **Stored XSS, fixed.** In the server-side rendering there was not a single
+  HTML escape. The model id (arbitrary since the free text field), description,
+  mount paths and tool list landed raw in the markup of the admin page. A new
+  `h()` (html.escape) in front; proven with a prepared instance: 0 raw,
+  4 neutralized occurrences.
+- **Open (configuration, not code):** `MANAGER_PASS` is empty, `_auth()` then lets
+  everyone through. Protection hangs solely on Traefik — whoever reaches 10.0.0.10:8700
+  directly is admin. See the note below.
 
-## 2026-08-14 (Veraltete Ansichten: Tasks, Policy und Verbrauch ziehen nach)
-- **Befund aus der Praxis:** in der Tasks-Tabelle stand als letztes Ergebnis noch
-  ein DNS-Fehler von 08:08, waehrend `tasks.json` laengst "Nichts zu tun." und
-  einen erfolgreichen Lauf um 17:08 fuehrte. Die Tabelle laedt naemlich nur
-  einmal beim Oeffnen der Seite — wer den Tab offenliess, sah beliebig alte
-  Staende und hielt ein behobenes Problem fuer aktuell.
-- Tasks und Policy ziehen jetzt alle 15 s nach, aber nur fuer den sichtbaren
-  Tab und nicht im Hintergrund-Reiter (`document.hidden`).
-- Die Verbrauchszeilen werden nicht mehr nur serverseitig gerendert: sie tragen
-  ein `data-usage` und werden aus `/api/usage` aktualisiert, ebenso die Summe in
-  der Fusszeile. Damit waechst der Zaehler beim Zuschauen mit.
-- Nebenbei: die Zeitzone des Hosts stand auf `America/Chicago` (UTC und NTP
-  waren korrekt, nur die Zone nicht) — 7 Stunden Versatz in `daily HH:MM`,
-  in der Tagesgrenze des Verbrauchszaehlers und in allen Server-Zeitstempeln.
-  Nach `timedatectl set-timezone Europe/Berlin` braucht der Manager einen
-  Neustart, glibc liest die Zone nur einmal pro Prozess.
+## 2026-08-14 (Stale views: Tasks, Policy and usage catch up)
+- **Finding from practice:** in the Tasks table the last result still showed
+  a DNS error from 08:08, while `tasks.json` had long since carried "Nothing to do."
+  and a successful run at 17:08. The table only loads
+  once when the page is opened — whoever left the tab open saw arbitrarily old
+  states and thought a fixed problem was current.
+- Tasks and Policy now catch up every 15 s, but only for the visible
+  tab and not in a background tab (`document.hidden`).
+- The usage rows are no longer only server-side rendered: they carry
+  a `data-usage` and are updated from `/api/usage`, as is the total in
+  the footer. So the counter grows as you watch.
+- On the side: the host's timezone was on `America/Chicago` (UTC and NTP
+  were correct, only the zone wasn't) — 7 hours of offset in `daily HH:MM`,
+  in the day boundary of the usage counter and in all server timestamps.
+  After `timedatectl set-timezone Europe/Berlin` the manager needs a
+  restart, glibc reads the zone only once per process.
 
-## 2026-08-14 (Rest der Oberflaechen gegen Industry geprueft)
-- **Web-Chat (`/chat`) war das groesste Loch**: eigene Palette mit orangem
-  Akzent (#e8590c), 14 px Rundung, system-ui. Jetzt Industry-Tokens unter den
-  gleichen Variablennamen — Slate-Blau, Barlow/Barlow Condensed, eckig,
-  Haarlinien. Eigene Nachricht gefuellt wie `.btn-primary`, Antwort als Karte
-  mit Haarlinie — dieselbe Aufteilung wie in der App.
-- **Fund im Manager:** `.radio .dot` war eckig (2 px). Im System ist der
-  Radio-Punkt ausdruecklich **rund** (`border-radius: 50%`) — korrigiert. Der
-  Statuspunkt im Chat bleibt aus demselben Grund rund.
-- **Browser-Terminal**: Konsole bleibt dunkel (dafuer gibt es keine
-  Systemkomponente, und ein heller Terminalgrund waere schlechter), aber Leiste
-  und Tasten folgen jetzt dem dunklen Band, Slate-Blau, eckig, Barlow.
-- **Offen: katfs-Freigabeseite** (`katfs/web/index.html`) — eigene dunkle
-  Palette mit Blau/Gruen, Rundungen 5/10/50 %, system-ui. Nicht angefasst,
-  weil dort auch die WASM-Bruecke haengt.
+## 2026-08-14 (Rest of the surfaces checked against Industry)
+- **The web chat (`/chat`) was the biggest hole**: its own palette with an orange
+  accent (#e8590c), 14 px rounding, system-ui. Now Industry tokens under the
+  same variable names — slate blue, Barlow/Barlow Condensed, angular,
+  hairlines. Own message filled like `.btn-primary`, reply as a card
+  with a hairline — the same layout as in the app.
+- **Finding in the manager:** `.radio .dot` was angular (2 px). In the system the
+  radio dot is explicitly **round** (`border-radius: 50%`) — corrected. The
+  status dot in the chat stays round for the same reason.
+- **Browser terminal**: the console stays dark (there is no
+  system component for it, and a light terminal background would be worse), but the bar
+  and buttons now follow the dark band, slate blue, angular, Barlow.
+- **Open: katfs share page** (`katfs/web/index.html`) — its own dark
+  palette with blue/green, rounding 5/10/50 %, system-ui. Not touched,
+  because the WASM bridge hangs there too.
 
-## 2026-08-14 (App folgt dem Design-System "Industry")
-- Tokens direkt aus dem Projekt gelesen (`DesignSync get_file` auf
-  `theme.json` + `styles.css`) statt nachgebaut — die App hatte bisher nur
-  Farben und Schriftfamilie uebernommen.
-- **Eckig ausnahmslos**: `styles.css` ueberstimmt am Ende das `radius:4` aus
-  `theme.json` mit `border-radius:0` fuer Card/Button/Input/Tag/Dialog. Shapes
-  auf 0, Kreis-Avatare und -Modussymbole sowie die 2/3/8-dp-Rundungen raus.
-- **Typo-Skala 1:1**: h1 42 / h2 32 / h3 25 / h4 20 / h5 16, Headings mit
-  line-height 1.12 und -0.015em, Body 15/1.55; `labelSmall` traegt jetzt die
-  h6-Rolle (13 px, versal, 0.08em) statt Materials Default.
-- **Raster** aus `density: 0.85` als `IndustrySpacing` (3.4/6.8/10.2/13.6/20.4/27.2).
-- Neu `IndustryComponents.kt`: `blueprintFrame()` zeichnet Haarlinie plus die
-  vier Registermarken *ausserhalb* der Box (in CSS `.corner tl|tr|bl|br`),
-  dazu `BlueprintBox`, `Tag` und `IndustryDivider`.
-- **Chat-Bubbles** ohne Material-Tonung: eigene Nachricht gefuellt wie
-  `.btn-primary`, Antwort des Agenten transparent mit Haarlinie wie `.card`.
-- Dark-Mode bleibt (Handy wird nachts benutzt) — im System ist er als
-  `band: light` nicht vorgesehen, hier also eine bewusste Erweiterung.
+## 2026-08-14 (App follows the "Industry" design system)
+- Tokens read directly from the project (`DesignSync get_file` on
+  `theme.json` + `styles.css`) instead of rebuilt — the app had so far only
+  adopted colors and font family.
+- **Angular without exception**: at the end `styles.css` overrides the `radius:4` from
+  `theme.json` with `border-radius:0` for Card/Button/Input/Tag/Dialog. Shapes
+  to 0, circular avatars and mode symbols as well as the 2/3/8-dp rounding removed.
+- **Type scale 1:1**: h1 42 / h2 32 / h3 25 / h4 20 / h5 16, headings with
+  line-height 1.12 and -0.015em, body 15/1.55; `labelSmall` now carries the
+  h6 role (13 px, uppercase, 0.08em) instead of Material's default.
+- **Grid** from `density: 0.85` as `IndustrySpacing` (3.4/6.8/10.2/13.6/20.4/27.2).
+- New `IndustryComponents.kt`: `blueprintFrame()` draws a hairline plus the
+  four register marks *outside* the box (in CSS `.corner tl|tr|bl|br`),
+  plus `BlueprintBox`, `Tag` and `IndustryDivider`.
+- **Chat bubbles** without Material tinting: own message filled like
+  `.btn-primary`, the agent's reply transparent with a hairline like `.card`.
+- Dark mode stays (the phone is used at night) — in the system it is not
+  foreseen as `band: light`, so here a deliberate extension.
 - KatAgent **3.9** (versionCode 39).
 
-## 2026-08-14 (Fix: Frage aus der App verschwand)
-- **Regression aus dem Live-Sync (3.7).** Der Merge ersetzte Conversation-
-  Objekte (`byId[id] = r`). `send()` haelt aber eine Referenz auf
-  `current.messages` und streamt die Antwort dorthin — wurde das Objekt
-  ausgetauscht, landeten Frage und Antwort in einer abgehaengten Liste:
-  aus der App verschwunden, nie gespeichert, nie gepusht.
-- Der Merge **befuellt jetzt das bestehende Objekt** statt es zu ersetzen, und
-  Nachrichten werden nur **angehaengt**: nur wenn die lokale Liste ein Praefix
-  der entfernten ist, wird uebernommen. Damit kann ein neuerer Stand der
-  Gegenseite (Web/Manager, ggf. mit vorgehender Uhr) eine gerade getippte,
-  noch nicht gepushte Frage nicht mehr wegwischen. Die offene Konversation
-  bleibt waehrend eines laufenden Turns ganz unangetastet.
-- Dieselbe Absicherung in der Web-Oberflaeche (`chatui.py`) — dort haelt
-  `send()` das Reply-Objekt genauso fest.
+## 2026-08-14 (Fix: question from the app disappeared)
+- **Regression from the live sync (3.7).** The merge replaced conversation
+  objects (`byId[id] = r`). But `send()` holds a reference to
+  `current.messages` and streams the reply there — if the object was
+  swapped, question and answer landed in a detached list:
+  gone from the app, never saved, never pushed.
+- The merge **now fills the existing object** instead of replacing it, and
+  messages are only **appended**: only if the local list is a prefix of
+  the remote one is it adopted. So a newer state from the
+  other side (Web/Manager, possibly with a leading clock) can no longer wipe a just-typed,
+  not-yet-pushed question. The open conversation
+  stays entirely untouched during a running turn.
+- The same safeguard in the web interface (`chatui.py`) — there
+  `send()` holds the reply object just the same.
 - KatAgent **3.8** (versionCode 38).
 
-## 2026-08-14 (Token-Zaehler je Instanz)
-- Neue Tabelle `llm_usage` in `history.db` und Gast-Route **`POST /api/usage`**:
-  der Agent meldet nach jedem LLM-Aufruf Tokens und Kosten, der Manager bucht
-  sie auf die Instanz. Die Zuordnung kommt aus der **Quell-IP**, nicht aus dem
-  Body — eine VM kann den Verbrauch einer anderen nicht faelschen.
-- `GET /api/usage` (Admin, fuer Gaeste gesperrt) liefert je Instanz heute und
-  gesamt: Aufrufe, Tokens rein/raus, Kosten.
-- Die Instanz-Tabelle zeigt die Zeile unter dem Modell-Chip, die Fusszeile die
-  Summe ueber alle Instanzen.
-- `agent.py`: fordert `usage:{include:true}` an (damit OpenRouter die realen
-  Kosten je Aufruf mitschickt), meldet streamend wie nicht-streamend, und
-  `OPENROUTER_URL` ist jetzt per Env setzbar. Melden ist fire-and-forget: faellt
-  der Manager aus, stoert das den Chat nicht.
-- Rootfs `openrouter` neu gebaut; verifiziert: ein Prompt an den Orchestrator
-  buchte 1313/29 Tokens und $0.0005.
-- Grenze: nur die `openrouter`-Vorlage meldet. `pi` und `prime` rufen ihre
-  eigenen CLIs auf, `claude` rechnet ueber das Abo — dort gibt es (noch) keine
-  Zahlen.
+## 2026-08-14 (Token counter per instance)
+- A new table `llm_usage` in `history.db` and guest route **`POST /api/usage`**:
+  the agent reports tokens and cost after every LLM call, the manager books
+  them onto the instance. The attribution comes from the **source IP**, not from the
+  body — one VM can't fake another's usage.
+- `GET /api/usage` (admin, locked for guests) delivers per instance today and
+  total: calls, tokens in/out, cost.
+- The instance table shows the row under the model chip, the footer the
+  total across all instances.
+- `agent.py`: requests `usage:{include:true}` (so OpenRouter sends along the real
+  cost per call), reports streaming as well as non-streaming, and
+  `OPENROUTER_URL` is now settable via env. Reporting is fire-and-forget: if
+  the manager is down, it doesn't disturb the chat.
+- Rootfs `openrouter` rebuilt; verified: a prompt to the orchestrator
+  booked 1313/29 tokens and $0.0005.
+- Limit: only the `openrouter` template reports. `pi` and `prime` call their
+  own CLIs, `claude` bills via the subscription — there are (still) no
+  numbers there.
 
-## 2026-08-14 (Gaeste ohne Internet: HOSTIF zeigte ins Leere)
-- **Befund:** seit dem Reboot um 03:07 erreichte keine microVM mehr DNS oder LLM
-  (`gaierror -3`), auch der Orchestrator-Heartbeat lief ins Leere. Ursache war
-  nicht die VM, sondern die NAT-Regel des Hosts: die Unit setzte
-  `Environment=HOSTIF=eth0`, der Uplink heisst aber `eth0`. MASQUERADE auf
-  ein nicht existierendes Interface trifft nichts — die Pakete der Gaeste gingen
-  unmaskiert raus und kamen nie zurueck. Kein Log, keine Fehlermeldung.
-- **Fix:** `manager.py` verlaesst sich nicht mehr blind auf den Namen. Ein
-  gesetztes `HOSTIF` gilt nur, wenn `/sys/class/net/<name>` existiert; sonst
-  gewinnt das Interface der Default-Route (mit Hinweis im Log). Die Unit-Vorlage
-  hat die Zeile jetzt auskommentiert.
-- Verifiziert: nach Manager- und Instanz-Neustart antwortet der Orchestrator in
-  1,6 s ("pong") statt nach 20 s DNS-Timeout.
-- Hinweis: die installierte Unit unter `/etc/systemd/system/` traegt weiterhin
-  `HOSTIF=eth0` (root-only). Dank der Erkennung ist das folgenlos, sollte
-  aber bei Gelegenheit aufgeraeumt werden.
+## 2026-08-14 (Guests without internet: HOSTIF pointed nowhere)
+- **Finding:** since the reboot at 03:07 no microVM reached DNS or the LLM
+  (`gaierror -3`) anymore, and the orchestrator heartbeat also ran into nothing. The cause was
+  not the VM, but the host's NAT rule: the unit set
+  `Environment=HOSTIF=eth0`, but the uplink is called `eth0`. MASQUERADE on
+  a non-existent interface hits nothing — the guests' packets went out
+  unmasqueraded and never came back. No log, no error message.
+- **Fix:** `manager.py` no longer relies blindly on the name. A
+  set `HOSTIF` applies only if `/sys/class/net/<name>` exists; otherwise
+  the interface of the default route wins (with a hint in the log). The unit template
+  now has the line commented out.
+- Verified: after a manager and instance restart the orchestrator answers in
+  1.6 s ("pong") instead of after a 20 s DNS timeout.
+- Note: the installed unit under `/etc/systemd/system/` still carries
+  `HOSTIF=eth0` (root-only). Thanks to the detection this is harmless, but should
+  be cleaned up at some point.
 
-## 2026-08-14 (Chats live zwischen App und Web)
-- `/api/chats` kann jetzt **Long-Poll**: `?since=<rev>&wait=<sek>` blockiert, bis
-  jemand schreibt, und antwortet dann mit `{rev, chats}` (bei Zeitablauf
-  `chats:null`). Ohne die Parameter unveraendert die blanke Liste — alte Clients
-  laufen weiter. Jedes Schreiben am Store zaehlt eine zeitbasiert-monotone
-  Revision hoch und weckt alle Wartenden (`threading.Condition`).
-- Die Web-Oberflaeche haengt dauerhaft an diesem Long-Poll: neue Nachrichten aus
-  der App stehen ohne Neuladen da (gemessen ~50 ms nach dem Push). Der gerade
-  streamende Chat wird beim Merge ausgelassen, damit kein Teiltext verlorengeht;
-  der Push nach lokalen Aenderungen wurde von 1200 auf 400 ms verkuerzt.
-- Nebenbei: die Gast-Sperre fuer `/api/chats` & Co. verglich den kompletten Pfad
-  und haette einen Query-String nicht mehr erkannt — vergleicht jetzt den Pfad
-  ohne Query.
-- **Die App zieht nach (KatAgent 3.7, versionCode 37):** neues
-  `ManagerSync.pollChats()` (Long-Poll mit passend erhoehtem Lesetimeout) und
-  eine Dauerschleife in `MainActivity` statt des einmaligen `sync()` beim Start.
-  Waehrend eine Antwort streamt (`busy`) wird nicht gemerged; der Merge schreibt
-  nur lokal (`store.save`), pusht also nicht zurueck -> kein Ping-Pong.
-  Damit ist der Sync in beide Richtungen live. APK: `katagent-3.7.apk`.
+## 2026-08-14 (Chats live between app and web)
+- `/api/chats` can now **long-poll**: `?since=<rev>&wait=<sec>` blocks until
+  someone writes, then answers with `{rev, chats}` (on timeout
+  `chats:null`). Without the parameters the plain list unchanged — old clients
+  keep running. Every write to the store increments a time-based monotone
+  revision and wakes all waiters (`threading.Condition`).
+- The web interface hangs permanently on this long-poll: new messages from
+  the app appear without reloading (measured ~50 ms after the push). The currently
+  streaming chat is skipped in the merge so no partial text is lost;
+  the push after local changes was shortened from 1200 to 400 ms.
+- On the side: the guest lock for `/api/chats` & co. compared the full path
+  and would no longer have recognized a query string — it now compares the path
+  without the query.
+- **The app catches up (KatAgent 3.7, versionCode 37):** a new
+  `ManagerSync.pollChats()` (long-poll with a suitably raised read timeout) and
+  a continuous loop in `MainActivity` instead of the one-off `sync()` at start.
+  While a reply is streaming (`busy`) nothing is merged; the merge writes
+  only locally (`store.save`), so it doesn't push back -> no ping-pong.
+  With that the sync is live in both directions. APK: `katagent-3.7.apk`.
 
 ## 2026-08-14 (Rebrand: kAIm56)
 - **"Firecracker Manager" is gone from the UI — the product is `kAIm56`.**
@@ -921,244 +924,244 @@
   Security/Changelog, the activity dialog, the instance rows, the chat UI
   (`chatui.py`) and every `msg` the API returns. Code comments stay German.
 
-## 2026-08-14 (Sofort-Trigger fuer den Orchestrator)
-- Neue Nutzer-Nachricht (Signal ueber /api/chat-log, App/Web ueber /api/chats)
-  stoesst den Orchestrator **debounced (8 s)** an — er reagiert in Sekunden
-  statt erst beim 2-h-Heartbeat. Coalesct Bursts, ein Lauf zur Zeit, feuert nur
-  bei wirklich neuem Posteingang (peek). Reiner Manager-Code, kein Rootfs-Build.
-- Verifiziert: Nachricht -> ~15 s spaeter Orchestrator auto-gestartet ->
-  read_inbox -> create_task(target=remote) fuer die Anfrage. Der 2-h-Heartbeat
-  bleibt als Fallback (zeitbasierte/wiederkehrende Checks).
+## 2026-08-14 (Instant trigger for the orchestrator)
+- A new user message (Signal via /api/chat-log, App/Web via /api/chats)
+  pokes the orchestrator **debounced (8 s)** — it reacts in seconds
+  instead of only at the 2-h heartbeat. Coalesces bursts, one run at a time, fires only
+  on genuinely new inbox (peek). Pure manager code, no rootfs build.
+- Verified: message -> ~15 s later orchestrator auto-started ->
+  read_inbox -> create_task(target=remote) for the request. The 2-h heartbeat
+  stays as a fallback (time-based/recurring checks).
 
 
-## 2026-08-14 (Orchestrator-Posteingang: Signal/Chat-Store als Quelle)
-- Neues Tool **`read_inbox`** (Gast-Route `/api/inbox`): neue Nutzer-Nachrichten
-  aus dem gemeinsamen Chat-Store (Signal/App/Web) seit dem letzten Lauf, mit
-  **Wasserzeichen** (jede Nachricht nur einmal; ?peek=1 = Vorschau ohne Verbrauch).
-  Task-Konversationen ausgeblendet.
-- Heartbeat des Orchestrators liest jetzt zuerst den Posteingang. Verifiziert:
-  neue Signal-Nachricht "Kellertuer 22:00 pruefen" -> read_inbox -> recall_tasks
-  -> list_agents -> create_task(target=hass, daily 22:00). Korrektes Routing zur
-  faehigen Instanz, Posteingang danach verbraucht.
+## 2026-08-14 (Orchestrator inbox: Signal/chat store as the source)
+- A new tool **`read_inbox`** (guest route `/api/inbox`): new user messages
+  from the shared chat store (Signal/App/Web) since the last run, with a
+  **watermark** (each message only once; ?peek=1 = preview without consuming).
+  Task conversations hidden.
+- The orchestrator's heartbeat now reads the inbox first. Verified:
+  a new Signal message "check basement door 22:00" -> read_inbox -> recall_tasks
+  -> list_agents -> create_task(target=hass, daily 22:00). Correct routing to the
+  capable instance, inbox consumed afterwards.
 
 
-## 2026-08-14 (Orchestrator-Heartbeat "Lloyd")
-- Neues Tool **`list_agents`** (Gast-Route `/api/agents`): Agenten-Roster +
-  Faehigkeiten (Modell/MCP) fuers Routing — ohne Secrets.
-- **`orchestrator`-Persona** angelegt: verwaltet Arbeit statt sie auszufuehren —
-  list_agents -> recall_tasks (Dubletten-Check) -> create_task an die FAEHIGE
-  Instanz (bzw. ephemeral). Aus vorhandenen Bausteinen, kaum neuer Code.
-- **`orchestrator`-Instanz** (gemini-2.5-flash) + wiederkehrender **Heartbeat-
-  Task** (every 2h). Der Worker weckt die Instanz zum Lauf und laesst sie danach
-  laufen.
-- Verifiziert: ein Heartbeat mit konkretem Anlass -> recall_tasks (keine Dubl.)
-  -> create_task(daily 08:00) korrekt angelegt.
-- Offen: der Heartbeat kann bisher Web/HTTP nutzen und an faehige Agenten
-  delegieren (z. B. hass), aber NOCH nicht Host-Logs/E-Mail/den Signal-Chat-Store
-  lesen — dafuer braucht es je ein kleines Quell-Tool (naechster Schritt).
+## 2026-08-14 (Orchestrator heartbeat "Lloyd")
+- A new tool **`list_agents`** (guest route `/api/agents`): agent roster +
+  capabilities (model/MCP) for routing — without secrets.
+- **`orchestrator` persona** created: manages work instead of doing it —
+  list_agents -> recall_tasks (duplicate check) -> create_task to the CAPABLE
+  instance (or ephemeral). From existing building blocks, hardly any new code.
+- **`orchestrator` instance** (gemini-2.5-flash) + a recurring **heartbeat
+  task** (every 2h). The worker wakes the instance for the run and leaves it
+  running afterwards.
+- Verified: a heartbeat with a concrete occasion -> recall_tasks (no dupl.)
+  -> create_task(daily 08:00) created correctly.
+- Open: the heartbeat can so far use Web/HTTP and delegate to capable agents
+  (e.g. hass), but NOT YET read host logs/email/the Signal chat store
+  — for each of those it needs a small source tool (next step).
 
 
-## 2026-08-14 (Abfragbare Aufgaben-History / Stammwissen)
-- Neue **SQLite-History** (`history.db`, stdlib — keine Abhaengigkeit): jeder
-  ausgefuehrte Task (Worker + synchrones create_task) wird mit Ziel, Aufgabe,
-  Ergebnis, ok, Zeitplan, Herkunft gespeichert. WAL-Modus, thread-safe.
-- Agent-Tool **`recall_tasks(query, limit)`** ueber `GET /api/history` — Agenten
-  fragen die Vergangenheit ab ("haben wir das schon gemacht?"), VOR create_task
-  gegen Dubletten. Damit hat der (kommende) Orchestrator sein Stammwissen.
-- Verifiziert: create_task -> Ergebnis in History; recall_tasks(query) findet den
-  Lauf wieder (Ziel/Aufgabe/Ergebnis + Zeit).
-- Idee aus der Symphony-Diskussion uebernommen (queryable memory), NICHT das
-  coding-spezifische Symphony selbst.
+## 2026-08-14 (Queryable task history / base knowledge)
+- A new **SQLite history** (`history.db`, stdlib — no dependency): every
+  executed task (worker + synchronous create_task) is stored with target, task,
+  result, ok, schedule, origin. WAL mode, thread-safe.
+- Agent tool **`recall_tasks(query, limit)`** via `GET /api/history` — agents
+  query the past ("have we done this already?"), BEFORE create_task
+  against duplicates. So the (upcoming) orchestrator has its base knowledge.
+- Verified: create_task -> result in history; recall_tasks(query) finds the
+  run again (target/task/result + time).
+- Idea adopted from the Symphony discussion (queryable memory), NOT the
+  coding-specific Symphony itself.
 
 
-## 2026-08-14 (Aufgaben aus der VM: create_task)
-- Neues Agent-Tool **`create_task(task, target, schedule, wait)`** — aus jeder
-  VM aufrufbar (gegated ueber AGENT_TOOLS). Manager-Gast-Route `POST /api/task`.
-- **Routing statt VM-pro-Task:** `target=<instanz>` fuehrt die Aufgabe dort aus,
-  wo ihre Tools/MCP/Secrets leben (z. B. `hass` fuer Home Assistant);
-  `target=ephemeral` spinnt eine frische, isolierte VM und reisst sie danach ab.
-- **Sync/Async:** `wait=true` blockiert und liefert das Ergebnis direkt;
-  sonst laeuft es im Hintergrund-Worker und das Ergebnis landet in der
-  gemeinsamen Chat-Historie (`task-<target>`) — sichtbar in App/Web/Signal.
-- `schedule` (every Nm|Nh|Nd, daily HH:MM, hourly) fuer wiederkehrende Aufgaben.
-- Runaway-Schutz: ephemere Kinder (task-*/sub-*) duerfen selbst keine Tasks
-  anlegen. `spawn_subagent`-Poll von 3 s auf 1 s gestrafft.
-- Verifiziert: ephemer sync -> `TASKOK`; async -> Worker done + Chat-Eintrag;
-  keine ephemeren Leichen. v1 seriell (eine Aufgabe zur Zeit) — Parallelitaet
-  mit N-Deckel ist der naechste Schritt.
+## 2026-08-14 (Tasks from the VM: create_task)
+- A new agent tool **`create_task(task, target, schedule, wait)`** — callable from any
+  VM (gated via AGENT_TOOLS). Manager guest route `POST /api/task`.
+- **Routing instead of a VM per task:** `target=<instance>` runs the task where
+  its tools/MCP/secrets live (e.g. `hass` for Home Assistant);
+  `target=ephemeral` spins up a fresh, isolated VM and tears it down afterwards.
+- **Sync/async:** `wait=true` blocks and delivers the result directly;
+  otherwise it runs in the background worker and the result lands in the
+  shared chat history (`task-<target>`) — visible in App/Web/Signal.
+- `schedule` (every Nm|Nh|Nd, daily HH:MM, hourly) for recurring tasks.
+- Runaway protection: ephemeral children (task-*/sub-*) may not create tasks
+  themselves. `spawn_subagent` poll tightened from 3 s to 1 s.
+- Verified: ephemeral sync -> `TASKOK`; async -> worker done + chat entry;
+  no ephemeral corpses. v1 serial (one task at a time) — parallelism
+  with an N cap is the next step.
 
 
-## 2026-08-13 (Signal in den gemeinsamen Chat-Sync)
-- Signal-Nachrichten liefen bisher nur im signal_loop der VM zur Signal-API und
-  landeten nie im gemeinsamen Store. Jetzt meldet jeder Bridge-Turn (Frage+
-  Antwort) an **`POST /api/chat-log`** (Gast per Source-IP erkannt); der Manager
-  haengt ihn als Konversation `sig-<instanz>-<sender>` an `chats.json`. Damit
-  erscheinen Signal-Chats in **App und Web** wie normale Chats.
-- Umgesetzt in allen drei Bridges (openrouter/pi/prime), Images neu gebaut.
-  Verifiziert: Gast-POST -> `Signal · remote`-Konversation im Store.
-- Grenze: Der **claude**-Signal-Bridge (claude-signal-firecracker) ist ein
-  eigener Codestand und noch NICHT angebunden.
+## 2026-08-13 (Signal into the shared chat sync)
+- Signal messages used to run only in the VM's signal_loop to the Signal API and
+  never landed in the shared store. Now every bridge turn (question+
+  answer) reports to **`POST /api/chat-log`** (guest recognized by source IP); the manager
+  appends it as a conversation `sig-<instance>-<sender>` to `chats.json`. So
+  Signal chats appear in **App and Web** like normal chats.
+- Implemented in all three bridges (openrouter/pi/prime), images rebuilt.
+  Verified: guest POST -> a `Signal · remote` conversation in the store.
+- Limit: the **claude** Signal bridge (claude-signal-firecracker) is a
+  separate code state and NOT yet connected.
 
 
-## 2026-08-10 (Audit + Policy-Ansicht)
+## 2026-08-10 (Audit + Policy view)
 
-### Audit-Log pro Instanz
-- Der Agent meldet jeden Werkzeug-Aufruf an den Manager (`/api/audit`,
-  Gast per Source-IP erkannt) — **Tool + Zielfeld** (URL bei http_fetch, Query
-  bei web_search, Pfad bei Datei/katfs-Tools, Kommando-Kopf bei bash) und ein
-  ok-Flag. **Nie** Secret-Werte oder Dateiinhalte (get_secret loggt nur den
-  Namen). Landet als `audit/<name>.jsonl` **auf dem Host** — ueberlebt
-  VM-Neustarts, auf die letzten 2000 Zeilen begrenzt. `GET /api/audit/<name>`
-  ist admin-only. Verifiziert: `http_fetch -> https://example.com`,
-  `web_search -> Hummel`; ein Gast bekommt beim Lesen `forbidden`.
+### Audit log per instance
+- The agent reports every tool call to the manager (`/api/audit`,
+  guest recognized by source IP) — **tool + target field** (URL for http_fetch, query
+  for web_search, path for file/katfs tools, command head for bash) and an
+  ok flag. **Never** secret values or file contents (get_secret logs only the
+  name). Lands as `audit/<name>.jsonl` **on the host** — survives
+  VM restarts, capped to the last 2000 lines. `GET /api/audit/<name>`
+  is admin-only. Verified: `http_fetch -> https://example.com`,
+  `web_search -> bumblebee`; a guest gets `forbidden` on reading.
 
-### Policy-Tab
-- Eine Ansicht **pro Instanz**, die die verstreuten Kontrollen zusammenzieht:
-  Internet (Live-Toggle), Modell, **Werkzeug-Allowlist zum Bearbeiten**
-  (`POST /api/instances/<n>/tools`, wirkt nach Stop/Start), erlaubte Secrets,
-  MCP-Server, katfs-Freigabe — plus Knopf **Aktivität** mit den zuletzt
-  aufgerufenen Tools/URLs aus dem Audit-Log. `GET /api/policy` (admin-only).
+### Policy tab
+- One view **per instance** that pulls the scattered controls together:
+  internet (live toggle), model, **an editable tool allowlist**
+  (`POST /api/instances/<n>/tools`, effective after stop/start), allowed secrets,
+  MCP servers, katfs share — plus an **Activity** button with the last
+  tools/URLs called from the audit log. `GET /api/policy` (admin-only).
 
-### Instanz-Tabelle
-- Jede Zeile zeigt jetzt das **verwendete Modell** (Chip statt Emoji).
+### Instance table
+- Each row now shows the **model in use** (a chip instead of an emoji).
 
-### Chat-UI
-- `/chat` sendet `Cache-Control: no-store`; Icons als Inline-SVG direkt im HTML
-  (die grauen Emoji-Kaestchen waren gecachte alte Seiten + fehlende Emoji-Schrift).
+### Chat UI
+- `/chat` sends `Cache-Control: no-store`; icons as inline SVG directly in the HTML
+  (the grey emoji boxes were cached old pages + a missing emoji font).
 
 
-## 2026-08-10 (Nachtrag: pi/prime-Fix)
-- Die Credential-Umstellung hatte pi/prime vermint: Keys wurden aus der Config
-  gestrippt, aber nur openrouter-agent holte sie ueber den Broker. Jetzt holen
-  auch **pi und prime** fehlende Provider-Keys beim Start vom Broker
-  (`ensure_provider_keys`), Policy fuer beide Templates ergaenzt. Verifiziert
-  (pi -> `piok` vom LLM, prime -> Key vom Broker, nichts auf der Config-Disk).
-- Beide Build-Skripte bekamen dieselben Fixes wie openrouter: `mkfs.ext4`-PATH
-  und **atomarer** Rootfs-Install (mv statt cp in die laufende Datei).
+## 2026-08-10 (Addendum: pi/prime fix)
+- The credential switch had mined pi/prime: keys were stripped from the config,
+  but only openrouter-agent fetched them via the broker. Now
+  **pi and prime** also fetch missing provider keys at start from the broker
+  (`ensure_provider_keys`), policy added for both templates. Verified
+  (pi -> `piok` from the LLM, prime -> key from the broker, nothing on the config disk).
+- Both build scripts got the same fixes as openrouter: `mkfs.ext4` PATH
+  and an **atomic** rootfs install (mv instead of cp into the running file).
 
 
 ## 2026-08-10
 
-### Agenten-Capabilities (pro Instanz steuerbar)
-- **Internet-Schalter.** Neue Instanz-Option `internet` (Default an). Aus =
-  die VM darf ihr eigenes /30 nicht verlassen: kein LAN, kein Web — und damit
-  auch **kein LLM**, der Agent kann dann nicht denken (im UI so beschriftet).
-  Der Manager-Broker am Gateway (8700, host-lokal) bleibt erreichbar.
-  Umschaltbar **live** ueber die Instanz-Tabelle (🌐/🚫), ohne Neustart —
-  `apply_internet` setzt/entfernt die Egress-Regeln der Tap.
-- **Werkzeug-Allowlist.** Neue Option `tools` beim Anlegen (Checkbox-Liste aus
-  `/api/agent-tools`). Landet als `AGENT_TOOLS=<namen>` in der Config; der Agent
-  filtert damit **Schema UND Ausfuehrung** (`tool_enabled`) — ein Modell kann ein
-  abgeschaltetes Tool weder sehen noch erzwingen. Verifiziert: Teilmenge -> Boot
-  meldet `tools=3` statt 17, `list_dir` im Modell nicht vorhanden.
-  Hinweis: `bash` ist der Generalschluessel — wer Datei/Web wirklich sperren
-  will, muss auch `bash` abwaehlen.
+### Agent capabilities (controllable per instance)
+- **Internet toggle.** A new instance option `internet` (default on). Off =
+  the VM may not leave its own /30: no LAN, no web — and thereby
+  **no LLM**, the agent then can't think (labeled so in the UI).
+  The manager broker at the gateway (8700, host-local) stays reachable.
+  Toggleable **live** via the instance table (🌐/🚫), without a restart —
+  `apply_internet` sets/removes the egress rules of the tap.
+- **Tool allowlist.** A new option `tools` at creation (a checkbox list from
+  `/api/agent-tools`). Lands as `AGENT_TOOLS=<names>` in the config; the agent
+  filters with it both **schema AND execution** (`tool_enabled`) — a model can neither see
+  nor force a disabled tool. Verified: a subset -> boot
+  reports `tools=3` instead of 17, `list_dir` not present in the model.
+  Note: `bash` is the master key — whoever really wants to lock file/web
+  must also deselect `bash`.
 
-### Chat-UI
+### Chat UI
 
-### Tasks-Tab
-- Die geplante Arbeit (Backend + Worker + `tasks.json` gab es laengst, nur ohne
-  Oberflaeche) hat jetzt einen **Tab „Tasks"**: Auftrag = Nachricht an eine
-  Instanz, einmalig oder wiederkehrend (`every Nm|Nh|Nd`, `daily HH:MM`,
-  `hourly`). Liste mit Status/naechster Ausfuehrung/letztem Ergebnis, anlegen
-  und loeschen. Eine gestoppte Instanz wird fuer den Lauf gestartet. `/api/tasks`
-  ist admin-only (Gaeste geblockt).
+### Tasks tab
+- The scheduled work (backend + worker + `tasks.json` had long existed, just without
+  a UI) now has a **"Tasks" tab**: a job = a message to an
+  instance, one-off or recurring (`every Nm|Nh|Nd`, `daily HH:MM`,
+  `hourly`). A list with status/next run/last result, create
+  and delete. A stopped instance is started for the run. `/api/tasks`
+  is admin-only (guests blocked).
 
-- Farb-Emoji (📎 🖥️ 🔄 🤖) gegen Inline-SVGs getauscht. Ohne installierte
-  Emoji-Schrift erschienen sie als graue Kaestchen (Tofu) — jetzt rendern die
-  Icons ueberall. (Gemeldet: graues Kaestchen neben dem Sende-Knopf = 📎.)
+- Color emoji (📎 🖥️ 🔄 🤖) swapped for inline SVGs. Without an installed
+  emoji font they appeared as grey boxes (tofu) — now the icons
+  render everywhere. (Reported: a grey box next to the send button = 📎.)
 
-### Diagnose
-- „gemma kann nicht im Internet suchen" war **kein** Netz-Problem (Egress 200):
-  das freie gemma-Modell ruft `web_search` schlicht nicht auf, sondern erzaehlt
-  vom Suchen und leakt `<|channel>`-Tokens. Ein staerkeres tool-faehiges Modell
-  waehlen (Tab Models) oder das Tool im Prompt erzwingen.
-
-
-## 2026-08-09 (Security-Scan Agents + katfs)
-
-### katfs — Cross-Tenant-Loch geschlossen (kritisch)
-- Der Knoten band auf `0.0.0.0:8790` und **pruefte den Aufrufer nie**. Jede
-  microVM konnte `/shares` enumerieren und mit `?share=<beliebig>` jede aktive
-  Freigabe lesen/schreiben/loeschen — auch die eines anderen Operators. Belegt
-  im Test: Instanz `remote` las `id_rsa` aus einer fremden Freigabe und schrieb
-  eine Backdoor hinein.
-- Fix: Knoten bindet nur noch **127.0.0.1**. Gaeste gehen ueber den
-  Manager-Broker (`/api/katfs/ls|read|write|delete`), der die Instanz per
-  Source-IP erkennt und die Freigabe aus **deren** Config erzwingt. `&share=`
-  vom Gast wird ignoriert. Write auf 64 MiB gedeckelt. Der Agent ruft nicht mehr
-  den Knoten, sondern den Broker.
-- Verifiziert aus der Angreiferposition (kompromittierter Agent mit Shell):
-  Direktzugriff auf den Knoten → connection refused; fremde Freigabe via
-  `&share=` → unerreichbar; eigene Freigabe → funktioniert.
-
-### Netz — Gast-Isolation
-- microVMs konnten untereinander routen; ein Agent erreichte die ungeschuetzten
-  Ports 8080/7682 einer anderen Instanz. Fix: Tap-ACCEPTs auf Nicht-Pool-Ziele
-  beschraenkt + `pool->pool`-DROP. Test: `remote` → `gemma:8080` laeuft in
-  Timeout (geblockt), Internet-Egress unveraendert (200).
-
-### Manager — weitere Gast-Lecks zu
-- `/api/chats` und `/api/tasks` in die Gast-Wache aufgenommen.
-- `/api/memory/<instanz>`: der Name kommt fuer Gaeste aus der Source-IP, nicht
-  aus dem Pfad — keine fremden Gedaechtnisse mehr.
+### Diagnostics
+- "gemma can't search the internet" was **not** a network problem (egress 200):
+  the free gemma model simply doesn't call `web_search`, but talks
+  about searching and leaks `<|channel>` tokens. Pick a stronger tool-capable model
+  (Models tab) or force the tool in the prompt.
 
 
-Aenderungen am Manager und am Umfeld (katfs, openrouter-Agent). Neueste zuerst.
+## 2026-08-09 (Security scan Agents + katfs)
+
+### katfs — cross-tenant hole closed (critical)
+- The node bound to `0.0.0.0:8790` and **never checked the caller**. Every
+  microVM could enumerate `/shares` and, with `?share=<any>`, read/write/delete every active
+  share — even that of another operator. Proven
+  in the test: instance `remote` read `id_rsa` from a foreign share and wrote
+  a backdoor into it.
+- Fix: the node now binds only **127.0.0.1**. Guests go via the
+  manager broker (`/api/katfs/ls|read|write|delete`), which recognizes the instance by
+  source IP and enforces the share from **its** config. `&share=`
+  from the guest is ignored. Write capped at 64 MiB. The agent no longer calls
+  the node, but the broker.
+- Verified from the attacker's position (a compromised agent with a shell):
+  direct access to the node → connection refused; a foreign share via
+  `&share=` → unreachable; its own share → works.
+
+### Net — guest isolation
+- microVMs could route among each other; an agent reached the unprotected
+  ports 8080/7682 of another instance. Fix: tap ACCEPTs restricted to non-pool
+  targets + `pool->pool` DROP. Test: `remote` → `gemma:8080` runs into a
+  timeout (blocked), internet egress unchanged (200).
+
+### Manager — further guest leaks closed
+- `/api/chats` and `/api/tasks` added to the guest guard.
+- `/api/memory/<instance>`: for guests the name comes from the source IP, not
+  from the path — no more foreign memories.
+
+
+Changes to the manager and the surroundings (katfs, openrouter agent). Newest first.
 
 ## 2026-08-09
 
 ### Credentials
-- **API-Keys aus den Instanzen entfernt.** `SECRET_PARAMS` wird beim Anlegen und
-  beim Bau der Config-Disk verworfen; der Agent holt `OPENROUTER_API_KEY` zur
-  Laufzeit ueber `/api/secret/<name>`. Der Manager erkennt den Gast an der
-  Source-IP und prueft die Allowlist aus `secret-policy.json`. Altbestand wird
-  beim Start bereinigt.
-- **`/api/settings` abgedichtet.** Die Route gab die Keys im Klartext an jede
-  microVM heraus. Jetzt Gast-Wache auf `/api/settings` und `/api/instances`,
-  und gesetzte Geheimnisse gehen nur noch als `__unchanged__` heraus.
-- **MCP-Tokens aus den Instanzen entfernt.** Statt `MCP_CONFIG` mit eingesetzten
-  Werten wird `MCP_SERVERS=<namen>` gespeichert; der Agent holt die
-  Konfiguration ueber `/api/mcp-config`, der Manager setzt nur die per Policy
-  dieser Instanz freigegebenen Secrets ein. Migration hebt die Servernamen aus
-  dem alten Blob und traegt die noetigen Secrets pro Instanz ein.
-- `settings.json` auf 0600.
+- **API keys removed from the instances.** `SECRET_PARAMS` is discarded at creation and
+  when building the config disk; the agent fetches `OPENROUTER_API_KEY` at
+  runtime via `/api/secret/<name>`. The manager recognizes the guest by the
+  source IP and checks the allowlist from `secret-policy.json`. Existing state is
+  cleaned up at start.
+- **`/api/settings` sealed.** The route handed out the keys in cleartext to every
+  microVM. Now a guest guard on `/api/settings` and `/api/instances`,
+  and set secrets go out only as `__unchanged__`.
+- **MCP tokens removed from the instances.** Instead of `MCP_CONFIG` with inserted
+  values, `MCP_SERVERS=<names>` is stored; the agent fetches the
+  configuration via `/api/mcp-config`, and the manager inserts only the secrets released for
+  this instance by policy. A migration lifts the server names out of
+  the old blob and enters the necessary secrets per instance.
+- `settings.json` to 0600.
 
 ### katfs
-- **Mehrere Freigaben gleichzeitig.** Der Knoten hielt bisher genau eine; jede
-  neue verdraengte die alte, zwei teilende Rechner flappten gegeneinander. Jede
-  Freigabe meldet jetzt beim `hello` eine stabile **share-id** plus Ordnername,
-  Plattform und `readonly`. `GET /shares` listet sie, `?share=<id>` waehlt aus.
-- **Auswahl beim Anlegen.** Im Anlege-Formular steht die Freigabe als Dropdown,
-  der Wert landet als `KATFS_SHARE` in der Instanz-Config.
-- **`katfs-share`** — der Provider als natives Programm (`iroh-fs/client/`).
-  Loest das Firefox/Safari-Problem: dort gibt es keine API, die in einen echten
-  Nutzerordner schreibt. Stabile share-id aus Hostname + Pfad, Auto-Reconnect,
+- **Multiple shares at once.** The node used to hold exactly one; each
+  new one displaced the old one, two sharing machines flapped against each other. Each
+  share now reports at `hello` a stable **share-id** plus folder name,
+  platform and `readonly`. `GET /shares` lists them, `?share=<id>` selects.
+- **Selection at creation.** In the create form the share stands as a dropdown,
+  the value lands as `KATFS_SHARE` in the instance config.
+- **`katfs-share`** — the provider as a native program (`iroh-fs/client/`).
+  Solves the Firefox/Safari problem: there is no API there that writes into a real
+  user folder. Stable share-id from hostname + path, auto-reconnect,
   `--ro`.
-- **`delete`** als fuenfte Operation, mit drei Sperren: Wurzel der Freigabe,
-  `..`, und nicht-leere Verzeichnisse ohne `recursive=1`.
-- Freigabe-Seite unter **`/katfs/`** durchgereicht — gleiche Herkunft, gleiche
-  Auth und damit HTTPS, das die File System Access API zwingend braucht.
-  `?key=<node-id>` setzt einen fremden Knoten ein.
-- Fehlermeldungen tragen jetzt ihre Ursache (`Directory not empty` statt nur
-  `delete <pfad>`), auch bis in den Agenten.
+- **`delete`** as a fifth operation, with three locks: the root of the share,
+  `..`, and non-empty directories without `recursive=1`.
+- The share page passed through under **`/katfs/`** — same origin, same
+  auth and thus HTTPS, which the File System Access API strictly requires.
+  `?key=<node-id>` inserts a foreign node.
+- Error messages now carry their cause (`Directory not empty` instead of just
+  `delete <path>`), all the way into the agent too.
 
-### Manager-UI
-- **Neu aufgesetzt** auf das Design-System *Industry*: Barlow, Blueprint-Rahmen,
-  Tabs statt einer langen Seite, hash-geroutet.
-- **Ordner-Browser** hinter dem 📁 in jeder Mount-Zeile (`/api/browse`, nur
-  Verzeichnisnamen, admin-only). Der `prompt()` fuer bestehende Instanzen ist
-  einem richtigen Dialog gewichen.
-- **Tab „Models"** — voller OpenRouter-Katalog live, daraus die Shortlist fuers
-  Anlege-Formular (`models.json`). Vorher eine Konstante im Quelltext.
-- **Tab „Sharing"** — katfs-Status, Freigaben, Sharing key.
-- `deepseek/deepseek-v4-flash-0731` in die Auswahl aufgenommen.
+### Manager UI
+- **Rebuilt** onto the design system *Industry*: Barlow, blueprint frames,
+  tabs instead of one long page, hash-routed.
+- **Folder browser** behind the 📁 in every mount row (`/api/browse`, only
+  directory names, admin-only). The `prompt()` for existing instances has
+  given way to a real dialog.
+- **"Models" tab** — the full OpenRouter catalog live, from it the shortlist for the
+  create form (`models.json`). Previously a constant in the source.
+- **"Sharing" tab** — katfs status, shares, sharing key.
+- `deepseek/deepseek-v4-flash-0731` added to the selection.
 
-### Betrieb
-- **Rootfs-Rebuild ist atomar.** Vorher `cp` in die Zieldatei — hielt eine VM
-  sie offen, endete der naechste Boot im ext4-Checksum-Panic. Jetzt danebenlegen
-  und per `mv` umhaengen, plus Warnung bei laufender Instanz.
-- `KillMode=process` in der Unit, damit ein Manager-Neustart nicht alle
-  laufenden microVMs mitreisst. **Noch nicht installiert** — siehe offene Punkte.
-- `node/build.sh` und `client/build.sh` fuer katfs (Docker, kein lokales Rust).
-- `build-openrouter-rootfs.sh` findet `mkfs.ext4` auch ohne root in der PATH.
+### Operations
+- **The rootfs rebuild is atomic.** Previously `cp` into the target file — if a VM
+  held it open, the next boot ended in an ext4 checksum panic. Now put beside
+  and rehang via `mv`, plus a warning on a running instance.
+- `KillMode=process` in the unit, so that a manager restart doesn't tear down all
+  running microVMs. **Not installed yet** — see the open points.
+- `node/build.sh` and `client/build.sh` for katfs (Docker, no local Rust).
+- `build-openrouter-rootfs.sh` finds `mkfs.ext4` even without root in the PATH.

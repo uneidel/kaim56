@@ -73,7 +73,7 @@ def delete_mcp(name):
 
 
 def mcp_required_secrets(names):
-    """Welche ${SECRET} die gewaehlten Katalog-Eintraege ueberhaupt brauchen."""
+    """Which ${SECRET} the selected catalog entries actually need."""
     cat = {m.get("name"): m for m in load_mcps()}
     need = set()
     for n in names:
@@ -86,7 +86,7 @@ def mcp_required_secrets(names):
 
 
 def mcp_hub_call(inst, server, payload):
-    """JSON-RPC eines Gastes an 'seinen' MCP-Server im Hub durchreichen.
+    """Pass a guest's JSON-RPC through to 'its' MCP server in the hub.
 
     Authorization HERE, not in the hub: the server must be in the instance's
     MCP_SERVERS. The manager builds argv/env from catalog + policy secrets —

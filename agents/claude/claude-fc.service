@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/ulrich/claude-signal-firecracker
-# Netz vor jedem Start (idempotent) einrichten, dann VM starten:
+# Set up networking before each start (idempotent), then start the VM:
 ExecStartPre=/home/ulrich/claude-signal-firecracker/net.sh
 ExecStart=/home/ulrich/claude-signal-firecracker/run.sh
 Restart=always

@@ -1,5 +1,5 @@
-# Auf .198 in die Traefik-Dynamic-Config (File-Provider) einfügen —
-# dieselbe Datei/Verzeichnis, in der auch rtr-agents/srv-agents/agents-auth stehen.
+# On .198, add into the Traefik dynamic config (file provider) —
+# the same file/directory that also holds rtr-agents/srv-agents/agents-auth.
 http:
   routers:
     rtr-katfs:

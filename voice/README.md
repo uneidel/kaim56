@@ -1,27 +1,27 @@
-# Sprachdienst
+# Voice service
 
-Erkennung (**Parakeet TDT v3**, ONNX int8) und Ausgabe (**Piper**, Stimme
-Thorsten) als ein Host-Dienst. Auf dem i5-10500T gemessen: beides rund
-**Faktor 0,07–0,1 der Echtzeit** — 6,5 s Audio brauchen etwa 0,6 s.
+Recognition (**Parakeet TDT v3**, ONNX int8) and output (**Piper**, voice
+Thorsten) as a single host service. Measured on the i5-10500T: both around
+**a factor of 0.07–0.1 of real time** — 6.5 s of audio take about 0.6 s.
 
-## Warum auf dem Host und nicht in den microVMs
+## Why on the host and not in the microVMs
 
-Die Modelle belegen zusammen gut 700 MB. In den Gästen läge das pro Instanz im
-Speicher (die haben 1–2 GB), und jede Änderung wäre ein Rootfs-Neubau je
-Vorlage. Auf dem Host reicht ein `docker restart`.
+Together the models take a good 700 MB. In the guests that would sit in memory
+per instance (they have 1–2 GB), and every change would be a rootfs rebuild per
+template. On the host a single `docker restart` is enough.
 
-## Warum nur Loopback
+## Why loopback only
 
-Der Dienst kennt keine Rechteverwaltung — er soll von außen gar nicht erreichbar
-sein. Die einzige Tür ist der Manager, der den Anrufer schon kennt (Basic-Auth
-bzw. Quell-IP der VM) und Roh-Audio unverändert durchreicht.
+The service has no permission management — it should not be reachable from
+outside at all. The only door is the manager, which already knows the caller
+(basic auth or the VM's source IP) and passes raw audio through unchanged.
 
-**Wichtig:** Im Container wird an `0.0.0.0` gebunden, die Beschränkung sitzt auf
-der Host-Seite der Portzuordnung (`-p 127.0.0.1:8770:8770`). Dockers
-Weiterleitung erreicht das Container-Loopback *nicht* — bindet man dort auf
-127.0.0.1, ist der Dienst von außerhalb des Containers tot.
+**Important:** In the container it binds to `0.0.0.0`; the restriction sits on
+the host side of the port mapping (`-p 127.0.0.1:8770:8770`). Docker's
+forwarding does *not* reach the container loopback — if you bind to
+127.0.0.1 there, the service is dead from outside the container.
 
-## Starten
+## Starting
 
 ```bash
 docker build -t kaim56-voice .
@@ -31,20 +31,20 @@ docker run -d --name kaim56-voice --restart unless-stopped \
   kaim56-voice
 ```
 
-Das Volume hält das Parakeet-Modell (640 MB) außerhalb des Images; ohne es lädt
-der erste Start es neu herunter.
+The volume keeps the Parakeet model (640 MB) outside the image; without it the
+first start downloads it again.
 
-## Schnittstelle
+## Interface
 
 | | | |
 |---|---|---|
-| `POST /stt` | Audio, beliebiges Format | `{"text","seconds","took"}` |
+| `POST /stt` | audio, any format | `{"text","seconds","took"}` |
 | `POST /tts` | `{"text": …}` | `audio/wav` |
 | `GET /health` | | `{"ready","voice","asr"}` |
 
-Über den Manager als `/api/stt` und `/api/tts` — für die Weboberfläche, die App
-und (per Positivliste freigeschaltet) für die Agenten selbst.
+Through the manager as `/api/stt` and `/api/tts` — for the web frontend, the app
+and (enabled via allowlist) for the agents themselves.
 
-`ffmpeg` im Container wandelt jedes Eingangsformat auf 16-kHz-Mono-PCM. Ohne
-diesen Schritt scheitert die Erkennung an allem, was kein WAV ist — Signal
-liefert Opus, Android AAC.
+`ffmpeg` in the container converts every input format to 16 kHz mono PCM. Without
+this step, recognition fails on anything that isn't WAV — Signal
+delivers Opus, Android AAC.

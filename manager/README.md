@@ -1,243 +1,243 @@
-# firecracker — microVM-Plattform + Web-Manager
+# firecracker — microVM platform + web manager
 
-Verwaltet **1..x Firecracker-microVMs** über eine kleine Web-UI. Erste Instanz =
-die Signal↔Claude-Code-Bridge (`claude`).
+Manages **1..x Firecracker microVMs** through a small web UI. First instance =
+the Signal↔Claude Code bridge (`claude`).
 
 ```
 firecracker/
-├── bin/           firecracker (v1.16.1 ✅) + vmlinux (Kernel, s. u.)
-├── instances/     <name>.json + <name>-rootfs.ext4  (je Instanz)
-├── run/           Laufzeit (sock/pid/log/config) – automatisch
-├── manager.py     Web-UI + API (Port 8700), laeuft als root
-├── chatui.py      Chat-Oberflaeche (vom Manager unter /chat ausgeliefert)
-├── firecracker-manager.service   systemd-Autostart
-└── traefik-firecracker.yml       Exposé via manager.example.com
+├── bin/           firecracker (v1.16.1 ✅) + vmlinux (kernel, see below)
+├── instances/     <name>.json + <name>-rootfs.ext4  (per instance)
+├── run/           runtime (sock/pid/log/config) – automatic
+├── manager.py     web UI + API (port 8700), runs as root
+├── chatui.py      chat frontend (served by the manager under /chat)
+├── firecracker-manager.service   systemd autostart
+└── traefik-firecracker.yml       exposure via manager.example.com
 ```
 
-## Chat-Oberfläche (`/chat`)
-Chatten mit den Agenten läuft über die Seite **`/chat`** des Managers — gleiche
-Herkunft, gleiche Traefik-Auth, kein Extra-Dienst und kein Extra-Port. Der Button
-**💬 Chat** in der Instanz-Tabelle öffnet `/chat?i=<instanz>`.
+## Chat frontend (`/chat`)
+Chatting with the agents runs through the manager's **`/chat`** page — same
+origin, same Traefik auth, no extra service and no extra port. The
+**💬 Chat** button in the instance table opens `/chat?i=<instance>`.
 
-Kann: Verlauf-Seitenleiste, Streaming-Antworten, Markdown mit Code-Blöcken +
-Kopieren, Bild-Anhang (Vision), Abbrechen, Hell/Dunkel, mobil.
+Features: history sidebar, streaming responses, Markdown with code blocks +
+copy, image attachment (vision), cancel, light/dark, mobile.
 
-| Endpoint | Bedeutung |
+| Endpoint | Meaning |
 |---|---|
-| `GET /chat[?i=<instanz>]` | die Oberfläche (`chatui.py`) |
-| `POST /api/chat/<instanz>` | `{message, image?}` → Antwort-Tokens als roher Text (Stream) |
+| `GET /chat[?i=<instance>]` | the frontend (`chatui.py`) |
+| `POST /api/chat/<instance>` | `{message, image?}` → response tokens as raw text (stream) |
 
 Details:
-- Chatbar ist jede Instanz mit `TRANSPORT=web`; eine **gestoppte Instanz startet
-  beim ersten Prompt** (wartet auf Guest-Port 8080, max. 120 s).
-- Gestreamt wird über `/api/chat/stream` der Bridge, sofern sie das kann
-  (openrouter); sonst kommt die Antwort als ein Stück.
-- Der **Verlauf liegt im localStorage** des Browsers — die microVM führt ihre
-  eigene Session (`claude --resume` bzw. `_history`), deshalb geht pro Turn nur
-  die neue Nachricht raus. Ein neuer Chat startet *keine* neue Agent-Session;
-  dafür gibt es 🔄 im Kopf der Seite (stoppt + startet die Instanz).
-- Die alten Chat-Seiten der Bridges bleiben unter `/i/<name>/` erreichbar
-  (Fallback; die Agent-zu-Agent-API `/i/<name>/api/chat` nutzt denselben Pfad).
+- The chat targets any instance with `TRANSPORT=web`; a **stopped instance starts
+  on the first prompt** (waits for guest port 8080, max. 120 s).
+- Streaming goes through the bridge's `/api/chat/stream` if it supports it
+  (openrouter); otherwise the response comes as a single chunk.
+- The **history lives in the browser's localStorage** — the microVM keeps its
+  own session (`claude --resume` or `_history`), so only the new message goes
+  out per turn. Starting a new chat does *not* start a new agent session;
+  for that there is 🔄 at the top of the page (stops + starts the instance).
+- The old chat pages of the bridges remain reachable under `/i/<name>/`
+  (fallback; the agent-to-agent API `/i/<name>/api/chat` uses the same path).
 
-## Netz-Modell (pro Instanz aus `index`)
-`host 172.30.<index>.1/30` · `guest 172.30.<index>.2/30` · `tap fc<index>` · MASQUERADE via `eth0`, Gast-DNS Pi-hole.
+## Network model (per instance from `index`)
+`host 172.30.<index>.1/30` · `guest 172.30.<index>.2/30` · `tap fc<index>` · MASQUERADE via `eth0`, guest DNS Pi-hole.
 
-## Instanz-JSON (`instances/<name>.json`)
+## Instance JSON (`instances/<name>.json`)
 ```json
 { "name":"claude", "index":1, "vcpus":2, "mem_mib":1536,
   "rootfs":"instances/claude-rootfs.ext4",
-  "extra_drives":[ {"path":"/pfad/data.ext4","readonly":false} ] }
+  "extra_drives":[ {"path":"/path/data.ext4","readonly":false} ] }
 ```
-Neue Instanz = neue JSON mit anderem `index` + eigenes `rootfs.ext4`.
+New instance = new JSON with a different `index` + its own `rootfs.ext4`.
 
-## Host-Ordner in die VM bekommen
-Firecracker kann **keine** Host-Ordner bind-mounten (nur Block-Devices + Netz):
-- **Extra-Disk:** ein ext4-Image als `extra_drives` anhängen (Snapshot bzw. Disk, die nur der Gast beschreibt).
-- **Live-Share:** im Gast einen **NFS/SMB-Share** mounten (echter Live-Ordner) — der saubere Weg, wenn Claude auf einen Host-Ordner soll. Dazu auf dem Host NFS exportieren und in `guest-init.sh` der Instanz `mount -t nfs …` ergänzen.
+## Getting host folders into the VM
+Firecracker **cannot** bind-mount host folders (only block devices + network):
+- **Extra disk:** attach an ext4 image as `extra_drives` (snapshot or disk that only the guest writes to).
+- **Live share:** mount an **NFS/SMB share** inside the guest (a real live folder) — the clean way when Claude needs a host folder. For that, export NFS on the host and add `mount -t nfs …` to the instance's `guest-init.sh`.
 
-Host-Pfade tippt man nicht mehr: **📁** in der Mount-Zeile (beim Anlegen wie in der
-Instanz-Tabelle) öffnet einen **Ordner-Browser** über `GET /api/browse?path=…`
-(nur Verzeichnisnamen, admin-only, versteckte Ordner ausgeblendet — direkt tippen
-geht weiter). Der Gast-Pfad wird als `/mnt/<ordnername>` vorgeschlagen.
+You no longer type host paths by hand: **📁** in the mount row (both when creating and in the
+instance table) opens a **folder browser** via `GET /api/browse?path=…`
+(directory names only, admin-only, hidden folders excluded — typing directly
+still works). The guest path is suggested as `/mnt/<foldername>`.
 
-## Policy & Audit (Tab „Policy")
-Eine Ansicht pro Instanz: was sie **darf** (Internet-Toggle, Werkzeug-Allowlist
-zum Bearbeiten, erlaubte Secrets, MCP, Modell) und was sie **tut** — Knopf
-*Aktivität* zeigt die zuletzt aufgerufenen Tools und Ziele (URL/Pfad/Query) aus
-dem Audit-Log. Der Agent meldet jeden Tool-Aufruf an `/api/audit`; gespeichert
-wird `audit/<name>.jsonl` auf dem Host (ueberlebt Neustarts, ohne Secret-Werte).
+## Policy & audit (tab "Policy")
+One view per instance: what it **may** do (internet toggle, editable tool
+allowlist, allowed secrets, MCP, model) and what it **does** — the
+*Activity* button shows the most recently invoked tools and targets (URL/path/query) from
+the audit log. The agent reports every tool call to `/api/audit`; it is stored
+as `audit/<name>.jsonl` on the host (survives restarts, without secret values).
 `GET /api/policy`, `GET /api/audit/<name>` — admin-only.
 
-## Tasks (Tab „Tasks")
-Geplante Arbeit pro Instanz: ein **Auftrag** (die Nachricht an den Agenten) laeuft
-einmalig oder wiederkehrend. Zeitplan-Formate: `every Nm|Nh|Nd`, `daily HH:MM`,
-`hourly`; leer = einmal sofort. Ein Hintergrund-Worker im Manager fuehrt faellige
-Tasks aus (startet die Instanz bei Bedarf) und plant wiederkehrende neu.
+## Tasks (tab "Tasks")
+Scheduled work per instance: a **job** (the message to the agent) runs
+once or recurring. Schedule formats: `every Nm|Nh|Nd`, `daily HH:MM`,
+`hourly`; empty = once immediately. A background worker in the manager runs due
+tasks (starting the instance if needed) and reschedules recurring ones.
 `GET/POST /api/tasks`, `POST /api/tasks/<id>/delete` — admin-only.
 
-## Capabilities pro Instanz
-Beim Anlegen: **Internet-Zugang** (an/aus) und eine **Werkzeug-Allowlist**
-(Checkboxen). Internet aus = die VM erreicht nur den Manager-Broker, nicht LAN/Web
-und damit nicht den LLM. Live umschaltbar in der Tabelle (🌐/🚫). Die Tool-Auswahl
-landet als `AGENT_TOOLS` in der Config; der Agent filtert Schema und Ausfuehrung.
-`bash` ist der Generalschluessel — zum echten Sperren auch `bash` abwaehlen.
+## Capabilities per instance
+On creation: **internet access** (on/off) and a **tool allowlist**
+(checkboxes). Internet off = the VM only reaches the manager broker, not LAN/web
+and therefore not the LLM. Toggleable live in the table (🌐/🚫). The tool selection
+lands as `AGENT_TOOLS` in the config; the agent filters schema and execution.
+`bash` is the master key — to truly lock things down, deselect `bash` as well.
 
-## Modell-Auswahl (Tab „Models")
-Der Tab zieht den **vollen OpenRouter-Katalog live** (~400 Modelle, 10 min
-gecacht, *Refresh catalog* umgeht den Cache) und laesst daraus die **Shortlist**
-ankreuzen, die beim Anlegen einer Instanz im Modell-Dropdown steht. Gespeichert
-wird sie in `models.json`; fehlt die Datei, ist die Konstante `CURATED` in
-`manager.py` die Erstbefuellung. Speichern wirkt sofort — kein Neustart.
+## Model selection (tab "Models")
+The tab pulls the **full OpenRouter catalog live** (~400 models, cached for
+10 min, *Refresh catalog* bypasses the cache) and lets you tick the **shortlist**
+from it that appears in the model dropdown when creating an instance. It is saved
+in `models.json`; if the file is missing, the `CURATED` constant in
+`manager.py` provides the initial fill. Saving takes effect immediately — no restart.
 
-Filter: Textsuche ueber id und Name, *tool calling only* (Vorgabe) und
-*selected only*. **Achtung:** Das openrouter-Template zieht die Liste mit
-`tools=1`; ein Modell ohne Tool-Calling bleibt also unsichtbar, auch wenn es
-angekreuzt ist — die Spalte zeigt es deshalb an.
+Filters: text search over id and name, *tool calling only* (default) and
+*selected only*. **Note:** The openrouter template pulls the list with
+`tools=1`; a model without tool calling therefore stays invisible, even if it
+is ticked — which is why the column indicates it.
 
-| Endpoint | Bedeutung |
+| Endpoint | Meaning |
 |---|---|
-| `GET /api/openrouter-models[?refresh=1&tools=1&relevant=1]` | Katalog (`relevant=1` = nur Shortlist) |
-| `GET /api/models` | die gespeicherte Shortlist |
-| `POST /api/models` | `{curated:[id,…]}` speichern |
+| `GET /api/openrouter-models[?refresh=1&tools=1&relevant=1]` | catalog (`relevant=1` = shortlist only) |
+| `GET /api/models` | the saved shortlist |
+| `POST /api/models` | save `{curated:[id,…]}` |
 
-## katfs — Ordner aus dem Browser (Tab „Sharing")
-Kein Host-Ordner, sondern das Verzeichnis **des Rechners, an dem du gerade sitzt**:
-`iroh-fs/` gibt es per P2P an die Agenten (`remote_ls` / `remote_read` / `remote_write`).
-Der Manager reicht die Freigabe-Seite unter **`/katfs/`** durch — gleiche Herkunft,
-gleiche Auth und damit **HTTPS**, das die File System Access API zwingend braucht;
-der SSH-Tunnel bzw. die eigene `katfs.example.com`-Route aus `iroh-fs/README.md` ist
-dafür nicht mehr nötig. Der Tab zeigt Knoten-Status und ob gerade ein Browser teilt
-(`GET /api/katfs/status`). **Kein Mount:** ist der Tab zu, ist der Ordner weg —
-für dauerhafte Ordner die NFS-Mounts oben nehmen.
+## katfs — folders from the browser (tab "Sharing")
+Not a host folder, but the directory **of the machine you're sitting at right now**:
+`iroh-fs/` shares it via P2P with the agents (`remote_ls` / `remote_read` / `remote_write`).
+The manager passes the sharing page through under **`/katfs/`** — same origin,
+same auth and therefore **HTTPS**, which the File System Access API strictly requires;
+the SSH tunnel or the dedicated `katfs.example.com` route from `iroh-fs/README.md` is
+no longer needed for that. The tab shows node status and whether a browser is currently sharing
+(`GET /api/katfs/status`). **No mount:** close the tab and the folder is gone —
+for permanent folders use the NFS mounts above.
 
-**Sharing key** = die **node-id** des Knotens, zu dem der Browser sich verbindet
-(iroh parst sie als `EndpointId`: 64 Hex-Zeichen — ein *Ticket* akzeptiert die
-WASM-Bruecke trotz des Platzhaltertexts auf der Seite nicht). Im Tab steht sie
-zum Kopieren und ist editierbar: *Share a folder…* öffnet dann
-`/katfs/?key=<node-id>`, und der Proxy setzt genau diesen Wert in das Feld
-`#nodeid` der Freigabe-Seite. Damit kann derselbe Browser einen Ordner auch an
-einen **fremden** katfs-Knoten liefern; *Reset* holt die eigene node-id zurück.
+**Sharing key** = the **node-id** of the node the browser connects to
+(iroh parses it as `EndpointId`: 64 hex characters — the WASM bridge does *not*
+accept a *ticket*, despite the placeholder text on the page). It is shown in the tab
+for copying and is editable: *Share a folder…* then opens
+`/katfs/?key=<node-id>`, and the proxy sets exactly this value in the
+`#nodeid` field of the sharing page. This lets the same browser deliver a folder to
+a **foreign** katfs node as well; *Reset* brings back its own node-id.
 
-**Freigeben geht auf zwei Wegen.** Im **Browser** nur mit Chromium/Edge über
-HTTPS — Firefox und Safari haben keine API, die in einen echten Nutzerordner
-schreibt. Wer read/write braucht (oder Firefox benutzt), nimmt stattdessen
-`iroh-fs/dist/katfs-share <node-id> <ordner>`: derselbe Provider als natives
-Programm, ohne Browser, mit Schreibzugriff und stabiler share-id.
+**Sharing works two ways.** In the **browser** only with Chromium/Edge over
+HTTPS — Firefox and Safari have no API that writes into a real user folder.
+Anyone who needs read/write (or uses Firefox) instead uses
+`iroh-fs/dist/katfs-share <node-id> <folder>`: the same provider as a native
+program, without a browser, with write access and a stable share-id.
 
-**Mehrere Freigaben, Auswahl beim Anlegen.** Der Knoten haelt beliebig viele
-Freigaben gleichzeitig; jede meldet beim Verbinden eine **share-id** (im Browser
-aus dem `localStorage`, bei `katfs-share` aus Hostname + Pfad abgeleitet) plus
-Ordnername, Plattform und ob sie read-only ist.
-Der Sharing-Tab listet sie, und im Anlege-Formular steht **katfs share** als
-Auswahl → der gewaehlte Wert landet als `KATFS_SHARE` in der Instanz-Config, die
-Agent-Tools haengen ihn als `&share=…` an. Ohne Auswahl bedient der Knoten die
-Anfrage nur, solange **genau eine** Freigabe aktiv ist — bei mehreren nennt er
-die ids, statt zu raten.
+**Multiple shares, selection on creation.** The node holds any number of
+shares at once; each announces a **share-id** on connect (in the browser
+from `localStorage`, for `katfs-share` derived from hostname + path) plus
+folder name, platform and whether it is read-only.
+The Sharing tab lists them, and the creation form has **katfs share** as a
+selection → the chosen value lands as `KATFS_SHARE` in the instance config, and the
+agent tools append it as `&share=…`. Without a selection, the node serves the
+request only as long as **exactly one** share is active — with several it names
+the ids instead of guessing.
 
-Die **node-id** ist etwas anderes und pro Instanz **kein** Wert: der Agent leitet
-seinen Knoten aus der eigenen IP ab (`_katfs_base()` in `openrouter-agent/agent.py`
-→ `http://<gateway>:8790`), die node-id sagt nur dem freigebenden *Browser*, wohin
-er sich verbindet. Soll eine Instanz einen *anderen* Knoten benutzen, braucht es
-eine Adresse: `KATFS_URL` in der Instanz-Config (z. B. `http://10.0.0.10:8790`).
+The **node-id** is something different and is **not** a per-instance value: the agent
+derives its node from its own IP (`_katfs_base()` in `openrouter-agent/agent.py`
+→ `http://<gateway>:8790`); the node-id only tells the sharing *browser* where
+to connect. If an instance should use a *different* node, it needs
+an address: `KATFS_URL` in the instance config (e.g. `http://10.0.0.10:8790`).
 
-⚠️ `KATFS_SHARE`/`KATFS_URL` wertet erst ein **neu gebautes openrouter-Rootfs**
-aus (`agent.py` steckt im Image). Der Knoten selbst wird mit
-`iroh-fs/node/build.sh` gebaut (Docker, kein lokales Rust noetig).
+⚠️ `KATFS_SHARE`/`KATFS_URL` is only evaluated by a **freshly built openrouter rootfs**
+(`agent.py` is baked into the image). The node itself is built with
+`iroh-fs/node/build.sh` (Docker, no local Rust needed).
 
-## Agent-Ordner (NFS-Live-Share)
-`/home/ulrich/agent` wird per **NFSv4** live in die `claude`-VM als `/root/workspace`
-gemountet — Claude arbeitet dort, die Dateien liegen auf dem Host. Einrichten (root):
+## Agent folder (NFS live share)
+`/home/ulrich/agent` is mounted live via **NFSv4** into the `claude` VM as `/root/workspace`
+— Claude works there, the files live on the host. Setup (root):
 ```
 sudo /home/ulrich/firecracker/setup-nfs-host.sh
 ```
-Der Gast mountet beim Boot automatisch `<gateway>:/ -> /root/workspace`
-(gesteuert über `AGENT_NFS`/`AGENT_EXPORT` in `claude-signal-firecracker/config.env`).
-Gast-Writes erscheinen auf dem Host als `ulrich` (all_squash/anonuid=1000).
+On boot the guest automatically mounts `<gateway>:/ -> /root/workspace`
+(controlled via `AGENT_NFS`/`AGENT_EXPORT` in `claude-signal-firecracker/config.env`).
+Guest writes appear on the host as `ulrich` (all_squash/anonuid=1000).
 
 ## Setup
-**0) NFS-Agent-Share** (siehe oben): `sudo ./setup-nfs-host.sh`
+**0) NFS agent share** (see above): `sudo ./setup-nfs-host.sh`
 
-**1) Kernel holen** — bereits erledigt (`bin/vmlinux` = 6.1.128, 40 MB). Falls neu nötig:
+**1) Get the kernel** — already done (`bin/vmlinux` = 6.1.128, 40 MB). If a new one is needed:
 ```
 ! curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128" -o /home/ulrich/firecracker/bin/vmlinux
 ```
-**2) Claude-Rootfs bauen** (docker build → du) und ablegen:
+**2) Build the Claude rootfs** (docker build → you) and place it:
 ```
 ! cd /home/ulrich/claude-signal-firecracker && ./build.sh && cp rootfs.ext4 /home/ulrich/firecracker/instances/claude-rootfs.ext4
 ```
-**3) Manager starten** (root):
+**3) Start the manager** (root):
 ```
 sudo cp /home/ulrich/firecracker/firecracker-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
 ```
-→ UI erreichbar unter `http://10.0.0.10:8700` (im LAN) und via Traefik unter
-`https://manager.example.com` (nach Einbau von `traefik-firecracker.yml`).
+→ UI reachable at `http://10.0.0.10:8700` (on the LAN) and via Traefik at
+`https://manager.example.com` (after installing `traefik-firecracker.yml`).
 
-## Exposé (manager.example.com)
-`traefik-firecracker.yml` in den **File-Provider-Ordner** des Traefik-Stacks legen
-(im traefik-Container `/etc/traefik/...`). Basic-Auth-Hash mit
-`htpasswd -nbB admin 'PW'` erzeugen. **Wichtig:** Der Manager steuert VMs als root —
-**nie ohne Auth exponieren** (Basic-Auth oder euer pocket-id/SSO davor).
+## Exposure (manager.example.com)
+Place `traefik-firecracker.yml` in the **file provider folder** of the Traefik stack
+(inside the traefik container `/etc/traefik/...`). Generate the basic-auth hash with
+`htpasswd -nbB admin 'PW'`. **Important:** The manager controls VMs as root —
+**never expose it without auth** (basic auth or your pocket-id/SSO in front).
 
-## Changelog & Security (Tab „Changelog")
-Der Tab zeigt oben die **offenen Befunde** aus `security.json` — nach Schweregrad
-sortiert, mit Ort, Beschreibung und Fix-Vorschlag — und darunter den gerenderten
-`CHANGELOG.md`. Behobenes ist ausgeblendet und laesst sich einblenden.
+## Changelog & security (tab "Changelog")
+The tab shows the **open findings** from `security.json` at the top — sorted by
+severity, with location, description and suggested fix — and below that the rendered
+`CHANGELOG.md`. Resolved items are hidden and can be revealed.
 
-Ueber die UI laesst sich **nur der Status** umschalten (offen/erledigt); Text und
-Bewertung stehen in der Datei, damit ein Befund nicht per Klick verschwindet.
-Beide Routen sind admin-only — die Liste beschreibt Loecher, Gaeste lesen sie
-nicht mit.
+Through the UI **only the status** can be toggled (open/done); text and
+assessment live in the file, so a finding can't disappear on a click.
+Both routes are admin-only — the list describes holes, guests do not read
+along.
 
-| Endpoint | Bedeutung |
+| Endpoint | Meaning |
 |---|---|
-| `GET /api/changelog` | `CHANGELOG.md` als Text |
+| `GET /api/changelog` | `CHANGELOG.md` as text |
 | `GET /api/security` | `{issues:[…]}` |
-| `POST /api/security` | `{issues:[{id,status}]}` — nur der Status |
+| `POST /api/security` | `{issues:[{id,status}]}` — the status only |
 
-## Credentials (Secret-Broker)
-Zugangsdaten stehen **nicht** in der Instanz-Config und damit nicht auf der
-Config-Disk der microVM. `SECRET_PARAMS` in `manager.py`
-(`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) wird beim Anlegen
-verworfen und beim Bau der Config-Disk ein zweites Mal — aeltere Instanz-JSONs
-bereinigt der Manager beim Start selbst (`migrate_secrets_out_of_instances`).
+## Credentials (secret broker)
+Access credentials are **not** in the instance config and therefore not on the
+config disk of the microVM. `SECRET_PARAMS` in `manager.py`
+(`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is discarded on
+creation and a second time when building the config disk — older instance JSONs
+are cleaned by the manager itself at startup (`migrate_secrets_out_of_instances`).
 
-Der Agent holt den Key stattdessen zur Laufzeit: `ensure_or_key()` fragt
-`GET /api/secret/OPENROUTER_API_KEY` beim Manager an. Der erkennt den Gast an
-der **Source-IP** (`instance_by_ip`), prueft die Allowlist aus
-`secret-policy.json` (Default deny, `by_template` ∪ `by_instance`) und liefert
-nur dann den Wert. Aufrufe, die zu keiner Instanz gehoeren — etwa vom Host —
-bekommen `403 nicht erlaubt`.
+The agent fetches the key at runtime instead: `ensure_or_key()` requests
+`GET /api/secret/OPENROUTER_API_KEY` from the manager. It recognizes the guest by
+its **source IP** (`instance_by_ip`), checks the allowlist from
+`secret-policy.json` (default deny, `by_template` ∪ `by_instance`) and only then
+delivers the value. Calls that belong to no instance — e.g. from the host —
+get `403 not allowed`.
 
-Quelle der Werte ist `secret_store()`: der Secret-Store
-(`~/.config/kat56/secrets.env`, 0600) und ergaenzend die Manager-Settings, wo die
-LLM-Keys im Tab **Settings** gepflegt werden (`settings.json`, jetzt 0600).
+The source of the values is `secret_store()`: the secret store
+(`~/.config/kat56/secrets.env`, 0600) and, in addition, the manager settings, where the
+LLM keys are maintained in the **Settings** tab (`settings.json`, now 0600).
 
-**MCP-Server ebenso.** Frueher stand in `MCP_CONFIG` die fertige Konfiguration
-*mit eingesetzten Tokens* — in `hass.json` das HA-Bearer-Token, das damit auch auf
-der Config-Disk lag. Gespeichert wird jetzt nur `MCP_SERVERS=<name>,<name>`; der
-Agent holt beim Start `GET /api/mcp-config` und bekommt die Konfiguration mit den
-Werten, die die Policy **dieser Instanz** freigibt. Nicht Freigegebenes bleibt als
-`${PLATZHALTER}` stehen und wird als `unresolved` gemeldet, statt still zu
-scheitern. Der Endpunkt beantwortet nur Anfragen aus einer Instanz — vom Host aus
-`403 nur fuer Gaeste`.
+**MCP servers likewise.** Previously `MCP_CONFIG` held the finished configuration
+*with the tokens inserted* — in `hass.json` the HA bearer token, which therefore also
+lay on the config disk. Now only `MCP_SERVERS=<name>,<name>` is stored; the
+agent fetches `GET /api/mcp-config` on startup and gets the configuration with the
+values that **this instance's** policy releases. Anything not released stays as
+`${PLACEHOLDER}` and is reported as `unresolved`, instead of failing
+silently. The endpoint answers requests only from within an instance — from the host it
+returns `403 guests only`.
 
-Der Manager hebt Altbestand beim Start selbst: `migrate_mcp_config_out_of_instances`
-liest die Servernamen aus dem alten Blob, schreibt `MCP_SERVERS` und traegt die
-noetigen Secrets **pro Instanz** in `by_instance` ein (also `hass -> HA_TOKEN`,
-nicht fuer alle openrouter-Agenten).
+The manager migrates legacy state at startup itself: `migrate_mcp_config_out_of_instances`
+reads the server names from the old blob, writes `MCP_SERVERS` and enters the
+required secrets **per instance** into `by_instance` (i.e. `hass -> HA_TOKEN`,
+not for all openrouter agents).
 
-Folge fuer den Betrieb: Ohne Eintrag in `secret-policy.json` startet ein
-openrouter-Agent zwar, meldet aber `FATAL: OPENROUTER_API_KEY fehlt … vom
-Secret-Broker` und kann nicht antworten. Ein MCP-Server ohne freigegebenes Token
-kommt hoch, aber ohne Zugang. Der Tab **Secrets** ist die Stelle, an der man das
-freigibt.
+Consequence for operations: without an entry in `secret-policy.json`, an
+openrouter agent does start, but reports `FATAL: OPENROUTER_API_KEY missing … from
+secret broker` and cannot answer. An MCP server without a released token
+comes up, but without access. The **Secrets** tab is where you release
+these.
 
-## Sicherheit
-- Manager = root-Dienst, der microVMs startet/stoppt und tap/iptables setzt.
-- Öffentlich nur **mit Auth** (Traefik-BasicAuth/SSO). Im LAN Port 8700 ggf. per Firewall begrenzen.
-- Jede microVM ist HW-isoliert; Host-Zugriff nur über explizit angehängte Disks/NFS.
+## Security
+- Manager = root service that starts/stops microVMs and sets tap/iptables.
+- Public only **with auth** (Traefik basic auth/SSO). On the LAN, limit port 8700 via firewall if needed.
+- Every microVM is HW-isolated; host access only via explicitly attached disks/NFS.
 
-## Grenzen
-`bin/vmlinux` + `instances/*-rootfs.ext4` müssen vorhanden sein, sonst schlägt
-Start fehl (Log in `run/<name>.log`). Manager selbst braucht kein Rootfs.
+## Limits
+`bin/vmlinux` + `instances/*-rootfs.ext4` must be present, otherwise the start
+fails (log in `run/<name>.log`). The manager itself needs no rootfs.

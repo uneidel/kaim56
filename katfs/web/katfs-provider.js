@@ -148,9 +148,9 @@ export class KatfsProvider {
     return {};
   }
 
-  // Löscht eine Datei oder ein Verzeichnis. Ohne `recursive` lehnt die
-  // Browser-API ein nicht-leeres Verzeichnis von sich aus ab — genau richtig,
-  // damit ein Agent nicht versehentlich einen Baum abräumt.
+  // Deletes a file or a directory. Without `recursive` the browser API rejects
+  // a non-empty directory on its own — exactly right, so an agent doesn't
+  // accidentally wipe a tree.
   async handleDelete(path, recursive) {
     const { dir, name } = await resolveParent(this.root, path);
     if (name == null) throw new Error('refusing to delete the share root');

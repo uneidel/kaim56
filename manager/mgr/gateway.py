@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Security Gateway: unsichtbare-Unicode-Filter (Text) + Bild-Metadaten-Strip.
-Pro Chat schaltbar; Zustand in gateway.json. Teil des mgr-Pakets, nur BASE.
+Toggleable per chat; state in gateway.json. Part of the mgr package, only BASE.
 """
 import json
 import os
@@ -134,7 +134,7 @@ class StreamGuard:
 
 
 def strip_image_meta(b64):
-    """EXIF/XMP/C2PA aus einem Base64-Bild schneiden. (bereinigt, entfernte Bloecke)
+    """Cut EXIF/XMP/C2PA out of a base64 image. (returns cleaned image, removed blocks)
 
     By hand instead of with Pillow: Pillow isn't installed here, and re-encoding
     would also touch the image lossily. Here the image data stays byte-for-byte
@@ -221,7 +221,7 @@ def _webp_strip(raw):
     while i + 8 <= len(raw):
         typ = raw[i:i + 4]
         ln = int.from_bytes(raw[i + 4:i + 8], "little")
-        end = i + 8 + ln + (ln & 1)                  # Bloecke sind gerade lang
+        end = i + 8 + ln + (ln & 1)                  # blocks are of even length
         if end > len(raw):
             return raw, 0
         if typ in (b"EXIF", b"XMP "):

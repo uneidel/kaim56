@@ -33,9 +33,9 @@ PAGE = """<!doctype html><html lang=en><meta charset=utf-8>
 <title>Terminal</title>
 <link rel=stylesheet href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
- /* Die Konsole bleibt dunkel — dafuer gibt es im System keine Komponente und
-    ein heller Terminalgrund waere schlechter. Alles drumherum folgt Industry:
-    dunkles Band, Slate-Blau als Akzent, eckig, Barlow. */
+ /* The console stays dark — there is no component for it in the system and
+    a light terminal background would be worse. Everything around it follows Industry:
+    dark band, slate blue as the accent, square, Barlow. */
  html,body{height:100%;margin:0;background:#141618}
  body{display:flex;flex-direction:column;height:100vh}
  #bar{font:13px "Barlow",system-ui,sans-serif;color:rgba(232,233,234,.55);

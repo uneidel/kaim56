@@ -1,24 +1,24 @@
 #!/bin/sh
 # PID 1 des OpenRouter-Agenten. Laeuft als node (uid 1000). run_agent.py waehlt
-# den Transport (signal|web) selbst anhand TRANSPORT.
+# picks the transport (signal|web) itself based on TRANSPORT.
 #
-# --- Overlay-Wurzel (Basis read-only + Upper je Instanz) ----------------------
-# Der Manager haengt die geteilte Basis ro an und gibt per Bootarg fc_upper=
-# das rw-Upper-Geraet mit. Hier: Upper mounten, overlayfs zusammensetzen,
-# pivot_root, dieses Skript im neuen Root neu ausfuehren. Der Marker
-# /.fc-overlay existiert nur IM Overlay (liegt im Upper) und verhindert die
-# Endlos-Rekursion. Schlaegt irgendetwas fehl, bootet die VM auf der ro-Basis
-# weiter (degradiert, aber erreichbar) statt gar nicht.
+# --- Overlay root (read-only base + per-instance upper) -----------------------
+# The manager mounts the shared base ro and passes the rw upper device via the
+# boot arg fc_upper=. Here: mount the upper, assemble overlayfs, pivot_root,
+# re-exec this script in the new root. The marker /.fc-overlay exists only IN
+# the overlay (lives in the upper) and prevents infinite recursion. If anything
+# fails, the VM keeps booting on the ro base (degraded, but reachable) instead
+# of not at all.
 mount -t proc proc /proc 2>/dev/null
 if [ ! -f /.fc-overlay ]; then
   UP=$(sed -n 's/.*fc_upper=\([^ ]*\).*/\1/p' /proc/cmdline)
   if [ -n "$UP" ]; then
     mount -t devtmpfs devtmpfs /dev 2>/dev/null
-    # Wurzel ist read-only -> als Mountpoint MUSS ein Verzeichnis dienen,
-    # das im Image existiert (/mnt); mkdir auf / schluege fehl.
-    # -o sync: stop() zieht der VM den Stecker (SIGTERM an Firecracker) —
-    # ohne sync laegen die letzten Schreibungen noch im Page-Cache und waeren
-    # weg (beobachtet: 0-Byte-Datei). Synchron ist bei unserer Schreiblast ok.
+    # The root is read-only -> the mountpoint MUST be a directory that exists
+    # in the image (/mnt); mkdir on / would fail.
+    # -o sync: stop() pulls the plug on the VM (SIGTERM to Firecracker) —
+    # without sync the last writes would still sit in the page cache and be
+    # lost (observed: 0-byte file). Synchronous is fine for our write load.
     if mount -o sync "$UP" /mnt 2>/dev/null; then
       mkdir -p /mnt/upper /mnt/work /mnt/root
       if mount -t overlay overlay \
@@ -27,13 +27,13 @@ if [ ! -f /.fc-overlay ]; then
         mkdir -p /mnt/root/oldroot
         cd /mnt/root
         pivot_root . oldroot && exec chroot . /init
-        echo "[init] WARN: pivot_root fehlgeschlagen — weiter ohne Overlay"
+        echo "[init] WARN: pivot_root failed — continuing without overlay"
         cd /
       else
-        echo "[init] WARN: overlay-Mount fehlgeschlagen — weiter ohne Overlay"
+        echo "[init] WARN: overlay mount failed — continuing without overlay"
       fi
     else
-      echo "[init] WARN: Upper $UP nicht mountbar — weiter ohne Overlay"
+      echo "[init] WARN: upper $UP not mountable — continuing without overlay"
     fi
   fi
 fi
@@ -59,12 +59,12 @@ WORKDIR="${CLAUDE_WORKDIR:-/home/node/workspace}"
 mkdir -p "$WORKDIR"; chown node:node "$WORKDIR" 2>/dev/null
 if [ "${AGENT_NFS:-1}" = "1" ] && [ -n "$GW" ]; then
   mount -t nfs4 -o nolock,soft,timeo=30,retrans=3 \
-    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS-Mount fehlgeschlagen"
+    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS mount failed"
 fi
-# --- dynamische Host-Ordner (Reconciler) --------------------------------------
-# Der Manager pflegt .fcmnt/<inst>/desired.list (im Workspace sichtbar) und gibt
-# jeden Ordner pro Guest-IP frei. fc_reconcile gleicht die Mounts an den
-# gewuenschten Gast-Pfaden ab: sofort + danach alle 5s im Hintergrund -> live.
+# --- dynamic host folders (reconciler) ----------------------------------------
+# The manager maintains .fcmnt/<inst>/desired.list (visible in the workspace) and
+# exports each folder per guest IP. fc_reconcile reconciles the mounts with the
+# desired guest paths: immediately + then every 5s in the background -> live.
 fc_reconcile() {
   LIST="$WORKDIR/.fcmnt/$FC_INSTANCE/desired.list"; want=" "
   if [ -f "$LIST" ]; then
@@ -74,12 +74,12 @@ fc_reconcile() {
       if ! awk -v p="$gp" '$2==p{f=1} END{exit !f}' /proc/mounts; then
         mkdir -p "$gp"; ro=""; [ "$mode" = "ro" ] && ro=",ro"
         mount -t nfs4 -o "nolock,soft,timeo=30,retrans=3$ro" "${GW}:${sub}" "$gp" 2>/dev/null \
-          && echo "[init] + Host-Ordner $gp"
+          && echo "[init] + host folder $gp"
       fi
     done < "$LIST"
   fi
   awk -v s=":/.fcmnt/$FC_INSTANCE/" 'index($1,s){print $2}' /proc/mounts | while read -r mp; do
-    case "$want" in *" $mp "*) : ;; *) umount -l "$mp" 2>/dev/null && echo "[init] - Host-Ordner $mp" ;; esac
+    case "$want" in *" $mp "*) : ;; *) umount -l "$mp" 2>/dev/null && echo "[init] - host folder $mp" ;; esac
   done
 }
 if [ -n "$FC_INSTANCE" ] && [ -n "$GW" ]; then

@@ -1,70 +1,70 @@
 # claude-signal-firecracker
 
-Die **Signal↔Claude-Code-Bridge** in einer **Firecracker-microVM** statt im Docker-
-Container — echte HW-VM-Isolation. Claude läuft in der VM, erreicht deine Dienste
-nur übers Netz (signalapi/portainer/pihole), kein Host-Filesystem, kein Docker-Socket.
+The **Signal↔Claude Code bridge** in a **Firecracker microVM** instead of a Docker
+container — real HW VM isolation. Claude runs in the VM, reaches your services
+only over the network (signalapi/portainer/pihole), no host filesystem, no Docker socket.
 
 ```
-Signal (Direkt-Chat) ─▶ signalapi ─▶ [ microVM: bridge.py + claude -p ] ─▶ Antwort
+Signal (direct chat) ─▶ signalapi ─▶ [ microVM: bridge.py + claude -p ] ─▶ response
                                         eth0(172.30.0.2) ── tap0(172.30.0.1) ── NAT ── LAN
 ```
 
-## Voraussetzungen (auf dieser Box vorhanden)
-- `/dev/kvm` (KVM) ✅, VT-x ✅ — geprüft.
+## Prerequisites (present on this box)
+- `/dev/kvm` (KVM) ✅, VT-x ✅ — checked.
 - `docker`, `curl`, `e2fsprogs` (mkfs.ext4 -d), `iproute2`, `iptables`.
-- Der Bridge-Code liegt in `../claude-signal-bridge/bridge.py` (wird eingebaut).
+- The bridge code lives in `../claude-signal-bridge/bridge.py` (gets baked in).
 
-## Dateien
-| Datei | Zweck |
+## Files
+| File | Purpose |
 |---|---|
-| `Dockerfile.rootfs` | Inhalt des Gast-Rootfs (Debian + Node + Claude Code + python) |
-| `config.env` | Bridge-Konfiguration im Gast (Nummer, ALLOWED_SENDERS, …) |
-| `guest-init.sh` | PID 1 in der VM: Mounts + DNS + startet die Bridge |
-| `build.sh` | holt firecracker + Kernel, baut `rootfs.ext4`, legt Anmeldung ein |
+| `Dockerfile.rootfs` | contents of the guest rootfs (Debian + Node + Claude Code + python) |
+| `config.env` | bridge configuration in the guest (number, ALLOWED_SENDERS, …) |
+| `guest-init.sh` | PID 1 in the VM: mounts + DNS + starts the bridge |
+| `build.sh` | fetches firecracker + kernel, builds `rootfs.ext4`, injects the login |
 | `net.sh` | tap0 + NAT (ROOT) |
-| `vmconfig.json` | Firecracker-Maschinenconfig (2 vCPU, 1536 MB) |
-| `run.sh` | startet die microVM |
-| `claude-fc.service` | systemd-Autostart |
+| `vmconfig.json` | Firecracker machine config (2 vCPU, 1536 MB) |
+| `run.sh` | starts the microVM |
+| `claude-fc.service` | systemd autostart |
 
-## Setup (Reihenfolge)
+## Setup (order)
 
-**1) Artefakte bauen** (als dein User; docker-Gruppe reicht):
+**1) Build artifacts** (as your user; docker group is enough):
 ```bash
 cd /home/ulrich/claude-signal-firecracker
 ./build.sh
 ```
-Erzeugt `firecracker`, `vmlinux`, `rootfs.ext4` und legt `~/.claude/.credentials.json`
-in den Gast (Variante „Abo nutzen"). Für einen eigenen API-Key stattdessen in
-`config.env` `ANTHROPIC_API_KEY=…` setzen und den Credentials-Schritt in `build.sh` weglassen.
+Produces `firecracker`, `vmlinux`, `rootfs.ext4` and places `~/.claude/.credentials.json`
+into the guest (the "use subscription" variant). For your own API key, instead set
+`ANTHROPIC_API_KEY=…` in `config.env` and omit the credentials step in `build.sh`.
 
-**2) Netz + Start** (ROOT — tap/iptables/kvm):
+**2) Network + start** (ROOT — tap/iptables/kvm):
 ```bash
 sudo ./net.sh
-sudo ./run.sh          # Vordergrund; Konsole der VM. Strg-C beendet.
+sudo ./run.sh          # foreground; VM console. Ctrl-C ends it.
 ```
-oder dauerhaft per systemd:
+or permanently via systemd:
 ```bash
 sudo cp claude-fc.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now claude-fc.service
 journalctl -u claude-fc -f
 ```
 
-**3) Test:** katbot **direkt** `/help` schreiben → „🤖 katbot online".
+**3) Test:** message katbot **directly** with `/help` → "🤖 katbot online".
 
-## Netz-Details
-- tap0 = `172.30.0.1/30` (Host), Gast = `172.30.0.2/30`, NAT via `eth0`.
-- Gast-DNS = `1.1.1.1` (Pi-hole). Kernel konfiguriert eth0 via `ip=`-Bootparam.
+## Network details
+- tap0 = `172.30.0.1/30` (host), guest = `172.30.0.2/30`, NAT via `eth0`.
+- Guest DNS = `1.1.1.1` (Pi-hole). The kernel configures eth0 via the `ip=` boot param.
 
-## Sicherheit
-- **Stärkere Isolation** als Container: Kompromittierung bleibt in der VM; Zugriff nur
-  übers Netz. Kein `/home`-Mount, kein Docker-Socket.
-- Trust-Boundary bleibt `ALLOWED_SENDERS` (nur deine Nummer).
-- Anmeldung liegt im `rootfs.ext4` (OAuth-Token) — Image entsprechend schützen.
-  Host + VM teilen sich den Token (Token-Rotation-Hinweis wie beim Container).
+## Security
+- **Stronger isolation** than a container: a compromise stays in the VM; access only
+  over the network. No `/home` mount, no Docker socket.
+- The trust boundary remains `ALLOWED_SENDERS` (only your number).
+- The login lives in `rootfs.ext4` (OAuth token) — protect the image accordingly.
+  Host and VM share the token (token-rotation note as with the container).
 
-## Grenzen / Iteration
-- Ich konnte hier **nichts davon ausführen** (root/kvm + Build sind gesperrt) — das Kit
-  ist ungetestet. Typische Stolpersteine: Kernel-URL (S3-Pfad ändert sich), `mkfs.ext4 -d`
-  (braucht e2fsprogs ≥1.43), Firewall/`FORWARD`-Policy. Schick mir die Ausgaben von
-  `build.sh` / `run.sh` / `journalctl`, dann fixe ich es gezielt.
-- signalapi im `native`-Mode → Empfang per Polling (Latenz ~1–10 s).
+## Limits / iteration
+- I could **run none of this here** (root/kvm + build are locked) — so the kit
+  is untested. Typical stumbling blocks: kernel URL (the S3 path changes), `mkfs.ext4 -d`
+  (needs e2fsprogs ≥1.43), firewall/`FORWARD` policy. Send me the output of
+  `build.sh` / `run.sh` / `journalctl`, and I'll fix it specifically.
+- signalapi in `native` mode → receiving via polling (latency ~1–10 s).

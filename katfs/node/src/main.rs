@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 const ALPN: &[u8] = b"katfs/0";
 const SECRET_PATH: &str = "/home/ulrich/iroh-fs/node/secret.key";
 const WEB_INDEX: &str = "/home/ulrich/iroh-fs/web/index.html";
-const HTTP_ADDR: &str = "127.0.0.1:8790";  // nur der Manager (loopback) darf ran; Gaeste gehen ueber den Broker
+const HTTP_ADDR: &str = "127.0.0.1:8790";  // only the manager (loopback) may connect; guests go through the broker
 
 /// One active browser share. Several may be connected at once (one per browser
 /// tab, on any machine); each is addressed by the `share_id` the browser
@@ -28,8 +28,8 @@ struct ConnState {
     name: String,
     /// Where it is being shared from ("Linux", "Android", …).
     device: String,
-    /// Provider meldet, dass er Schreibzugriffe ablehnt (Browser-Fallback ohne
-    /// schreibende API, oder katfs-share --ro).
+    /// Provider reports that it rejects writes (browser fallback without a
+    /// writing API, or katfs-share --ro).
     readonly: bool,
     since: u64,
 }
@@ -187,12 +187,12 @@ async fn accept_loop(endpoint: Endpoint, state: Shared) {
                     readonly: false,
                     since: now_secs(),
                 };
-                // Warmup + Identifikation in einem: "hello" sendet sofort erste
-                // Bytes (damit accept_bi im Browser feuert — ein QUIC-Stream
-                // wird beim Peer erst durch Bytes sichtbar) und liefert die
-                // Share-Kennung zurueck. Aeltere Seiten kennen "hello" nicht und
-                // antworten ok:false — dann bleibt es beim alten list-"."-Warmup
-                // und der Knoten vergibt die Kennung selbst.
+                // Warmup + identification in one: "hello" sends the first bytes
+                // immediately (so accept_bi fires in the browser — a QUIC stream
+                // only becomes visible to the peer through bytes) and returns the
+                // share id. Older pages don't know "hello" and answer ok:false —
+                // then it falls back to the old list-"."-warmup and the node
+                // assigns the id itself.
                 match katfs_request(&mut cs, "hello", ".", None, None).await {
                     Ok((v, _)) if v.get("ok").and_then(|b| b.as_bool()) == Some(true) => {
                         cs.share_id =
@@ -223,8 +223,8 @@ async fn accept_loop(endpoint: Endpoint, state: Shared) {
                     cs.name = cs.share_id.clone();
                 }
                 let mut g = state.lock().await;
-                // Reconnect derselben Kennung ersetzt den alten Eintrag, statt
-                // ihn zu verdoppeln — genau der Fall nach einem Reload.
+                // Reconnect of the same id replaces the old entry instead of
+                // duplicating it — exactly the case after a reload.
                 let replaced = g.iter().any(|c| c.share_id == cs.share_id);
                 g.retain(|c| c.share_id != cs.share_id);
                 eprintln!(
@@ -347,8 +347,8 @@ fn run_http(
                 200,
                 &json!({
                     "connected": n > 0,
-                    // "share" bleibt aus Kompatibilitaet ein String; bei genau
-                    // einer Freigabe jetzt ihr Name statt des Literals "active".
+                    // "share" stays a string for compatibility; with exactly
+                    // one share it is now its name instead of the literal "active".
                     "share": if n == 1 { first } else if n > 1 { format!("{n} shares") } else { String::new() },
                     "count": n,
                 }),
@@ -378,7 +378,7 @@ fn run_http(
             continue;
         }
 
-        // --- statische Assets aus web/ (app.js, katfs-provider.js, wasm/…) ---
+        // --- static assets from web/ (app.js, katfs-provider.js, wasm/…) ---
         if method == tiny_http::Method::Get {
             let rel = path_only.trim_start_matches('/');
             if !rel.is_empty() && !rel.contains("..") {
@@ -476,7 +476,7 @@ fn run_http(
             let path = normalize_path(&query_param(&url, "path").unwrap_or_default());
             let share = query_param(&url, "share");
             let recursive = query_param(&url, "recursive").as_deref() == Some("1");
-            // Leerer Pfad waere die Wurzel der Freigabe — die wird nie geloescht.
+            // An empty path would be the root of the share — that is never deleted.
             if !path_is_safe(&path) || path.is_empty() {
                 respond_json(request, 400, &json!({ "error": "invalid path" }));
                 continue;
@@ -605,8 +605,8 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Application-level keepalive: alle 10s ein leichtes stat "." über die aktive
-    // Verbindung, damit die untätige Relay-Verbindung nicht idle-timeout't.
+    // Application-level keepalive: every 10s a light stat "." over the active
+    // connection, so the idle relay connection does not idle-timeout.
     {
         let state = state.clone();
         tokio::spawn(async move {

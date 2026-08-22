@@ -37,7 +37,7 @@ _mi_lock = threading.Lock()
 MISSION_MAX_ACTIVE = 5
 MISSION_MAX_STEPS = 20
 MISSION_MAX_LOG = 30
-MISSION_TTL_DAYS = 7           # ohne Aktivitaet -> paused + Hinweis
+MISSION_TTL_DAYS = 7           # without activity -> paused + note
 
 
 def load_missions():
@@ -164,7 +164,7 @@ def mission_admin(instance, mid, action):
         elif action == "resume" and m.get("status") == "paused":
             m["status"] = "active"; _mi_log(m, "Fortgesetzt (UI)")
         elif action == "abort" and m.get("status") in ("active", "paused"):
-            m["status"] = "failed"; m["summary"] = "abgebrochen (UI)"
+            m["status"] = "failed"; m["summary"] = "aborted (UI)"
             _mi_log(m, "Abgebrochen (UI)")
         else:
             return f"cannot {action} ({m.get('status')})"

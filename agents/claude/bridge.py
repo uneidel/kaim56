@@ -137,10 +137,10 @@ def run_claude(prompt):
         p = subprocess.run(cmd, cwd=CLAUDE_WORKDIR, capture_output=True, text=True,
                            timeout=CLAUDE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return f"⏱️ Zeitlimit ({CLAUDE_TIMEOUT}s) erreicht — Anfrage abgebrochen."
+        return f"⏱️ Time limit ({CLAUDE_TIMEOUT}s) reached — request aborted."
     out = (p.stdout or "").strip()
     if not out:
-        return f"⚠️ Keine Ausgabe (exit {p.returncode}).\n{(p.stderr or '')[:800]}"
+        return f"⚠️ No output (exit {p.returncode}).\n{(p.stderr or '')[:800]}"
     try:
         data = json.loads(out)
         if isinstance(data, dict):
@@ -148,8 +148,8 @@ def run_claude(prompt):
                 _session_id = data["session_id"]
             res = data.get("result")
             if data.get("is_error"):
-                return f"⚠️ Claude-Fehler: {res or data.get('subtype')}"
-            return res or "(leere Antwort)"
+                return f"⚠️ Claude error: {res or data.get('subtype')}"
+            return res or "(empty reply)"
     except json.JSONDecodeError:
         pass
     return out[:MAX_REPLY_CHARS]
@@ -161,16 +161,16 @@ def handle(text):
     low = cmd.lower()
     if low in ("/help", "help", "/start"):
         return ("🤖 katbot ↔ Claude Code\n"
-                "Schreib einfach deine Anfrage. Befehle:\n"
-                "  /reset – neue Unterhaltung\n"
-                "  /status – Info\n"
-                f"Workdir: {CLAUDE_WORKDIR}, Aktionen: {'AN' if ALLOW_ACTIONS else 'aus'}")
+                "Just write your request. Commands:\n"
+                "  /reset – new conversation\n"
+                "  /status – info\n"
+                f"Workdir: {CLAUDE_WORKDIR}, actions: {'ON' if ALLOW_ACTIONS else 'off'}")
     if low == "/reset":
         _session_id = None
-        return "🔄 Neue Unterhaltung gestartet."
+        return "🔄 New conversation started."
     if low == "/status":
-        return (f"✅ läuft. session={'ja' if _session_id else 'neu'} "
-                f"workdir={CLAUDE_WORKDIR} aktionen={'an' if ALLOW_ACTIONS else 'aus'}")
+        return (f"✅ running. session={'yes' if _session_id else 'new'} "
+                f"workdir={CLAUDE_WORKDIR} actions={'on' if ALLOW_ACTIONS else 'off'}")
     return run_claude(cmd)
 
 
@@ -187,7 +187,7 @@ def main():
         f"actions={ALLOW_ACTIONS} senders={ALLOWED_SENDERS}")
     # drain/ignore backlog once so we don't replay old messages on startup
     receive()
-    signal_send("🤖 katbot online — schreib mir. (/help)", ALLOWED_SENDERS[0])
+    signal_send("🤖 katbot online — message me. (/help)", ALLOWED_SENDERS[0])
     while True:
         for env in receive() or []:
             got = extract(env)
@@ -203,7 +203,7 @@ def main():
                 signal_send("💭 …", target)
                 reply = handle(text)
             except Exception as e:
-                reply = f"⚠️ Bridge-Fehler: {e!r}"
+                reply = f"⚠️ Bridge error: {e!r}"
             signal_send(reply, target)
             log("replied", len(reply), "chars")
         time.sleep(1)

@@ -1,23 +1,23 @@
 #!/bin/sh
-# PID 1 der Claude-microVM. Liest Instanz-Config von der Config-Disk (vdb).
+# PID 1 of the Claude microVM. Reads instance config from the config disk (vdb).
 #
-# --- Overlay-Wurzel (Basis read-only + Upper je Instanz) ----------------------
-# Der Manager haengt die geteilte Basis ro an und gibt per Bootarg fc_upper=
-# das rw-Upper-Geraet mit. Hier: Upper mounten, overlayfs zusammensetzen,
-# pivot_root, dieses Skript im neuen Root neu ausfuehren. Der Marker
-# /.fc-overlay existiert nur IM Overlay (liegt im Upper) und verhindert die
-# Endlos-Rekursion. Schlaegt irgendetwas fehl, bootet die VM auf der ro-Basis
-# weiter (degradiert, aber erreichbar) statt gar nicht.
+# --- Overlay root (read-only base + per-instance upper) -----------------------
+# The manager mounts the shared base ro and passes the rw upper device via the
+# boot arg fc_upper=. Here: mount the upper, assemble overlayfs, pivot_root,
+# re-exec this script in the new root. The marker /.fc-overlay exists only IN
+# the overlay (lives in the upper) and prevents infinite recursion. If anything
+# fails, the VM keeps booting on the ro base (degraded, but reachable) instead
+# of not at all.
 mount -t proc proc /proc 2>/dev/null
 if [ ! -f /.fc-overlay ]; then
   UP=$(sed -n 's/.*fc_upper=\([^ ]*\).*/\1/p' /proc/cmdline)
   if [ -n "$UP" ]; then
     mount -t devtmpfs devtmpfs /dev 2>/dev/null
-    # Wurzel ist read-only -> als Mountpoint MUSS ein Verzeichnis dienen,
-    # das im Image existiert (/mnt); mkdir auf / schluege fehl.
-    # -o sync: stop() zieht der VM den Stecker (SIGTERM an Firecracker) —
-    # ohne sync laegen die letzten Schreibungen noch im Page-Cache und waeren
-    # weg (beobachtet: 0-Byte-Datei). Synchron ist bei unserer Schreiblast ok.
+    # The root is read-only -> the mountpoint MUST be a directory that exists
+    # in the image (/mnt); mkdir on / would fail.
+    # -o sync: stop() pulls the plug on the VM (SIGTERM to Firecracker) —
+    # without sync the last writes would still sit in the page cache and be
+    # lost (observed: 0-byte file). Synchronous is fine for our write load.
     if mount -o sync "$UP" /mnt 2>/dev/null; then
       mkdir -p /mnt/upper /mnt/work /mnt/root
       if mount -t overlay overlay \
@@ -26,13 +26,13 @@ if [ ! -f /.fc-overlay ]; then
         mkdir -p /mnt/root/oldroot
         cd /mnt/root
         pivot_root . oldroot && exec chroot . /init
-        echo "[init] WARN: pivot_root fehlgeschlagen — weiter ohne Overlay"
+        echo "[init] WARN: pivot_root failed — continuing without overlay"
         cd /
       else
-        echo "[init] WARN: overlay-Mount fehlgeschlagen — weiter ohne Overlay"
+        echo "[init] WARN: overlay mount failed — continuing without overlay"
       fi
     else
-      echo "[init] WARN: Upper $UP nicht mountbar — weiter ohne Overlay"
+      echo "[init] WARN: upper $UP not mountable — continuing without overlay"
     fi
   fi
 fi
@@ -46,7 +46,7 @@ echo "nameserver 1.1.1.1" > /etc/resolv.conf
 export HOME=/root
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Defaults (gebacken) + Instanz-Config (Config-Disk vdb, ueberschreibt Defaults)
+# Defaults (baked) + instance config (config disk vdb, overrides defaults)
 mkdir -p /config
 mount -o ro /dev/vdb /config 2>/dev/null
 set -a
@@ -58,15 +58,15 @@ GW=$(ip route 2>/dev/null | awk '/default/{print $3; exit}')
 WORKDIR="${CLAUDE_WORKDIR:-/home/node/workspace}"
 mkdir -p "$WORKDIR"; chown node:node "$WORKDIR" 2>/dev/null
 
-# NFS-Agent-Ordner (Default-Gateway = tap-Host); Writes werden auf uid 1000 gemappt
+# NFS agent folder (default gateway = tap host); writes are mapped to uid 1000
 if [ "${AGENT_NFS:-1}" = "1" ] && [ -n "$GW" ]; then
   mount -t nfs4 -o nolock,soft,timeo=30,retrans=3 \
-    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS-Mount fehlgeschlagen"
+    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS mount failed"
 fi
-# --- dynamische Host-Ordner (Reconciler) --------------------------------------
-# Der Manager pflegt .fcmnt/<inst>/desired.list (im Workspace sichtbar) und gibt
-# jeden Ordner pro Guest-IP frei. fc_reconcile gleicht die Mounts an den
-# gewuenschten Gast-Pfaden ab: sofort + danach alle 5s im Hintergrund -> live.
+# --- dynamic host folders (reconciler) ----------------------------------------
+# The manager maintains .fcmnt/<inst>/desired.list (visible in the workspace) and
+# exports each folder per guest IP. fc_reconcile reconciles the mounts with the
+# desired guest paths: immediately + then every 5s in the background -> live.
 fc_reconcile() {
   LIST="$WORKDIR/.fcmnt/$FC_INSTANCE/desired.list"; want=" "
   if [ -f "$LIST" ]; then
@@ -76,12 +76,12 @@ fc_reconcile() {
       if ! awk -v p="$gp" '$2==p{f=1} END{exit !f}' /proc/mounts; then
         mkdir -p "$gp"; ro=""; [ "$mode" = "ro" ] && ro=",ro"
         mount -t nfs4 -o "nolock,soft,timeo=30,retrans=3$ro" "${GW}:${sub}" "$gp" 2>/dev/null \
-          && echo "[init] + Host-Ordner $gp"
+          && echo "[init] + host folder $gp"
       fi
     done < "$LIST"
   fi
   awk -v s=":/.fcmnt/$FC_INSTANCE/" 'index($1,s){print $2}' /proc/mounts | while read -r mp; do
-    case "$want" in *" $mp "*) : ;; *) umount -l "$mp" 2>/dev/null && echo "[init] - Host-Ordner $mp" ;; esac
+    case "$want" in *" $mp "*) : ;; *) umount -l "$mp" 2>/dev/null && echo "[init] - host folder $mp" ;; esac
   done
 }
 if [ -n "$FC_INSTANCE" ] && [ -n "$GW" ]; then
@@ -89,14 +89,14 @@ if [ -n "$FC_INSTANCE" ] && [ -n "$GW" ]; then
   ( while true; do sleep 5; fc_reconcile; done ) &
 fi
 
-# Abo-Anmeldung (Claude Max/Pro): das lebende Credential des Hosts beim Boot
-# holen, damit `claude -p` als Abo laeuft statt "Not logged in" zu melden.
-# Kommt ueber den Manager (nur claude-Template, per Source-IP); die kurzlebige
-# accessToken-Erneuerung macht Claude Code dann pro Sitzung selbst.
+# Subscription login (Claude Max/Pro): fetch the host's live credential at boot
+# so `claude -p` runs as a subscription instead of reporting "Not logged in".
+# Comes via the manager (claude template only, by source IP); Claude Code then
+# does the short-lived accessToken renewal itself per session.
 if [ -n "$GW" ]; then
   mkdir -p /home/node/.claude
-  # Kein curl im Image -> python3 (ist ohnehin da). Schreibt die Datei nur,
-  # wenn wirklich der claudeAiOauth-Block kam, nie eine Fehlermeldung.
+  # No curl in the image -> python3 (present anyway). Writes the file only if
+  # the claudeAiOauth block really arrived, never an error message.
   if python3 - "$GW" <<'PY'
 import json, sys, urllib.request
 gw = sys.argv[1]
@@ -111,13 +111,13 @@ PY
   then
     chown -R node:node /home/node/.claude
     chmod 600 /home/node/.claude/.credentials.json
-    echo "[init] Claude-Abo-Anmeldung geladen"
+    echo "[init] Claude subscription login loaded"
   else
-    echo "[init] WARN: keine Claude-Anmeldung vom Manager (claude -p meldet 'Not logged in')"
+    echo "[init] WARN: no Claude login from the manager (claude -p reports 'Not logged in')"
   fi
 fi
 
-# Agent laeuft als node (uid 1000) — claude-code erlaubt Aktionen nicht als root
+# Agent runs as node (uid 1000) — claude-code does not allow actions as root
 export HOME=/home/node
 export CLAUDE_WORKDIR="$WORKDIR"
 TRANSPORT="${TRANSPORT:-signal}"
@@ -131,7 +131,7 @@ echo "[init] webterm auf :7682 gestartet"
 case "$TRANSPORT" in
   signal) $RUNAS python3 -u /app/bridge.py ;;
   web)    AGENT=claude $RUNAS python3 -u /app/web_bridge.py ;;
-  *) echo "[init] transport '$TRANSPORT' unbekannt"; sleep 15 ;;
+  *) echo "[init] transport '$TRANSPORT' unknown"; sleep 15 ;;
 esac
 
 echo "[init] bridge beendet -> poweroff"

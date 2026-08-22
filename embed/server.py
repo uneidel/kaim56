@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Embedding-Dienst fuer das semantische Gedaechtnis von kAIm56.
+"""Embedding service for kAIm56's semantic memory.
 
-Laeuft am Host, nicht in den VMs: das Modell (~120 MB) laege sonst je Instanz
-im Speicher, und Embeddings sind der eine ML-Schritt, der auf der CPU wirklich
-schnell ist Gebunden 0.0.0.0 im
-Container, auf der Host-Seite auf 127.0.0.1 beschraenkt (-p 127.0.0.1:8772:8772),
-genau wie der Sprachdienst. Erreichbar nur ueber den Manager.
+Runs on the host, not in the VMs: the model (~120 MB) would otherwise sit in
+memory per instance, and embeddings are the one ML step that is genuinely fast
+on the CPU. Bound to 0.0.0.0 in the container, restricted to 127.0.0.1 on the
+host side (-p 127.0.0.1:8772:8772), just like the voice service. Reachable only
+through the manager.
 
   POST /embed  {"texts": [...], "kind": "query"|"passage"} -> {"vectors": [...]}
   GET  /health -> {"ready": bool, "model": ..., "dim": ...}
 
-Das Modell (multilingual-e5) will Praefixe: Suchanfragen als "query: …",
-gespeicherte Texte als "passage: …". Ohne das sinkt die Trefferqualitaet
-spuerbar. Der Dienst setzt sie selbst, der Aufrufer schickt nur `kind`.
+The model (multilingual-e5) wants prefixes: search queries as "query: …",
+stored texts as "passage: …". Without that the match quality drops noticeably.
+The service sets them itself, the caller sends only `kind`.
 """
 import json
 import os

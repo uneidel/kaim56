@@ -12,8 +12,8 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.flow.collect
 import java.io.File
 
-/** On-Device-LLM via LiteRT-LM. Laedt .litertlm-Modelle (inkl. Gemma 4).
- *  gemma-3n/gemma-4 sind multimodal -> optionaler Bild-Input. */
+/** On-device LLM via LiteRT-LM. Loads .litertlm models (incl. Gemma 4).
+ *  gemma-3n/gemma-4 are multimodal -> optional image input. */
 class LocalGemma(private val context: Context) {
     private var engine: Engine? = null
     var loadedPath: String = ""
@@ -21,13 +21,13 @@ class LocalGemma(private val context: Context) {
 
     fun isReady(): Boolean = engine != null
 
-    /** Modell laden (Pfad auf eine .litertlm-Datei). Kann mehrere Sekunden dauern. */
+    /** Load a model (path to a .litertlm file). May take several seconds. */
     fun load(modelPath: String) {
         close()
         val cfg = EngineConfig(
             modelPath = modelPath,
             backend = Backend.CPU(),
-            visionBackend = Backend.CPU(),   // Bild-Input (multimodal) aktivieren
+            visionBackend = Backend.CPU(),   // enable image input (multimodal)
         )
         val e = Engine(cfg)
         e.initialize()
@@ -35,11 +35,11 @@ class LocalGemma(private val context: Context) {
         loadedPath = modelPath
     }
 
-    /** Streaming: onPartial fuer jedes Teilstueck, am Ende onDone. */
-    /** Streaming per Flow: ruft onPartial je Token; kehrt zurueck wenn fertig.
-     *  Der Aufrufer setzt danach 'busy=false' (im finally) -> haengt nicht mehr. */
+    /** Streaming: onPartial for each chunk, onDone at the end. */
+    /** Streaming via Flow: calls onPartial per token; returns when finished.
+     *  The caller then sets 'busy=false' (in finally) -> no longer hangs. */
     suspend fun generateStreaming(prompt: String, image: Bitmap?, onPartial: (String) -> Unit) {
-        val eng = engine ?: throw IllegalStateException("Kein Modell geladen.")
+        val eng = engine ?: throw IllegalStateException("No model loaded.")
         val conversation = eng.createConversation(
             ConversationConfig(samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.8))
         )

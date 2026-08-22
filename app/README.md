@@ -1,56 +1,56 @@
 # KatAgent (Android)
 
-Kleine Android-App mit **zwei Modi**:
+Small Android app with **two modes**:
 
-1. **Server-Agent** — chattet mit einem laufenden Firecracker-Agenten über den Manager:
-   `POST {Server-URL}/i/{Instanz}/api/chat` (Body `{"message": …}` → `{"reply": …}`), Basic-Auth.
-2. **Gerät (Gemma)** — führt ein **Gemma-Modell lokal** auf dem Telefon aus (MediaPipe LLM Inference, offline, funktioniert auch ohne Netz/VPN, z. B. unterwegs).
+1. **Server agent** — chats with a running Firecracker agent through the manager:
+   `POST {server-url}/i/{instance}/api/chat` (body `{"message": …}` → `{"reply": …}`), basic auth.
+2. **On-device (Gemma)** — runs a **Gemma model locally** on the phone (MediaPipe LLM Inference, offline, works without network/VPN too, e.g. on the go).
 
-## Bauen (ohne lokales Android-SDK, via Docker)
+## Building (without a local Android SDK, via Docker)
 ```bash
 cd /home/ulrich/katagent
-docker build -f Dockerfile.build -t katagent-build .          # einmalig (Android-SDK+Gradle)
+docker build -f Dockerfile.build -t katagent-build .          # once (Android SDK + Gradle)
 docker run --rm -v /home/ulrich/katagent:/project \
   -v katagent-gradle:/root/.gradle katagent-build \
   gradle assembleDebug --no-daemon --console=plain
-# Ergebnis:
+# Result:
 #   app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Chat-Sync
-Chats liegen im gemeinsamen Store des Managers (`/api/chats`) und werden **live**
-abgeglichen: die App haengt an einem Long-Poll (`?since=<rev>&wait=25`), der
-Manager antwortet, sobald App oder Web-UI schreibt. Neue Nachrichten der jeweils
-anderen Seite stehen damit binnen Sekundenbruchteilen da — ohne Neustart.
-Der Manager merged serverseitig pro Chat-`id` (neueres `updatedAt` gewinnt);
-Loeschungen synchronisieren nicht (es gibt keine Tombstones).
+## Chat sync
+Chats live in the manager's shared store (`/api/chats`) and are reconciled
+**live**: the app hangs on a long-poll (`?since=<rev>&wait=25`), the manager
+responds as soon as the app or the web UI writes. New messages from the other
+side thus appear within a fraction of a second — without a restart. The manager
+merges server-side per chat `id` (newer `updatedAt` wins); deletions do not
+sync (there are no tombstones).
 
-## Installieren
-Debug-APK aufs Handy kopieren und öffnen → „Aus unbekannten Quellen erlauben" → installieren.
-(Oder per `adb install app-debug.apk`.)
+## Installing
+Copy the debug APK to the phone and open it → "Allow from unknown sources" → install.
+(Or via `adb install app-debug.apk`.)
 
-## Konfiguration (Zahnrad oben rechts)
-- **Server-URL**: `https://agents.example.com` (nur im Heimnetz/VPN erreichbar).
-- **Instanz**: Name einer **laufenden** Instanz im Manager (z. B. eine openrouter-/pi-Web-Instanz). Erst im Manager erstellen & starten.
-- **Benutzer/Passwort**: Manager-Basic-Auth (`admin` / …).
-- **Gemma-.task-Modell wählen**: eine `.task`-Datei (siehe unten). Wird in den App-Speicher kopiert und geladen.
+## Configuration (gear icon, top right)
+- **Server URL**: `https://agents.example.com` (reachable only on the home network/VPN).
+- **Instance**: name of a **running** instance in the manager (e.g. an openrouter/pi web instance). Create & start it in the manager first.
+- **User/password**: the manager's basic auth (`admin` / …).
+- **Pick a Gemma .task model**: a `.task` file (see below). It is copied into app storage and loaded.
 
-## On-Device-Modell (Gemma, `.task`)
-MediaPipe braucht ein **`.task`-Bundle**. Passende Modelle (auf dem Handy in `Downloads` speichern, dann in den Einstellungen wählen):
-- Google AI Edge / LiteRT-Community (HuggingFace `litert-community`) oder Kaggle „Gemma" — z. B.
-  `gemma-3n-E2B-it` / `gemma-3n-E4B-it` oder `gemma2-2b-it` als `.task` (CPU/GPU, int4/int8).
-- Größe je nach Variante ~1–4 GB. Für das Xiaomi 15 (arm64) passt eine int4-Variante gut.
+## On-device model (Gemma, `.task`)
+MediaPipe needs a **`.task` bundle**. Suitable models (save to `Downloads` on the phone, then pick them in the settings):
+- Google AI Edge / LiteRT Community (HuggingFace `litert-community`) or Kaggle "Gemma" — e.g.
+  `gemma-3n-E2B-it` / `gemma-3n-E4B-it` or `gemma2-2b-it` as `.task` (CPU/GPU, int4/int8).
+- Size depending on the variant ~1–4 GB. An int4 variant fits the Xiaomi 15 (arm64) well.
 
-Hinweis: reine `.gguf`-Modelle funktionieren **nicht** direkt — MediaPipe erwartet das `.task`-Format.
+Note: plain `.gguf` models do **not** work directly — MediaPipe expects the `.task` format.
 
-## Architektur
-- `MainActivity.kt` — Compose-UI (Chat, Modus-Umschalter, Einstellungen, Modell-Picker via SAF).
-- `ServerAgent.kt` — HTTP-Client für den Manager-Agenten.
-- `LocalGemma.kt` — MediaPipe-`LlmInference`-Wrapper (laden/generieren).
-- `Prefs.kt` — Einstellungen (SharedPreferences).
-- `Dockerfile.build` — reproduzierbare Android-Build-Umgebung.
+## Architecture
+- `MainActivity.kt` — Compose UI (chat, mode switch, settings, model picker via SAF).
+- `ServerAgent.kt` — HTTP client for the manager agent.
+- `LocalGemma.kt` — MediaPipe `LlmInference` wrapper (load/generate).
+- `Prefs.kt` — settings (SharedPreferences).
+- `Dockerfile.build` — reproducible Android build environment.
 
-## Bekannte MVP-Grenzen (Ausbaustufen)
-- Antworten kommen als Ganzes (kein Token-Streaming) — Streaming ließe sich ergänzen.
-- Kein Chat-Verlauf-Persistenz, kein Modell-Download in der App (nur Datei-Auswahl).
-- Server-Modus braucht Heimnetz/VPN; On-Device läuft überall offline.
+## Known MVP limits (future stages)
+- Replies arrive as a whole (no token streaming) — streaming could be added.
+- No chat-history persistence, no model download in the app (file selection only).
+- Server mode needs the home network/VPN; on-device runs everywhere, offline.

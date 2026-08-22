@@ -1,28 +1,28 @@
 # kAIm56 — Tests
 
-Vollständige E2E-/Unit-Tests, stdlib-only (`unittest`, keine Dependency).
+Complete E2E/unit tests, stdlib-only (`unittest`, no dependency).
 
 ```bash
-./run-tests.sh                 # alles
-python3 tests/e2e.py AgentLogic        # nur eine Klasse
-python3 tests/e2e.py -v                 # ausführlich
+./run-tests.sh                 # everything
+python3 tests/e2e.py AgentLogic        # just one class
+python3 tests/e2e.py -v                 # verbose
 ```
 
-## Drei Stufen (überspringen sich selbst, wenn die Umgebung fehlt)
+## Three stages (they skip themselves when the environment is missing)
 
-- **OFFLINE** (immer): importiert `openrouter-agent/agent.py` und `manager.py`
-  direkt und testet die Kernlogik ohne VM/Netz:
-  - Agent: Backend-Auswahl (openrouter/orcarouter/llama), Context-Offloader +
-    `offload_read`, Summarizing-`_trim_history` (inkl. Einfalten alter
-    Zusammenfassung), Tool-Hook-Denylist, `/goal`, `or_chat` lässt leere
-    tools-Liste weg.
-  - Manager: `set_model`-Provider-Switch (inkl. `:free`-Fallstrick), HITL-Store,
-    `katfs_zip`-Rekursion, `PROVIDER_MODEL_KEY ⊆ MODEL_KEYS`.
-- **HTTP** (wenn Manager auf `127.0.0.1:8700` läuft): `/api/agents` liefert
-  `backend`+`model`, orchestrator meldet sein echtes Backend, `/api/hitl/<id>`,
-  `/api/katfs/status`, orcarouter-Template registriert.
-- **LIVE** (wenn Orchestrator-VM läuft): `/goal`-Roundtrip — beweist, dass der
-  neue Agent-Code in der VM lebt, **ohne** Modellaufruf (keine Token-Kosten).
+- **OFFLINE** (always): imports `openrouter-agent/agent.py` and `manager.py`
+  directly and tests the core logic without VM/network:
+  - Agent: backend selection (openrouter/orcarouter/llama), context offloader +
+    `offload_read`, summarizing `_trim_history` (incl. folding in the old
+    summary), tool-hook denylist, `/goal`, `or_chat` omits an empty
+    tools list.
+  - Manager: `set_model` provider switch (incl. the `:free` pitfall), HITL store,
+    `katfs_zip` recursion, `PROVIDER_MODEL_KEY ⊆ MODEL_KEYS`.
+- **HTTP** (when the manager runs on `127.0.0.1:8700`): `/api/agents` returns
+  `backend`+`model`, orchestrator reports its real backend, `/api/hitl/<id>`,
+  `/api/katfs/status`, orcarouter template registered.
+- **LIVE** (when the orchestrator VM is running): `/goal` roundtrip — proves that the
+  new agent code lives in the VM, **without** a model call (no token cost).
 
-Exit-Code ≠ 0 bei Fehlern → als Pre-Deploy-Gate nutzbar.
-`MANAGER_URL` überschreibt das Ziel für die HTTP-/LIVE-Stufe.
+Exit code ≠ 0 on failures → usable as a pre-deploy gate.
+`MANAGER_URL` overrides the target for the HTTP/LIVE stage.

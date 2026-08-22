@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
-// Bausteine des Prototyps "KatAgent Prototype". Ersetzt die Industry-Bausteine
-// (blueprintFrame/BlueprintBox mit Registermarken) — der Prototyp kennt keine
-// Registermarken, sondern Karten mit Haarlinie und 14-px-Radius.
+// Building blocks of the "KatAgent Prototype". Replaces the Industry building
+// blocks (blueprintFrame/BlueprintBox with register marks) — the prototype has no
+// register marks, but cards with a hairline and a 14-px radius.
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,14 +52,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateColorAsState
 
-/** Klickflaeche ohne Welligkeits-Kringel — der Prototyp faerbt nur den Grund. */
+/** Tap area without a ripple — the prototype only tints the background. */
 @Composable
 fun Modifier.tap(enabled: Boolean = true, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     return this.clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick)
 }
 
-/** Abschnittstitel: versal, gesperrt, gedaempft (11.5/600, 0.08em). */
+/** Section title: uppercase, letter-spaced, muted (11.5/600, 0.08em). */
 @Composable
 fun Kicker(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -70,7 +70,7 @@ fun Kicker(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Karte: #171D26, Haarlinie, Radius 14. */
+/** Card: #171D26, hairline, radius 14. */
 @Composable
 fun KatCard(
     modifier: Modifier = Modifier,
@@ -90,7 +90,7 @@ fun KatCard(
     )
 }
 
-/** Runder 44-dp-Knopf des Kopfes und der Eingabezeile. */
+/** Round 44-dp button of the header and the input row. */
 @Composable
 fun RoundIconButton(
     onClick: () -> Unit,
@@ -111,13 +111,13 @@ fun RoundIconButton(
     )
 }
 
-/** Haarlinie (rgba(255,255,255,0.06)). */
+/** Hairline (rgba(255,255,255,0.06)). */
 @Composable
 fun Hairline(modifier: Modifier = Modifier, color: Color = Kat.hairline) {
     Box(modifier.fillMaxWidth().height(1.dp).background(color))
 }
 
-/** Schalter 44x26 mit 20-dp-Knopf, Bahn #2D5C96 / #262F3C. */
+/** Switch 44x26 with a 20-dp knob, track #2D5C96 / #262F3C. */
 @Composable
 fun KatSwitch(checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
     val knob by animateDpAsState(if (checked) 21.dp else 3.dp, label = "knob")
@@ -139,7 +139,7 @@ fun KatSwitch(checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modif
     }
 }
 
-/** Statusplakette der Aufgabenliste: 11/600, Radius 9, Flaeche + Rand + Schrift. */
+/** Status badge of the task list: 11/600, radius 9, fill + border + text. */
 @Composable
 fun StatusBadge(text: String, bg: Color, fg: Color, borderColor: Color, modifier: Modifier = Modifier) {
     Box(
@@ -153,7 +153,7 @@ fun StatusBadge(text: String, bg: Color, fg: Color, borderColor: Color, modifier
     }
 }
 
-/** Kleine Plakette ohne Rand (Preset-Marke). */
+/** Small badge without a border (preset tag). */
 @Composable
 fun MiniTag(text: String, bg: Color, fg: Color, modifier: Modifier = Modifier) {
     Box(
@@ -167,9 +167,9 @@ fun MiniTag(text: String, bg: Color, fg: Color, modifier: Modifier = Modifier) {
 }
 
 /**
- * Eingabefeld der Einstellungen: 40 dp hoch, Radius 10, Grund #0E1218 auf der
- * Karte. Bewusst BasicTextField statt OutlinedTextField — Material zeichnet
- * sonst seinen eigenen Rahmen und sein eigenes Label darueber.
+ * Settings input field: 40 dp tall, radius 10, background #0E1218 on the card.
+ * Deliberately BasicTextField instead of OutlinedTextField — otherwise Material
+ * draws its own frame and its own label on top.
  */
 @Composable
 fun KatField(
@@ -216,7 +216,7 @@ fun KatField(
     }
 }
 
-/** Beschriftetes Feld: 12-px-Label in #7A8598 ueber dem Eingabefeld. */
+/** Labeled field: 12-px label in #7A8598 above the input field. */
 @Composable
 fun LabeledField(
     label: String,
@@ -233,7 +233,7 @@ fun LabeledField(
     }
 }
 
-/** Gefuellte Aktion: 42 dp, Radius 21, #2D5C96. */
+/** Filled action: 42 dp, radius 21, #2D5C96. */
 @Composable
 fun FilledPill(
     text: String,
@@ -263,7 +263,7 @@ fun FilledPill(
     }
 }
 
-/** Zweite Aktion: nur Rand #35507A, Schrift #A9CBF2. */
+/** Secondary action: border only #35507A, text #A9CBF2. */
 @Composable
 fun OutlinePill(
     text: String,

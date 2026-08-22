@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Richtet tap0 + NAT ein, damit die microVM ins LAN/Internet kommt. Braucht ROOT.
+# Sets up tap0 + NAT so the microVM reaches the LAN/internet. Needs ROOT.
 set -euo pipefail
 TAP=${TAP:-tap0}
-HOSTIF=${HOSTIF:-eth0}      # LAN-Interface dieses Hosts
+HOSTIF=${HOSTIF:-eth0}      # LAN interface of this host
 GUEST_NET=172.30.0.0/30
 
 ip link del "$TAP" 2>/dev/null || true

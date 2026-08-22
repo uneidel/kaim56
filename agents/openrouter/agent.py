@@ -3,10 +3,10 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""OpenRouter-Agent mit Tool-Calling — modell-agnostisch, laeuft in der microVM.
+"""OpenRouter agent with tool-calling — model-agnostic, runs inside the microVM.
 
-Tools: bash, read_file, write_file, list_dir, http_fetch  + optional MCP-Server
-(stdio), zur Laufzeit vom Manager geholt. Transports: signal | web (via TRANSPORT). Stdlib only.
+Tools: bash, read_file, write_file, list_dir, http_fetch  + optional MCP servers
+(stdio), fetched from the manager at runtime. Transports: signal | web (via TRANSPORT). Stdlib only.
 """
 import itertools
 import json
@@ -21,31 +21,31 @@ import urllib.error
 import uuid
 
 # --- config -----------------------------------------------------------------
-# Der Key steht bewusst NICHT mehr in der Instanz-Config (und damit nicht auf
-# der Config-Disk der microVM). Env bleibt als Fallback fuer Altbestand; sonst
-# wird er beim ersten Bedarf einmal beim Manager geholt — der erkennt den Gast
-# an der Source-IP und prueft die Allowlist aus secret-policy.json.
+# The key is deliberately NO LONGER kept in the instance config (and thus not on
+# the microVM's config disk). Env remains a fallback for legacy setups; otherwise
+# it is fetched once from the manager on first need — which recognizes the guest
+# by its source IP and checks the allowlist from secret-policy.json.
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o")
 OR_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 
-# Selbst gehostetes LLM via llama.cpp (OpenAI-kompatibel). Ist LLAMA_ENDPOINT
-# gesetzt, spricht der Agent den lokalen Server statt OpenRouter an — gleicher
-# Code, nur andere Basis-URL, Modellname und (optionaler) Key. Der Endpoint
-# kommt aus den geteilten Settings ueber die Instanz-Config, der Key als Secret
-# ueber den Broker (LLAMA_API_KEY, darf fehlen -> ohne Auth).
+# Self-hosted LLM via llama.cpp (OpenAI-compatible). If LLAMA_ENDPOINT is set,
+# the agent talks to the local server instead of OpenRouter — same code, just a
+# different base URL, model name and (optional) key. The endpoint comes from the
+# shared settings via the instance config, the key as a secret via the broker
+# (LLAMA_API_KEY, may be absent -> no auth).
 LLAMA_ENDPOINT = os.environ.get("LLAMA_ENDPOINT", "").strip()
-# OrcaRouter: OpenAI-kompatibles Gateway wie OpenRouter, nur andere Basis-URL
-# und ein sk-orca-Key. Gesetzt ist ORCAROUTER_MODEL (oder eine eigene URL beim
-# Selbsthosten von OrcaRouter-Lite), spricht der Agent OrcaRouter statt
-# OpenRouter an. Der Key kommt als Secret ueber den Broker (ORCAROUTER_API_KEY).
+# OrcaRouter: an OpenAI-compatible gateway like OpenRouter, just a different base
+# URL and an sk-orca key. If ORCAROUTER_MODEL is set (or a custom URL when
+# self-hosting OrcaRouter-Lite), the agent talks to OrcaRouter instead of
+# OpenRouter. The key comes as a secret via the broker (ORCAROUTER_API_KEY).
 ORCA_URL = os.environ.get("ORCAROUTER_URL", "").strip()
 ORCA_MODEL = os.environ.get("ORCAROUTER_MODEL", "").strip()
 
 
 def _openai_chat_url(base):
-    """Basis-URL auf den vollen /chat/completions-Pfad bringen — egal ob
-    ".../v1", ".../v1/chat/completions" oder nackter "host:port" reinkommt."""
+    """Bring a base URL to the full /chat/completions path — no matter whether
+    ".../v1", ".../v1/chat/completions" or a bare "host:port" comes in."""
     u = base.rstrip("/")
     if u.endswith("/chat/completions"):
         return u
@@ -69,99 +69,95 @@ elif ORCA_MODEL or ORCA_URL:
     LLM_KEY_SECRET = "ORCAROUTER_API_KEY"
     OR_URL = _openai_chat_url(ORCA_URL or "https://api.orcarouter.ai/v1")
     OR_MODEL = ORCA_MODEL or os.environ.get("OPENROUTER_MODEL") or "openai/gpt-4o"
-# Key-Injection-Proxy (OneCLI-Muster): bei KEY_PROXY=1 (Config-Disk) gehen die
-# Chat-Requests an den Manager, der den Backend-Key beim Weiterleiten injiziert
-# — der Key erreicht die VM nie. Die Ziel-URL entsteht bewusst LAZY in
-# _llm_url(): _manager_base() ist hier noch nicht definiert, und /model kann
-# das Backend zur Laufzeit wechseln. llama.cpp bleibt direkt (lokal erreichbar,
-# Key optional — da gibt es nichts zu verstecken).
+# Key-injection proxy (OneCLI pattern): with KEY_PROXY=1 (config disk) the chat
+# requests go to the manager, which injects the backend key while forwarding
+# — the key never reaches the VM. The target URL is built LAZILY on purpose in
+# _llm_url(): _manager_base() is not yet defined here, and /model can switch the
+# backend at runtime. llama.cpp stays direct (locally reachable, key optional —
+# there is nothing to hide there).
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
 MAX_TOOL_OUT = int(os.environ.get("MAX_TOOL_OUT", "8000"))
-# Heartbeat waehrend Tool-Ausfuehrung: langsame lokale Modelle + lange Tools
-# (apt, Downloads) erzeugen minutenlange Byte-Stille -> ein Proxy/Client-
-# Idle-Timeout (Traefik-Default 180s) kappt sonst den Stream mitten im Satz.
+# Heartbeat during tool execution: slow local models + long-running tools
+# (apt, downloads) produce minutes of byte silence -> a proxy/client idle
+# timeout (Traefik default 180s) would otherwise cut the stream mid-sentence.
 HEARTBEAT_SEC = int(os.environ.get("HEARTBEAT_SEC", "30"))
 SYSTEM = os.environ.get("AGENT_SYSTEM",
-    "Du bist ein hilfreicher Agent mit Tools (Shell, Dateien, Web, MCP). "
-    "Arbeite im Verzeichnis %s. Nutze Tools wenn nötig, antworte sonst direkt. "
-    "Fasse dich kurz." % WORKDIR)
+    "You are a helpful agent with tools (shell, files, web, MCP). "
+    "Work in the directory %s. Use tools when needed, otherwise answer directly. "
+    "Keep it brief." % WORKDIR)
 
-# Laufzeit-Selbstauskunft: der Agent soll wissen, WORAUF er selbst laeuft, damit
-# er auf "welches Modell nutzt du?" korrekt antwortet und nicht faelschlich das
-# Template (list_agents zeigt fuers Routing ANDERE Agenten) heranzieht.
-if os.environ.get("TASK_ADMIN"):   # Missions-Tools hat nur der Orchestrator
+# Runtime self-knowledge: the agent should know WHAT it is running on, so that it
+# answers "which model do you use?" correctly and does not mistakenly pull in the
+# template (list_agents shows OTHER agents for routing).
+if os.environ.get("TASK_ADMIN"):   # only the orchestrator has the mission tools
     SYSTEM += (
-    "\n\nMissionen: Gibt dir der Nutzer einen MEHRSTUFIGEN Auftrag (mehrere "
-        "Tasks/Tage), lege SOFORT mit mission_start eine Mission mit klaren "
-        "Schritten an. Je Vorstoss: einen Schritt per create_task anstossen und "
-        "die task-id mit mission_update am Schritt vermerken (status doing). Ist "
-        "ein Task fertig, wirst du automatisch getriggert: Ergebnis pruefen, "
-        "Schritt auf done/failed, naechsten Schritt anstossen. Alle Schritte "
-        "fertig -> mission_finish mit Fazit. Blockiert -> notify an den Nutzer. "
-        "Einfache Einzelauftraege bleiben normale Tasks OHNE Mission.")
+    "\n\nMissions: If the user gives you a MULTI-STAGE assignment (several "
+        "tasks/days), IMMEDIATELY create a mission with clear steps via "
+        "mission_start. Per push: kick off one step with create_task and record "
+        "the task id on the step with mission_update (status doing). Once a task "
+        "is done, you are triggered automatically: check the result, set the "
+        "step to done/failed, kick off the next step. All steps done -> "
+        "mission_finish with a conclusion. Blocked -> notify the user. "
+        "Simple one-off assignments stay ordinary tasks WITHOUT a mission.")
 
-SYSTEM += (f"\n\nLaufzeit: Du laeufst ueber {LLM_NAME} mit dem Modell "
-           f"'{OR_MODEL}'. Fragt jemand nach deinem Modell/Backend, nenne genau "
-           f"das — verwende dafuer NICHT list_agents (das listet andere Agenten "
-           f"zum Delegieren, nicht dich).")
+SYSTEM += (f"\n\nRuntime: You run via {LLM_NAME} with the model "
+           f"'{OR_MODEL}'. If anyone asks about your model/backend, name exactly "
+           f"that — do NOT use list_agents for it (that lists other agents to "
+           f"delegate to, not you).")
 
-# Haengt an JEDEN Systemprompt, auch an Personas: die Gedaechtnis-Werkzeuge
-# sind eingebaut, also gehoert die Anweisung dazu hierher — nicht in jede
-# Persona einzeln, wo sie beim naechsten Bearbeiten verloren ginge.
+# Appended to EVERY system prompt, personas included: the memory tools are
+# built in, so the instruction for them belongs here — not in each persona
+# individually, where it would be lost on the next edit.
 SYSTEM += (
-    "\n\nGedaechtnis: Innerhalb eines Gespraechs erinnerst du dich ganz normal "
-    "an das bisher Gesagte — nutze das selbstverstaendlich und erklaere dem "
-    "Nutzer NICHT ungefragt, wie dein Gedaechtnis funktioniert oder dass es sich "
-    "zuruecksetzt. Ueber Gespraeche und Neustarts hinweg bleibt nur, was du "
-    "bewusst ablegst: was kuenftige Gespraeche brauchen — Vorlieben des Nutzers, "
-    "getroffene Entscheidungen, laufende Vorhaben, gelernte Eigenheiten der "
-    "Umgebung — merkst du dir sofort und still mit memory_store. Der key ist "
-    "kurz (zum Aktualisieren); der value ist eine VOLLSTAENDIGE, fuer sich "
-    "verstaendliche Aussage (ganzer Satz), denn er wird spaeter nach Bedeutung "
-    "wieder hervorgeholt — 'Ulrichs Lieblingsberg zum Wandern ist der Watzmann', "
-    "nicht bloss 'Watzmann'. Bestehendes unter gleichem key aktualisieren. "
-    "Kein Protokoll fuehren: fluechtige Details nicht speichern. Passende "
-    "fruehere Notizen werden dir automatisch eingeblendet; memory_recall liefert "
-    "bei Bedarf mehr.")
+    "\n\nMemory: Within a conversation you remember what was said so far quite "
+    "normally — use that as a matter of course and do NOT explain to the user, "
+    "unprompted, how your memory works or that it resets. Across conversations "
+    "and restarts, only what you deliberately store persists: whatever future "
+    "conversations need — the user's preferences, decisions made, ongoing "
+    "projects, learned quirks of the environment — you store immediately and "
+    "silently with memory_store. The key is short (for updating); the value is a "
+    "COMPLETE, self-contained statement (a full sentence), because it is later "
+    "retrieved by meaning — 'Ulrich's favorite mountain to hike is the "
+    "Watzmann', not just 'Watzmann'. Update existing entries under the same key. "
+    "Keep no running log: do not store fleeting details. Matching earlier notes "
+    "are surfaced to you automatically; memory_recall provides more when needed.")
 
 SYSTEM += (
-    "\n\nPlaybooks (feste Regeln): Sagt dir der Nutzer, WIE etwas zu tun ist, "
-    "nennt eine dauerhafte Vorliebe ('immer …', 'fuer X nutze Y') oder korrigiert "
-    "deinen Ansatz, halte das SOFORT und still mit playbook_add als kurze, "
-    "konkrete Regel fest — so waechst dein Wissen mit seinen Wuenschen. Die unter "
-    "[Playbooks] eingeblendeten Regeln befolgst du immer. Mit playbooks zeigst du "
-    "sie, mit playbook_forget entfernst du eine.")
+    "\n\nPlaybooks (fixed rules): If the user tells you HOW something is to be "
+    "done, states a lasting preference ('always …', 'for X use Y') or corrects "
+    "your approach, capture it IMMEDIATELY and silently with playbook_add as a "
+    "short, concrete rule — that way your knowledge grows with their wishes. The "
+    "rules surfaced under [Playbooks] you always follow. With playbooks you show "
+    "them, with playbook_forget you remove one.")
 
-# Verhaltensleitplanken, sinngemaess aus Anthropics veroeffentlichten
-# System-Prompts uebernommen (das Modell-agnostische daran) — gilt fuer jedes
-# Modell hinter diesem Agenten, auch fuer Personas.
+# Behavioral guardrails, adapted in spirit from Anthropic's published system
+# prompts (the model-agnostic parts) — applies to every model behind this
+# agent, personas included.
 SYSTEM += (
-    "\n\nArbeitsweise: Erfinde nichts. Bist du nicht sicher, ob etwas stimmt "
-    "oder noch aktuell ist, sag das offen und pruefe es mit web_search/"
-    "http_fetch, statt zu raten; erfinde keine Quellen, Zitate oder Links. "
-    "Bevor du behauptest, etwas nicht zu koennen oder keinen Zugriff zu haben, "
-    "sieh nach, ob ein Werkzeug dafuer da ist, und nutze es — selbst handeln "
-    "geht vor darum bitten. Bei unklaren Anfragen triff eine sinnvolle Annahme "
-    "und leg los; frag nur zurueck, wenn es ohne die Angabe wirklich nicht "
-    "geht. Eine begonnene Aufgabe fuehrst du zu Ende statt auf halbem Weg "
-    "aufzuhoeren.\n"
-    "Ton: sachlich, ohne Schmeichelei und ohne uebertriebene Entschuldigungen; "
-    "widersprich freundlich und begruendet, wenn du anderer Meinung bist, statt "
-    "nachzugeben. Lass leere Fuellwoerter wie 'ehrlich gesagt', 'wirklich' oder "
-    "'tatsaechlich' weg — sag es einfach direkt. Antworte knapp und in "
-    "Fliesstext; Listen, Fettung und Ueberschriften nur, wenn der Inhalt es "
-    "wirklich erfordert oder du danach gefragt wirst; Vorbehalte kurz halten, "
-    "der Hauptteil ist die Antwort. Ueber Absichten oder Gemuetszustand anderer "
-    "spekulierst du nicht.")
+    "\n\nWorking style: Invent nothing. If you are not sure whether something is "
+    "true or still current, say so openly and check it with web_search/"
+    "http_fetch instead of guessing; do not invent sources, quotes or links. "
+    "Before claiming you cannot do something or have no access, check whether "
+    "there is a tool for it, and use it — acting yourself comes before asking "
+    "for it. On unclear requests make a sensible assumption and get going; only "
+    "ask back when it genuinely cannot proceed without the detail. A task you "
+    "have started you carry to the end instead of stopping halfway.\n"
+    "Tone: matter-of-fact, without flattery and without excessive apologies; "
+    "disagree kindly and with reasons when you are of a different opinion, "
+    "instead of caving. Drop empty filler words like 'honestly', 'really' or "
+    "'actually' — just say it directly. Answer concisely and in prose; lists, "
+    "bolding and headings only when the content truly calls for them or you are "
+    "asked for them; keep caveats short, the main part is the answer. You do not "
+    "speculate about the intentions or state of mind of others.")
 
 
-# Reasoning/Thinking des Modells (OpenRouter reasoning-Parameter). None = aus.
-# --- /model: Modell (und optional Backend) zur Laufzeit wechseln ------------
-# Wie bei pi.dev: mitten in der Session hochschalten ("/model orcarouter:
-# anthropic/claude-sonnet-4.6") und wieder zurueck — ohne Neustart, Kontext
-# bleibt. Wirkt nur bis zum Neustart; dauerhaft bleibt die Instanz-Config.
+# Model reasoning/thinking (OpenRouter reasoning parameter). None = off.
+# --- /model: switch model (and optionally backend) at runtime ---------------
+# Like pi.dev: switch up mid-session ("/model orcarouter:
+# anthropic/claude-sonnet-4.6") and back again — without a restart, the context
+# stays. Only effective until restart; the instance config remains authoritative.
 _MODEL_BACKENDS = {
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1/chat/completions",
                    "OPENROUTER_API_KEY"),
@@ -174,62 +170,62 @@ def _set_model(cmd):
     global OR_MODEL, OR_URL, LLM_NAME, LLM_KEY_SECRET, LLM_BACKEND, OR_KEY
     rest = cmd[len("/model"):].strip()
     if not rest or rest in ("show", "status"):
-        return f"🧠 Modell: {OR_MODEL} ueber {LLM_NAME} ({_llm_url()})"
+        return f"🧠 Model: {OR_MODEL} via {LLM_NAME} ({_llm_url()})"
     if ":" in rest and rest.split(":", 1)[0] in _MODEL_BACKENDS:
         prov, mdl = rest.split(":", 1)
         name, url, secret = _MODEL_BACKENDS[prov]
         LLM_BACKEND, LLM_NAME, OR_URL, LLM_KEY_SECRET = prov, name, url, secret
-        OR_KEY = ""                      # Key des neuen Backends beim Broker holen
+        OR_KEY = ""                      # fetch the new backend's key from the broker
         OR_MODEL = mdl.strip()
     else:
         OR_MODEL = rest
-    return f"🧠 Modell jetzt: {OR_MODEL} ueber {LLM_NAME} (bis zum Neustart)"
+    return f"🧠 Model now: {OR_MODEL} via {LLM_NAME} (until restart)"
 
 
 def _set_steps(cmd):
-    """/steps [n|unlimited] — max. Tool-Schritte pro Turn zur Laufzeit aendern
-    (bis zum Neustart; dauerhaft: AGENT_MAX_STEPS in der Instanz-Config).
-    '/steps 30' = bis zu 30 Runden, '/steps unlimited' = unbegrenzt (dann
-    begrenzen nur noch die Guardrails: Token-Budget + Rate-Limit am Key-Proxy)."""
+    """/steps [n|unlimited] — change the max tool steps per turn at runtime
+    (until restart; permanently: AGENT_MAX_STEPS in the instance config).
+    '/steps 30' = up to 30 rounds, '/steps unlimited' = unlimited (then only the
+    guardrails limit: token budget + rate limit at the key proxy)."""
     global MAX_STEPS
     rest = cmd[len("/steps"):].strip().lower()
     if not rest:
         cur = "unlimited" if MAX_STEPS <= 0 else MAX_STEPS
-        return (f"🔢 max. Tool-Schritte je Turn: {cur}"
-                "  ·  /steps <1..x> oder /steps unlimited")
+        return (f"🔢 max tool steps per turn: {cur}"
+                "  ·  /steps <1..x> or /steps unlimited")
     if rest in ("unlimited", "unbegrenzt", "inf", "infinite", "\u221e", "0", "none", "off"):
         MAX_STEPS = 0
-        return ("🔢 max. Tool-Schritte jetzt: unlimited (bis zum Neustart) "
-                "\u2014 nur Guardrails begrenzen noch")
+        return ("🔢 max tool steps now: unlimited (until restart) "
+                "\u2014 only the guardrails still limit")
     try:
         MAX_STEPS = max(1, int(rest))
     except ValueError:
-        return "Nutzung: /steps <1..x> oder /steps unlimited"
-    return f"🔢 max. Tool-Schritte jetzt: {MAX_STEPS} (bis zum Neustart)"
+        return "Usage: /steps <1..x> or /steps unlimited"
+    return f"🔢 max tool steps now: {MAX_STEPS} (until restart)"
 
 
 def _step_iter():
-    """Iterator fuer die Tool-Runden: begrenzt (range) oder unbegrenzt
-    (itertools.count) bei MAX_STEPS<=0. Liest MAX_STEPS bei jedem Aufruf frisch."""
+    """Iterator for the tool rounds: bounded (range) or unbounded
+    (itertools.count) when MAX_STEPS<=0. Reads MAX_STEPS fresh on each call."""
     return itertools.count() if MAX_STEPS <= 0 else range(MAX_STEPS)
 
 
-# Default aus Env (OPENROUTER_REASONING), zur Laufzeit per /reasoning umschaltbar.
+# Default from env (OPENROUTER_REASONING), switchable at runtime via /reasoning.
 _reasoning = (os.environ.get("OPENROUTER_REASONING", "").strip().lower() or None)
 if _reasoning not in (None, "low", "medium", "high"):
     _reasoning = None
 
 
-# Marker fuer den Denk-/Reasoning-Block im Token-Strom. Sichtbare Unicode-
-# Klammern: kommen in normalem Text praktisch nie vor und werden vom Security
-# Gateway NICHT entfernt (kein Zero-Width/Tag-Zeichen). Web und App klappen den
-# Bereich zwischen den Markern als "Denken" ein.
+# Marker for the thinking/reasoning block in the token stream. Visible Unicode
+# brackets: they practically never occur in normal text and are NOT stripped by
+# the security gateway (no zero-width/tag characters). Web and app collapse the
+# region between the markers as "thinking".
 THINK_START = "\u27E6think\u27E7"
 THINK_END = "\u27E6/think\u27E7"
 
 
 def _set_reasoning(cmd):
-    """/reasoning [off|low|medium|high] — ohne Argument umschalten (aus <-> medium)."""
+    """/reasoning [off|low|medium|high] — toggle without an argument (off <-> medium)."""
     global _reasoning
     arg = cmd[len("/reasoning"):].strip().lower()
     if arg in ("off", "aus", "0", "none", "false"):
@@ -239,8 +235,8 @@ def _set_reasoning(cmd):
     elif arg == "":
         _reasoning = None if _reasoning else "medium"
     else:
-        return "Nutzung: /reasoning [off|low|medium|high]"
-    return f"🧠 Reasoning {'aus' if _reasoning is None else 'an (' + _reasoning + ')'}."
+        return "Usage: /reasoning [off|low|medium|high]"
+    return f"🧠 Reasoning {'off' if _reasoning is None else 'on (' + _reasoning + ')'}."
 
 
 def log(*a):
@@ -252,7 +248,7 @@ def log(*a):
 def t_bash(command):
     p = subprocess.run(command, shell=True, cwd=WORKDIR, capture_output=True,
                        text=True, timeout=BASH_TIMEOUT)
-    return (p.stdout + p.stderr).strip() or f"(exit {p.returncode}, keine Ausgabe)"
+    return (p.stdout + p.stderr).strip() or f"(exit {p.returncode}, no output)"
 
 
 def _safe(path):
@@ -270,11 +266,11 @@ def t_write_file(path, content):
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     with open(p, "w") as f:
         f.write(content)
-    return f"geschrieben: {p} ({len(content)} zeichen)"
+    return f"written: {p} ({len(content)} characters)"
 
 
 def t_list_dir(path="."):
-    return "\n".join(sorted(os.listdir(_safe(path)))) or "(leer)"
+    return "\n".join(sorted(os.listdir(_safe(path)))) or "(empty)"
 
 
 def t_http_fetch(url, method="GET"):
@@ -284,8 +280,8 @@ def t_http_fetch(url, method="GET"):
 
 
 def t_read_pdf(path, pages=""):
-    """PDF-Text extrahieren via pdftotext. `path` = Workspace-Datei ODER
-    http(s)-URL. `pages` optional als Bereich, z. B. '1-5'."""
+    """Extract PDF text via pdftotext. `path` = workspace file OR
+    http(s) URL. `pages` optional as a range, e.g. '1-5'."""
     import re
     import tempfile
     tmp = None
@@ -308,12 +304,12 @@ def t_read_pdf(path, pages=""):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         txt = (r.stdout or "").strip()
         if not txt:
-            return ("PDF-Fehler: " + (r.stderr.strip()[:300] or "")
+            return ("PDF error: " + (r.stderr.strip()[:300] or "")
                     if r.returncode != 0
-                    else "(kein Text im PDF — evtl. gescanntes Bild ohne Textebene)")
+                    else "(no text in the PDF — possibly a scanned image without a text layer)")
         return txt[:MAX_TOOL_OUT]
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
     finally:
         if tmp:
             try:
@@ -323,7 +319,7 @@ def t_read_pdf(path, pages=""):
 
 
 def t_web_search(query, count=5):
-    """Websuche via DuckDuckGo-HTML (kein API-Key). Liefert Titel + URL + Snippet."""
+    """Web search via DuckDuckGo HTML (no API key). Returns title + URL + snippet."""
     import urllib.parse
     import re
     try:
@@ -351,11 +347,11 @@ def t_web_search(query, count=5):
         t = clean(titles[i]) if i < len(titles) else ""
         s = clean(snips[i]) if i < len(snips) else ""
         out.append(f"{i+1}. {t}\n   {real(hrefs[i])}\n   {s}")
-    return "\n".join(out) or "keine Ergebnisse"
+    return "\n".join(out) or "no results"
 
 
 def _manager_base():
-    """Manager-URL vom Gast aus: Host-Gateway (.1 des /30) auf Port 8700."""
+    """Manager URL as seen from the guest: host gateway (.1 of the /30) on port 8700."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("10.255.255.255", 1))
@@ -373,14 +369,14 @@ def _mgr(base, path, payload=None, timeout=60):
 
 
 def ensure_or_key():
-    """LLM-Key beschaffen und im Speicher halten. Bei llama.cpp ist der Key
-    optional — fehlt er, laeuft der Agent ohne Auth (leerer Bearer), das ist
-    fuer einen Server ohne --api-key der Normalfall und kein Fehler."""
+    """Obtain the LLM key and hold it in memory. With llama.cpp the key is
+    optional — if it is missing, the agent runs without auth (empty bearer), which
+    is the normal case for a server without --api-key and not an error."""
     global OR_KEY
     if _llm_proxy_active():
-        # Proxy-Modus: der Manager injiziert den Key beim Weiterleiten — die
-        # VM braucht (und bekommt) keinen. Ein Broker-Abruf hier waere genau
-        # das Leck, das der Proxy verhindern soll.
+        # Proxy mode: the manager injects the key while forwarding — the
+        # VM needs (and gets) none. A broker fetch here would be exactly
+        # the leak the proxy is meant to prevent.
         return ""
     if OR_KEY:
         return OR_KEY
@@ -388,34 +384,34 @@ def ensure_or_key():
         d = json.loads(_mgr_get(_manager_base(), f"/api/secret/{LLM_KEY_SECRET}"))
         OR_KEY = d.get("value", "") or ""
         if not OR_KEY and LLM_BACKEND != "llama":
-            print(f"{LLM_KEY_SECRET}: {d.get('error', 'vom Broker nicht freigegeben')}",
+            print(f"{LLM_KEY_SECRET}: {d.get('error', 'not released by the broker')}",
                   flush=True)
     except Exception as e:
         if LLM_BACKEND != "llama":
-            print(f"{LLM_KEY_SECRET} nicht vom Manager zu bekommen: {e!r}", flush=True)
+            print(f"{LLM_KEY_SECRET} could not be obtained from the manager: {e!r}", flush=True)
     return OR_KEY
 
 
 def _llm_proxy_active():
-    """Key-Injection-Proxy an? Nur fuer die Router-Backends — llama.cpp ist
-    lokal und hat keinen schuetzenswerten Cloud-Key, das bleibt direkt."""
+    """Key-injection proxy on? Only for the router backends — llama.cpp is
+    local and has no cloud key worth protecting, so that stays direct."""
     return bool(os.environ.get("KEY_PROXY")) and LLM_BACKEND in ("openrouter",
                                                                  "orcarouter")
 
 
 def _llm_url():
-    """Ziel-URL fuer Chat-Requests, je Aufruf frisch: im Proxy-Modus der
-    Manager-Pfad (der injiziert den Key), sonst die direkte Backend-URL.
-    Lazy statt beim Import, weil /model das Backend zur Laufzeit wechselt."""
+    """Target URL for chat requests, fresh on each call: in proxy mode the
+    manager path (which injects the key), otherwise the direct backend URL.
+    Lazy rather than at import, because /model switches the backend at runtime."""
     if _llm_proxy_active():
         return f"{_manager_base()}/api/llm/{LLM_BACKEND}/chat/completions"
     return OR_URL
 
 
 def _llm_headers():
-    """Request-Header fuer Chat-Requests. Im Proxy-Modus OHNE Authorization —
-    den setzt der Manager beim Weiterleiten; ein Bearer aus der VM waere
-    bestenfalls ein Dummy und suggeriert nur, hier laege ein Key."""
+    """Request headers for chat requests. In proxy mode WITHOUT Authorization —
+    the manager sets it while forwarding; a bearer from the VM would be
+    at best a dummy and only suggest a key were present here."""
     h = {"Content-Type": "application/json",
          "HTTP-Referer": "https://agents.example.com", "X-Title": "kaim56-agent"}
     if not _llm_proxy_active():
@@ -424,8 +420,8 @@ def _llm_headers():
 
 
 def t_spawn_subagent(task, model=None):
-    """Erstellt eine neue ephemere Agenten-Instanz, delegiert die Aufgabe,
-    liefert das Ergebnis und löscht die Instanz danach wieder."""
+    """Creates a new ephemeral agent instance, delegates the task,
+    returns the result and deletes the instance again afterwards."""
     base = _manager_base()
     name = "sub-" + uuid.uuid4().hex[:6]
     cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
@@ -435,10 +431,10 @@ def t_spawn_subagent(task, model=None):
         _mgr(base, "/api/create", {"name": name, "template": "openrouter", "config": cfg})
         _mgr(base, f"/api/instances/{name}/start")
     except Exception as e:
-        return f"Subagent-Start fehlgeschlagen: {e!r}"
+        return f"Subagent start failed: {e!r}"
     reply = None
     try:
-        for _ in range(120):  # ~2 min, 1s-Granularitaet
+        for _ in range(120):  # ~2 min, 1s granularity
             time.sleep(1)
             try:
                 body = _mgr(base, f"/i/{name}/api/chat", {"message": task}, timeout=180)
@@ -455,13 +451,13 @@ def t_spawn_subagent(task, model=None):
             _mgr(base, f"/api/instances/{name}/delete")
         except Exception:
             pass
-    return reply or "(Subagent lieferte kein Ergebnis)"
+    return reply or "(subagent returned no result)"
 
 
 def t_create_task(task, target="ephemeral", schedule="", wait=False):
-    """Eine Aufgabe zur Ausfuehrung einreihen — auf einer FAEHIGEN Instanz oder
-    isoliert in einer ephemeren VM. Der Manager fuehrt sie aus; das Ergebnis
-    erscheint in der gemeinsamen Chat-Historie (App/Web)."""
+    """Queue a task for execution — on a CAPABLE instance or
+    isolated in an ephemeral VM. The manager runs it; the result
+    appears in the shared chat history (app/web)."""
     payload = {"message": task, "target": (target or "ephemeral").strip(),
                "schedule": (schedule or "").strip(), "wait": bool(wait)}
     try:
@@ -470,33 +466,33 @@ def t_create_task(task, target="ephemeral", schedule="", wait=False):
         d = json.loads(body)
         if d.get("error"):
             return f"⚠️ {d['error']}"
-        if "result" in d:                      # wait=True -> Ergebnis direkt
+        if "result" in d:                      # wait=True -> result directly
             return str(d["result"])
-        return (f"Aufgabe eingereiht (id {d.get('id')}, target {d.get('target')}, "
-                f"{d.get('status')}). Ergebnis erscheint im Chat.")
+        return (f"Task queued (id {d.get('id')}, target {d.get('target')}, "
+                f"{d.get('status')}). The result will appear in the chat.")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_mission_start(goal, steps):
-    """Mehrstufigen Auftrag als Mission anlegen: Ziel + geplante Schritte.
-    Der Fortschritt liegt im Manager und ueberlebt Neustart/Reset."""
+    """Create a multi-stage assignment as a mission: goal + planned steps.
+    The progress lives in the manager and survives restart/reset."""
     if isinstance(steps, str):
         steps = [x.strip() for x in steps.split("\n") if x.strip()]
     try:
         d = json.loads(_mgr(_manager_base(), "/api/mission-start",
                             {"goal": goal, "steps": steps}, timeout=10))
-        return f"Mission {d['id']} angelegt." if d.get("id") else f"Nicht angelegt: {d.get('note','')}"
+        return f"Mission {d['id']} created." if d.get("id") else f"Not created: {d.get('note','')}"
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_missions():
-    """Aktive/pausierte Missionen mit Schritten und Status auflisten."""
+    """List active/paused missions with steps and status."""
     try:
         ms = json.loads(_mgr_get(_manager_base(), "/api/missions", timeout=8)).get("missions", [])
         if not ms:
-            return "keine Missionen"
+            return "no missions"
         out = []
         for m in ms:
             if m.get("status") in ("done", "failed"):
@@ -505,15 +501,15 @@ def t_missions():
                                + (f" (task {st['task_id']})" if st.get("task_id") else "")
                                for st in m.get("steps", []))
             out.append(f"{m['id']} [{m['status']}] {m['goal'][:80]} :: {steps}")
-        return "\n".join(out) or "keine offenen Missionen"
+        return "\n".join(out) or "no open missions"
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_mission_update(id, step=None, status="", result="", task_id="", add_step="", note=""):
-    """Missionsschritt fortschreiben: status open|doing|done|failed, result kurz,
-    task_id des angestossenen Tasks vermerken; add_step haengt einen neuen
-    Schritt an; note schreibt nur ins Log."""
+    """Advance a mission step: status open|doing|done|failed, result brief,
+    record the task_id of the kicked-off task; add_step appends a new
+    step; note only writes to the log."""
     try:
         body = {"id": id, "status": status, "result": result,
                 "task_id": task_id, "add_step": add_step, "note": note}
@@ -522,126 +518,126 @@ def t_mission_update(id, step=None, status="", result="", task_id="", add_step="
         d = json.loads(_mgr(_manager_base(), "/api/mission-update", body, timeout=10))
         return d.get("msg", "?")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_mission_finish(id, summary, failed=False):
-    """Mission abschliessen (oder mit failed=true als gescheitert beenden).
-    Fazit wandert ins Langzeitgedaechtnis, der Nutzer bekommt eine Notification."""
+    """Finish a mission (or end it as failed with failed=true).
+    The conclusion goes into long-term memory, the user gets a notification."""
     try:
         d = json.loads(_mgr(_manager_base(), "/api/mission-finish",
                             {"id": id, "summary": summary, "failed": bool(failed)}, timeout=10))
         return d.get("msg", "?")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
-ORACLE_MODEL = os.environ.get("ORACLE_MODEL", "").strip()   # leer = aktuelles Modell
+ORACLE_MODEL = os.environ.get("ORACLE_MODEL", "").strip()   # empty = current model
 ORACLE_PROMPT = (
-    "Du bist ein skeptischer Berater (Oracle): Zweitmeinung VOR einer Handlung. "
-    "Du handelst NIE selbst. Hinterfrage die Annahmen: Passt die Aktion zum "
-    "eigentlichen Auftrag? Ist das Ziel eindeutig identifiziert (ID + Inhalt, "
-    "nicht nur Uhrzeit/Name)? Was waere der Schaden, wenn die Annahme falsch "
-    "ist? Antworte knapp: erst 'EINWAND:' mit dem staerksten Gegenargument "
-    "(oder 'KEIN EINWAND'), dann max. 3 Zeilen Begruendung/Empfehlung.")
+    "You are a skeptical advisor (Oracle): a second opinion BEFORE an action. "
+    "You NEVER act yourself. Question the assumptions: Does the action fit the "
+    "actual assignment? Is the target unambiguously identified (ID + content, "
+    "not just time/name)? What would the damage be if the assumption is wrong? "
+    "Answer concisely: first 'OBJECTION:' with the strongest counter-argument "
+    "(or 'NO OBJECTION'), then at most 3 lines of reasoning/recommendation.")
 
 
 def t_oracle(plan, kontext=""):
-    """Zweitmeinung vor einer Handlung (pi.dev-Idee 'oracle'): challenge der
-    Annahmen, ohne selbst zu handeln. Extra LLM-Aufruf ohne Tools; via
-    ORACLE_MODEL optional ein staerkeres Modell."""
+    """Second opinion before an action (pi.dev idea 'oracle'): challenge the
+    assumptions, without acting yourself. An extra LLM call without tools; via
+    ORACLE_MODEL optionally a stronger model."""
     msgs = [{"role": "system", "content": ORACLE_PROMPT},
-            {"role": "user", "content": f"GEPLANTE AKTION:\n{plan}\n\nKONTEXT:\n{kontext or '(keiner)'}"}]
+            {"role": "user", "content": f"PLANNED ACTION:\n{plan}\n\nCONTEXT:\n{kontext or '(none)'}"}]
     r = or_chat(msgs, [], model=ORACLE_MODEL or None)
-    return (r.get("content") or "").strip() or "(Oracle ohne Antwort — im Zweifel NICHT handeln)"
+    return (r.get("content") or "").strip() or "(Oracle gave no answer — when in doubt do NOT act)"
 
 
 def t_notify(title, message=""):
-    """Eine Push-Benachrichtigung an die Geraete des Nutzers schicken (App als
-    Android-Systemnotification, Web-Manager als Glocke). Fuer wichtige
-    Ereignisse/Ergebnisse, wenn der Nutzer nicht im Chat sitzt. Anders als
-    send_signal (klingelt in Signal) ist das der App/Web-Kanal. Der Versand
-    laeuft ueber den Manager."""
+    """Send a push notification to the user's devices (app as an
+    Android system notification, web manager as a bell). For important
+    events/results when the user is not in the chat. Unlike
+    send_signal (which rings in Signal), this is the app/web channel. Delivery
+    goes through the manager."""
     try:
         body = _mgr(_manager_base(), "/api/notify",
                     {"title": title, "message": message}, timeout=15)
         d = json.loads(body)
-        return "Benachrichtigung gesendet." if d.get("id") else \
-            "⚠️ nicht gesendet: " + str(d.get("note", ""))
+        return "Notification sent." if d.get("id") else \
+            "⚠️ not sent: " + str(d.get("note", ""))
     except urllib.error.HTTPError as e:
         try:
-            return "⚠️ nicht gesendet: " + str(json.loads(e.read()).get("note", e.code))
+            return "⚠️ not sent: " + str(json.loads(e.read()).get("note", e.code))
         except Exception:
-            return f"⚠️ nicht gesendet (HTTP {e.code})"
+            return f"⚠️ not sent (HTTP {e.code})"
     except Exception as e:
-        return f"⚠️ Fehler: {e!r}"
+        return f"⚠️ Error: {e!r}"
 
 
 def t_send_signal(text, to=""):
-    """Dem Nutzer per Signal schreiben. Der Versand laeuft im Manager: die
-    Bot-Nummer und der API-Zugang liegen dort, und der Empfaenger wird gegen
-    die Liste der erlaubten Nummern geprueft. Von hier aus laesst sich also
-    nicht an beliebige Nummern schreiben — mit Absicht."""
+    """Write to the user via Signal. Delivery runs in the manager: the
+    bot number and the API access live there, and the recipient is checked
+    against the list of allowed numbers. So from here you cannot
+    write to arbitrary numbers — by design."""
     try:
         body = _mgr(_manager_base(), "/api/signal",
                     {"text": text, "to": (to or "").strip()}, timeout=45)
         d = json.loads(body)
-        return ("Signal gesendet: " if d.get("ok") else "⚠️ nicht gesendet: ") + str(d.get("note", ""))
+        return ("Signal sent: " if d.get("ok") else "⚠️ not sent: ") + str(d.get("note", ""))
     except urllib.error.HTTPError as e:
         try:
-            return "⚠️ nicht gesendet: " + str(json.loads(e.read()).get("note", e.code))
+            return "⚠️ not sent: " + str(json.loads(e.read()).get("note", e.code))
         except Exception:
-            return f"⚠️ nicht gesendet: HTTP {e.code}"
+            return f"⚠️ not sent: HTTP {e.code}"
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_read_inbox(peek=False):
-    """Neue Nutzer-Nachrichten (Signal/App/Web) seit dem letzten Lauf lesen —
-    der Posteingang des Orchestrators. Standardmaessig wird jede Nachricht nur
-    EINMAL geliefert (Wasserzeichen). peek=True liefert, ohne zu 'verbrauchen'."""
+    """Read new user messages (Signal/app/web) since the last run —
+    the orchestrator's inbox. By default each message is delivered only
+    ONCE (watermark). peek=True returns without 'consuming'."""
     try:
         body = _mgr_get(_manager_base(), "/api/inbox" + ("?peek=1" if peek else ""))
         msgs = json.loads(body).get("messages", [])
         if not msgs:
-            return "Posteingang leer (nichts Neues)"
+            return "Inbox empty (nothing new)"
         out = []
         for m in msgs:
             who = m.get("instance") or m.get("title") or "?"
             out.append(f"[{who}] {str(m.get('text',''))[:200]}")
         return "\n".join(out)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_list_agents():
-    """Verfuegbare Agenten-Instanzen + Faehigkeiten (Modell, MCP) auflisten —
-    fuers Routing: waehle als create_task-target den Agenten, der die noetigen
-    Tools/MCP hat (z. B. den mit homeassistant-MCP fuer Licht/Heizung)."""
+    """List available agent instances + capabilities (model, MCP) —
+    for routing: choose as the create_task target the agent that has the needed
+    tools/MCP (e.g. the one with the homeassistant MCP for lights/heating)."""
     try:
         rows = json.loads(_mgr_get(_manager_base(), "/api/agents")).get("agents", [])
         if not rows:
-            return "keine Agenten"
+            return "no agents"
         out = []
         for a in rows:
             mcp = (" mcp:" + ",".join(a["mcps"])) if a.get("mcps") else ""
-            st = "läuft" if a.get("running") else "aus"
+            st = "running" if a.get("running") else "off"
             out.append(f"{a['name']} [{st}] {a.get('backend') or a.get('template','')} {a.get('model','')}{mcp}")
         return "\n".join(out)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_recall_tasks(query="", limit=10):
-    """Frueher ausgefuehrte Aufgaben abfragen (Langzeitgedaechtnis / Stammwissen).
-    Ohne query die letzten; mit query nach Text in Aufgabe/Ergebnis/Ziel suchen.
-    Nutze das VOR dem Anlegen neuer Tasks, um Dubletten zu vermeiden."""
+    """Query previously executed tasks (long-term memory / base knowledge).
+    Without query the most recent; with query, search by text in task/result/goal.
+    Use this BEFORE creating new tasks to avoid duplicates."""
     try:
         q = urllib.parse.quote(query or "")
         body = _mgr_get(_manager_base(), f"/api/history?q={q}&limit={int(limit)}")
         rows = json.loads(body).get("rows", [])
         if not rows:
-            return "keine passenden frueheren Aufgaben"
+            return "no matching earlier tasks"
         out = []
         for r in rows:
             ts = time.strftime("%m-%d %H:%M", time.localtime(r.get("ts", 0)))
@@ -650,18 +646,18 @@ def t_recall_tasks(query="", limit=10):
                        f" -> {str(r.get('result','') or '')[:140]}")
         return "\n".join(out)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_list_tasks():
-    """Laufende/geplante Aufgaben mit IDs auflisten — noetig, um eine gezielt
-    mit delete_task zu entfernen. (recall_tasks liefert dagegen die History
-    erledigter Laeufe, nicht die aktiven mit ihren IDs.)"""
+    """List running/scheduled tasks with IDs — needed to remove a specific
+    one with delete_task. (recall_tasks, by contrast, returns the history of
+    completed runs, not the active ones with their IDs.)"""
     try:
         body = _mgr_get(_manager_base(), "/api/tasks-open")
         tasks = json.loads(body).get("tasks", [])
         if not tasks:
-            return "keine laufenden Aufgaben"
+            return "no running tasks"
         out = []
         for t in tasks:
             sch = f" [{t['schedule']}]" if t.get("schedule") else ""
@@ -669,27 +665,27 @@ def t_list_tasks():
                        f"{str(t.get('message',''))[:80]}")
         return "\n".join(out)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_delete_task(id):
-    """Eine laufende/geplante Aufgabe per ID entfernen. Die ID kommt aus
-    list_tasks. Endgueltig; eine gerade laufende Aufgabe bricht das nicht ab,
-    verhindert aber kuenftige Laeufe."""
+    """Remove a running/scheduled task by ID. The ID comes from
+    list_tasks. Final; it does not abort a task that is currently running,
+    but prevents future runs."""
     try:
         body = _mgr(_manager_base(), "/api/task-delete", {"id": str(id)})
         d = json.loads(body)
-        return (f"Aufgabe {id} geloescht." if d.get("deleted")
-                else f"Keine Aufgabe mit ID {id} gefunden.")
+        return (f"Task {id} deleted." if d.get("deleted")
+                else f"No task with ID {id} found.")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_edit_task(id, message="", schedule=""):
-    """Nachricht und/oder Zeitplan einer Aufgabe aendern (ID aus list_tasks).
-    schedule z. B. 'every 2h', 'daily 08:00', 'hourly'; leerer schedule macht
-    aus einer Wiederholung eine einmalige Aufgabe. Leere Felder bleiben
-    unveraendert. Eine gerade LAUFENDE Aufgabe laesst sich nicht aendern."""
+    """Change the message and/or schedule of a task (ID from list_tasks).
+    schedule e.g. 'every 2h', 'daily 08:00', 'hourly'; an empty schedule turns
+    a recurring task into a one-off. Empty fields stay
+    unchanged. A task that is currently RUNNING cannot be changed."""
     try:
         payload = {"id": str(id)}
         if message:
@@ -699,7 +695,7 @@ def t_edit_task(id, message="", schedule=""):
         body = _mgr(_manager_base(), "/api/task-edit", payload)
         return str(json.loads(body).get("result", body))
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def _mgr_get(base, path, timeout=30):
@@ -708,120 +704,120 @@ def _mgr_get(base, path, timeout=30):
 
 
 def t_list_skills():
-    """Verfügbare Experten-Skills (Wissens-Dokumente) auflisten."""
+    """List available expert skills (knowledge documents)."""
     try:
         arr = json.loads(_mgr_get(_manager_base(), "/api/skills"))
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
     if not arr:
-        return "Keine Skills verfügbar."
+        return "No skills available."
     return "\n".join(f"- {s.get('name')}: {s.get('description', '')}" for s in arr)
 
 
 def t_load_skill(name):
-    """Einen Skill in den Kontext laden (liefert das Wissens-Dokument)."""
+    """Load a skill into the context (returns the knowledge document)."""
     try:
         return _mgr_get(_manager_base(), f"/api/skills/{name}")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_memory_store(key, value):
-    """Wert dauerhaft merken (zentral im Manager, überlebt Instanz-Löschung)."""
+    """Store a value permanently (centrally in the manager, survives instance deletion)."""
     inst = os.environ.get("FC_INSTANCE", "default")
     try:
         return _mgr(_manager_base(), f"/api/memory/{inst}", {"key": key, "value": value})
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_memory_recall(key=None):
-    """Gemerkten Wert abrufen (ohne key: alle Einträge dieser Instanz)."""
+    """Retrieve a stored value (without key: all entries for this instance)."""
     inst = os.environ.get("FC_INSTANCE", "default")
     try:
         return _mgr_get(_manager_base(), f"/api/memory/{inst}" + (f"/{key}" if key else ""))
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_playbook_add(rule):
-    """Eine dauerhafte Regel/ein Vorgehen festhalten (Playbook). Wird kuenftig
-    IMMER eingeblendet und befolgt."""
+    """Record a permanent rule/procedure (playbook). It will ALWAYS be
+    surfaced and followed from now on."""
     try:
         d = json.loads(_mgr(_manager_base(), "/api/playbook-add", {"text": rule}))
         if d.get("added"):
-            return "Regel gemerkt."
-        return "Regel gibt es schon." if d.get("note") == "exists" else "Nicht gemerkt."
+            return "Rule saved."
+        return "Rule already exists." if d.get("note") == "exists" else "Not saved."
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_playbooks():
-    """Alle festen Regeln (Playbooks) mit IDs anzeigen."""
+    """Show all fixed rules (playbooks) with IDs."""
     try:
         pbs = json.loads(_mgr_get(_manager_base(), "/api/playbooks")).get("playbooks", [])
         if not pbs:
-            return "keine Playbooks"
+            return "no playbooks"
         return "\n".join(f"{p['id']}: {p['text']}" for p in pbs)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_playbook_forget(id):
-    """Eine Regel per ID entfernen (ID aus playbooks)."""
+    """Remove a rule by ID (ID from playbooks)."""
     try:
         d = json.loads(_mgr(_manager_base(), "/api/playbook-remove", {"id": str(id)}))
-        return f"Regel {id} entfernt." if d.get("removed") else f"Keine Regel {id}."
+        return f"Rule {id} removed." if d.get("removed") else f"No rule {id}."
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_list_secrets():
-    """Zeigt, welche Secrets dieser Agent laut Allowlist abrufen darf (nur Namen)."""
+    """Show which secrets this agent may fetch according to the allowlist (names only)."""
     try:
         d = json.loads(_mgr_get(_manager_base(), "/api/secrets"))
         ks = d.get("allowed", [])
-        return "Erlaubte Secrets: " + (", ".join(ks) if ks else "(keine)")
+        return "Allowed secrets: " + (", ".join(ks) if ks else "(none)")
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_get_secret(name):
-    """Holt ein erlaubtes Secret vom Manager (nur bei Bedarf; nicht loggen/weitergeben)."""
+    """Fetch an allowed secret from the manager (only when needed; do not log/share)."""
     try:
         d = json.loads(_mgr_get(_manager_base(), f"/api/secret/{name}"))
-        return d.get("value", "") if "value" in d else f"⚠️ {d.get('error', 'nicht erlaubt')}"
+        return d.get("value", "") if "value" in d else f"⚠️ {d.get('error', 'not allowed')}"
     except urllib.error.HTTPError as e:
-        return "⚠️ nicht erlaubt" if e.code == 403 else f"Fehler: HTTP {e.code}"
+        return "⚠️ not allowed" if e.code == 403 else f"Error: HTTP {e.code}"
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_remote_ls(path="."):
-    """Freigegebenes Remote-Verzeichnis auflisten (P2P-Browser-Freigabe)."""
-    # Nicht mehr direkt an den katfs-Knoten (der ist seit dem Isolations-Fix
-    # loopback-only), sondern ueber den Broker im Manager. Der erkennt die
-    # Instanz an der Source-IP und adressiert NUR ihre zugewiesene Freigabe —
-    # eine fremde kann der Agent nicht mehr ansprechen.
+    """List the shared remote directory (P2P browser share)."""
+    # No longer directly to the katfs node (which is loopback-only since the
+    # isolation fix), but through the broker in the manager. It recognizes the
+    # instance by its source IP and addresses ONLY its assigned share —
+    # the agent can no longer reach someone else's.
     try:
         return _mgr_get(_manager_base(), f"/api/katfs/ls?path={urllib.parse.quote(path)}")
     except Exception as e:
-        return f"Fehler (Freigabe aktiv?): {e!r}"
+        return f"Error (is the share active?): {e!r}"
 
 
 def t_remote_read(path):
-    """Datei aus dem freigegebenen Remote-Verzeichnis lesen."""
+    """Read a file from the shared remote directory."""
     try:
         return _mgr_get(_manager_base(),
                         f"/api/katfs/read?path={urllib.parse.quote(path)}", timeout=60)
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def _katfs_post(url, data=b""):
-    """POST an den katfs-Knoten. Bei HTTP-Fehlern den Body mitnehmen — dort steht
-    der eigentliche Grund ({"error": ...}); ohne ihn bleibt nur ein nacktes
-    'Internal Server Error', mit dem weder Modell noch Mensch etwas anfangen."""
+    """POST to the katfs node. On HTTP errors take the body along — that is where
+    the actual reason is ({"error": ...}); without it only a bare
+    'Internal Server Error' remains, which is useless to both model and human."""
     try:
         req = urllib.request.Request(url, data=data, method="POST")
         return urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "replace")
@@ -831,20 +827,20 @@ def _katfs_post(url, data=b""):
             body = e.read().decode("utf-8", "replace")[:400]
         except Exception:
             pass
-        return f"Fehler HTTP {e.code}: {body or e.reason}"
+        return f"Error HTTP {e.code}: {body or e.reason}"
     except Exception as e:
-        return f"Fehler: {e!r}"
+        return f"Error: {e!r}"
 
 
 def t_remote_write(path, content):
-    """Datei ins freigegebene Remote-Verzeichnis schreiben."""
+    """Write a file to the shared remote directory."""
     return _katfs_post(
         _manager_base() + f"/api/katfs/write?path={urllib.parse.quote(path)}",
         (content or "").encode())
 
 
 def t_remote_delete(path, recursive=False):
-    """Datei/Ordner aus dem freigegebenen Remote-Verzeichnis loeschen."""
+    """Delete a file/folder from the shared remote directory."""
     q = f"/api/katfs/delete?path={urllib.parse.quote(path)}"
     if recursive:
         q += "&recursive=1"
@@ -852,178 +848,178 @@ def t_remote_delete(path, recursive=False):
 
 
 BUILTIN = {
-    "bash": (t_bash, "Shell-Befehl im Workspace ausführen",
-             {"command": {"type": "string", "description": "Befehl"}}, ["command"]),
-    "read_file": (t_read_file, "Datei lesen",
+    "bash": (t_bash, "Run a shell command in the workspace",
+             {"command": {"type": "string", "description": "command"}}, ["command"]),
+    "read_file": (t_read_file, "Read a file",
                   {"path": {"type": "string"}}, ["path"]),
-    "write_file": (t_write_file, "Datei schreiben",
+    "write_file": (t_write_file, "Write a file",
                    {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
-    "list_dir": (t_list_dir, "Verzeichnis auflisten",
+    "list_dir": (t_list_dir, "List a directory",
                  {"path": {"type": "string"}}, []),
-    "http_fetch": (t_http_fetch, "URL abrufen (HTTP)",
+    "http_fetch": (t_http_fetch, "Fetch a URL (HTTP)",
                    {"url": {"type": "string"}, "method": {"type": "string"}}, ["url"]),
-    "read_pdf": (t_read_pdf, "Text aus einem PDF extrahieren — path ist eine Workspace-Datei ODER eine http(s)-URL; pages optional als Bereich (z. B. '1-5').",
-                 {"path": {"type": "string", "description": "Datei im Workspace oder http(s)-URL"},
-                  "pages": {"type": "string", "description": "optionaler Seitenbereich, z. B. '1-5'"}}, ["path"]),
-    "web_search": (t_web_search, "Im Web suchen (DuckDuckGo) – liefert Titel, URL und Snippet; danach ggf. http_fetch zum Lesen der Seite",
-                   {"query": {"type": "string", "description": "Suchbegriff"},
-                    "count": {"type": "integer", "description": "Anzahl Treffer (Standard 5)"}}, ["query"]),
+    "read_pdf": (t_read_pdf, "Extract text from a PDF — path is a workspace file OR an http(s) URL; pages optional as a range (e.g. '1-5').",
+                 {"path": {"type": "string", "description": "file in the workspace or http(s) URL"},
+                  "pages": {"type": "string", "description": "optional page range, e.g. '1-5'"}}, ["path"]),
+    "web_search": (t_web_search, "Search the web (DuckDuckGo) – returns title, URL and snippet; then optionally http_fetch to read the page",
+                   {"query": {"type": "string", "description": "search term"},
+                    "count": {"type": "integer", "description": "number of hits (default 5)"}}, ["query"]),
     "spawn_subagent": (t_spawn_subagent,
-                       "Ephemeren Subagenten (neue Instanz) starten, Teilaufgabe delegieren, Ergebnis holen; Instanz wird danach automatisch gelöscht. Für parallele/abgegrenzte Teilaufgaben.",
-                       {"task": {"type": "string", "description": "Aufgabe für den Subagenten"},
-                        "model": {"type": "string", "description": "optionales OpenRouter-Modell"}}, ["task"]),
+                       "Start an ephemeral subagent (new instance), delegate a subtask, fetch the result; the instance is deleted automatically afterwards. For parallel/self-contained subtasks.",
+                       {"task": {"type": "string", "description": "task for the subagent"},
+                        "model": {"type": "string", "description": "optional OpenRouter model"}}, ["task"]),
     "create_task": (t_create_task,
-                    "Eine Aufgabe einreihen — WICHTIG: waehle target nach Faehigkeit. "
-                    "Braucht die Aufgabe einen bestimmten MCP/Token (z. B. Home Assistant), "
-                    "nimm die passende Instanz als target (z. B. 'hass'). Fuer allgemeine/"
-                    "isolierte Arbeit 'ephemeral' (frische VM, danach geloescht). schedule "
-                    "optional ('every 2h','daily 08:00','hourly'). wait=true wartet auf das "
-                    "Ergebnis, sonst laeuft es im Hintergrund und erscheint im Chat.",
-                    {"task": {"type": "string", "description": "Was getan werden soll"},
-                     "target": {"type": "string", "description": "Instanzname (faehig) oder 'ephemeral'"},
+                    "Queue a task — IMPORTANT: choose target by capability. "
+                    "If the task needs a specific MCP/token (e.g. Home Assistant), "
+                    "use the matching instance as target (e.g. 'hass'). For general/"
+                    "isolated work use 'ephemeral' (fresh VM, deleted afterwards). schedule "
+                    "optional ('every 2h','daily 08:00','hourly'). wait=true waits for the "
+                    "result, otherwise it runs in the background and appears in the chat.",
+                    {"task": {"type": "string", "description": "what should be done"},
+                     "target": {"type": "string", "description": "instance name (capable) or 'ephemeral'"},
                      "schedule": {"type": "string", "description": "optional: every Nm|Nh|Nd, daily HH:MM, hourly"},
-                     "wait": {"type": "boolean", "description": "auf Ergebnis warten (Standard false)"}}, ["task"]),
+                     "wait": {"type": "boolean", "description": "wait for the result (default false)"}}, ["task"]),
     "mission_start": (t_mission_start,
-                      "Mehrstufigen Auftrag als Mission anlegen (Ziel + Schritte). Fuer alles, "
-                      "was mehrere Tasks/Tage braucht — der Fortschritt ueberlebt Neustarts.",
-                      {"goal": {"type": "string", "description": "Ziel der Mission"},
+                      "Create a multi-stage assignment as a mission (goal + steps). For anything "
+                      "that needs several tasks/days — the progress survives restarts.",
+                      {"goal": {"type": "string", "description": "goal of the mission"},
                        "steps": {"type": "array", "items": {"type": "string"},
-                                 "description": "geplante Schritte in Reihenfolge"}},
+                                 "description": "planned steps in order"}},
                       ["goal", "steps"]),
-    "missions": (t_missions, "Offene Missionen mit Schritten/Status auflisten.", {}, []),
+    "missions": (t_missions, "List open missions with steps/status.", {}, []),
     "mission_update": (t_mission_update,
-                       "Missionsschritt fortschreiben: status setzen (doing/done/failed), "
-                       "Ergebnis + task_id des angestossenen Tasks vermerken, add_step haengt "
-                       "einen Schritt an.",
-                       {"id": {"type": "string", "description": "Mission-ID"},
-                        "step": {"type": "integer", "description": "Schrittnummer"},
+                       "Advance a mission step: set status (doing/done/failed), "
+                       "record result + task_id of the kicked-off task, add_step appends "
+                       "a step.",
+                       {"id": {"type": "string", "description": "mission ID"},
+                        "step": {"type": "integer", "description": "step number"},
                         "status": {"type": "string", "description": "open|doing|done|failed"},
-                        "result": {"type": "string", "description": "kurzes Ergebnis"},
-                        "task_id": {"type": "string", "description": "ID des create_task-Tasks"},
-                        "add_step": {"type": "string", "description": "neuen Schritt anhaengen"},
-                        "note": {"type": "string", "description": "nur Log-Notiz"}}, ["id"]),
+                        "result": {"type": "string", "description": "short result"},
+                        "task_id": {"type": "string", "description": "ID of the create_task task"},
+                        "add_step": {"type": "string", "description": "append a new step"},
+                        "note": {"type": "string", "description": "log note only"}}, ["id"]),
     "mission_finish": (t_mission_finish,
-                       "Mission abschliessen; failed=true bei Scheitern. Kurzes Fazit angeben.",
+                       "Finish a mission; failed=true on failure. Provide a short conclusion.",
                        {"id": {"type": "string"}, "summary": {"type": "string"},
                         "failed": {"type": "boolean"}}, ["id", "summary"]),
     "oracle": (t_oracle,
-               "Zweitmeinung VOR einer riskanten/irreversiblen Aktion: challenged deine "
-               "Annahmen, handelt nie selbst. plan = was du vorhast und warum; kontext = "
-               "relevante Fakten (IDs, Wortlaute, Nutzerauftrag). Bei 'EINWAND' nicht "
-               "handeln, sondern aufloesen oder rueckfragen.",
-               {"plan": {"type": "string", "description": "geplante Aktion + Begruendung"},
-                "kontext": {"type": "string", "description": "Fakten: IDs, Wortlaute, Auftrag"}},
+               "Second opinion BEFORE a risky/irreversible action: challenges your "
+               "assumptions, never acts itself. plan = what you intend and why; kontext = "
+               "relevant facts (IDs, wordings, user assignment). On 'OBJECTION' do not "
+               "act, but resolve it or ask back.",
+               {"plan": {"type": "string", "description": "planned action + reasoning"},
+                "kontext": {"type": "string", "description": "facts: IDs, wordings, assignment"}},
                ["plan"]),
     "notify": (t_notify,
-               "Push-Benachrichtigung an die Geraete des Nutzers (App-Systemnotification + "
-               "Web-Manager-Glocke). Fuer wichtige Ereignisse/Ergebnisse, wenn er nicht im "
-               "Chat sitzt. Anders als send_signal ist das der App/Web-Kanal, klingelt nicht "
+               "Push notification to the user's devices (app system notification + "
+               "web-manager bell). For important events/results when they are not in the "
+               "chat. Unlike send_signal this is the app/web channel, does not ring "
                "in Signal.",
-               {"title": {"type": "string", "description": "Kurzer Titel"},
-                "message": {"type": "string", "description": "Text der Benachrichtigung"}},
+               {"title": {"type": "string", "description": "short title"},
+                "message": {"type": "string", "description": "text of the notification"}},
                ["title"]),
     "send_signal": (t_send_signal,
-                    "Dem Nutzer eine Signal-Nachricht schicken — fuer Ergebnisse, Funde "
-                    "oder Rueckfragen, wenn er gerade nicht im Chat sitzt. NICHT fuer die "
-                    "normale Antwort im laufenden Gespraech verwenden (die kommt ohnehin "
-                    "an) und nicht ungefragt wiederholt: eine Nachricht klingelt auf einem "
-                    "Telefon. Empfaenger nur aus der erlaubten Liste; 'to' leer lassen "
-                    "heisst: an den Standardempfaenger.",
-                    {"text": {"type": "string", "description": "Nachrichtentext"},
-                     "to": {"type": "string", "description": "optional: Nummer im Format +49…"}},
+                    "Send the user a Signal message — for results, findings "
+                    "or questions when they are not currently in the chat. Do NOT use for the "
+                    "normal reply in an ongoing conversation (that arrives anyway) "
+                    "and not repeatedly unprompted: a message rings on a "
+                    "phone. Recipients only from the allowed list; leaving 'to' empty "
+                    "means: to the default recipient.",
+                    {"text": {"type": "string", "description": "message text"},
+                     "to": {"type": "string", "description": "optional: number in the format +49…"}},
                     ["text"]),
     "read_inbox": (t_read_inbox,
-                  "Neue Nutzer-Nachrichten (Signal/App/Web) seit dem letzten Lauf lesen — "
-                  "Posteingang des Orchestrators. Jede Nachricht kommt nur einmal (Wasserzeichen); "
-                  "peek=true zum Vorschauen ohne Verbrauch.",
-                  {"peek": {"type": "boolean", "description": "nur ansehen, nicht verbrauchen"}}, []),
+                  "Read new user messages (Signal/app/web) since the last run — "
+                  "the orchestrator's inbox. Each message comes only once (watermark); "
+                  "peek=true to preview without consuming.",
+                  {"peek": {"type": "boolean", "description": "only look, do not consume"}}, []),
     "list_agents": (t_list_agents,
-                    "Verfuegbare Agenten-Instanzen + Faehigkeiten (Modell/MCP) auflisten. "
-                    "Fuer Routing: create_task-target nach Faehigkeit waehlen.",
+                    "List available agent instances + capabilities (model/MCP). "
+                    "For routing: choose the create_task target by capability.",
                     {}, []),
     "recall_tasks": (t_recall_tasks,
-                     "Frueher ausgefuehrte Aufgaben + Ergebnisse abfragen (Langzeitgedaechtnis). "
-                     "Ohne query die letzten, mit query gezielt suchen. VOR create_task nutzen, "
-                     "um zu pruefen, ob etwas schon erledigt/geplant ist (keine Dubletten).",
-                     {"query": {"type": "string", "description": "Suchbegriff (leer = letzte)"},
-                      "limit": {"type": "integer", "description": "max. Treffer (Standard 10)"}}, []),
+                     "Query previously executed tasks + results (long-term memory). "
+                     "Without query the most recent, with query search specifically. Use BEFORE create_task "
+                     "to check whether something is already done/scheduled (no duplicates).",
+                     {"query": {"type": "string", "description": "search term (empty = most recent)"},
+                      "limit": {"type": "integer", "description": "max hits (default 10)"}}, []),
     "list_tasks": (t_list_tasks,
-                   "LAUFENDE/geplante Aufgaben mit IDs auflisten — zum gezielten Loeschen. "
-                   "(recall_tasks ist dagegen die History erledigter Laeufe.)", {}, []),
+                   "List RUNNING/scheduled tasks with IDs — for targeted deletion. "
+                   "(recall_tasks, by contrast, is the history of completed runs.)", {}, []),
     "delete_task": (t_delete_task,
-                    "Eine laufende/geplante Aufgabe per ID loeschen. Die ID zuerst mit "
-                    "list_tasks holen. Endgueltig.",
-                    {"id": {"type": "string", "description": "Task-ID aus list_tasks"}}, ["id"]),
+                    "Delete a running/scheduled task by ID. Get the ID first with "
+                    "list_tasks. Final.",
+                    {"id": {"type": "string", "description": "task ID from list_tasks"}}, ["id"]),
     "edit_task": (t_edit_task,
-                  "Nachricht und/oder Zeitplan einer Aufgabe aendern (ID aus list_tasks). "
-                  "schedule z. B. 'every 2h', 'daily 08:00', 'hourly'; leer = einmalig.",
-                  {"id": {"type": "string", "description": "Task-ID aus list_tasks"},
-                   "message": {"type": "string", "description": "neuer Text (leer = unveraendert)"},
-                   "schedule": {"type": "string", "description": "neuer Zeitplan (leer = einmalig/unveraendert)"}},
+                  "Change the message and/or schedule of a task (ID from list_tasks). "
+                  "schedule e.g. 'every 2h', 'daily 08:00', 'hourly'; empty = one-off.",
+                  {"id": {"type": "string", "description": "task ID from list_tasks"},
+                   "message": {"type": "string", "description": "new text (empty = unchanged)"},
+                   "schedule": {"type": "string", "description": "new schedule (empty = one-off/unchanged)"}},
                   ["id"]),
-    "list_skills": (t_list_skills, "Verfügbare Experten-Skills auflisten (name: Beschreibung). Vor Fachaufgaben prüfen, ob ein passender Skill existiert.",
+    "list_skills": (t_list_skills, "List available expert skills (name: description). Before specialized tasks, check whether a matching skill exists.",
                     {}, []),
-    "load_skill": (t_load_skill, "Einen Experten-Skill (Wissens-Dokument) in den Kontext laden und befolgen.",
-                   {"name": {"type": "string", "description": "Skill-Name aus list_skills"}}, ["name"]),
-    "memory_store": (t_memory_store, "Einen Wert dauerhaft merken (überlebt Neustart/Instanz-Löschung).",
+    "load_skill": (t_load_skill, "Load an expert skill (knowledge document) into the context and follow it.",
+                   {"name": {"type": "string", "description": "skill name from list_skills"}}, ["name"]),
+    "memory_store": (t_memory_store, "Store a value permanently (survives restart/instance deletion).",
                      {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"]),
-    "memory_recall": (t_memory_recall, "Gemerkten Wert abrufen; ohne key alle Einträge.",
+    "memory_recall": (t_memory_recall, "Retrieve a stored value; without key all entries.",
                       {"key": {"type": "string"}}, []),
     "playbook_add": (t_playbook_add,
-                     "Eine dauerhafte Regel/ein Vorgehen festhalten — gilt kuenftig IMMER. "
-                     "Nutze das, wenn der Nutzer dir sagt WIE etwas zu tun ist, eine "
-                     "dauerhafte Vorliebe nennt oder dich korrigiert.",
-                     {"rule": {"type": "string", "description": "die Regel als kurzer, konkreter Satz"}}, ["rule"]),
-    "playbooks": (t_playbooks, "Alle festen Regeln (Playbooks) mit IDs anzeigen.", {}, []),
-    "playbook_forget": (t_playbook_forget, "Eine Regel per ID entfernen (ID aus playbooks).",
-                        {"id": {"type": "string", "description": "Playbook-ID"}}, ["id"]),
+                     "Record a permanent rule/procedure — applies ALWAYS from now on. "
+                     "Use this when the user tells you HOW something is to be done, states a "
+                     "lasting preference or corrects you.",
+                     {"rule": {"type": "string", "description": "the rule as a short, concrete sentence"}}, ["rule"]),
+    "playbooks": (t_playbooks, "Show all fixed rules (playbooks) with IDs.", {}, []),
+    "playbook_forget": (t_playbook_forget, "Remove a rule by ID (ID from playbooks).",
+                        {"id": {"type": "string", "description": "playbook ID"}}, ["id"]),
     "remote_ls": (t_remote_ls,
-                  "Den vom Nutzer freigegebenen Ordner auflisten (liegt auf SEINEM Rechner, "
-                  "per P2P angebunden). Pfade sind relativ zur Wurzel der Freigabe.",
-                  {"path": {"type": "string", "description": "relativ, Standard '.'"}}, []),
+                  "List the folder the user has shared (lives on THEIR machine, "
+                  "connected via P2P). Paths are relative to the root of the share.",
+                  {"path": {"type": "string", "description": "relative, default '.'"}}, []),
     "remote_read": (t_remote_read,
-                    "Datei aus dem freigegebenen Ordner des Nutzers lesen (Pfad relativ zur Freigabe).",
+                    "Read a file from the user's shared folder (path relative to the share).",
                     {"path": {"type": "string"}}, ["path"]),
     "remote_write": (t_remote_write,
-                     "Datei in den freigegebenen Ordner des Nutzers schreiben — LEGT AN und "
-                     "UEBERSCHREIBT, fehlende Unterordner entstehen automatisch. Der Schreibzugriff "
-                     "ist ausdruecklich erlaubt: wenn der Nutzer dort etwas ablegen, speichern oder "
-                     "aendern will, RUFE DIESES TOOL AUF, statt zu behaupten, du koenntest nicht "
-                     "schreiben. Nur wenn es einen Fehler zurueckgibt, ist es nicht moeglich.",
-                     {"path": {"type": "string", "description": "relativ zur Freigabe, z. B. 'notiz.txt'"},
-                      "content": {"type": "string", "description": "vollstaendiger neuer Dateiinhalt"}},
+                     "Write a file to the user's shared folder — CREATES and "
+                     "OVERWRITES, missing subfolders are created automatically. Write access "
+                     "is explicitly allowed: when the user wants to put, save or "
+                     "change something there, CALL THIS TOOL instead of claiming you cannot "
+                     "write. Only if it returns an error is it not possible.",
+                     {"path": {"type": "string", "description": "relative to the share, e.g. 'note.txt'"},
+                      "content": {"type": "string", "description": "complete new file content"}},
                      ["path", "content"]),
     "remote_delete": (t_remote_delete,
-                      "Datei oder Ordner im freigegebenen Ordner des Nutzers loeschen. "
-                      "Unwiderruflich — es gibt keinen Papierkorb. Nur loeschen, wenn der Nutzer "
-                      "es verlangt, und im Zweifel vorher nachfragen. Ein nicht-leerer Ordner "
-                      "scheitert absichtlich; dafuer recursive=true setzen.",
-                      {"path": {"type": "string", "description": "relativ zur Freigabe"},
+                      "Delete a file or folder in the user's shared folder. "
+                      "Irreversible — there is no trash. Only delete when the user "
+                      "requests it, and ask first when in doubt. A non-empty folder "
+                      "fails on purpose; set recursive=true for that.",
+                      {"path": {"type": "string", "description": "relative to the share"},
                        "recursive": {"type": "boolean",
-                                     "description": "Ordner mitsamt Inhalt loeschen (Standard false)"}},
+                                     "description": "delete the folder including its contents (default false)"}},
                       ["path"]),
-    "list_secrets": (t_list_secrets, "Zeigt die für diesen Agenten freigegebenen Secret-Namen (keine Werte).",
+    "list_secrets": (t_list_secrets, "Show the secret names released for this agent (no values).",
                      {}, []),
-    "get_secret": (t_get_secret, "Holt ein freigegebenes Secret (z. B. API-Key/Token) nur bei Bedarf. Werte niemals in Antworten/Logs ausgeben.",
+    "get_secret": (t_get_secret, "Fetch a released secret (e.g. API key/token) only when needed. Never output values in replies/logs.",
                    {"name": {"type": "string"}}, ["name"]),
 }
 
 
-# Optionale Werkzeug-Allowlist pro Instanz (AGENT_TOOLS, kommagetrennt). Leer =
-# alle. Filtert sowohl das an das Modell gemeldete Schema ALS AUCH die
-# Ausfuehrung — ein Modell koennte sonst ein abgeschaltetes Tool trotzdem
-# aufrufen. MCP-Tools sind davon unberuehrt (die steuert MCP_SERVERS/Policy).
+# Optional per-instance tool allowlist (AGENT_TOOLS, comma-separated). Empty =
+# all. Filters both the schema reported to the model AND the
+# execution — otherwise a model could call a disabled tool anyway.
+# MCP tools are unaffected by this (those are controlled by MCP_SERVERS/policy).
 _TOOL_ALLOW = {t.strip() for t in os.environ.get("AGENT_TOOLS", "").split(",") if t.strip()}
 
 
-# Task-Verwaltung nur, wo der Manager TASK_ADMIN gesetzt hat (Orchestrator).
+# Task administration only where the manager has set TASK_ADMIN (orchestrator).
 _TASK_ADMIN_TOOLS = {"list_tasks", "delete_task", "edit_task",
                      "mission_start", "missions", "mission_update", "mission_finish"}
 
 
 def tool_enabled(name):
     if name == "offload_read":
-        return True   # Systemhilfe: muss immer verfuegbar sein, sonst haengt eine Referenz in der Luft
+        return True   # system helper: must always be available, otherwise a reference dangles
     if name == "spawn_subagent" and os.environ.get("NO_SPAWN"):
         return False
     if name in _TASK_ADMIN_TOOLS and not os.environ.get("TASK_ADMIN"):
@@ -1086,12 +1082,12 @@ class MCP:
 
 
 class HubMCP:
-    """MCP ueber den Manager statt als eigener Prozess in der VM.
+    """MCP via the manager instead of as its own process in the VM.
 
-    Der Serverprozess laeuft im MCP-Hub am Host; hier geht nur noch JSON-RPC
-    ueber /api/mcp hinaus. Damit braucht der Gast weder die Tokens (die setzt
-    der Manager ein) noch LAN-Zugang (die Verbindung zum Zielsystem oeffnet
-    der Hub). Gleiche Schnittstelle wie MCP: tools() und call()."""
+    The server process runs in the MCP hub on the host; here only JSON-RPC
+    goes out via /api/mcp. This way the guest needs neither the tokens (the
+    manager inserts them) nor LAN access (the hub opens the connection to the
+    target system). Same interface as MCP: tools() and call()."""
 
     def __init__(self, name):
         self.name = name
@@ -1128,21 +1124,21 @@ _mcp_tools = {}  # exposed-tool-name -> (server-name, mcp-tool-name)
 
 
 def init_mcp():
-    # MCP_CONFIG liegt nicht mehr in der Instanz-Config — es trug die Tokens im
-    # Klartext. Der Manager baut sie zur Laufzeit aus MCP_SERVERS zusammen und
-    # setzt dabei nur die Secrets ein, die die Policy dieser Instanz erlaubt.
+    # MCP_CONFIG no longer lives in the instance config — it carried the tokens in
+    # plaintext. The manager assembles it at runtime from MCP_SERVERS and
+    # inserts only the secrets that this instance's policy allows.
     cfg = os.environ.get("MCP_CONFIG", "")
     if not cfg:
         try:
             body = _mgr_get(_manager_base(), "/api/mcp-config")
             d = json.loads(body)
             if d.get("unresolved"):
-                log("MCP: nicht freigegebene Secrets, Server startet ggf. ohne Zugang:",
+                log("MCP: secrets not released, server may start without access:",
                     ", ".join(d["unresolved"]))
             if d.get("mcpServers"):
                 cfg = json.dumps(d)
         except Exception as e:
-            log("MCP-Konfiguration nicht vom Manager zu bekommen:", repr(e))
+            log("MCP configuration could not be obtained from the manager:", repr(e))
     if not cfg:
         p = os.path.join(WORKDIR, ".mcp.json")
         if os.path.exists(p):
@@ -1152,7 +1148,7 @@ def init_mcp():
     try:
         servers = json.loads(cfg).get("mcpServers", json.loads(cfg))
     except Exception as e:
-        log("MCP config fehlerhaft:", e)
+        log("MCP config malformed:", e)
         return []
     schema = []
     for name, spec in servers.items():
@@ -1161,13 +1157,13 @@ def init_mcp():
             continue
         env = spec.get("env") if isinstance(spec, dict) else None
         try:
-            # Hub zuerst: der Prozess laeuft am Host, der Gast braucht weder
-            # argv noch env noch Secrets. Der Eigenprozess bleibt Rueckfall
-            # fuer Manager ohne /api/mcp (aelterer Stand).
+            # Hub first: the process runs on the host, the guest needs neither
+            # argv nor env nor secrets. The own-process path stays a fallback
+            # for managers without /api/mcp (older versions).
             try:
                 srv = HubMCP(name)
             except Exception as hub_err:
-                log(f"MCP '{name}': Hub nicht erreichbar ({hub_err!r:.120}), starte lokal")
+                log(f"MCP '{name}': hub unreachable ({hub_err!r:.120}), starting locally")
                 srv = MCP(name, argv, env={str(k): str(v) for k, v in (env or {}).items()})
             _mcp[name] = srv
             for t in srv.tools():
@@ -1178,13 +1174,13 @@ def init_mcp():
                     "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}})
             log(f"MCP '{name}': {len(srv.tools())} tools")
         except Exception as e:
-            log(f"MCP '{name}' Start fehlgeschlagen:", repr(e))
+            log(f"MCP '{name}' start failed:", repr(e))
     return schema
 
 
 def _audit_target(name, args):
-    """Aussagekraeftigstes Feld je Tool fuer das Audit-Log — nie ein Secret-Wert.
-    Bei get_secret nur der Name, bei write NICHT der Inhalt."""
+    """The most meaningful field per tool for the audit log — never a secret value.
+    For get_secret only the name, for write NOT the content."""
     a = args or {}
     if name in ("http_fetch",):
         return a.get("url", "")
@@ -1205,10 +1201,10 @@ def _audit_target(name, args):
 
 
 def audit(name, args, ok=True):
-    """Tool-Aufruf beim Manager protokollieren (pro Instanz, auf dem Host —
-    ueberlebt VM-Neustarts). Best-effort: faellt der Broker aus, laeuft der
-    Agent normal weiter. Enthaelt Tool, Zielfeld (URL/Pfad/Query) und ok-Flag,
-    NIE Secret-Werte oder Dateiinhalte."""
+    """Log a tool call at the manager (per instance, on the host —
+    survives VM restarts). Best-effort: if the broker fails, the
+    agent continues normally. Contains tool, target field (URL/path/query) and ok flag,
+    NEVER secret values or file contents."""
     try:
         _mgr(_manager_base(), "/api/audit",
              {"tool": name, "target": _audit_target(name, args), "ok": bool(ok)}, timeout=5)
@@ -1217,16 +1213,16 @@ def audit(name, args, ok=True):
 
 
 def exec_tool(name, args):
-    # Hook/Intervention: Denylist + optionale HITL-Freigabe VOR der Ausfuehrung.
+    # Hook/intervention: denylist + optional HITL approval BEFORE execution.
     allow, reason = _hook_before_tool(name, args)
     if not allow:
         audit(name, args, ok=False)
-        return f"Tool '{name}' nicht ausgefuehrt: {reason}"
+        return f"Tool '{name}' not executed: {reason}"
     try:
         if name in BUILTIN:
             if not tool_enabled(name):
                 audit(name, args, ok=False)
-                return f"Tool '{name}' ist fuer diese Instanz nicht freigegeben."
+                return f"Tool '{name}' is not enabled for this instance."
             audit(name, args)
             return _finalize_output(name, str(BUILTIN[name][0](**args)))
         if name in _mcp_tools:
@@ -1234,16 +1230,16 @@ def exec_tool(name, args):
             srv, tool = _mcp_tools[name]
             return _finalize_output(name, _mcp[srv].call(tool, args))
         audit(name, args, ok=False)
-        return f"unbekanntes Tool: {name}"
+        return f"unknown tool: {name}"
     except Exception as e:
-        return f"Tool-Fehler ({name}): {e!r}"
+        return f"Tool error ({name}): {e!r}"
 
 
-# --- Verbrauch melden -------------------------------------------------------
+# --- report usage -----------------------------------------------------------
 def report_usage(u):
-    """Token/Kosten eines Aufrufs an den Manager melden (fire-and-forget).
-    Die Instanz erkennt der Manager an der Quell-IP; wir schicken nur Zahlen.
-    Faellt der Manager aus, darf das den Chat nicht stoeren -> alles schlucken."""
+    """Report tokens/cost of a call to the manager (fire-and-forget).
+    The manager recognizes the instance by its source IP; we send only numbers.
+    If the manager fails, that must not disturb the chat -> swallow everything."""
     if not isinstance(u, dict):
         return
     try:
@@ -1261,68 +1257,68 @@ def report_usage(u):
         pass
 
 
-# ===== Harness-Muster (angelehnt an strands-agents/harness-sdk, Apache-2.0) ====
-# Vier Bausteine, alle stdlib, ohne neue Abhaengigkeit:
-#  1) Retry mit Backoff um den Modellaufruf
-#  2) Kontext ZUSAMMENFASSEN statt Wegwerfen (summarizing conversation manager)
-#  3) Grosse Tool-Ausgaben AUSLAGERN statt hart kappen (context offloader)
-#  4) ZIEL-Schleife mit Judge (goal loop) + Tool-HOOK (interventions/HITL)
+# ===== Harness patterns (inspired by strands-agents/harness-sdk, Apache-2.0) ====
+# Four building blocks, all stdlib, without a new dependency:
+#  1) Retry with backoff around the model call
+#  2) SUMMARIZE context instead of discarding it (summarizing conversation manager)
+#  3) OFFLOAD large tool outputs instead of hard-truncating (context offloader)
+#  4) GOAL loop with judge (goal loop) + tool HOOK (interventions/HITL)
 
 LLM_RETRIES = int(os.environ.get("LLM_RETRIES", "3"))
 _RETRY_CODES = {408, 409, 429, 500, 502, 503, 504}
 
 
 def _retry_sleep(attempt):
-    # 0.5s, 1s, 2s, 4s … gedeckelt auf 8s.
+    # 0.5s, 1s, 2s, 4s … capped at 8s.
     time.sleep(min(8.0, 0.5 * (2 ** attempt)))
 
 
-# --- 2) Kontext-Zusammenfassung --------------------------------------------
-SUMMARY_TAG = "[Zusammenfassung]"
+# --- 2) context summarization ----------------------------------------------
+SUMMARY_TAG = "[Summary]"
 CTX_SUMMARY = os.environ.get("CTX_SUMMARY", "1") != "0"
 CTX_PRESERVE_RECENT = int(os.environ.get("CTX_PRESERVE_RECENT", "10"))
 SUMMARIZE_PROMPT = (
-    "Du fasst einen Gespraechsverlauf zusammen. Erzeuge eine knappe, strukturierte "
-    "Zusammenfassung in Stichpunkten. Antworte NICHT konversationell und sprich den "
-    "Nutzer NICHT an. Enthalte: behandelte Themen und Fragen; wichtige Tool-Aufrufe "
-    "und deren Ergebnisse; geteilte Fakten, Daten und Code; offene Punkte; zentrale "
-    "Erkenntnisse. Schreibe in der dritten Person. Nimm nicht an, dass Tools "
-    "fehlschlugen, sofern nicht ausdruecklich angegeben.")
+    "You summarize a conversation history. Produce a concise, structured "
+    "summary in bullet points. Do NOT answer conversationally and do NOT "
+    "address the user. Include: topics and questions covered; important tool calls "
+    "and their results; facts, data and code that were shared; open points; key "
+    "insights. Write in the third person. Do not assume that tools "
+    "failed unless explicitly stated.")
 
 
 def _msg_text(m):
     c = m.get("content")
-    if isinstance(c, list):   # Vision-Content -> nur die Textteile
+    if isinstance(c, list):   # vision content -> only the text parts
         c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
     return c or ""
 
 
 def _summarize(msgs, prior=""):
-    """Eine Nachrichtenliste (Gespraech, ohne System-Bloecke) zu einem kurzen
-    Stichpunkt-Summary verdichten. Faellt der Aufruf aus -> '' (Aufrufer macht
-    dann das alte Wegwerf-Verhalten)."""
+    """Condense a message list (conversation, without system blocks) into a short
+    bullet-point summary. If the call fails -> '' (the caller then does
+    the old discard behavior)."""
     lines = []
     for m in msgs:
         role = m.get("role")
         txt = _msg_text(m)
         if role == "tool":
-            lines.append(f"[Tool-Ergebnis] {txt[:1500]}")
+            lines.append(f"[Tool result] {txt[:1500]}")
         elif role == "assistant":
             tcs = m.get("tool_calls")
             if tcs:
                 names = ", ".join(t.get("function", {}).get("name", "?") for t in tcs)
-                lines.append(f"[Assistant rief Tools: {names}] {txt[:800]}")
+                lines.append(f"[Assistant called tools: {names}] {txt[:800]}")
             else:
                 lines.append(f"[Assistant] {txt[:1500]}")
         elif role == "user":
-            lines.append(f"[Nutzer] {txt[:1500]}")
+            lines.append(f"[User] {txt[:1500]}")
     joined = "\n".join(lines)
     if prior:
-        joined = f"Bisherige Zusammenfassung:\n{prior}\n\nNeue Nachrichten:\n{joined}"
+        joined = f"Prior summary:\n{prior}\n\nNew messages:\n{joined}"
     msg = or_chat([{"role": "system", "content": SUMMARIZE_PROMPT},
                    {"role": "user", "content": joined}], [])
     out = (msg.get("content") or "").strip()
-    return "" if out.startswith("⚠") else out   # Fehlermeldung zaehlt nicht
+    return "" if out.startswith("⚠") else out   # an error message does not count
 
 
 # --- 3) Context-Offloader ---------------------------------------------------
@@ -1333,10 +1329,10 @@ _offload_seq = 0
 
 
 def _finalize_output(name, out):
-    """Ist eine Tool-Ausgabe groesser als OFFLOAD_MIN, wird sie VOLLSTAENDIG in
-    eine Datei ausgelagert und im Kontext nur eine Vorschau + Referenz gehalten
-    (offload_read holt den Rest). So bleibt nichts verloren, ohne den Kontext zu
-    fluten. Kleiner -> unveraendert."""
+    """If a tool output is larger than OFFLOAD_MIN, it is offloaded to a file IN
+    FULL and only a preview + reference is kept in the context (offload_read
+    fetches the rest). This way nothing is lost without flooding the context.
+    Smaller -> unchanged."""
     out = out if isinstance(out, str) else str(out)
     if len(out) <= OFFLOAD_MIN:
         return out
@@ -1348,70 +1344,70 @@ def _finalize_output(name, out):
         with open(os.path.join(OFFLOAD_DIR, oid + ".txt"), "w") as fh:
             fh.write(out)
     except Exception:
-        return out[:MAX_TOOL_OUT]   # Auslagern misslang -> alt: hart kappen
+        return out[:MAX_TOOL_OUT]   # offloading failed -> fall back: hard-truncate
     preview = out[:OFFLOAD_PREVIEW]
-    return (preview + f"\n\n[… {len(out) - len(preview)} weitere Zeichen ausgelagert. "
-            f"Weiterlesen mit offload_read(id=\"{oid}\", offset={OFFLOAD_PREVIEW}). "
-            f"Gesamtlaenge {len(out)} Zeichen.]")
+    return (preview + f"\n\n[… {len(out) - len(preview)} more characters offloaded. "
+            f"Continue reading with offload_read(id=\"{oid}\", offset={OFFLOAD_PREVIEW}). "
+            f"Total length {len(out)} characters.]")
 
 
 def t_offload_read(id="", offset=0, length=None):
-    """Ausgelagerte Tool-Ausgabe (siehe offload-Referenz) stueckweise lesen."""
+    """Read an offloaded tool output (see the offload reference) in chunks."""
     length = int(length) if length else MAX_TOOL_OUT
     offset = max(0, int(offset or 0))
-    safe = os.path.basename(str(id))              # kein Pfad-Ausbruch
+    safe = os.path.basename(str(id))              # no path traversal
     fp = os.path.join(OFFLOAD_DIR, safe + ".txt")
     try:
         with open(fp) as fh:
             fh.seek(offset)
             data = fh.read(length)
     except FileNotFoundError:
-        return f"offload '{id}' nicht gefunden."
+        return f"offload '{id}' not found."
     except Exception as e:
-        return f"offload-Fehler: {e!r}"
-    more = f"\n\n[… weiter mit offset={offset + len(data)} …]" if len(data) >= length else ""
+        return f"offload error: {e!r}"
+    more = f"\n\n[… continue with offset={offset + len(data)} …]" if len(data) >= length else ""
     return data + more
 
 
-# offload_read in den Werkzeugkatalog haengen (erst hier, weil t_offload_read
-# nach dem BUILTIN-Literal definiert ist).
+# Attach offload_read to the tool catalog (only here, because t_offload_read
+# is defined after the BUILTIN literal).
 BUILTIN["offload_read"] = (
     t_offload_read,
-    "Eine zuvor ausgelagerte, gekuerzte Tool-Ausgabe stueckweise nachlesen "
-    "(die offload-Referenz nennt id und offset).",
-    {"id": {"type": "string", "description": "offload-id aus der Referenz"},
-     "offset": {"type": "integer", "description": "Startposition (Zeichen)"},
-     "length": {"type": "integer", "description": "max. Zeichen (Standard 8000)"}},
+    "Re-read a previously offloaded, truncated tool output in chunks "
+    "(the offload reference names id and offset).",
+    {"id": {"type": "string", "description": "offload id from the reference"},
+     "offset": {"type": "integer", "description": "start position (characters)"},
+     "length": {"type": "integer", "description": "max characters (default 8000)"}},
     ["id"])
 
 
-# --- 4a) Ziel-Schleife (goal loop) -----------------------------------------
+# --- 4a) goal loop ---------------------------------------------------------
 GOAL_MAX_ATTEMPTS = int(os.environ.get("GOAL_MAX_ATTEMPTS", "3"))
 _goal = (os.environ.get("AGENT_GOAL", "").strip() or None)
 JUDGE_PROMPT = (
-    "Du bist ein strenger Pruefer. Pruefe, ob die ANTWORT das ZIEL fuer die FRAGE "
-    "erfuellt. Antworte AUSSCHLIESSLICH mit JSON, kein weiterer Text: "
-    '{"meets": true|false, "feedback": "knappe Begruendung, was noch fehlt"}.')
+    "You are a strict reviewer. Check whether the ANSWER meets the GOAL for the "
+    "QUESTION. Answer EXCLUSIVELY with JSON, no other text: "
+    '{"meets": true|false, "feedback": "concise reasoning, what is still missing"}.')
 
 
 def _set_goal(cmd):
     global _goal
     rest = cmd[len("/goal"):].strip()
     if rest in ("", "show", "status"):
-        return f"\U0001f3af Ziel: {_goal}" if _goal else \
-            "Kein Ziel gesetzt. /goal <Kriterium> setzt eines, /goal off entfernt es."
+        return f"\U0001f3af Goal: {_goal}" if _goal else \
+            "No goal set. /goal <criterion> sets one, /goal off removes it."
     if rest in ("off", "clear", "none", "aus"):
         _goal = None
-        return "\U0001f3af Ziel entfernt."
+        return "\U0001f3af Goal removed."
     _goal = rest
-    return f"\U0001f3af Ziel gesetzt (max. {GOAL_MAX_ATTEMPTS} Versuche): {_goal}"
+    return f"\U0001f3af Goal set (max {GOAL_MAX_ATTEMPTS} attempts): {_goal}"
 
 
 def _judge(goal, question, answer):
-    """(meets, feedback). Judge kaputt/unparsebar -> durchlassen (True)."""
+    """(meets, feedback). Judge broken/unparseable -> let it pass (True)."""
     try:
         m = or_chat([{"role": "system", "content": JUDGE_PROMPT},
-                     {"role": "user", "content": f"ZIEL:\n{goal}\n\nFRAGE:\n{question}\n\nANTWORT:\n{answer}"}], [])
+                     {"role": "user", "content": f"GOAL:\n{goal}\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"}], [])
         raw = (m.get("content") or "").strip()
         d = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
         return bool(d.get("meets")), str(d.get("feedback", ""))[:500]
@@ -1420,33 +1416,33 @@ def _judge(goal, question, answer):
 
 
 def _run_goal(hist, question):
-    """Antwort erzeugen und gegen _goal pruefen; bei Nichterfuellung mit der
-    Judge-Kritik nachbessern, bis max. GOAL_MAX_ATTEMPTS."""
+    """Produce an answer and check it against _goal; on non-fulfillment improve it
+    with the judge's critique, up to max GOAL_MAX_ATTEMPTS."""
     answer = _tool_loop(hist)
     for _ in range(GOAL_MAX_ATTEMPTS - 1):
         meets, fb = _judge(_goal, question, answer)
         if meets:
             break
         hist.append({"role": "system", "content":
-                     f"Deine letzte Antwort erfuellt das Ziel noch nicht: {_goal}. "
-                     f"Kritik: {fb}. Verbessere die Antwort entsprechend."})
+                     f"Your last answer does not yet meet the goal: {_goal}. "
+                     f"Critique: {fb}. Improve the answer accordingly."})
         answer = _tool_loop(hist)
     return answer
 
 
-# --- 4b) Tool-Hook: harte Denylist + optionale HITL-Freigabe ----------------
+# --- 4b) tool hook: hard denylist + optional HITL approval ------------------
 HITL = os.environ.get("HITL", "") not in ("", "0", "false", "False")
 HITL_TOOLS = set(t for t in os.environ.get(
     "HITL_TOOLS", "bash,remote_delete,remote_write,delete_task,edit_task").split(",") if t)
 HITL_TIMEOUT = int(os.environ.get("HITL_TIMEOUT", "120"))
-# Immer aktiv, unabhaengig von HITL: offensichtlich zerstoererische bash-Muster.
+# Always active, independent of HITL: obviously destructive bash patterns.
 _DENY_PATTERNS = ("rm -rf /", ":(){:|:&};:", "mkfs", "dd if=", "> /dev/sd", "chmod -R 000")
 
 
 def _request_approval(name, args):
-    """Beim Manager eine Freigabe anfragen (der fragt den Nutzer per Signal) und
-    darauf pollen. Kann der Manager es nicht (alte Version/kein Signal) -> nicht
-    blockieren (True). Zeitueberschreitung/Ablehnung -> False."""
+    """Request an approval from the manager (which asks the user via Signal) and
+    poll for it. If the manager cannot (old version/no Signal) -> do not
+    block (True). Timeout/rejection -> False."""
     try:
         d = json.loads(_mgr(_manager_base(), "/api/hitl",
                             {"tool": name, "target": _audit_target(name, args)}, timeout=8))
@@ -1470,22 +1466,22 @@ def _request_approval(name, args):
 
 
 def _hook_before_tool(name, args):
-    """(allow, reason). Denylist zuerst, dann optionale HITL-Freigabe."""
+    """(allow, reason). Denylist first, then optional HITL approval."""
     if name == "bash":
         cmd = str(args.get("command", ""))
         for pat in _DENY_PATTERNS:
             if pat in cmd:
-                return False, f"durch Sicherheitsregel blockiert ({pat})"
+                return False, f"blocked by security rule ({pat})"
     if HITL and name in HITL_TOOLS:
         if not _request_approval(name, args):
-            return False, "vom Nutzer nicht freigegeben (oder Zeitueberschreitung)"
+            return False, "not approved by the user (or timed out)"
     return True, ""
 
 
 # --- OpenRouter chat --------------------------------------------------------
 def or_chat(messages, tools, model=None):
     _b = {"model": model or OR_MODEL, "messages": messages, "usage": {"include": True}}
-    if tools:                       # leere tools-Liste NICHT mitschicken (400)
+    if tools:                       # do NOT send an empty tools list (400)
         _b["tools"] = tools
         _b["tool_choice"] = "auto"
     if _reasoning:
@@ -1506,7 +1502,7 @@ def or_chat(messages, tools, model=None):
                 _retry_sleep(attempt); continue
             return {"content": last}
         except Exception as e:
-            last = f"⚠️ {LLM_NAME}-Fehler: {e!r}"
+            last = f"⚠️ {LLM_NAME} error: {e!r}"
             if attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
             return {"content": last}
@@ -1516,22 +1512,22 @@ def or_chat(messages, tools, model=None):
 TOOLS = []
 _history = [{"role": "system", "content": SYSTEM}]
 
-# Semantisches Langzeitgedaechtnis: statt beim ersten Turn ALLE Fakten in den
-# Prompt zu kippen (das waechst mit dem Gedaechtnis und kostet jeden Turn),
-# holt der Agent pro Frage nur die inhaltlich naechsten Notizen. Kurzzeit ist
-# _history (dieses Gespraech), Langzeit liegt semantisch im Manager.
-RECALL_TAG = "[Gedaechtnis]"
+# Semantic long-term memory: instead of dumping ALL facts into the prompt on the
+# first turn (that grows with the memory and costs every turn), the agent
+# fetches only the content-nearest notes per question. Short-term is
+# _history (this conversation), long-term lives semantically in the manager.
+RECALL_TAG = "[Memory]"
 RECALL_K = 4
-# Schwelle fuer multilingual-e5: relevante Treffer liegen ~0.82+, thematisch
-# fremde ~0.76. 0.78 trennt sauber. Tunbar, falls zu streng/locker.
+# Threshold for multilingual-e5: relevant hits sit ~0.82+, thematically
+# unrelated ones ~0.76. 0.78 separates cleanly. Tunable if too strict/loose.
 RECALL_MIN = 0.78
 
 
 def _recall(user_message):
-    """Den Gedaechtnis-Block in _history durch die zu DIESER Frage passenden
-    Langzeit-Notizen ersetzen. Genau EIN solcher Block bleibt stehen, frisch je
-    Turn; /reset raeumt ihn mit weg. Faellt die Suche aus, gibt es diesen Turn
-    eben keinen Langzeit-Kontext — die Notizen bleiben gespeichert."""
+    """Replace the memory block in _history with the long-term notes matching
+    THIS question. Exactly ONE such block remains, fresh each
+    turn; /reset clears it too. If the search fails, this turn simply has
+    no long-term context — the notes stay stored."""
     _history[:] = [m for m in _history
                    if not (m.get("role") == "system"
                            and str(m.get("content", "")).startswith(RECALL_TAG))]
@@ -1543,8 +1539,8 @@ def _recall(user_message):
     except Exception:
         hits = []
     if hits:
-        block = (RECALL_TAG + " Relevante Notizen aus frueheren Sitzungen "
-                 "(nutze sie, wenn sie zur Frage passen):\n"
+        block = (RECALL_TAG + " Relevant notes from earlier sessions "
+                 "(use them when they fit the question):\n"
                  + "\n".join(f"- {h['text']}" for h in hits))
         _history.insert(1, {"role": "system", "content": block})
 
@@ -1553,8 +1549,8 @@ PLAYBOOK_TAG = "[Playbooks]"
 
 
 def _inject_playbooks():
-    """Feste Regeln jeden Turn frisch einblenden — anders als _recall gelten
-    Playbooks IMMER. Genau EIN Block, /reset raeumt ihn mit weg."""
+    """Surface the fixed rules fresh each turn — unlike _recall, playbooks
+    apply ALWAYS. Exactly ONE block, /reset clears it too."""
     _history[:] = [m for m in _history
                    if not (m.get("role") == "system"
                            and str(m.get("content", "")).startswith(PLAYBOOK_TAG))]
@@ -1563,15 +1559,15 @@ def _inject_playbooks():
     except Exception:
         pbs = []
     if pbs:
-        block = (PLAYBOOK_TAG + " Deine festen Regeln — IMMER befolgen:\n"
+        block = (PLAYBOOK_TAG + " Your fixed rules — ALWAYS follow:\n"
                  + "\n".join(f"- {p.get('text','')}" for p in pbs))
         _history.insert(1, {"role": "system", "content": block})
 
 
-# --- Prompt-Templates: /name -> im Manager gepflegter Prompt -----------------
-# Wiederkehrende Auftraege als Kommando (pi.dev-Idee "prompt templates").
-# Expansion passiert HIER im Agenten — funktioniert damit in Web, App und
-# Signal gleichermassen. "/daily bitte kurz" -> Template-Text + " bitte kurz".
+# --- prompt templates: /name -> prompt maintained in the manager ------------
+# Recurring assignments as a command (pi.dev idea "prompt templates").
+# Expansion happens HERE in the agent — so it works in web, app and
+# Signal alike. "/daily please keep it short" -> template text + " please keep it short".
 _BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps", "/branch", "/back")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
@@ -1582,7 +1578,7 @@ def _prompt_templates():
             lst = json.loads(_mgr_get(_manager_base(), "/api/prompts", timeout=6)).get("prompts", [])
             _prompts_cache["map"] = {p["name"]: p.get("text", "") for p in lst if p.get("name")}
         except Exception:
-            pass                       # alten Cache behalten
+            pass                       # keep the old cache
         _prompts_cache["ts"] = time.time()
     return _prompts_cache["map"]
 
@@ -1598,13 +1594,13 @@ def _expand_prompt(message):
     return tpl + ((" " + rest.strip()) if rest.strip() else "")
 
 
-MISSION_TAG = "[Missionen]"
+MISSION_TAG = "[Missions]"
 
 
 def _inject_missions():
-    """Aktive Missionen jeden Turn kompakt einblenden — der Arbeitsstand
-    ueberlebt so /reset und Neustart. Nur fuer den Orchestrator (TASK_ADMIN).
-    Genau EIN Block, /reset raeumt ihn mit weg."""
+    """Surface active missions compactly each turn — this way the work state
+    survives /reset and restart. Only for the orchestrator (TASK_ADMIN).
+    Exactly ONE block, /reset clears it too."""
     _history[:] = [m for m in _history
                    if not (m.get("role") == "system"
                            and str(m.get("content", "")).startswith(MISSION_TAG))]
@@ -1621,35 +1617,35 @@ def _inject_missions():
         cur = next((st for st in m.get("steps", []) if st.get("status") == "doing"),
                    None) or next((st for st in m.get("steps", []) if st.get("status") == "open"), None)
         done = sum(1 for st in m.get("steps", []) if st.get("status") == "done")
-        lines.append(f"- {m['id']}: {m['goal'][:100]} ({done}/{len(m.get('steps', []))} Schritte) — "
-                     + (f"aktuell Schritt {cur['n']}: {cur['text'][:80]} [{cur['status']}]"
-                        if cur else "alle Schritte erledigt -> mission_finish!"))
+        lines.append(f"- {m['id']}: {m['goal'][:100]} ({done}/{len(m.get('steps', []))} steps) — "
+                     + (f"currently step {cur['n']}: {cur['text'][:80]} [{cur['status']}]"
+                        if cur else "all steps done -> mission_finish!"))
     if lines:
         _history.insert(1, {"role": "system", "content":
-                            MISSION_TAG + " Deine laufenden Missionen (Fortschritt liegt im "
-                            "Manager, nutze mission_update/mission_finish):\n" + "\n".join(lines)})
+                            MISSION_TAG + " Your ongoing missions (progress lives in the "
+                            "manager, use mission_update/mission_finish):\n" + "\n".join(lines)})
 
 
-# Obergrenze fuers Gespraechs-_history. Ohne die waechst der Kontext eines
-# Dauerprozesses (Orchestrator: Heartbeat + App-Chats teilen sich EIN _history)
-# unbegrenzt, und jeder Call schickt alles erneut. Geschnitten wird nur ZWISCHEN
-# Turns (hier, vor der neuen Nutzernachricht) — nie mitten in einem Tool-Zyklus,
-# sonst haengt ein tool-Ergebnis ohne sein tool_calls in der Luft (API-Fehler).
+# Upper bound for the conversation _history. Without it the context of a
+# long-running process (orchestrator: heartbeat + app chats share ONE _history)
+# grows unbounded, and every call sends everything again. Trimming happens only
+# BETWEEN turns (here, before the new user message) — never mid tool cycle,
+# otherwise a tool result dangles without its tool_calls (API error).
 CTX_MAX_MSGS = int(os.environ.get("CTX_MAX_MSGS", "20"))
 
 
 def _trim_history():
-    """Bei Ueberlauf die aelteren Nachrichten ZUSAMMENFASSEN statt sie zu
-    verwerfen (summarizing conversation manager). _history[0] (System) ist
-    gepinnt; die letzten CTX_PRESERVE_RECENT Gespraechsnachrichten bleiben
-    woertlich; alles davor wird zu einem [Zusammenfassung]-Systemblock verdichtet
-    (bestehende Zusammenfassung wird eingefaltet). Transiente Bloecke
-    (Playbooks/Gedaechtnis) werden hier verworfen — _inject/_recall setzen sie
-    gleich neu. Nur ZWISCHEN Turns aufrufen, nie im Tool-Zyklus."""
+    """On overflow, SUMMARIZE the older messages instead of discarding
+    them (summarizing conversation manager). _history[0] (system) is
+    pinned; the last CTX_PRESERVE_RECENT conversation messages stay
+    verbatim; everything before is condensed into a [Summary] system block
+    (an existing summary is folded in). Transient blocks
+    (playbooks/memory) are discarded here — _inject/_recall set them
+    up again right away. Only call BETWEEN turns, never in the tool cycle."""
     if len(_history) <= CTX_MAX_MSGS:
         return
     if _branch_depth() > 0:
-        return          # offener Nebenast: nicht trimmen, Marker muss stehen bleiben
+        return          # open side branch: do not trim, the marker must stay
     head = _history[0]
     prior, convo = "", []
     for m in _history[1:]:
@@ -1657,12 +1653,12 @@ def _trim_history():
             c = str(m.get("content", ""))
             if c.startswith(SUMMARY_TAG):
                 prior = c[len(SUMMARY_TAG):].strip()
-            continue    # Playbook/Recall/Summary: nicht als Gespraech behandeln
+            continue    # playbook/recall/summary: do not treat as conversation
         convo.append(m)
 
     def _boundary_keep(msgs, n):
-        """Die letzten n Nachrichten, aber an einer user-Grenze beginnend, damit
-        kein tool-Ergebnis ohne sein assistant/tool_calls verwaist."""
+        """The last n messages, but starting at a user boundary, so that
+        no tool result is orphaned from its assistant/tool_calls."""
         k = msgs[-n:] if n < len(msgs) else msgs[:]
         while k and k[0].get("role") != "user":
             k.pop(0)
@@ -1672,32 +1668,32 @@ def _trim_history():
         return [{"role": "system", "content": SUMMARY_TAG + " " + sm}] if sm else []
 
     if not CTX_SUMMARY or len(convo) <= CTX_PRESERVE_RECENT:
-        # Zusammenfassen aus/zu wenig -> altes Verhalten, aber Summary behalten.
+        # summarizing off/too little -> old behavior, but keep the summary.
         _history[:] = [head] + _prefix(prior) + _boundary_keep(convo, CTX_MAX_MSGS - 1)
         return
     recent = _boundary_keep(convo, CTX_PRESERVE_RECENT)
     to_sum = convo[:len(convo) - len(recent)]
     new_summary = _summarize(to_sum, prior) if to_sum else prior
     if not new_summary:
-        # Summarizer nicht verfuegbar -> nicht mehr Kontext riskieren: wegwerfen.
+        # summarizer unavailable -> do not risk losing more context: discard.
         _history[:] = [head] + _prefix(prior) + recent
         return
     _history[:] = [head] + _prefix(new_summary) + recent
 
 
-# --- Steering: dem laufenden Agenten reinrufen -------------------------------
-# Waehrend ein Turn laeuft (Tool-Schleife), kann der Nutzer Nachrichten
-# nachschieben (run_agent: POST /api/steer). Sie werden zwischen zwei Tool-
-# Schritten als User-Nachricht eingespeist — der Agent aendert den Kurs, statt
-# stur zu Ende zu laufen.
+# --- steering: interrupt the running agent -----------------------------------
+# While a turn is running (tool loop), the user can push in additional messages
+# (run_agent: POST /api/steer). They are fed in between two tool
+# steps as a user message — the agent changes course instead of
+# stubbornly running to the end.
 _steer_lock = threading.Lock()
 _steer_q = []
 _busy = [False]
 
 
 def steer_push(msg):
-    """(angenommen?) True, wenn ein Turn laeuft und die Nachricht eingespeist
-    wird; False -> Aufrufer soll sie als normale Nachricht senden."""
+    """(accepted?) True if a turn is running and the message is fed in;
+    False -> the caller should send it as a normal message."""
     with _steer_lock:
         if not _busy[0]:
             return False
@@ -1710,19 +1706,19 @@ def _drain_steer(hist, on_token=None):
         msgs, _steer_q[:] = _steer_q[:], []
     for m in msgs:
         hist.append({"role": "user", "content":
-                     "[Steuerung — soeben vom Nutzer nachgeschoben, hat Vorrang] " + m})
+                     "[Steering — just pushed in by the user, takes priority] " + m})
         if on_token:
             on_token(f"\n\u21aa {m}\n")
     return bool(msgs)
 
 
-# --- Aeste (Tree-Chat): Nebenfrage im geerbten Kontext, sauberer Ruecksprung --
-# /branch oeffnet einen Ast: ein Marker merkt sich den Punkt. /back schliesst
-# den innersten Ast: alles nach dem Marker wird zu EINER Randnotiz verdichtet
-# (bzw. mit "drop" spurlos verworfen) — das Hauptthema bleibt unverschmutzt,
-# aber informiert. Verschachtelt moeglich (Stack ueber Marker im Verlauf).
-BRANCH_MARK = "[Ast]"
-NOTE_TAG = "[Randnotiz]"
+# --- branches (tree chat): side question in inherited context, clean return --
+# /branch opens a branch: a marker remembers the point. /back closes
+# the innermost branch: everything after the marker is condensed into ONE sidenote
+# (or discarded without a trace with "drop") — the main topic stays unpolluted
+# but informed. Nesting is possible (a stack via markers in the history).
+BRANCH_MARK = "[Branch]"
+NOTE_TAG = "[Sidenote]"
 
 
 def _branch_depth():
@@ -1734,9 +1730,9 @@ def _branch_depth():
 def _branch_open(cmd):
     thema = cmd[len("/branch"):].strip()
     _history.append({"role": "system", "content":
-                     BRANCH_MARK + (f" Nebenast: {thema}" if thema else " Nebenast") +
-                     " — der Nutzer stellt eine Rueckfrage abseits des Hauptthemas."})
-    return f"⑂ Nebenast geoeffnet (Tiefe {_branch_depth()})." +         (f" Thema: {thema}" if thema else "")
+                     BRANCH_MARK + (f" Side branch: {thema}" if thema else " Side branch") +
+                     " — the user asks a question aside from the main topic."})
+    return f"⑂ Side branch opened (depth {_branch_depth()})." +         (f" Topic: {thema}" if thema else "")
 
 
 def _branch_close(cmd):
@@ -1748,7 +1744,7 @@ def _branch_close(cmd):
             idx = i
             break
     if idx is None:
-        return "Kein offener Nebenast."
+        return "No open side branch."
     segment = _history[idx + 1:]
     note = ""
     if not drop and segment:
@@ -1757,35 +1753,35 @@ def _branch_close(cmd):
             for m in segment:
                 c = _msg_text(m)
                 if m.get("role") in ("user", "assistant") and c:
-                    lines.append(("Nutzer: " if m["role"] == "user" else "Agent: ") + c[:300])
+                    lines.append(("User: " if m["role"] == "user" else "Agent: ") + c[:300])
             r = or_chat([{"role": "system", "content":
-                          "Fasse diesen Nebenast eines Gespraechs in EINER Zeile (max. 140 "
-                          "Zeichen) zusammen: Kernfrage und Ergebnis. Nur die Zeile."},
+                          "Summarize this side branch of a conversation in ONE line (max 140 "
+                          "characters): the core question and the outcome. Just the line."},
                          {"role": "user", "content": "\n".join(lines)[:6000]}], [])
             note = (r.get("content") or "").strip().splitlines()[0][:160]
         except Exception:
             note = ""
     del _history[idx:]
     if note:
-        _history.append({"role": "system", "content": f"{NOTE_TAG} Nebenast geklaert: {note}"})
+        _history.append({"role": "system", "content": f"{NOTE_TAG} Side branch resolved: {note}"})
     left = _branch_depth()
-    return ("↩ Zurueck im " + ("Hauptthema" if left == 0 else f"Ast Tiefe {left}") +
-            ("." if drop or not note else f" — Randnotiz: {note}"))
+    return ("↩ Back in the " + ("main topic" if left == 0 else f"branch depth {left}") +
+            ("." if drop or not note else f" — sidenote: {note}"))
 
 
 def _tool_loop(hist):
-    """Tool-Schleife auf einer beliebigen Nachrichtenliste. `hist` ist entweder
-    das persistente _history (Gespraech) oder eine Wegwerf-Liste (Heartbeat)."""
+    """Tool loop on an arbitrary message list. `hist` is either
+    the persistent _history (conversation) or a throwaway list (heartbeat)."""
     for _ in _step_iter():
         _drain_steer(hist)
         msg = or_chat(hist, TOOLS)
         hist.append(msg)
         tcs = msg.get("tool_calls")
         if not tcs:
-            # Kam waehrend der Antwort noch eine Steuerung rein? Dann weiter.
+            # Did a steering message arrive during the answer? Then continue.
             if _drain_steer(hist):
                 continue
-            return msg.get("content") or "(leere Antwort)"
+            return msg.get("content") or "(empty answer)"
         for tc in tcs:
             fn = tc["function"]
             try:
@@ -1795,14 +1791,14 @@ def _tool_loop(hist):
             out = exec_tool(fn["name"], args)
             log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
             hist.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
-    return "(max. Tool-Schritte erreicht)"
+    return "(max tool steps reached)"
 
 
 def run(user_message):
     user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
-        return "🔄 Kontext zurückgesetzt."
+        return "🔄 Context reset."
     if user_message.startswith("/reasoning"):
         return _set_reasoning(user_message)
     if user_message.startswith("/goal"):
@@ -1815,10 +1811,10 @@ def run(user_message):
         return _branch_open(user_message)
     if user_message.startswith("/back"):
         return _branch_close(user_message)
-    # /fresh: zustandslos in einem Wegwerf-Kontext laufen — das Gespraechs-
-    # _history bleibt unangetastet (sonst wischte ein Heartbeat einen laufenden
-    # App-Chat weg, weil beide sich dasselbe _history teilen). Fuer den
-    # Orchestrator-Heartbeat: schauen, delegieren, verwerfen.
+    # /fresh: run statelessly in a throwaway context — the conversation
+    # _history stays untouched (otherwise a heartbeat would wipe out a running
+    # app chat, because both share the same _history). For the
+    # orchestrator heartbeat: look, delegate, discard.
     if user_message.startswith("/fresh"):
         m = user_message[len("/fresh"):].strip()
         hist = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": m}]
@@ -1838,8 +1834,8 @@ def run(user_message):
 
 
 def or_chat_stream(messages, tools, on_token):
-    """Wie or_chat, aber streamend: ruft on_token(text) je Delta. Baut die
-    (assistant-)Nachricht inkl. evtl. tool_calls aus dem Stream zusammen."""
+    """Like or_chat, but streaming: calls on_token(text) per delta. Reassembles
+    the (assistant) message including any tool_calls from the stream."""
     def _build_llm_body(use_tools):
         b = {"model": OR_MODEL, "messages": messages, "stream": True, "usage": {"include": True}}
         if use_tools and tools:
@@ -1855,8 +1851,8 @@ def or_chat_stream(messages, tools, on_token):
     tcs = {}
     reasoning_open = False
     reasoning_txt = ""
-    # Nur den Verbindungsaufbau retryen (mitten im Stream nicht sinnvoll wieder-
-    # holbar, da schon Tokens geflossen sein koennen).
+    # Only retry the connection setup (mid-stream is not sensibly retryable,
+    # since tokens may already have flowed).
     r = None
     for attempt in range(LLM_RETRIES + 1):
         req = urllib.request.Request(_llm_url(), data=body, method="POST",
@@ -1866,25 +1862,25 @@ def or_chat_stream(messages, tools, on_token):
             break
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", "replace")[:400]
-            # Lokale Modelle erzeugen bei grossen String-Argumenten (z. B. eine
-            # ganze Datei) oft kaputtes Tool-Call-JSON -> llama.cpp antwortet 500
-            # ("Failed to parse tool call arguments as JSON"). Ein erneuter Versuch
-            # mit demselben Body scheitert gleich wieder; stattdessen EINMAL ohne
-            # Tools wiederholen: das Modell gibt die Antwort dann als Text/Code aus,
-            # statt den ganzen Turn zu verlieren.
+            # With large string arguments (e.g. a whole file), local models often
+            # produce broken tool-call JSON -> llama.cpp answers 500
+            # ("Failed to parse tool call arguments as JSON"). A retry
+            # with the same body fails again immediately; instead retry ONCE without
+            # tools: the model then emits the answer as text/code
+            # instead of losing the whole turn.
             if (e.code == 500 and tools_on
                     and ("tool call" in err_body.lower() or "tool_call" in err_body.lower())):
                 tools_on = False
                 body = _build_llm_body(False)
-                on_token("\n⚠️ Ungueltiges Tool-Call-JSON vom lokalen Modell — "
-                         "Runde ohne Tools wiederholt (Antwort als Text).\n")
+                on_token("\n⚠️ Invalid tool-call JSON from the local model — "
+                         "round retried without tools (answer as text).\n")
                 continue
             m = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
             on_token(m); return {"role": "assistant", "content": m}
         except Exception as e:
-            m = f"⚠️ {LLM_NAME}-Fehler: {e!r}"
+            m = f"⚠️ {LLM_NAME} error: {e!r}"
             if attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
             on_token(m); return {"role": "assistant", "content": m}
@@ -1900,13 +1896,13 @@ def or_chat_stream(messages, tools, on_token):
                 chunk = json.loads(data)
             except Exception:
                 continue
-            if chunk.get("usage"):          # letzter Chunk traegt die Abrechnung
+            if chunk.get("usage"):          # the last chunk carries the billing
                 report_usage(chunk["usage"])
             try:
                 delta = chunk["choices"][0]["delta"]
             except (KeyError, IndexError):
                 continue
-            # OpenRouter nennt es "reasoning", llama.cpp (Qwen3 u.ae.) "reasoning_content"
+            # OpenRouter calls it "reasoning", llama.cpp (Qwen3 et al.) "reasoning_content"
             rzn = delta.get("reasoning") or delta.get("reasoning_content")
             if rzn:
                 if not reasoning_open:
@@ -1936,12 +1932,12 @@ def or_chat_stream(messages, tools, on_token):
         if reasoning_open:
             on_token(THINK_END)
     except Exception as e:
-        # Abbruch mitten im Stream: das bereits Gestreamte behalten, Rest melden.
-        m = f"⚠️ {LLM_NAME}-Streamabbruch: {e!r}"
+        # aborted mid-stream: keep what was already streamed, report the rest.
+        m = f"⚠️ {LLM_NAME} stream aborted: {e!r}"
         on_token(m)
         content += ("\n" + m)
-    # Manche Reasoning-Modelle geben ALLES als Denken aus und lassen content leer
-    # -> statt einer leeren Antwort das Denken behalten (sonst "_(empty reply)_").
+    # Some reasoning models emit EVERYTHING as thinking and leave content empty
+    # -> instead of an empty answer, keep the thinking (otherwise "_(empty reply)_").
     msg = {"role": "assistant", "content": content or reasoning_txt or None}
     if tcs:
         msg["tool_calls"] = [tcs[i] for i in sorted(tcs)]
@@ -1949,13 +1945,13 @@ def or_chat_stream(messages, tools, on_token):
 
 
 def run_stream(user_message, on_token, image=None):
-    """Wie run(), aber streamt die Antwort-Tokens ueber on_token. Tool-Runden
-    erzeugen keinen Text; die finale Antwort wird gestreamt.
-    image: optionales Base64-JPEG -> als Vision-Content an OpenRouter."""
+    """Like run(), but streams the answer tokens via on_token. Tool rounds
+    produce no text; the final answer is streamed.
+    image: optional base64 JPEG -> sent as vision content to OpenRouter."""
     user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
-        on_token("🔄 Kontext zurückgesetzt.")
+        on_token("🔄 Context reset.")
         return
     if user_message.startswith("/reasoning"):
         on_token(_set_reasoning(user_message))
@@ -1975,8 +1971,8 @@ def run_stream(user_message, on_token, image=None):
     if user_message.startswith("/back"):
         on_token(_branch_close(user_message))
         return
-    # /fresh: wie in run() zustandslos, Gespraech unangetastet. Heartbeats
-    # brauchen kein Streaming — einmal die Antwort ausgeben.
+    # /fresh: stateless as in run(), conversation untouched. Heartbeats
+    # need no streaming — emit the answer once.
     if user_message.startswith("/fresh"):
         m = user_message[len("/fresh"):].strip()
         on_token(_tool_loop([{"role": "system", "content": SYSTEM},
@@ -1988,7 +1984,7 @@ def run_stream(user_message, on_token, image=None):
     _recall(user_message)
     if image:
         content = [
-            {"type": "text", "text": user_message or "Was ist auf dem Bild?"},
+            {"type": "text", "text": user_message or "What is in the image?"},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
         ]
     else:
@@ -1997,8 +1993,8 @@ def run_stream(user_message, on_token, image=None):
     _busy[0] = True
     try:
         if _goal:
-            # Mit aktivem Ziel wird die Antwort gegen den Judge verfeinert (nicht
-            # gestreamt) und danach als Ganzes ausgegeben.
+            # With an active goal the answer is refined against the judge (not
+            # streamed) and then emitted as a whole.
             on_token(_run_goal(_history, user_message))
             return
         for _ in _step_iter():
@@ -2034,15 +2030,15 @@ def run_stream(user_message, on_token, image=None):
                 on_token("\n")
                 log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
                 _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
-        on_token("\n(max. Tool-Schritte erreicht)")
+        on_token("\n(max tool steps reached)")
     finally:
         _busy[0] = False
 
 
-# Tool-Plugins (pi.dev-Extension-Idee, uebersetzt): eine .py-Datei je Tool,
-# vom Manager auf die Config-Disk gelegt (/config/plugins). Konvention:
+# Tool plugins (pi.dev extension idea, ported): one .py file per tool,
+# placed on the config disk by the manager (/config/plugins). Convention:
 #   DESC = "…"; PARAMS = {...}; REQUIRED = [...];  def run(**kwargs): ...
-# Der Dateiname (ohne .py) wird der Tool-Name. Die microVM ist die Sandbox.
+# The filename (without .py) becomes the tool name. The microVM is the sandbox.
 PLUGIN_TOOLS = set()
 PLUGIN_DIR = os.environ.get("PLUGIN_DIR", "/config/plugins")
 
@@ -2055,16 +2051,16 @@ def load_plugins():
         path = os.path.join(PLUGIN_DIR, entry)
         syspath_add = None
         if os.path.isdir(path):
-            # Mehrdatei-Tool: Ordner <name>/ mit Entry-Datei tool.py (oder
-            # __init__.py / <name>.py). Der Ordner kommt auf sys.path, damit
-            # interne Importe (import helper) funktionieren.
+            # multi-file tool: folder <name>/ with entry file tool.py (or
+            # __init__.py / <name>.py). The folder goes on sys.path so that
+            # internal imports (import helper) work.
             name = os.path.basename(path)
             src = None
             for cand in ("tool.py", "__init__.py", name + ".py"):
                 if os.path.isfile(os.path.join(path, cand)):
                     src = os.path.join(path, cand); break
             if not src:
-                log(f"plugin '{name}' ignoriert: keine tool.py/__init__.py im Ordner")
+                log(f"plugin '{name}' ignored: no tool.py/__init__.py in the folder")
                 continue
             syspath_add = path
         elif path.endswith(".py"):
@@ -2072,7 +2068,7 @@ def load_plugins():
         else:
             continue
         if name in BUILTIN and name not in PLUGIN_TOOLS:
-            log(f"plugin '{name}' ignoriert: kollidiert mit eingebautem Tool")
+            log(f"plugin '{name}' ignored: collides with a built-in tool")
             continue
         try:
             if syspath_add and syspath_add not in sys.path:
@@ -2083,9 +2079,9 @@ def load_plugins():
             BUILTIN[name] = (mod.run, str(getattr(mod, "DESC", name))[:300],
                              getattr(mod, "PARAMS", {}), getattr(mod, "REQUIRED", []))
             PLUGIN_TOOLS.add(name)
-            log(f"plugin geladen: {name}")
+            log(f"plugin loaded: {name}")
         except Exception as e:
-            log(f"plugin '{name}' FEHLER: {e!r}")
+            log(f"plugin '{name}' ERROR: {e!r}")
 
 
 def init():
@@ -2093,4 +2089,4 @@ def init():
     os.makedirs(WORKDIR, exist_ok=True)
     load_plugins()
     TOOLS = builtin_schema() + init_mcp()
-    log(f"agent bereit: backend={LLM_BACKEND} url={_llm_url()} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")
+    log(f"agent ready: backend={LLM_BACKEND} url={_llm_url()} model={OR_MODEL} tools={len(TOOLS)} workdir={WORKDIR}")

@@ -1,5 +1,5 @@
-# Android-Build-Umgebung (JDK 17 + Android SDK + Gradle) fuer die KatAgent-APK.
-# Baut ohne lokales Android-SDK -> alles im Container. APK landet via Volume-Mount
+# Android build environment (JDK 17 + Android SDK + Gradle) for the KatAgent APK.
+# Builds without a local Android SDK -> everything in the container. APK lands via volume mount
 # in ./app/build/outputs/apk/.
 FROM eclipse-temurin:17-jdk-jammy
 

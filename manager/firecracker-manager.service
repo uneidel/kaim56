@@ -7,20 +7,20 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/ulrich/firecracker
 Environment=PORT=8700
-# HOSTIF nur setzen, wenn die Default-Route NICHT ueber den gewuenschten
-# Uplink laeuft — der Manager ermittelt ihn sonst selbst. Ein hier fest
-# eingetragener, spaeter umbenannter NIC bricht die NAT der Gaeste still.
+# Only set HOSTIF if the default route does NOT run over the desired uplink —
+# otherwise the manager determines it itself. A NIC hard-coded here and later
+# renamed silently breaks the guests' NAT.
 # Environment=HOSTIF=eth0
-# Web-Auth (leer = keine Auth -> nur hinter Traefik/SSO betreiben!):
+# Web auth (empty = no auth -> run only behind Traefik/SSO!):
 Environment=MANAGER_USER=admin
 Environment=MANAGER_PASS=
 ExecStart=/usr/bin/python3 /home/ulrich/firecracker/manager.py
 Restart=always
 RestartSec=5
-# Die microVMs sind Kindprozesse des Managers und haengen damit in seiner
-# Cgroup: ohne dies nimmt jedes `systemctl restart` alle laufenden Instanzen
-# mit. KillMode=process beendet nur den Manager selbst, die VMs laufen weiter
-# und bleiben ueber ihre pidfiles steuerbar.
+# The microVMs are child processes of the manager and thus live in its
+# cgroup: without this, every `systemctl restart` takes all running instances
+# with it. KillMode=process stops only the manager itself, the VMs keep running
+# and stay controllable via their pidfiles.
 KillMode=process
 # Muss root sein (kvm, ip, iptables):
 User=root

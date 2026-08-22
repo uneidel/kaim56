@@ -5,7 +5,7 @@ package de.kat56.agent
 
 import android.content.Context
 
-/** Einfache Einstellungs-Persistenz (SharedPreferences). */
+/** Simple settings persistence (SharedPreferences). */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("katagent", Context.MODE_PRIVATE)
 
@@ -17,8 +17,8 @@ class Prefs(context: Context) {
         get() = sp.getString("instance", "ortest") ?: ""
         set(v) = sp.edit().putString("instance", v).apply()
 
-    // Welche Server-Instanz die Assistenten-Taste (ACTION_ASSIST) oeffnet.
-    // Leer = die aktuell aktive Instanz verwenden.
+    // Which server instance the assistant button (ACTION_ASSIST) opens.
+    // Empty = use the currently active instance.
     var assistInstance: String
         get() = sp.getString("assistInstance", "") ?: ""
         set(v) = sp.edit().putString("assistInstance", v).apply()
@@ -39,17 +39,17 @@ class Prefs(context: Context) {
         get() = sp.getString("mode", "local") ?: "local"
         set(v) = sp.edit().putString("mode", v).apply()
 
-    // Web-Zugriff im Gerät-Modus (App holt Suche/Seiten als Kontext für Gemma).
+    // Web access in device mode (the app fetches search/pages as context for Gemma).
     var webAccess: Boolean
         get() = sp.getBoolean("webAccess", false)
         set(v) = sp.edit().putBoolean("webAccess", v).apply()
 
-    // Aktives On-Device-Modell (Dateiname im models/-Ordner).
+    // Active on-device model (file name in the models/ folder).
     var activeModel: String
         get() = sp.getString("activeModel", "") ?: ""
         set(v) = sp.edit().putString("activeModel", v).apply()
 
-    // Zuletzt geoeffneter Chat (nach Neustart wiederherstellen).
+    // Last opened chat (restore after restart).
     var currentChatId: String
         get() = sp.getString("currentChatId", "") ?: ""
         set(v) = sp.edit().putString("currentChatId", v).apply()

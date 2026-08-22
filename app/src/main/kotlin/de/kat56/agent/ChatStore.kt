@@ -14,39 +14,39 @@ import java.io.File
 import java.util.UUID
 
 private val msgKeySeq = java.util.concurrent.atomic.AtomicLong(1)
-// key: stabile Identitaet EINER Nachricht (bleibt ueber copy() erhalten), damit
-// Streaming-Chunks per Key statt per Positions-Index ans Ziel gehen -> keine
-// verrutschten Indizes bei Interrupt/Sync. key ist bewusst NICHT Teil von
-// equals/hashCode, sonst wuerde der Multi-Device-Prefix-Merge (Vergleich per
-// Inhalt) brechen.
+// key: stable identity of ONE message (preserved across copy()), so that
+// streaming chunks reach their target by key rather than by position index ->
+// no shifted indices on interrupt/sync. key is deliberately NOT part of
+// equals/hashCode, otherwise the multi-device prefix merge (comparison by
+// content) would break.
 data class Msg(val user: Boolean, val text: String, val key: Long = msgKeySeq.getAndIncrement(), val image: String? = null) {
     override fun equals(other: Any?) = other is Msg && other.user == user && other.text == text
     override fun hashCode() = user.hashCode() * 31 + text.hashCode()
 }
 
-/** Eine Konversation. title/updatedAt sind Compose-State -> UI aktualisiert sich. */
+/** A conversation. title/updatedAt are Compose state -> the UI updates itself. */
 class Conversation(
     val id: String = UUID.randomUUID().toString(),
-    title: String = "Neuer Chat",
+    title: String = "New Chat",
     mode: String = "local",
     instance: String = "",
     updatedAt: Long = 0L,
 ) {
     var title by mutableStateOf(title)
     var mode by mutableStateOf(mode)
-    var instance by mutableStateOf(instance)   // gewählter Server-Agent für diesen Chat
+    var instance by mutableStateOf(instance)   // selected server agent for this chat
     var updatedAt by mutableStateOf(updatedAt)
     val messages = mutableStateListOf<Msg>()
 }
 
-/** Lokale Persistenz (JSON) fuer Konversationen + Registry der Modelle. */
+/** Local persistence (JSON) for conversations + registry of models. */
 class ChatStore(context: Context) {
     private val file = File(context.filesDir, "conversations.json")
     val modelsDir: File = File(context.filesDir, "models").apply { mkdirs() }
     private val tombFile = File(context.filesDir, "chat_tombstones.json")
-    private val tombTtlMs = 60L * 24 * 3600 * 1000   // Loesch-Marker nach 60 Tagen verwerfen
+    private val tombTtlMs = 60L * 24 * 3600 * 1000   // discard delete markers after 60 days
 
-    /** Loesch-Tombstones {id -> deletedAt} laden. */
+    /** Load delete tombstones {id -> deletedAt}. */
     fun loadTombs(): MutableMap<String, Long> = try {
         if (tombFile.exists()) {
             val o = JSONObject(tombFile.readText())
@@ -56,7 +56,7 @@ class ChatStore(context: Context) {
         } else HashMap()
     } catch (_: Exception) { HashMap() }
 
-    /** Tombstones speichern (mit TTL-Prune). */
+    /** Save tombstones (with TTL prune). */
     fun saveTombs(t: Map<String, Long>) {
         val now = System.currentTimeMillis()
         val o = JSONObject()
@@ -64,7 +64,7 @@ class ChatStore(context: Context) {
         try { tombFile.writeText(o.toString()) } catch (_: Exception) {}
     }
 
-    /** Push-Payload fuer den Server: {chats:[...], tombstones:{id:deletedAt}}. */
+    /** Push payload for the server: {chats:[...], tombstones:{id:deletedAt}}. */
     fun toPushJson(conversations: List<Conversation>, tombs: Map<String, Long>): String {
         val to = JSONObject()
         for ((k, v) in tombs) to.put(k, v)
@@ -83,7 +83,7 @@ class ChatStore(context: Context) {
         }
     }
 
-    /** Konversationen -> JSON-String (fuer Server-Sync). */
+    /** Conversations -> JSON string (for server sync). */
     fun toJson(conversations: List<Conversation>): String {
         val arr = JSONArray()
         for (c in conversations) {
@@ -98,7 +98,7 @@ class ChatStore(context: Context) {
         return arr.toString()
     }
 
-    /** JSON-String -> Konversationen. */
+    /** JSON string -> conversations. */
     fun fromJson(str: String): List<Conversation> {
         return try {
             val arr = JSONArray(str)
@@ -123,18 +123,18 @@ class ChatStore(context: Context) {
         }
     }
 
-    // ---- Modelle -----------------------------------------------------------
+    // ---- Models ------------------------------------------------------------
     fun models(): List<File> =
         (modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".litertlm") } ?: emptyArray())
             .sortedBy { it.name }
 
     fun modelFile(name: String) = File(modelsDir, name)
 
-    /** Altes v1.0-Modell (filesDir/model.litertlm) in den models/-Ordner uebernehmen. */
+    /** Migrate the old v1.0 model (filesDir/model.litertlm) into the models/ folder. */
     fun migrate(prefs: Prefs) {
         val old = File(modelsDir.parentFile, "model.litertlm")
         if (old.exists() && old.length() > 0 && models().isEmpty()) {
-            val dest = File(modelsDir, "modell.litertlm")
+            val dest = File(modelsDir, "model.litertlm")
             if (old.renameTo(dest)) prefs.activeModel = dest.name
         }
     }

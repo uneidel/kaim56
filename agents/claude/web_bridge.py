@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Web-Transport-Bridge: kleine Chat-UI + /api/chat, agent-aware (claude|fabric).
+"""Web transport bridge: small chat UI + /api/chat, agent-aware (claude|fabric).
 
-Laeuft in der microVM auf 0.0.0.0:WEB_PORT. Wird NUR ueber den Manager-Proxy
-(agents.example.com/i/<name>/) erreicht, daher keine eigene Auth. Stdlib only.
+Runs in the microVM on 0.0.0.0:WEB_PORT. Reached ONLY through the manager proxy
+(agents.example.com/i/<name>/), hence no auth of its own. Stdlib only.
 """
 import json
 import os
@@ -21,8 +21,8 @@ _session = None
 
 def run_claude(msg):
     global _session
-    # /reset leert die Claude-Code-Sitzung (neuer Kontext) — dasselbe, was der
-    # OpenRouter-Agent kann. Die App reicht /reset jetzt durch.
+    # /reset clears the Claude Code session (new context) — the same the
+    # OpenRouter agent can do. The app now passes /reset through.
     if msg.strip() == "/reset":
         _session = None
         return "🔄 Neue Unterhaltung."
@@ -36,9 +36,9 @@ def run_claude(msg):
         d = json.loads(p.stdout)
         if d.get("session_id"):
             _session = d["session_id"]
-        return d.get("result") or "(leere Antwort)"
+        return d.get("result") or "(empty reply)"
     except json.JSONDecodeError:
-        return (p.stdout or p.stderr or "(keine Ausgabe)")[:4000]
+        return (p.stdout or p.stderr or "(no output)")[:4000]
 
 
 def run_fabric(msg):
@@ -49,16 +49,16 @@ def run_fabric(msg):
         body = parts[1] if len(parts) > 1 else ""
     p = subprocess.run(["fabric", "-p", pattern], input=body, capture_output=True,
                        text=True, timeout=TIMEOUT)
-    return (p.stdout or p.stderr or "(leere Antwort)").strip()
+    return (p.stdout or p.stderr or "(empty reply)").strip()
 
 
 def run(msg):
     try:
         return run_fabric(msg) if AGENT == "fabric" else run_claude(msg)
     except subprocess.TimeoutExpired:
-        return f"⏱️ Zeitlimit ({TIMEOUT}s) erreicht."
+        return f"⏱️ Time limit ({TIMEOUT}s) reached."
     except Exception as e:
-        return f"⚠️ Fehler: {e!r}"
+        return f"⚠️ Error: {e!r}"
 
 
 PAGE = """<!doctype html><html lang=de><head><meta charset=utf-8>
@@ -79,13 +79,13 @@ button{padding:.6rem 1rem;font-size:1rem;border:none;border-radius:10px;backgrou
 </style></head><body>
 <header>🤖 __AGENT__</header>
 <div id=log></div>
-<form id=f><textarea id=t placeholder="Nachricht… (Enter sendet)" autofocus></textarea><button>➤</button></form>
+<form id=f><textarea id=t placeholder="Message… (Enter sends)" autofocus></textarea><button>➤</button></form>
 <script>
 const log=document.getElementById('log'),t=document.getElementById('t');
 function add(txt,cls){const d=document.createElement('div');d.className='msg '+cls;d.textContent=txt;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 async function send(){const m=t.value.trim();if(!m)return;t.value='';add(m,'me');const b=add('…','bot');
   try{const r=await fetch('api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});
-    const j=await r.json();b.textContent=j.reply||'(leer)';}catch(e){b.textContent='⚠️ '+e}log.scrollTop=log.scrollHeight}
+    const j=await r.json();b.textContent=j.reply||'(empty)';}catch(e){b.textContent='⚠️ '+e}log.scrollTop=log.scrollHeight}
 document.getElementById('f').onsubmit=e=>{e.preventDefault();send()};
 t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 </script></body></html>"""

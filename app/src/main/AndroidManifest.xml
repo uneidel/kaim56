@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Sprachbedienung: aufnehmen und zum Manager schicken. -->
+    <!-- Voice control: record and send to the manager. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
@@ -17,9 +17,9 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.KatAgent">
 
-        <!-- singleTask: der Assistent wird aus jeder Lage heraus gerufen. Ohne
-             das stapelt sich bei jedem Druck auf die Ein-Aus-Taste eine
-             weitere Kopie der App, jede mit eigenem Chatzustand. -->
+        <!-- singleTask: the assistant is invoked from any state. Without it,
+             every press of the power button stacks another copy of the app,
+             each with its own chat state. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -29,11 +29,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Assistent: damit KatAgent unter Einstellungen > Apps >
-                 Standard-Apps > Digitaler Assistent auftaucht und beim langen
-                 Druck auf die Ein-Aus-Taste startet. ASSIST ist der Weg ueber
-                 die Aktivitaet; VOICE_COMMAND meldet zusaetzlich die
-                 Sprachfaehigkeit an. -->
+            <!-- Assistant: so KatAgent shows up under Settings > Apps >
+                 Default apps > Digital assistant and starts on a long press of
+                 the power button. ASSIST is the path via the activity;
+                 VOICE_COMMAND additionally registers the voice capability. -->
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />

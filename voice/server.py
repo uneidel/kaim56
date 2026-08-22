@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Sprachdienst fuer kAIm56: Erkennung (Parakeet) und Sprachausgabe (Piper).
+"""Voice service for kAIm56: recognition (Parakeet) and speech output (Piper).
 
-Laeuft auf dem Host, nicht in den microVMs: die Modelle brauchen zusammen gut
-700 MB und wuerden sonst pro Instanz im Speicher liegen. Gebunden auf 127.0.0.1
-— erreichbar ist der Dienst nur ueber den Manager, genau wie der katfs-Knoten.
-Der Manager weiss ueber die Quell-IP, wer anruft; hier gibt es keine eigene
-Rechteverwaltung, weil er nie direkt erreichbar sein soll.
+Runs on the host, not in the microVMs: together the models need a good 700 MB
+and would otherwise sit in memory per instance. Bound to 127.0.0.1 — the
+service is reachable only through the manager, just like the katfs node. The
+manager knows from the source IP who is calling; there is no separate access
+control here, because it should never be directly reachable.
 
   POST /stt   Audio (beliebiges Format)      -> {"text": …, "seconds": …}
   POST /tts   {"text": …}                    -> audio/wav
@@ -23,36 +23,36 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import onnx_asr
 
 PORT = int(os.environ.get("PORT", "8770"))
-# Im Container an 0.0.0.0 binden: Dockers Portweiterleitung erreicht das
-# Container-Loopback NICHT. Die Beschraenkung sitzt auf der Host-Seite der
-# Zuordnung (-p 127.0.0.1:8770:8770) — von aussen ist der Dienst damit
-# genauso unerreichbar wie der katfs-Knoten, nur eine Ebene hoeher.
+# Bind to 0.0.0.0 in the container: Docker's port forwarding does NOT reach the
+# container loopback. The restriction sits on the host side of the mapping
+# (-p 127.0.0.1:8770:8770) — so from outside the service is just as unreachable
+# as the katfs node, only one level up.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PIPER = os.environ.get("PIPER_BIN", "/opt/piper/piper")
 VOICE = os.environ.get("PIPER_VOICE", "/opt/piper/de-thorsten-medium.onnx")
 ASR_NAME = os.environ.get("ASR_MODEL", "nemo-parakeet-tdt-0.6b-v3")
-MAX_BODY = 32 * 1024 * 1024      # 32 MB reichen fuer mehrere Minuten Sprache
-MAX_TEXT = 4000                  # laengere Antworten werden vor dem Sprechen gekuerzt
+MAX_BODY = 32 * 1024 * 1024      # 32 MB is enough for several minutes of speech
+MAX_TEXT = 4000                  # longer replies are shortened before speaking
 
 _asr = None
 _asr_lock = threading.Lock()
 
 
 def asr():
-    """Modell beim ersten Aufruf laden (~2 s aus dem Cache) und behalten."""
+    """Load the model on first call (~2 s from cache) and keep it."""
     global _asr
     with _asr_lock:
         if _asr is None:
             t0 = time.time()
             _asr = onnx_asr.load_model(ASR_NAME, quantization="int8")
-            print(f"[voice] ASR geladen in {time.time()-t0:.1f}s", flush=True)
+            print(f"[voice] ASR loaded in {time.time()-t0:.1f}s", flush=True)
     return _asr
 
 
 def to_wav16k(raw):
-    """Eingang beliebig (Opus/OGG von Signal, AAC/M4A von Android, WAV) ->
-    16 kHz mono PCM. Ohne diesen Schritt scheitert die Erkennung an allem,
-    was kein WAV ist."""
+    """Arbitrary input (Opus/OGG from Signal, AAC/M4A from Android, WAV) ->
+    16 kHz mono PCM. Without this step recognition fails on anything that is
+    not WAV."""
     src = tempfile.NamedTemporaryFile(suffix=".in", delete=False)
     src.write(raw)
     src.close()
@@ -67,7 +67,7 @@ def to_wav16k(raw):
 
 
 def list_voices():
-    """Verfuegbare Piper-Stimmen: alle *.onnx im Piper-Verzeichnis."""
+    """Available Piper voices: all *.onnx in the Piper directory."""
     d = os.path.dirname(VOICE)
     try:
         return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".onnx"))
@@ -76,7 +76,7 @@ def list_voices():
 
 
 def _voice_path(name):
-    """Stimmen-Namen path-sicher aufloesen; unbekannt/leer -> Default."""
+    """Resolve a voice name path-safely; unknown/empty -> default."""
     if not name:
         return VOICE
     base = os.path.basename(str(name))
@@ -87,9 +87,9 @@ def _voice_path(name):
 
 
 def speak(text, voice="", speed=1.0):
-    """Piper laeuft als Prozess je Anfrage — bei 0,07 Echtzeitfaktor ist der
-    Start teurer als die Synthese, aber das haelt den Dienst zustandslos.
-    speed >1 = schneller (Piper: length_scale = 1/speed), geklemmt 0.5–2.0."""
+    """Piper runs as a process per request — at a 0.07 real-time factor the
+    startup costs more than the synthesis, but it keeps the service stateless.
+    speed >1 = faster (Piper: length_scale = 1/speed), clamped 0.5–2.0."""
     try:
         speed = min(2.0, max(0.5, float(speed or 1.0)))
     except (TypeError, ValueError):

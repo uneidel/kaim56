@@ -9,14 +9,14 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Laedt ein (ggf. HuggingFace-gated) .task-Modell herunter — **resume-faehig**.
+/** Downloads a (possibly HuggingFace-gated) .task model — **resumable**.
  *
- *  - Geladen wird in <ziel>.part; bei Abbruch bleibt der Teil erhalten und wird
- *    beim naechsten Aufruf per HTTP-Range fortgesetzt (nicht neu gestartet).
- *  - Eine Marker-Datei <ziel>.part.url merkt sich, zu welcher URL der Teil
- *    gehoert; bei anderer URL wird der alte Teil verworfen.
- *  - HuggingFace-resolve -> 302 auf signierte CDN-URL: Auth-Header nur an
- *    huggingface.co, Range-Header an beide.
+ *  - Downloaded into <target>.part; on interruption the partial file is kept and
+ *    resumed on the next call via HTTP Range (not restarted from scratch).
+ *  - A marker file <target>.part.url records which URL the partial belongs to;
+ *    if the URL differs, the old partial is discarded.
+ *  - HuggingFace resolve -> 302 to a signed CDN URL: send the Auth header only to
+ *    huggingface.co, the Range header to both.
  */
 object ModelDownloader {
     fun download(
@@ -28,7 +28,7 @@ object ModelDownloader {
         val part = File(outFile.absolutePath + ".part")
         val marker = File(outFile.absolutePath + ".part.url")
 
-        // Gehoert der vorhandene Teil zu DIESER URL? Sonst neu anfangen.
+        // Does the existing partial belong to THIS URL? Otherwise start over.
         val resumable = part.exists() && marker.exists() && marker.readText() == url
         if (!resumable) {
             part.delete()
@@ -50,20 +50,20 @@ object ModelDownloader {
 
             val code = conn.responseCode
             if (code in 300..399) {
-                val loc = conn.getHeaderField("Location") ?: throw IOException("Redirect ohne Location")
+                val loc = conn.getHeaderField("Location") ?: throw IOException("Redirect without Location")
                 conn.disconnect(); current = loc; redirects++; continue
             }
 
             val append: Boolean
             val total: Long
             when (code) {
-                HttpURLConnection.HTTP_PARTIAL -> {           // 206 -> fortsetzen
+                HttpURLConnection.HTTP_PARTIAL -> {           // 206 -> resume
                     append = true
                     val cr = conn.getHeaderField("Content-Range")   // bytes start-end/total
                     total = cr?.substringAfterLast('/')?.toLongOrNull()
                         ?: (startAt + conn.contentLengthLong)
                 }
-                HttpURLConnection.HTTP_OK -> {                // 200 -> Server ignoriert Range: neu
+                HttpURLConnection.HTTP_OK -> {                // 200 -> server ignores Range: start fresh
                     append = false
                     startAt = 0
                     total = conn.contentLengthLong
@@ -90,19 +90,18 @@ object ModelDownloader {
             }
             conn.disconnect()
 
-            // WICHTIG: nur finalisieren, wenn wirklich vollstaendig. Sonst bleibt
-            // die .part-Datei erhalten und wird beim naechsten Mal fortgesetzt —
-            // verhindert eine kaputte (abgeschnittene) model.task ("Unable to open
-            // zip archive").
+            // IMPORTANT: only finalize if truly complete. Otherwise the .part file
+            // is kept and resumed next time — prevents a broken (truncated)
+            // model.task ("Unable to open zip archive").
             if (total > 0 && part.length() < total) {
-                throw IOException("Download unvollständig (${part.length()}/$total B) — erneut starten setzt fort.")
+                throw IOException("Download incomplete (${part.length()}/$total B) — restart to resume.")
             }
 
             if (outFile.exists()) outFile.delete()
-            if (!part.renameTo(outFile)) throw IOException("Umbenennen der fertigen Datei fehlgeschlagen")
+            if (!part.renameTo(outFile)) throw IOException("Renaming the finished file failed")
             marker.delete()
             return outFile.absolutePath
         }
-        throw IOException("Zu viele Redirects")
+        throw IOException("Too many redirects")
     }
 }
