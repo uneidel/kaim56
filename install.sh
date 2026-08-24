@@ -110,6 +110,9 @@ echo "  kernel: $(du -h "$FC_DIR/bin/vmlinux" | cut -f1)"
 if [ "$NO_BUILD" = "0" ]; then
   say "[5/7] Build rootfs + services (takes a while the first time)"
   ( cd "$BASE/openrouter-agent" && FC_DIR="$FC_DIR" bash build-openrouter-rootfs.sh )
+  # iroh app<->manager gateway (Rust, built in Docker; gives the app a P2P
+  # transport so it needs no VPN and no exposed HTTPS port).
+  ( cd "$SRC/iroh-gw" && bash build.sh ) && install -m0755 "$SRC/dist/iroh-gw" "$FC_DIR/bin/iroh-gw"
   ( cd "$BASE/embed"   && docker build -q -t kaim56-embed .   && docker rm -f kaim56-embed 2>/dev/null; \
     docker run -d --restart unless-stopped --name kaim56-embed -p 127.0.0.1:8772:8772 kaim56-embed )
   ( cd "$BASE/mcp-hub" && docker build -q -t kaim56-mcp-hub . && docker rm -f kaim56-mcp-hub 2>/dev/null; \
@@ -159,6 +162,31 @@ sudo sysctl -qw net.ipv4.ip_forward=1
 echo net.ipv4.ip_forward=1 | sudo tee /etc/sysctl.d/99-kaim56.conf >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now firecracker-manager
+
+# iroh gateway (only if the binary was built) — the app's P2P transport.
+if [ -x "$FC_DIR/bin/iroh-gw" ]; then
+  sudo tee /etc/systemd/system/iroh-gw.service >/dev/null <<UNIT
+[Unit]
+Description=kAIm56 iroh gateway (app<->manager transport over iroh, P2P)
+After=network-online.target firecracker-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=IROHGW_SECRET=$FC_DIR/iroh-gw/secret.key
+Environment=IROHGW_ALLOW=$FC_DIR/iroh-gw/allow.txt
+Environment=IROHGW_NODEID=$FC_DIR/iroh-gw/nodeid.txt
+Environment=IROHGW_MANAGER=127.0.0.1:8700
+ExecStart=$FC_DIR/bin/iroh-gw
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now iroh-gw
+fi
 
 # ── [7] Smoke test ───────────────────────────────────────────────────────────
 say "[7/7] Smoke test"

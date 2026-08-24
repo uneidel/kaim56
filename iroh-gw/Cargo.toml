@@ -1,0 +1,16 @@
+[package]
+name = "iroh-gw"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "iroh-gw"
+path = "src/main.rs"
+
+[dependencies]
+iroh = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
+anyhow = "1"
+
+[profile.release]
+opt-level = 2

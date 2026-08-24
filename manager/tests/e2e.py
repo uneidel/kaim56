@@ -917,6 +917,29 @@ class ManagerFunctions(unittest.TestCase):
         self.assertTrue(st.TASKS_FILE and st.TASKS_FILE.endswith("tasks.json"))
         self.assertIsInstance(st.load_tasks(), list)
 
+    def test_irohgw_allowlist_roundtrip(self):
+        """iroh app-transport pairing: add/remove phone node-ids; only 64-hex
+        ids are accepted; a missing gateway node-id reads as unavailable."""
+        import mgr.irohgw as ig
+        tmp = tempfile.mkdtemp(prefix="e2e-iroh-")
+        ig.configure(tmp)
+        nid = "a" * 64
+        self.assertFalse(ig.status()["available"])          # no nodeid.txt yet
+        ok, _ = ig.allow_add("nothex", "x")
+        self.assertFalse(ok)                                 # rejected: not 64 hex
+        ok, _ = ig.allow_add(nid, "Phone")
+        self.assertTrue(ok)
+        self.assertEqual(ig.load_allow(), [{"id": nid, "label": "Phone"}])
+        ig.allow_add(nid, "Phone")                           # idempotent
+        self.assertEqual(len(ig.load_allow()), 1)
+        ig.allow_remove(nid)
+        self.assertEqual(ig.load_allow(), [])
+        # gateway node-id surfaces once the gateway writes nodeid.txt
+        with open(os.path.join(tmp, "iroh-gw", "nodeid.txt"), "w") as fh:
+            fh.write("b" * 64 + "\n")
+        self.assertEqual(ig.gateway_node_id(), "b" * 64)
+        self.assertTrue(ig.status()["available"])
+
     def test_reclaim_stuck_tasks(self):
         m = self.m
         import mgr.store as st

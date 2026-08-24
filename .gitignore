@@ -53,3 +53,8 @@ app/keystore/
 secret.key
 *.jks
 *.p12
+
+# built Rust binaries (iroh-gw, katfs-node)
+dist/
+iroh-gw/target/
+iroh-gw/.out/

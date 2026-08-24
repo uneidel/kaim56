@@ -2074,6 +2074,11 @@ from mgr.katfs import (KATFS_HOST, KATFS_PORT, KATFS_BASE, KATFS_MAX_WRITE,  # n
                        katfs_share_for, katfs_proxy_fs, katfs_zip, katfs_status,
                        KATFS_ZIP_MAX_FILES, KATFS_ZIP_MAX_BYTES)
 
+from mgr import irohgw as _irohgw  # noqa: E402
+_irohgw.configure(BASE)
+from mgr.irohgw import (status as irohgw_status,  # noqa: E402,F401
+                        allow_add as irohgw_allow_add, allow_remove as irohgw_allow_remove)
+
 # ---- Audit log per instance (tool calls, URLs) -----------------------------
 # Lives on the host (survives VM restarts). JSONL, one file per instance,
 # hard-capped to the last N lines.
@@ -3067,6 +3072,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
+        if self.path.split("?", 1)[0] == "/api/iroh":
+            body = json.dumps(irohgw_status()).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         if self.path.split("?", 1)[0] == "/api/plugins":
             body = json.dumps({"plugins": list_plugins()}, ensure_ascii=False).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
@@ -3352,6 +3362,21 @@ class H(BaseHTTPRequestHandler):
             # response may be streamed and doesn't fit the JSON schema of the
             # other routes.
             return self._llm_proxy(_pp)
+        if _pp == "/api/iroh":
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+            act = b.get("action")
+            if act == "add":
+                ok, msg = irohgw_allow_add(b.get("id", ""), b.get("label", ""))
+            elif act == "remove":
+                ok, msg = irohgw_allow_remove(b.get("id", ""))
+            else:
+                ok, msg = False, "unknown action"
+            out = json.dumps({"ok": ok, "msg": msg, **irohgw_status()}).encode()
+            self.send_response(200 if ok else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
         # Voice: the service listens on loopback and is not reachable from
         # outside. The manager is the only door — it already knows the caller
         # (basic auth or source IP) and passes raw audio or WAV through unchanged

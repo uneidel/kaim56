@@ -554,6 +554,37 @@ footer{border-top:1px solid var(--color-divider)}
       <button class="btn btn-primary" onclick=openShare()>Share a folder…</button>
     </div>
   </div>
+  <div class=sec-head style="margin-top:36px">
+    <div><h6>App &#8596; Manager</h6><h3 style="font-size:22px">App transport (iroh)</h3></div>
+    <span class="note text-muted">The Android app reaches the manager over iroh (P2P) &#183; no VPN, no exposed HTTPS port &#183; only allow-listed phone node-ids get through</span>
+  </div>
+  <div class="panel blueprint">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class=field>
+      <label>Manager node-id &#8212; paste this into the app (Settings &#8250; Server connection)</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input class="input mono" id=irohnid readonly spellcheck=false
+               placeholder="gateway not running (start the iroh-gw service)" style="flex:1;min-width:260px;width:auto">
+        <button class="btn btn-secondary" onclick=irohCopy()>Copy</button>
+      </div>
+      <span class=text-muted id=irohhint style="font-size:12px"></span>
+    </div>
+    <div class=field style="margin-top:18px">
+      <label>Paired phones (allow-listed node-ids)</label>
+      <div id=irohallow><span class=text-muted style="font-size:13px">&#8230;</span></div>
+    </div>
+    <div class=grid2 style="margin-top:14px">
+      <div class=field><label>Add a phone &#8212; its node-id (64 hex, shown in the app)</label>
+        <input class="input mono" id=irohaddid spellcheck=false placeholder="64 hex characters"></div>
+      <div class=field><label>Label (optional)</label>
+        <div style="display:flex;gap:6px">
+          <input class=input id=irohaddlabel placeholder="e.g. Ulrich Phone" style="flex:1">
+          <button class="btn btn-primary" onclick=irohAdd()>Add</button>
+        </div></div>
+    </div>
+    <div id=irohmsg class=msg style="margin-top:8px"></div>
+  </div>
+
   <div class=grid2 style="margin-top:32px">
     <div class="card blueprint">
       <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
@@ -1332,7 +1363,7 @@ function showTab(t){
     if(a.getAttribute('href')==='#'+t)a.setAttribute('aria-current','page');
     else a.removeAttribute('aria-current');});
 }
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='sharing'){loadKatfs();loadIroh();}});
 
 async function loadPlaybooks(){
   const sel=document.getElementById('pbinst');
@@ -1795,6 +1826,41 @@ function saveModels(){
     });
 }
 
+/* — iroh app transport: the manager's gateway node-id + the phone allowlist — */
+async function loadIroh(){
+  let d={node_id:'',allow:[]};
+  try{d=await (await fetch('/api/iroh')).json()}catch(e){}
+  const nid=document.getElementById('irohnid'); if(nid){
+    nid.value=d.node_id||'';
+    document.getElementById('irohhint').textContent=d.node_id
+      ? 'Live — the app dials this node-id over iroh (relayed, NAT-traversed, end-to-end encrypted).'
+      : 'Gateway not running. Start it: sudo systemctl enable --now iroh-gw';
+  }
+  const box=document.getElementById('irohallow'); if(box){
+    box.innerHTML=(d.allow&&d.allow.length)? d.allow.map(a=>
+      `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--color-border,#0002)">`+
+      `<span style="flex:1;min-width:0"><b>${escT(a.label||'(no label)')}</b> `+
+      `<span class="mono text-muted" style="font-size:12px">${escT(a.id.slice(0,16))}…</span></span>`+
+      `<button class="btn btn-ghost btn-sm" onclick="irohRemove('${escT(a.id)}')">Remove</button></div>`).join('')
+      : '<span class=text-muted style="font-size:13px">No phones paired yet.</span>';
+  }
+}
+function irohCopy(){const v=document.getElementById('irohnid').value;if(v)navigator.clipboard.writeText(v).then(()=>{document.getElementById('irohhint').textContent='Copied.';});}
+async function irohAdd(){
+  const id=document.getElementById('irohaddid').value.trim();
+  const label=document.getElementById('irohaddlabel').value.trim();
+  const d=await (await fetch('/api/iroh',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'add',id,label})})).json();
+  document.getElementById('irohmsg').textContent=d.ok?('✓ '+d.msg):('⚠️ '+d.msg);
+  if(d.ok){document.getElementById('irohaddid').value='';document.getElementById('irohaddlabel').value='';}
+  loadIroh();
+}
+async function irohRemove(id){
+  await fetch('/api/iroh',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'remove',id})}).catch(()=>{});
+  loadIroh();
+}
+
 /* — katfs: status of the host node + the browser share it is holding — */
 let KATFS_ID='';
 async function loadKatfs(){
@@ -1971,7 +2037,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();
+  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();
   refreshUsage();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a
