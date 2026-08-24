@@ -149,6 +149,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         val prefs = Prefs(this)
+        IrohNet.register(this)   // install the iroh:// transport to the manager
         val gemma = LocalGemma(this)
         val store = ChatStore(this)
         store.migrate(prefs)   // migrate the v1.0 model, if present
@@ -2157,7 +2158,8 @@ fun SettingsScreen(
     val ver = remember {
         try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
     }
-    var url by remember { mutableStateOf(prefs.serverUrl) }
+    var url by remember { mutableStateOf(prefs.serverUrl.removePrefix("iroh://")) }
+    val myNodeId = remember { IrohNet.myNodeId(prefs.appContext) }
     var instance by remember { mutableStateOf(prefs.instance) }
     var assistInstance by remember { mutableStateOf(prefs.assistInstance) }
     var user by remember { mutableStateOf(prefs.user) }
@@ -2241,8 +2243,11 @@ fun SettingsScreen(
                 Kicker("Server connection", Modifier.padding(horizontal = 4.dp))
                 KatCard {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LabeledField("Server URL", url, { url = it; prefs.serverUrl = it.trim() },
-                            Modifier.weight(1f), mono = true)
+                        LabeledField("Manager node-id", url, {
+                            url = it
+                            val id = it.trim().removePrefix("iroh://").lowercase()
+                            prefs.serverUrl = if (id.isBlank()) "" else "iroh://$id"
+                        }, Modifier.weight(1f), mono = true)
                         StatusBadge(
                             if (online) "connected" else "offline",
                             if (online) Color(0x1A4CC38A) else Kat.hover,
@@ -2251,6 +2256,12 @@ fun SettingsScreen(
                             Modifier.padding(top = 20.dp),
                         )
                     }
+                    Text(
+                        "Paste the manager node-id from the web UI (Sharing → App transport). " +
+                            "This device: ${if (myNodeId.isBlank()) "…" else myNodeId} — add it to the manager's allowlist to pair.",
+                        fontSize = 11.sp, fontFamily = PlexMono, color = Kat.textFaint,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         LabeledField("User", user, { user = it; prefs.user = it.trim() }, Modifier.weight(1f))
                         LabeledField("Password", pass, { pass = it; prefs.pass = it }, Modifier.weight(1f), password = true)

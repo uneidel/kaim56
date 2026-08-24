@@ -7,10 +7,14 @@ import android.content.Context
 
 /** Simple settings persistence (SharedPreferences). */
 class Prefs(context: Context) {
-    private val sp = context.getSharedPreferences("katagent", Context.MODE_PRIVATE)
+    val appContext: Context = context.applicationContext
+    private val sp = appContext.getSharedPreferences("katagent", Context.MODE_PRIVATE)
 
+    // Base URL for the manager. The app talks to the manager over iroh, so this
+    // is "iroh://<manager-node-id>" (set from the Manager node-id in Settings);
+    // empty until paired.
     var serverUrl: String
-        get() = sp.getString("serverUrl", "https://agents.example.com") ?: ""
+        get() = sp.getString("serverUrl", "") ?: ""
         set(v) = sp.edit().putString("serverUrl", v).apply()
 
     var instance: String
