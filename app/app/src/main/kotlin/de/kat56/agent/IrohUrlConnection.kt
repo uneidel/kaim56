@@ -47,8 +47,10 @@ class IrohUrlConnection(url: URL, private val ctx: Context) : HttpURLConnection(
         val nodeId = url.host                        // iroh://<nodeid>/path
         val path = url.file.ifEmpty { "/" }          // "/api/…?query"
         val body = reqBody?.toByteArray()
+        IrohNet.crumb(ctx, "req: open $requestMethod $path -> ${nodeId.take(12)}…")
         val st = IrohNet.client(ctx).open(nodeId)
         stream = st
+        IrohNet.crumb(ctx, "req: stream opened; writing ${(body?.size ?: 0)}B body")
         val head = StringBuilder()
         head.append("$requestMethod $path HTTP/1.1\r\n")
         head.append("Host: kaim\r\n")
@@ -74,6 +76,7 @@ class IrohUrlConnection(url: URL, private val ctx: Context) : HttpURLConnection(
                 break
             }
         }
+        IrohNet.crumb(ctx, "req: response head parsed, status=$status")
         bodyIn = IrohBodyStream(st, leftover)
     }
 

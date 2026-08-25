@@ -142,8 +142,11 @@ class MainActivity : ComponentActivity() {
                     val sw = java.io.StringWriter()
                     e.printStackTrace(java.io.PrintWriter(sw))
                     val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (x: Exception) { "?" }
-                    java.io.File(filesDir, "crash.log").writeText(
-                        "kAIm56 " + ver + " @ " + java.util.Date() + "\nThread " + t.name + "\n\n" + sw)
+                    val txt = "kAIm56 " + ver + " @ " + java.util.Date() + "\nThread " + t.name + "\n\n" + sw
+                    java.io.File(filesDir, "crash.log").writeText(txt)
+                    // Also to external files (readable via a file manager, no adb):
+                    // Android/data/de.kat56.agent/files/crash.log
+                    try { (getExternalFilesDir(null))?.let { java.io.File(it, "crash.log").writeText(txt) } } catch (_: Throwable) {}
                 } catch (_: Throwable) {}
                 prev?.uncaughtException(t, e)
             }
@@ -2159,7 +2162,8 @@ fun SettingsScreen(
         try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
     }
     var url by remember { mutableStateOf(prefs.serverUrl.removePrefix("iroh://")) }
-    val myNodeId = remember { IrohNet.myNodeId(prefs.appContext) }
+    var myNodeId by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { myNodeId = withContext(Dispatchers.IO) { IrohNet.myNodeId(prefs.appContext) } }
     var instance by remember { mutableStateOf(prefs.instance) }
     var assistInstance by remember { mutableStateOf(prefs.assistInstance) }
     var user by remember { mutableStateOf(prefs.user) }
