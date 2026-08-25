@@ -9,7 +9,10 @@
 // module (UniFFI).
 package de.kat56.agent
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.provider.MediaStore
 import uniffi.kaim_iroh.IrohClient
 import java.io.File
 import java.net.URL
@@ -19,15 +22,42 @@ import java.net.URLStreamHandlerFactory
 object IrohNet {
     @Volatile private var client: IrohClient? = null
     @Volatile private var registered = false
+    private val logBuf = StringBuilder()
 
-    /** Diagnostics to the app's EXTERNAL files dir (readable via a file manager
-     *  at Android/data/de.kat56.agent/files/iroh-debug.log — no adb needed). A
-     *  breadcrumb before each native step, so even a hard native crash leaves a
-     *  trail showing how far it got. */
+    /** Diagnostics written to the public Downloads folder as
+     *  `kaim-iroh-debug.txt` (retrievable with any file manager — Android/data is
+     *  blocked on Android 15). A breadcrumb before each native step, so even a
+     *  hard native crash leaves a trail showing how far it got. */
+    @Synchronized
     fun crumb(ctx: Context, msg: String) {
+        logBuf.append(System.currentTimeMillis()).append(' ').append(msg).append('\n')
+        val text = logBuf.toString()
+        // app-private external dir (fallback / adb-USB retrieval)
+        try { (ctx.getExternalFilesDir(null) ?: ctx.filesDir).let { File(it, "iroh-debug.log").writeText(text) } } catch (_: Throwable) {}
+        // public Downloads via MediaStore (no permission on API 29+)
+        if (Build.VERSION.SDK_INT >= 29) writeToDownloads(ctx, "kaim-iroh-debug.txt", text)
+    }
+
+    /** Overwrite a file in the public Downloads collection (MediaStore, no
+     *  permission needed). Best effort. */
+    fun writeToDownloads(ctx: Context, name: String, text: String) {
         try {
-            val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
-            File(dir, "iroh-debug.log").appendText("${System.currentTimeMillis()} $msg\n")
+            val resolver = ctx.contentResolver
+            val col = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            resolver.query(col, arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME}=?", arrayOf(name), null)?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    resolver.delete(android.content.ContentUris.withAppendedId(col, id), null, null)
+                }
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            }
+            resolver.insert(col, values)?.let { uri ->
+                resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+            }
         } catch (_: Throwable) {}
     }
 

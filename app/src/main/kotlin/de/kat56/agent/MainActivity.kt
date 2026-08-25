@@ -144,9 +144,10 @@ class MainActivity : ComponentActivity() {
                     val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (x: Exception) { "?" }
                     val txt = "kAIm56 " + ver + " @ " + java.util.Date() + "\nThread " + t.name + "\n\n" + sw
                     java.io.File(filesDir, "crash.log").writeText(txt)
-                    // Also to external files (readable via a file manager, no adb):
-                    // Android/data/de.kat56.agent/files/crash.log
+                    // Also to external files + public Downloads (Android/data is
+                    // blocked on Android 15; Downloads is retrievable by any file manager).
                     try { (getExternalFilesDir(null))?.let { java.io.File(it, "crash.log").writeText(txt) } } catch (_: Throwable) {}
+                    try { IrohNet.writeToDownloads(applicationContext, "kaim-crash.txt", txt) } catch (_: Throwable) {}
                 } catch (_: Throwable) {}
                 prev?.uncaughtException(t, e)
             }
