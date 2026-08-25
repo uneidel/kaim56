@@ -140,12 +140,7 @@ impl IrohStream {
             }
         })
     }
-
-    /// Drop the stream (best effort).
-    pub fn close(&self) {
-        let _ = self.handle.block_on(async {
-            let mut s = self.send.lock().await;
-            let _ = s.finish();
-        });
-    }
+    // No explicit close(): UniFFI objects are AutoCloseable — the generated
+    // close()/destroy() drops this struct (and with it the streams/connection),
+    // which is exactly what the caller's disconnect()/cancel needs.
 }

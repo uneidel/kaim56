@@ -21,7 +21,7 @@ docker run --rm -v "$HERE":/work -v "$APP":/app -w /work \
   -v kaim_iroh_android_target:/work/target \
   kaim-iroh-android bash -eux -c '
     # 1) per-ABI shared libraries for the APK
-    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o /app/src/main/jniLibs build --release
+    cargo ndk -t arm64-v8a -o /app/src/main/jniLibs build --release
     # 2) a host build of the cdylib, used only to extract UniFFI metadata
     cargo build --release
     # 3) generate the Kotlin bindings from that library
@@ -30,6 +30,7 @@ docker run --rm -v "$HERE":/work -v "$APP":/app -w /work \
       --out-dir /app/src/main/kotlin
     chown -R '"$(id -u)":"$(id -g)"' /app/src/main/jniLibs /app/src/main/kotlin/uniffi 2>/dev/null || true
   '
+find "$JNILIBS" -name "libiroh*.so" -delete   # keep only libkaim_iroh.so (self-contained)
 echo "built jniLibs + Kotlin bindings:"
 ls -R "$JNILIBS" 2>/dev/null | head
 ls "$KOTLIN/uniffi/kaim_iroh/" 2>/dev/null || true
