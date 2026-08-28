@@ -12,8 +12,8 @@ android {
         applicationId = "de.kat56.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 73
-        versionName = "5.23"
+        versionCode = 75
+        versionName = "5.25"
         ndk {
             // Xiaomi 15 = arm64-v8a. Only this ABI -> significantly smaller APK.
             abiFilters += "arm64-v8a"

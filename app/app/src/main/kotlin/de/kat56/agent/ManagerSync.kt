@@ -175,38 +175,60 @@ object ManagerSync {
     fun push(baseUrl: String, user: String, pass: String, json: String): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/chats", user, pass, json) != null
 
-    /** One step of a mission (multi-stage orchestrator job). */
-    data class MissionStep(val n: Int, val text: String, val status: String, val taskId: String)
+    /** One step of a mission. target = the instance the step was delegated to
+     *  (create_task target) — plan and execution may live on different agents. */
+    data class MissionStep(val n: Int, val text: String, val status: String,
+                           val taskId: String, val target: String)
 
-    /** A mission: plan + progress live in the manager. */
+    /** A mission: plan + progress live in the manager. instance = the owner
+     *  (the agent that planned it) — every agent may own missions. */
     data class Mission(val id: String, val goal: String, val status: String,
-                       val steps: List<MissionStep>, val summary: String, val lastLog: String)
+                       val steps: List<MissionStep>, val summary: String, val lastLog: String,
+                       val instance: String)
 
+    private fun parseMission(m: JSONObject, inst: String): Mission {
+        val sa = m.optJSONArray("steps")
+        val steps = if (sa == null) emptyList() else (0 until sa.length()).map { j ->
+            val st = sa.getJSONObject(j)
+            MissionStep(st.optInt("n"), st.optString("text"), st.optString("status"),
+                st.optString("task_id"), st.optString("target"))
+        }
+        val log = m.optJSONArray("log")
+        return Mission(m.optString("id"), m.optString("goal"), m.optString("status"),
+            steps, m.optString("summary"),
+            if (log != null && log.length() > 0) log.optString(log.length() - 1) else "", inst)
+    }
+
+    /** Missions of ALL agents (admin view): the manager returns them grouped by
+     *  owner (by_instance). `missions` is the fallback for older managers that
+     *  only knew the orchestrator's. */
     fun listMissions(baseUrl: String, user: String, pass: String): List<Mission>? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/missions?instance=orchestrator",
-            user, pass, null) ?: return null
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/missions", user, pass, null)
+            ?: return null
         return try {
-            val arr = JSONObject(raw).optJSONArray("missions") ?: return emptyList()
-            (0 until arr.length()).map { i ->
-                val m = arr.getJSONObject(i)
-                val sa = m.optJSONArray("steps")
-                val steps = if (sa == null) emptyList() else (0 until sa.length()).map { j ->
-                    val st = sa.getJSONObject(j)
-                    MissionStep(st.optInt("n"), st.optString("text"),
-                        st.optString("status"), st.optString("task_id"))
+            val o = JSONObject(raw)
+            val by = o.optJSONObject("by_instance")
+            if (by != null) {
+                val out = mutableListOf<Mission>()
+                for (inst in by.keys()) {
+                    val arr = by.optJSONArray(inst) ?: continue
+                    for (i in 0 until arr.length()) out.add(parseMission(arr.getJSONObject(i), inst))
                 }
-                val log = m.optJSONArray("log")
-                Mission(m.optString("id"), m.optString("goal"), m.optString("status"),
-                    steps, m.optString("summary"),
-                    if (log != null && log.length() > 0) log.optString(log.length() - 1) else "")
+                out
+            } else {
+                val arr = o.optJSONArray("missions") ?: return emptyList()
+                (0 until arr.length()).map { parseMission(arr.getJSONObject(it), "orchestrator") }
             }
         } catch (e: Exception) { null }
     }
 
-    /** pause | resume | abort a mission (admin). */
-    fun missionAction(baseUrl: String, user: String, pass: String, id: String, action: String): Boolean =
+    /** pause | resume | abort a mission (admin). The instance comes along because
+     *  missions can belong to any agent (empty = the manager resolves the owner). */
+    fun missionAction(baseUrl: String, user: String, pass: String, id: String,
+                      action: String, instance: String = ""): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/mission-admin", user, pass,
-            JSONObject().put("id", id).put("action", action).toString()) != null
+            JSONObject().put("id", id).put("action", action)
+                .put("instance", instance).toString()) != null
 
     /** Prompt templates (slash commands) from the manager. */
     fun listPrompts(baseUrl: String, user: String, pass: String): List<Pair<String, String>> {

@@ -526,7 +526,7 @@ footer{border-top:1px solid var(--color-divider)}
   <div id=missions class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <span class=text-muted style="font-size:13px">…</span>
   </div>
-  <p class=text-muted style="font-size:12.5px;margin-top:14px">The orchestrator creates missions itself when a job needs several steps — e.g. via chat: "… — as a mission".</p>
+  <p class=text-muted style="font-size:12.5px;margin-top:14px">Any agent creates a mission itself when a job needs several steps — e.g. via chat: "… — as a mission". The owner plans, the steps run on whichever instance has the needed tools.</p>
 </section>
 
 <section class="screen" id=s-sharing>
@@ -893,13 +893,17 @@ footer{border-top:1px solid var(--color-divider)}
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Missions &#8212; multi-step autonomy</span>
   <p class=card-body>Plan + progress store for multi-step assignments, persisted on the host
-  (<code>missions.json</code>) so the working state survives resets and restarts. The orchestrator
-  plans (<code>mission_start</code>: goal + steps), delegates each step via <code>create_task</code>
-  and records the task-id; when that task finishes, the worker <b>immediately</b> re-triggers the
-  orchestrator to advance (event-driven, heartbeat only as fallback). Active missions are injected
-  every turn as a <code>[Missions]</code> block. Guardrails: max 5 active / 20 steps, 7-day TTL
-  auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
-  tab (web) / screen (app) with progress, current step and pause/abort.</p></div>
+  (<code>missions.json</code>, keyed by the OWNER instance) so the working state survives resets and
+  restarts. <b>Cross-instance:</b> every agent may own missions &#8212; it plans
+  (<code>mission_start</code>: goal + steps), picks the capable instance per step
+  (<code>list_agents</code>) and delegates via <code>create_task(target=&#8249;instance&#8250;)</code>,
+  recording task-id <i>and</i> target on the step. Plan and execution therefore live on different
+  agents. When that task finishes, the worker <b>immediately</b> re-triggers the mission&#8217;s owner
+  to advance (event-driven, heartbeat only as fallback). Active missions are injected every turn as a
+  <code>[Missions]</code> block; each agent only ever sees its own (the manager keys reads/writes by
+  the calling instance, ephemeral VMs excluded). Guardrails: max 5 active / 20 steps per owner, 7-day
+  TTL auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
+  tab (web) / screen (app) with owner, progress, current step + executing agent, and pause/abort.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Reasoning &amp; thinking</span>
   <p class=card-body>Per-agent runtime toggle via the slash command <code>/reasoning [low|medium|high|off]</code> (sets OpenRouter&#8217;s reasoning parameter; off by default, <code>OPENROUTER_REASONING</code> for a persistent default). The model&#8217;s thinking is streamed separately (marker-wrapped in the token stream, kept OUT of the conversation context so it never bloats follow-ups) and rendered in web and app as a collapsible &#8220;Denken&#8221; block; copy and speak take only the answer. Costs extra tokens, so it is a toggle, not always-on.</p></div>
@@ -954,6 +958,7 @@ footer{border-top:1px solid var(--color-divider)}
   <nav class=af-nav>
     <a href="#changelog">Changelog</a>
     <a href="#architecture">Architecture</a>
+    __CODE_LINK__
   </nav>
 </footer>
 </div>
@@ -1239,14 +1244,15 @@ async function loadMissions(){
         <span class=mono style="font-size:11px;color:var(--color-neutral-500)">${escT(m.id)}</span>
         <b style="font-size:14.5px">${escT(m.goal)}</b>
         <span class="tag ${st}">${m.status}</span>
+        <span class="tag tag-neutral" title="owner of the mission">${escT(m._inst||'?')}</span>
         ${bar(m)}
         <span style="margin-left:auto;display:flex;gap:6px">
-          ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause')">Pause</button>`:''}
-          ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume')">Weiter</button>`:''}
-          ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort')">Cancel</button>`:''}
+          ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause','${esc(m._inst||'')}')">Pause</button>`:''}
+          ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume','${esc(m._inst||'')}')">Weiter</button>`:''}
+          ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort','${esc(m._inst||'')}')">Cancel</button>`:''}
         </span>
       </div>
-      ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">current step ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
+      ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">current step ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.target?` · on <b>${escT(cur.target)}</b>`:''}${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
       ${m.summary?`<div class=text-muted style="font-size:12.5px;margin-top:4px">Summary: ${escT(m.summary)}</div>`:''}
       ${log?`<div class=text-muted style="font-size:11.5px;margin-top:3px;opacity:.75">${escT(log)}</div>`:''}
     </div>`};
@@ -1254,12 +1260,12 @@ async function loadMissions(){
     (open.length||closed.length
       ? open.map(row).join('')
         + (closed.length?`<div class=text-muted style="margin:14px 0 4px;font-size:10px;letter-spacing:.1em;text-transform:uppercase">Zuletzt abgeschlossen</div>${closed.map(row).join('')}`:'')
-      : '<span class=text-muted style="font-size:13px">No missions. The orchestrator creates them itself for multi-step jobs (mission_start) — e.g. via chat: "… — as a mission".</span>');
+      : '<span class=text-muted style="font-size:13px">No missions. Any agent creates them itself for multi-step jobs (mission_start) — e.g. via chat: "… — as a mission".</span>');
 }
-async function missionAct(id,action){
+async function missionAct(id,action,instance){
   if(action==='abort'&&!confirm('Mission '+id+' abbrechen?'))return;
   await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id,action})}).catch(()=>{});
+    body:JSON.stringify({id,action,instance:instance||''})}).catch(()=>{});
   loadMissions();
 }
 async function loadTasks(){
@@ -1460,9 +1466,13 @@ function renderSkills(){
     `<p class=card-body style="font-size:12.5px">${escT(s.description||'')}</p></div>`)
     .join('')||'<span class=text-muted style="font-size:13px">none</span>';
 }
-function editSkill(n){const s=SKILLS.find(x=>x.name===n);if(!s)return;
+async function editSkill(n){const s=SKILLS.find(x=>x.name===n);if(!s)return;
   document.getElementById('skname').value=s.name;document.getElementById('skdesc').value=s.description||'';
-  document.getElementById('skcontent').value=s.content||'';document.getElementById('skname').scrollIntoView({behavior:'smooth'});}
+  const c=document.getElementById('skcontent');c.value='… lade';
+  // The page carries only name+description (the catalog is ~1 MB); the body
+  // comes on demand.
+  try{c.value=await (await fetch('/api/skills/'+encodeURIComponent(n))).text()}catch(e){c.value=''}
+  document.getElementById('skname').scrollIntoView({behavior:'smooth'});}
 function saveSkill(){
   const name=document.getElementById('skname').value.trim(),description=document.getElementById('skdesc').value,
         content=document.getElementById('skcontent').value;

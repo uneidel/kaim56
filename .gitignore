@@ -65,3 +65,6 @@ app/app/src/main/jniLibs/
 app/src/main/kotlin/uniffi/
 app/app/src/main/kotlin/uniffi/
 app/iroh-android/.out/
+
+# Imported skill catalog (github.com/daedalus/skills — no license upstream)
+manager/skills.json

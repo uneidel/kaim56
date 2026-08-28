@@ -88,20 +88,26 @@ SYSTEM = os.environ.get("AGENT_SYSTEM",
     "Work in the directory %s. Use tools when needed, otherwise answer directly. "
     "Keep it brief." % WORKDIR)
 
+# Missions are open to EVERY agent (not just the orchestrator): whoever gets a
+# multi-stage assignment owns the plan and delegates the steps to the instance
+# that has the needed tools/MCP.
+SYSTEM += (
+    "\n\nMissions: If the user gives you a MULTI-STAGE assignment (several "
+    "tasks/days), IMMEDIATELY create a mission with clear steps via "
+    "mission_start. The mission is YOURS (you own the plan), the steps may run "
+    "ANYWHERE: per push pick the capable instance with list_agents — the one "
+    "that has the needed tools/MCP (e.g. hass for HomeAssistant) — kick the step "
+    "off with create_task(target=<that instance>) and record task id AND target "
+    "on the step with mission_update (status doing). Only use target 'ephemeral' "
+    "when no existing agent fits. Once a task is done, you are triggered "
+    "automatically: check the result, set the step to done/failed, kick off the "
+    "next step. All steps done -> mission_finish with a conclusion. Blocked -> "
+    "notify the user. Simple one-off assignments stay ordinary tasks WITHOUT a "
+    "mission.")
+
 # Runtime self-knowledge: the agent should know WHAT it is running on, so that it
 # answers "which model do you use?" correctly and does not mistakenly pull in the
 # template (list_agents shows OTHER agents for routing).
-if os.environ.get("TASK_ADMIN"):   # only the orchestrator has the mission tools
-    SYSTEM += (
-    "\n\nMissions: If the user gives you a MULTI-STAGE assignment (several "
-        "tasks/days), IMMEDIATELY create a mission with clear steps via "
-        "mission_start. Per push: kick off one step with create_task and record "
-        "the task id on the step with mission_update (status doing). Once a task "
-        "is done, you are triggered automatically: check the result, set the "
-        "step to done/failed, kick off the next step. All steps done -> "
-        "mission_finish with a conclusion. Blocked -> notify the user. "
-        "Simple one-off assignments stay ordinary tasks WITHOUT a mission.")
-
 SYSTEM += (f"\n\nRuntime: You run via {LLM_NAME} with the model "
            f"'{OR_MODEL}'. If anyone asks about your model/backend, name exactly "
            f"that — do NOT use list_agents for it (that lists other agents to "
@@ -506,13 +512,15 @@ def t_missions():
         return f"Error: {e!r}"
 
 
-def t_mission_update(id, step=None, status="", result="", task_id="", add_step="", note=""):
+def t_mission_update(id, step=None, status="", result="", task_id="", add_step="",
+                     note="", target=""):
     """Advance a mission step: status open|doing|done|failed, result brief,
-    record the task_id of the kicked-off task; add_step appends a new
-    step; note only writes to the log."""
+    record the task_id of the kicked-off task and the target instance it went
+    to; add_step appends a new step; note only writes to the log."""
     try:
         body = {"id": id, "status": status, "result": result,
-                "task_id": task_id, "add_step": add_step, "note": note}
+                "task_id": task_id, "add_step": add_step, "note": note,
+                "target": target}
         if step is not None:
             body["step"] = int(step)
         d = json.loads(_mgr(_manager_base(), "/api/mission-update", body, timeout=10))
@@ -889,15 +897,18 @@ BUILTIN = {
     "missions": (t_missions, "List open missions with steps/status.", {}, []),
     "mission_update": (t_mission_update,
                        "Advance a mission step: set status (doing/done/failed), "
-                       "record result + task_id of the kicked-off task, add_step appends "
-                       "a step.",
+                       "record result + task_id AND the target instance of the kicked-off "
+                       "task, add_step appends a step.",
                        {"id": {"type": "string", "description": "mission ID"},
                         "step": {"type": "integer", "description": "step number"},
                         "status": {"type": "string", "description": "open|doing|done|failed"},
                         "result": {"type": "string", "description": "short result"},
                         "task_id": {"type": "string", "description": "ID of the create_task task"},
                         "add_step": {"type": "string", "description": "append a new step"},
-                        "note": {"type": "string", "description": "log note only"}}, ["id"]),
+                        "note": {"type": "string", "description": "log note only"},
+                        "target": {"type": "string",
+                                   "description": "instance the step was delegated to "
+                                                  "(create_task target)"}}, ["id"]),
     "mission_finish": (t_mission_finish,
                        "Finish a mission; failed=true on failure. Provide a short conclusion.",
                        {"id": {"type": "string"}, "summary": {"type": "string"},
@@ -1013,8 +1024,11 @@ _TOOL_ALLOW = {t.strip() for t in os.environ.get("AGENT_TOOLS", "").split(",") i
 
 
 # Task administration only where the manager has set TASK_ADMIN (orchestrator).
-_TASK_ADMIN_TOOLS = {"list_tasks", "delete_task", "edit_task",
-                     "mission_start", "missions", "mission_update", "mission_finish"}
+# The MISSION tools are deliberately NOT in here: every agent may plan its own
+# mission and delegate the steps to capable instances (create_task target). Each
+# agent only ever sees and writes its own missions — the manager keys them by
+# the calling instance.
+_TASK_ADMIN_TOOLS = {"list_tasks", "delete_task", "edit_task"}
 
 
 def tool_enabled(name):
@@ -1599,13 +1613,11 @@ MISSION_TAG = "[Missions]"
 
 def _inject_missions():
     """Surface active missions compactly each turn — this way the work state
-    survives /reset and restart. Only for the orchestrator (TASK_ADMIN).
-    Exactly ONE block, /reset clears it too."""
+    survives /reset and restart. For every agent: the manager returns only the
+    missions this instance owns. Exactly ONE block, /reset clears it too."""
     _history[:] = [m for m in _history
                    if not (m.get("role") == "system"
                            and str(m.get("content", "")).startswith(MISSION_TAG))]
-    if not os.environ.get("TASK_ADMIN"):
-        return
     try:
         ms = json.loads(_mgr_get(_manager_base(), "/api/missions", timeout=6)).get("missions", [])
     except Exception:
@@ -1619,6 +1631,7 @@ def _inject_missions():
         done = sum(1 for st in m.get("steps", []) if st.get("status") == "done")
         lines.append(f"- {m['id']}: {m['goal'][:100]} ({done}/{len(m.get('steps', []))} steps) — "
                      + (f"currently step {cur['n']}: {cur['text'][:80]} [{cur['status']}]"
+                        + (f" @{cur['target']}" if cur.get("target") else "")
                         if cur else "all steps done -> mission_finish!"))
     if lines:
         _history.insert(1, {"role": "system", "content":

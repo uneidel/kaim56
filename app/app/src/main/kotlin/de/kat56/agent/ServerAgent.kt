@@ -42,14 +42,14 @@ object ServerAgent {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            if (code !in 200..299) return "⚠️ HTTP $code: ${body.take(300)}"
+            if (code !in 200..299) return "⚠️ HTTP $code: ${plainText(body)}"
             try {
                 JSONObject(body).optString("reply", body)
             } catch (e: Exception) {
                 body
             }
         } catch (e: Exception) {
-            "⚠️ Error: ${e.message}"
+            "⚠️ Error: ${errText(e)}"
         } finally {
             conn.disconnect()
         }
@@ -95,8 +95,14 @@ object ServerAgent {
             if (chatId.isNotEmpty()) payload.put("chat", chatId)
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = conn.responseCode
-            val stream = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                ?: return "⚠️ HTTP $code"
+            if (code !in 200..299) {
+                // Never stream an error body into the bubble: manager/Traefik answer
+                // with HTML, which the chat would otherwise show as raw <p> text.
+                val body = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val txt = plainText(body)
+                return if (txt.isEmpty()) "⚠️ HTTP $code" else "⚠️ HTTP $code: $txt"
+            }
+            val stream = conn.inputStream ?: return "⚠️ HTTP $code"
             val reader = stream.bufferedReader()
             val buf = CharArray(256)
             while (true) {
@@ -104,12 +110,28 @@ object ServerAgent {
                 if (n < 0) break
                 if (n > 0) onPartial(String(buf, 0, n))
             }
-            if (code !in 200..299) "⚠️ HTTP $code" else null
+            null
         } catch (e: Exception) {
-            "⚠️ Error: ${e.message}"
+            "⚠️ Error: ${errText(e)}"
         } finally {
             cancel?.disconnect = null
             conn.disconnect()
         }
     }
+
+    /** Error pages (HTML) into readable text: drop scripts/tags, resolve entities,
+     *  normalize whitespace. So the bubble shows "Instance 'x' is not running."
+     *  instead of "<p>Instance 'x' is not running.</p>". */
+    fun plainText(raw: String): String {
+        var s = raw.replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), " ")
+        s = s.replace(Regex("(?is)<br\\s*/?>|</p>|</div>|</li>|</tr>|</h[1-6]>"), " ")
+        s = s.replace(Regex("(?s)<[^>]*>"), "")
+        s = s.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
+             .replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
+        return s.replace(Regex("\\s+"), " ").trim().take(300)
+    }
+
+    /** Some IOExceptions carry no message — otherwise a bare "Error:" would be left. */
+    private fun errText(e: Exception): String =
+        e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
 }

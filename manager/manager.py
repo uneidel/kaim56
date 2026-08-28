@@ -137,6 +137,10 @@ def load_site():
 SITE = load_site()
 PUBLIC_HOST = SITE.get("PUBLIC_HOST") or "example.com"
 SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"
+# Editor on the host (code-server/openvscode). Only a LINK in the footer, no
+# embedding: the manager runs behind HTTPS, the editor usually on plain HTTP in
+# the LAN — an iframe would be blocked as mixed content. Empty = no link.
+CODE_URL = SITE.get("CODE_URL") or ""
 
 POOL = "172.30.0.0/16"
 def _uplink_iface():
@@ -855,17 +859,21 @@ MISSION_ADVANCE_MSG = (
 
 def _mission_advance_fire(task_id):
     """After task completion: if the task belongs to a mission step, have the
-    orchestrator make an immediate progress push (instead of waiting for the
-    next heartbeat). Best-effort in a background thread."""
+    mission's OWNER make an immediate progress push (instead of waiting for the
+    next heartbeat). The owner is whichever agent planned the mission — the step
+    itself may have run on a completely different instance. Best-effort in a
+    background thread."""
     inst, m, st = mission_for_task(task_id)
-    if not m or inst != ORCH_INSTANCE:
+    if not m or not inst:
         return
+    if not any(i.get("name") == inst for i in load_instances()):
+        return          # owner deleted -> nothing to push to (TTL sweep pauses it)
     msg = MISSION_ADVANCE_MSG.format(task_id=task_id, mid=m["id"],
                                      goal=m["goal"][:80], step=st["n"])
 
     def go():
         try:
-            _run_named(ORCH_INSTANCE, msg)
+            _run_named(inst, msg)
         except Exception as e:
             print("mission-advance:", repr(e), flush=True)
     threading.Thread(target=go, daemon=True).start()
@@ -1957,7 +1965,7 @@ from mgr.rules import (load_playbooks, pb_list, pb_add, pb_remove, PB_MAX,  # no
 # ---- Missions: moved out to mgr/missions.py (imported early, see above) ----
 from mgr.missions import (load_missions, mission_list, mission_start,  # noqa: E402,F401
                           mission_update, mission_finish, mission_admin,
-                          mission_ttl_sweep, mission_for_task,
+                          mission_ttl_sweep, mission_for_task, mission_owner,
                           MISSION_MAX_ACTIVE, MISSION_MAX_STEPS, MISSION_TTL_DAYS)
 
 
@@ -2302,10 +2310,18 @@ def render():
                 .replace("__SETTINGS__", json.dumps(settings_for_ui()))
                 .replace("__SETTINGS_SCHEMA__", json.dumps(SETTINGS_SCHEMA))
                 .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
-                .replace("__SKILLS__", json.dumps(load_skills(), ensure_ascii=False))
+                # Only name + description into the page: with an imported
+                # catalog the contents are ~1 MB, and the UI needs them only
+                # when editing (then it fetches GET /api/skills/<name>).
+                .replace("__SKILLS__", json.dumps(
+                    [{"name": x.get("name", ""), "description": x.get("description", "")}
+                     for x in load_skills()], ensure_ascii=False))
                 .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
                 .replace("__PUBLIC_HOST__", PUBLIC_HOST)
                 .replace("__SIGNAL_HOST__", SIGNAL_HOST)
+                .replace("__CODE_LINK__",
+                         f'<a href="{html.escape(CODE_URL, quote=True)}" target="_blank" '
+                         f'rel="noopener noreferrer">VS&nbsp;Code</a>' if CODE_URL else "")
                 .replace("__HOME__", os.path.expanduser(
                     "~" + (os.environ.get("SUDO_USER") or "")))
                 )
@@ -2657,10 +2673,16 @@ class H(BaseHTTPRequestHandler):
             tail = tail_override
         inst = next((i for i in load_instances() if i["name"] == name), None)
         if not inst or not is_running(inst):
+            # The app puts the body of an API answer straight into the chat bubble —
+            # HTML would show up there as raw <p>…</p>. So: markup only for the
+            # browser paths, plain text for /api/….
+            api = tail.split("?", 1)[0].startswith("api/")
+            msg = f"Instance '{name}' is not running (web UI unavailable)."
             self.send_response(503)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type",
+                             "text/plain; charset=utf-8" if api else "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(f"<p>Instance '{name}' is not running (web UI unavailable).</p>".encode())
+            self.wfile.write((msg if api else f"<p>{msg}</p>").encode())
             return
         url = f"http://{net_of(inst)['guest']}:{port}/{tail}"
         data = None
@@ -2883,11 +2905,9 @@ class H(BaseHTTPRequestHandler):
         # RUNNING tasks (not the history) — for the agent's list_tasks/delete_task.
         # Guest-open; tasks carry no secrets.
         if self.path.startswith("/api/missions"):
-            # Guest: only its own (orchestrator). Admin: ?instance= or all.
+            # Guest: only its OWN missions (every agent may own missions, not
+            # just the orchestrator). Admin: ?instance= or all.
             g = instance_by_ip(self.client_address[0])
-            if g is not None and g.get("name") != ORCH_INSTANCE:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
             if g is not None:
                 data = {"missions": mission_list(g["name"])}
             else:
@@ -3514,11 +3534,13 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(out); return
         if self.path in ("/api/mission-start", "/api/mission-update",
                          "/api/mission-finish"):
-            # Mission write access: only the orchestrator (guest) or admin.
+            # Mission write access: every persistent agent (its own missions)
+            # or admin. Ephemeral VMs are excluded — they are deleted after the
+            # task, their mission would dangle without an owner.
             g = instance_by_ip(self.client_address[0])
-            if g is not None and g.get("name") != ORCH_INSTANCE:
+            if g is not None and g["name"].startswith(("task-", "sub-")):
                 self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
+                self.end_headers(); self.wfile.write(b'{"error":"ephemeral VMs may not own missions"}'); return
             inst = g["name"] if g else ORCH_INSTANCE
             ln = int(self.headers.get("Content-Length", 0) or 0)
             b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
@@ -3531,7 +3553,8 @@ class H(BaseHTTPRequestHandler):
                                              result=b.get("result", ""),
                                              task_id=b.get("task_id", ""),
                                              add_step=b.get("add_step", ""),
-                                             note=b.get("note", ""))}
+                                             note=b.get("note", ""),
+                                             target=b.get("target", ""))}
             else:
                 out = {"msg": mission_finish(inst, b.get("id", ""),
                                              summary=b.get("summary", ""),
@@ -3547,7 +3570,10 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
             ln = int(self.headers.get("Content-Length", 0) or 0)
             b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            out = {"msg": mission_admin(b.get("instance") or ORCH_INSTANCE,
+            # Without an instance mission_admin resolves the owner itself —
+            # web UI and app only know the mission id, and the owner can be any
+            # agent since missions are no longer orchestrator-only.
+            out = {"msg": mission_admin(b.get("instance", ""),
                                         b.get("id", ""), b.get("action", ""))}
             body = json.dumps(out).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")

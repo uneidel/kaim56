@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.error
 import urllib.request
@@ -792,6 +793,40 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             kmod.katfs_proxy_fs = old
 
+    def test_skills_page_carries_no_contents(self):
+        """Regression: the page inlined the COMPLETE skills.json. With the
+        imported catalog (~870 KB) that would ship on every page load — only
+        name + description belong in the page, the body comes from
+        GET /api/skills/<name> when editing."""
+        m = self.m
+        marker = "SKILL-BODY-MARKER-DO-NOT-INLINE"
+        old = m.load_skills
+        try:
+            m.load_skills = lambda: [{"name": "e2e-skill", "description": "kurz",
+                                      "content": marker + " x" * 5000}]
+            page = m.render()
+            self.assertIn("e2e-skill", page)          # name/description are in
+            self.assertIn("kurz", page)
+            self.assertNotIn(marker, page)            # the body is NOT
+        finally:
+            m.load_skills = old
+
+    def test_footer_code_link_optional(self):
+        """The editor link is host-specific (site.json CODE_URL): set = link in
+        the footer, unset = no placeholder left over in the page."""
+        m = self.m
+        old = m.CODE_URL
+        try:
+            m.CODE_URL = "http://example.invalid:8443/"
+            page = m.render()
+            self.assertIn('href="http://example.invalid:8443/"', page)
+            self.assertIn('rel="noopener noreferrer"', page)
+            m.CODE_URL = ""
+            page = m.render()
+            self.assertNotIn("__CODE_LINK__", page)
+        finally:
+            m.CODE_URL = old
+
     def test_tool_catalog_matches_agent(self):
         """Drift guard: every tool in the agent (BUILTIN) must be in the manager
         catalog (AGENT_TOOLS_CATALOG) — otherwise it is missing from the create
@@ -896,6 +931,70 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
+
+    def test_mission_cross_instance(self):
+        """Multi-owner missions: ANY agent owns missions, the steps carry the
+        instance they were delegated to, and admin actions find the owner from
+        the id alone (web UI/app only know the mission id)."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-mi3-")
+        import mgr.missions as mmod
+        old_file, old_notify = mmod.MISSIONS_FILE, mmod.notify_add
+        try:
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.notify_add = lambda *a, **k: ("x", "ok")
+            mid, _ = m.mission_start("jobresearcher", "cross-instance goal", ["s1", "s2"])
+            self.assertTrue(mid)
+            # Step 1 is executed by a DIFFERENT agent than the owner.
+            self.assertEqual(m.mission_update("jobresearcher", mid, step=1, status="doing",
+                                              task_id="t-x1", target="hass"), "ok")
+            st1 = m.mission_list("jobresearcher")[0]["steps"][0]
+            self.assertEqual(st1["target"], "hass")
+            self.assertIn("@hass", m.mission_list("jobresearcher")[0]["log"][-1])
+            # The advance trigger has to find the OWNER, not the executor.
+            inst, mi, st = m.mission_for_task("t-x1")
+            self.assertEqual((inst, mi["id"], st["n"]), ("jobresearcher", mid, 1))
+            self.assertEqual(m.mission_owner(mid), "jobresearcher")
+            self.assertIsNone(m.mission_owner("m-nope"))
+            # Admin action without an instance resolves the owner itself.
+            self.assertEqual(m.mission_admin("", mid, "pause"), "ok")
+            self.assertEqual(m.mission_list("jobresearcher")[0]["status"], "paused")
+            self.assertEqual(m.mission_admin("", mid, "resume"), "ok")
+            self.assertEqual(m.mission_admin("", "m-nope", "pause"), "unknown mission")
+        finally:
+            mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
+
+    def test_mission_advance_fires_at_owner(self):
+        """Regression guard: the push after a finished task goes to the mission's
+        owner — previously it was hard-wired to the orchestrator, so a mission
+        owned by any other agent would never advance."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-mi4-")
+        import mgr.missions as mmod
+        old_file, old_notify = mmod.MISSIONS_FILE, mmod.notify_add
+        old_run, old_load = m._run_named, m.load_instances
+        fired = []
+        done = threading.Event()
+        try:
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.notify_add = lambda *a, **k: ("x", "ok")
+            m.load_instances = lambda: [{"name": "jobresearcher"}, {"name": "orchestrator"}]
+            m._run_named = lambda inst, msg: (fired.append(inst), done.set(), (True, "ok"))[-1]
+            mid, _ = m.mission_start("jobresearcher", "owned elsewhere", ["s1"])
+            m.mission_update("jobresearcher", mid, step=1, status="doing",
+                             task_id="t-y1", target="hass")
+            m._mission_advance_fire("t-y1")
+            self.assertTrue(done.wait(5), "no advance push fired")
+            self.assertEqual(fired, ["jobresearcher"])
+            # Owner gone -> no push (the TTL sweep pauses the mission instead).
+            fired.clear(); done.clear()
+            m.load_instances = lambda: [{"name": "orchestrator"}]
+            m._mission_advance_fire("t-y1")
+            self.assertFalse(done.wait(0.5))
+            self.assertEqual(fired, [])
+        finally:
+            mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
+            m._run_named, m.load_instances = old_run, old_load
 
     def test_mission_caps(self):
         m = self.m
@@ -1109,6 +1208,29 @@ class ManagerHTTP(unittest.TestCase):
         st, txt = _http("/")
         self.assertEqual(st, 200)
         self.assertIn("orcarouter", txt)
+
+    def test_stopped_instance_api_error_is_plain_text(self):
+        """The app pours the body of an API answer straight into the chat bubble.
+        For a stopped/unknown instance that must be plain text — HTML showed up
+        there as a raw "<p>Instance … is not running</p>"."""
+        req = urllib.request.Request(MANAGER_URL + "/i/e2e-gibtsnicht/api/chat",
+                                     data=b'{"message":"hi"}', method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=8)
+            self.fail("expected 503")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "replace")
+            self.assertEqual(e.code, 503)
+            self.assertTrue(e.headers.get("Content-Type", "").startswith("text/plain"))
+            self.assertNotIn("<", body)
+            self.assertIn("not running", body)
+
+    def test_stopped_instance_page_stays_html(self):
+        """The browser path keeps its markup."""
+        st, txt = _http("/i/e2e-gibtsnicht/")
+        self.assertEqual(st, 503)
+        self.assertIn("<p>", txt)
 
 
 # ===========================================================================

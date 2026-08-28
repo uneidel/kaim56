@@ -1887,6 +1887,8 @@ private fun MissionsScreen(
                     color = if (closed) Kat.textDim else Kat.text,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f))
+                if (m.instance.isNotBlank())
+                    Text(m.instance, fontSize = 11.sp, fontFamily = Plex, color = Kat.textFaint)
                 Text(when (m.status) {
                     "paused" -> "paused"; "done" -> "done"; "failed" -> "failed"
                     else -> "active"
@@ -1904,7 +1906,8 @@ private fun MissionsScreen(
                 Text("$done/$total", fontSize = 11.5.sp, fontFamily = Plex, color = Kat.textFaint)
             }
             if (!closed) cur?.let {
-                Text("Step ${it.n}: ${it.text}", fontSize = 12.5.sp,
+                val on = if (it.target.isNotBlank()) " · on ${it.target}" else ""
+                Text("Step ${it.n}: ${it.text}$on", fontSize = 12.5.sp,
                     fontFamily = Plex, color = Kat.textDim,
                     maxLines = if (mExpanded == m.id) 4 else 1,
                     overflow = TextOverflow.Ellipsis)
@@ -1917,7 +1920,8 @@ private fun MissionsScreen(
                     val mark = when (st.status) {
                         "done" -> "✓"; "doing" -> "◔"; "failed" -> "✕"; else -> "○"
                     }
-                    Text("$mark  ${st.n}. ${st.text}", fontSize = 12.sp, fontFamily = Plex,
+                    val on = if (st.target.isNotBlank()) "  @${st.target}" else ""
+                    Text("$mark  ${st.n}. ${st.text}$on", fontSize = 12.sp, fontFamily = Plex,
                         color = if (st.status == "done") Kat.textFaint else Kat.textDim)
                 }
                 if (m.lastLog.isNotBlank())
@@ -1926,7 +1930,8 @@ private fun MissionsScreen(
                     fun act(a: String) {
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                ManagerSync.missionAction(prefs.serverUrl, prefs.user, prefs.pass, m.id, a)
+                                ManagerSync.missionAction(prefs.serverUrl, prefs.user, prefs.pass,
+                                    m.id, a, m.instance)
                             }
                             reload++
                         }
@@ -1954,7 +1959,7 @@ private fun MissionsScreen(
             val open = missions.filter { it.status == "active" || it.status == "paused" }
             val closed = missions.filter { it.status == "done" || it.status == "failed" }.takeLast(5)
             if (missions.isEmpty()) Text(
-                "No missions. The orchestrator creates them itself for multi-step jobs " +
+                "No missions. Any agent creates them itself for multi-step jobs " +
                 "— e.g. via chat: \"… — as a mission\".",
                 fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
             )

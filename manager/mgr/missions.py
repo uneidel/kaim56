@@ -29,10 +29,14 @@ def configure(base, notify=None, sem=None):
 
 
 # ---- Missions: plan/progress store for multi-step jobs ---------------------
-# The orchestrator plans a mission (goal + steps), works through it step by step
-# via create_task and records the progress HERE — so the working state survives
+# An agent plans a mission (goal + steps), works through it step by step via
+# create_task and records the progress HERE — so the working state survives
 # /reset, VM restart and the stateless heartbeat. A finished task that belongs
 # to a mission step immediately triggers the next push (see _task_worker).
+# Missions are keyed by their OWNER instance (the agent that planned them —
+# any agent, not just the orchestrator). The steps are cross-instance: each one
+# carries the target it was delegated to (`target`), so goal and execution can
+# live on different agents.
 _mi_lock = threading.Lock()
 MISSION_MAX_ACTIVE = 5
 MISSION_MAX_STEPS = 20
@@ -92,9 +96,11 @@ def mission_start(instance, goal, steps):
 
 
 def mission_update(instance, mid, step=None, status=None, result="",
-                   task_id="", add_step="", note=""):
+                   task_id="", add_step="", note="", target=""):
     """Advance a step (status: doing|done|failed|open), optionally append a new
-    step or just set a log note."""
+    step or just set a log note. `target` records WHICH instance the step was
+    delegated to (create_task target) — the mission is the plan, the target is
+    the executor."""
     with _mi_lock:
         d = load_missions()
         m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
@@ -118,7 +124,10 @@ def mission_update(instance, mid, step=None, status=None, result="",
                 st["result"] = str(result)[:500]
             if task_id:
                 st["task_id"] = str(task_id)[:40]
+            if target:
+                st["target"] = str(target).strip()[:64]
             _mi_log(m, f"Step {step} -> {status or '?'}"
+                       + (f" @{st.get('target')}" if st.get("target") else "")
                        + (f": {str(result)[:80]}" if result else ""))
         elif note:
             _mi_log(m, note)
@@ -152,10 +161,23 @@ def mission_finish(instance, mid, summary="", failed=False):
     return "ok"
 
 
+def mission_owner(mid):
+    """Owner instance of a mission id — missions can belong to ANY agent, so a
+    caller that only knows the id (UI, app) must not have to guess."""
+    for inst, lst in load_missions().items():
+        if any(x.get("id") == str(mid) for x in lst):
+            return inst
+    return None
+
+
 def mission_admin(instance, mid, action):
-    """UI-Aktionen: pause | resume | abort."""
+    """UI actions: pause | resume | abort. Without an instance the owner is
+    looked up — the UI knows the mission id, not necessarily who owns it."""
     with _mi_lock:
         d = load_missions()
+        if not instance:
+            instance = next((i for i, lst in d.items()
+                             if any(x.get("id") == str(mid) for x in lst)), "")
         m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
         if not m:
             return "unknown mission"
