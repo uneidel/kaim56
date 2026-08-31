@@ -848,35 +848,60 @@ ORCH_HEARTBEAT_MSG = (
     "mission_update and kick off the next step. Keep it short. Nothing to do? "
     "Report: nothing to do.")
 MISSION_ADVANCE_MSG = (
-    "/fresh Mission progress (instant trigger after task completion): The task "
-    "'{task_id}' for mission '{mid}' ({goal}) is done. 1) recall_tasks for the "
-    "result of this task. 2) mission_update: set step {step} to done/failed, "
-    "record the result briefly. 3) Kick off the NEXT open step "
-    "(create_task to the capable instance or ephemeral, note the task-id on the "
-    "step via mission_update). 4) No open step left? "
+    "/fresh Mission progress (instant trigger after task completion): the "
+    "following tasks are done:\n{done}\n"
+    "For EACH of them: 1) recall_tasks for the result. 2) mission_update: set "
+    "the step to done/failed, record the result briefly. 3) Kick off the NEXT "
+    "open step (create_task to the capable instance or ephemeral, note the "
+    "task-id on the step via mission_update). 4) No open step left? "
     "mission_finish with a short summary. Blocked? notify the user. Keep it short.")
 
 
-def _mission_advance_fire(task_id):
-    """After task completion: if the task belongs to a mission step, have the
-    mission's OWNER make an immediate progress push (instead of waiting for the
-    next heartbeat). The owner is whichever agent planned the mission — the step
-    itself may have run on a completely different instance. Best-effort in a
-    background thread."""
-    inst, m, st = mission_for_task(task_id)
-    if not m or not inst:
+# Collect mode for the advance push (idea from OpenClaw's queue modes): every
+# push is a full /fresh turn and costs its fixed ~5k input tokens before any
+# work happens. When several tasks finish close together — exactly what the
+# cross-instance missions produce — one push handling all of them does the same
+# work for one fixed cost. Completions are therefore collected per OWNER for a
+# short window and flushed as a single message.
+MISSION_COLLECT_SECS = float(os.environ.get("MISSION_COLLECT_SECS", "8"))
+_madv_lock = threading.Lock()
+_madv_pending = {}        # owner -> [ "task 'id' (mission 'mid', goal, step N)" ]
+_madv_timer = {}          # owner -> threading.Timer
+
+
+def _mission_advance_flush(inst):
+    with _madv_lock:
+        _madv_timer.pop(inst, None)
+        lines = _madv_pending.pop(inst, [])
+    if not lines:
         return
     if not any(i.get("name") == inst for i in load_instances()):
         return          # owner deleted -> nothing to push to (TTL sweep pauses it)
-    msg = MISSION_ADVANCE_MSG.format(task_id=task_id, mid=m["id"],
-                                     goal=m["goal"][:80], step=st["n"])
+    msg = MISSION_ADVANCE_MSG.format(done="\n".join("- " + x for x in lines))
+    try:
+        _run_named(inst, msg)
+    except Exception as e:
+        print("mission-advance:", repr(e), flush=True)
 
-    def go():
-        try:
-            _run_named(inst, msg)
-        except Exception as e:
-            print("mission-advance:", repr(e), flush=True)
-    threading.Thread(target=go, daemon=True).start()
+
+def _mission_advance_fire(task_id):
+    """After task completion: if the task belongs to a mission step, note it for
+    the mission's OWNER and (re)arm that owner's collect window. The owner is
+    whichever agent planned the mission — the step itself may have run on a
+    completely different instance."""
+    inst, m, st = mission_for_task(task_id)
+    if not m or not inst:
+        return
+    line = f"task '{task_id}' (mission '{m['id']}', {m['goal'][:80]}, step {st['n']})"
+    with _madv_lock:
+        _madv_pending.setdefault(inst, []).append(line)
+        t = _madv_timer.get(inst)
+        if t:
+            t.cancel()
+        t = threading.Timer(MISSION_COLLECT_SECS, _mission_advance_flush, args=(inst,))
+        t.daemon = True
+        _madv_timer[inst] = t
+        t.start()
 
 
 _orch_lock = threading.Lock()
@@ -2506,7 +2531,14 @@ def _rt_personas(h):
 
 @ROUTER.get("/api/skills")
 def _rt_skills(h):
-    return json.dumps(load_skills(), ensure_ascii=False).encode(), "application/json"
+    # ?meta=1: name + description only. The full catalog is ~870 KB with the
+    # bodies — the agents call this on every list_skills and never need them.
+    q = urllib.parse.parse_qs(h.path.partition("?")[2])
+    items = load_skills()
+    if q.get("meta", ["0"])[0] == "1":
+        items = [{"name": x.get("name", ""), "description": x.get("description", "")}
+                 for x in items]
+    return json.dumps(items, ensure_ascii=False).encode(), "application/json"
 
 
 @ROUTER.get("/api/skills/", prefix=True)

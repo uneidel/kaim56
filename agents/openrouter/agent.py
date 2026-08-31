@@ -11,6 +11,7 @@ Tools: bash, read_file, write_file, list_dir, http_fetch  + optional MCP servers
 import itertools
 import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -711,15 +712,26 @@ def _mgr_get(base, path, timeout=30):
     return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
 
 
-def t_list_skills():
-    """List available expert skills (knowledge documents)."""
+def t_list_skills(query=""):
+    """List available expert skills. Without a query: names only (the catalog
+    has ~70 entries; the full descriptions cost ~2.5k tokens per call). With a
+    query: name + description of the matching ones."""
     try:
-        arr = json.loads(_mgr_get(_manager_base(), "/api/skills"))
+        arr = json.loads(_mgr_get(_manager_base(), "/api/skills?meta=1"))
     except Exception as e:
         return f"Error: {e!r}"
     if not arr:
         return "No skills available."
-    return "\n".join(f"- {s.get('name')}: {s.get('description', '')}" for s in arr)
+    q = (query or "").strip().lower()
+    if q:
+        hits = [s for s in arr
+                if q in s.get("name", "").lower() or q in s.get("description", "").lower()]
+        if not hits:
+            return f"No skill matches '{query}'. list_skills() shows all names."
+        return "\n".join(f"- {s.get('name')}: {s.get('description', '')}" for s in hits)
+    names = sorted(s.get("name", "") for s in arr)
+    return ("Skills (load with load_skill(name); descriptions via "
+            "list_skills(query=…)):\n" + ", ".join(names))
 
 
 def t_load_skill(name):
@@ -968,8 +980,14 @@ BUILTIN = {
                    "message": {"type": "string", "description": "new text (empty = unchanged)"},
                    "schedule": {"type": "string", "description": "new schedule (empty = one-off/unchanged)"}},
                   ["id"]),
-    "list_skills": (t_list_skills, "List available expert skills (name: description). Before specialized tasks, check whether a matching skill exists.",
-                    {}, []),
+    "list_skills": (t_list_skills,
+                    "List available expert skills. Without arguments: names only. "
+                    "query='…' searches names AND descriptions. Before specialized "
+                    "tasks, check whether a matching skill exists.",
+                    {"query": {"type": "string",
+                               "description": "optional: filter, e.g. 'docker' or 'security'"}},
+                    []),
+
     "load_skill": (t_load_skill, "Load an expert skill (knowledge document) into the context and follow it.",
                    {"name": {"type": "string", "description": "skill name from list_skills"}}, ["name"]),
     "memory_store": (t_memory_store, "Store a value permanently (survives restart/instance deletion).",
@@ -1342,6 +1360,89 @@ OFFLOAD_PREVIEW = int(os.environ.get("OFFLOAD_PREVIEW", "2000"))
 _offload_seq = 0
 
 
+# Type-aware previews (idea from Caveman's per-type compressors, done in ~60
+# lines of stdlib instead of adopting the BSL-licensed engine): the preview an
+# agent sees for an offloaded output should carry STRUCTURE, not just the first
+# N characters. A head-slice of a 40k JSON is usually an unclosed brace of the
+# first record; an outline of keys, types and counts tells the model what it is
+# holding and where to read on. Nothing is lost either way — the full text
+# stays in the offload file.
+
+def _preview_json(out, budget):
+    """Outline of a JSON payload: shape, keys, counts, first items."""
+    data = json.loads(out)      # caller catches
+    lines = []
+
+    def walk(node, path, depth):
+        if len(lines) > 60 or depth > 3:
+            return
+        if isinstance(node, dict):
+            lines.append(f"{path or '$'}: object, {len(node)} keys: "
+                         + ", ".join(list(node.keys())[:12])
+                         + (" …" if len(node) > 12 else ""))
+            for k in list(node.keys())[:6]:
+                v = node[k]
+                if isinstance(v, (dict, list)):
+                    walk(v, f"{path}.{k}" if path else k, depth + 1)
+        elif isinstance(node, list):
+            lines.append(f"{path or '$'}: array, {len(node)} items")
+            if node and isinstance(node[0], (dict, list)):
+                walk(node[0], (path or "$") + "[0]", depth + 1)
+            elif node:
+                sample = json.dumps(node[:3], ensure_ascii=False)
+                lines.append(f"{path or '$'}[0..2]: {sample[:200]}")
+        else:
+            lines.append(f"{path or '$'}: {json.dumps(node, ensure_ascii=False)[:120]}")
+
+    walk(data, "", 0)
+    head = json.dumps(data, ensure_ascii=False)[:budget // 3]
+    return ("[JSON structure]\n" + "\n".join(lines))[:budget - len(head) - 20] \
+        + "\n\n[begins] " + head
+
+
+def _preview_log(out, budget):
+    """Head + tail + everything that smells like a problem, duplicates folded."""
+    lines = out.splitlines()
+    folded, last, count = [], None, 0
+    for ln in lines:
+        if ln == last:
+            count += 1
+            continue
+        if count > 1:
+            folded.append(f"  [previous line repeats ×{count}]")
+        folded.append(ln)
+        last, count = ln, 1
+    if count > 1:
+        folded.append(f"  [previous line repeats ×{count}]")
+    interesting = [ln for ln in folded
+                   if re.search(r"error|warn|fail|exception|traceback|fatal|denied",
+                                ln, re.I)]
+    head = folded[:15]
+    tail = folded[-10:] if len(folded) > 25 else []
+    mid = [ln for ln in interesting if ln not in head and ln not in tail][:20]
+    parts = head + (["  […]"] if mid or tail else []) + mid \
+        + (["  […]"] if tail and mid else []) + tail
+    return (f"[log, {len(lines)} lines, duplicates folded]\n"
+            + "\n".join(parts))[:budget]
+
+
+def _smart_preview(out, budget):
+    """Pick a preview by payload type; plain head-slice as the fallback."""
+    stripped = out.lstrip()
+    if stripped[:1] in "[{":
+        try:
+            return _preview_json(out, budget)
+        except Exception:
+            pass
+    lines = out.count("\n")
+    if lines >= 30 and len(out) / max(lines, 1) < 400:
+        try:
+            return _preview_log(out, budget)
+        except Exception:
+            pass
+    return out[:budget]
+
+
 def _finalize_output(name, out):
     """If a tool output is larger than OFFLOAD_MIN, it is offloaded to a file IN
     FULL and only a preview + reference is kept in the context (offload_read
@@ -1359,10 +1460,9 @@ def _finalize_output(name, out):
             fh.write(out)
     except Exception:
         return out[:MAX_TOOL_OUT]   # offloading failed -> fall back: hard-truncate
-    preview = out[:OFFLOAD_PREVIEW]
-    return (preview + f"\n\n[… {len(out) - len(preview)} more characters offloaded. "
-            f"Continue reading with offload_read(id=\"{oid}\", offset={OFFLOAD_PREVIEW}). "
-            f"Total length {len(out)} characters.]")
+    preview = _smart_preview(out, OFFLOAD_PREVIEW)
+    return (preview + f"\n\n[… full output offloaded ({len(out)} characters). "
+            f"Read verbatim with offload_read(id=\"{oid}\", offset=0).]")
 
 
 def t_offload_read(id="", offset=0, length=None):

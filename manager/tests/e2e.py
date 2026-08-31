@@ -22,6 +22,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -285,6 +286,62 @@ class AgentLogic(unittest.TestCase):
             self.a._TOOL_ALLOW = old
 
     # --- Tool-Hook / Guardrails ---------------------------------------------
+    def test_offload_preview_outlines_json(self):
+        """A head-slice of a big JSON is an unclosed brace of the first record.
+        The preview should say WHAT the payload is instead."""
+        a = self.a
+        rows = [{"id": i, "name": f"row {i}", "value": i * 3.14} for i in range(500)]
+        out = __import__("json").dumps({"total": 500, "rows": rows})
+        assert len(out) > a.OFFLOAD_MIN, "test payload must trigger offloading"
+        got = a._finalize_output("http_fetch", out)
+        self.assertIn("[JSON structure]", got)
+        self.assertIn("rows", got)                     # the key survives
+        self.assertIn("500 items", got)                # the count survives
+        self.assertIn("offload_read", got)             # the full text is reachable
+        self.assertLess(len(got), a.OFFLOAD_PREVIEW + 400)
+
+    def test_offload_preview_folds_logs_and_keeps_errors(self):
+        a = self.a
+        noise = "GET /health 200 0.001s"
+        lines = [noise] * 800 + ["ERROR: db connection refused"] + [noise] * 800
+        out = "\n".join(lines)
+        assert len(out) > a.OFFLOAD_MIN
+        got = a._finalize_output("bash", out)
+        self.assertIn("repeats ×800", got)             # duplicates folded
+        self.assertIn("ERROR: db connection refused", got)   # the problem survives
+        self.assertIn("1601 lines", got)
+        self.assertLess(len(got), a.OFFLOAD_PREVIEW + 400)
+
+    def test_offload_preview_plain_text_stays_head_slice(self):
+        a = self.a
+        out = ("word " * 20000).strip()
+        got = a._finalize_output("read_file", out)
+        self.assertTrue(got.startswith("word word"))
+        self.assertIn("offload_read", got)
+
+    def test_list_skills_names_only_without_query(self):
+        """67 skills × full description cost ~2.5k tokens per call — the bare
+        list must stay cheap, the descriptions come via query."""
+        a = self.a
+        catalog = __import__("json").dumps([
+            {"name": "docker", "description": "Docker expert for containers"},
+            {"name": "kubernetes", "description": "K8s operations expert"},
+            {"name": "git-expert", "description": "Git operations expert"},
+        ])
+        old = a._mgr_get
+        try:
+            a._mgr_get = lambda base, path, **k: catalog
+            bare = a.t_list_skills()
+            self.assertIn("docker", bare)
+            self.assertNotIn("containers", bare)       # no descriptions
+            hit = a.t_list_skills(query="container")
+            self.assertIn("Docker expert", hit)        # description on demand
+            self.assertNotIn("git-expert", hit)
+            miss = a.t_list_skills(query="quantum")
+            self.assertIn("No skill matches", miss)
+        finally:
+            a._mgr_get = old
+
     def test_hook_denylist_blocks_rmrf(self):
         allow, reason = self.a._hook_before_tool("bash", {"command": "sudo rm -rf / --no-preserve-root"})
         self.assertFalse(allow)
@@ -1022,20 +1079,55 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
 
+    def test_mission_advance_collects_bursts_into_one_push(self):
+        """Collect mode: every advance push is a full /fresh turn with ~5k fixed
+        input tokens. Several tasks finishing inside the window must produce ONE
+        push that lists them all — not one turn each."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-mi5-")
+        import mgr.missions as mmod
+        old_file, old_notify = mmod.MISSIONS_FILE, mmod.notify_add
+        old_run, old_load, old_win = m._run_named, m.load_instances, m.MISSION_COLLECT_SECS
+        pushes = []
+        done = threading.Event()
+        try:
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.notify_add = lambda *a, **k: ("x", "ok")
+            m.load_instances = lambda: [{"name": "owner-a"}]
+            m._run_named = lambda inst, msg: (pushes.append((inst, msg)), done.set(), (True, "ok"))[-1]
+            m.MISSION_COLLECT_SECS = 0.3
+            mid, _ = m.mission_start("owner-a", "burst goal", ["s1", "s2", "s3"])
+            for n, tid in ((1, "t-b1"), (2, "t-b2"), (3, "t-b3")):
+                m.mission_update("owner-a", mid, step=n, status="doing", task_id=tid)
+                m._mission_advance_fire(tid)
+            self.assertTrue(done.wait(5), "no push fired")
+            time.sleep(0.4)                            # window fully drained
+            self.assertEqual(len(pushes), 1, f"expected ONE push, got {len(pushes)}")
+            inst, msg = pushes[0]
+            self.assertEqual(inst, "owner-a")
+            for tid in ("t-b1", "t-b2", "t-b3"):
+                self.assertIn(tid, msg)
+        finally:
+            mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
+            m._run_named, m.load_instances = old_run, old_load
+            m.MISSION_COLLECT_SECS = old_win
+
     def test_mission_advance_fires_at_owner(self):
         """Regression guard: the push after a finished task goes to the mission's
         owner — previously it was hard-wired to the orchestrator, so a mission
-        owned by any other agent would never advance."""
+        owned by any other agent would never advance. The push is debounced by
+        the collect window, hence the shortened window here."""
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-mi4-")
         import mgr.missions as mmod
         old_file, old_notify = mmod.MISSIONS_FILE, mmod.notify_add
-        old_run, old_load = m._run_named, m.load_instances
+        old_run, old_load, old_win = m._run_named, m.load_instances, m.MISSION_COLLECT_SECS
         fired = []
         done = threading.Event()
         try:
             mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
             mmod.notify_add = lambda *a, **k: ("x", "ok")
+            m.MISSION_COLLECT_SECS = 0.2
             m.load_instances = lambda: [{"name": "jobresearcher"}, {"name": "orchestrator"}]
             m._run_named = lambda inst, msg: (fired.append(inst), done.set(), (True, "ok"))[-1]
             mid, _ = m.mission_start("jobresearcher", "owned elsewhere", ["s1"])
@@ -1048,11 +1140,12 @@ class ManagerFunctions(unittest.TestCase):
             fired.clear(); done.clear()
             m.load_instances = lambda: [{"name": "orchestrator"}]
             m._mission_advance_fire("t-y1")
-            self.assertFalse(done.wait(0.5))
+            self.assertFalse(done.wait(0.6))
             self.assertEqual(fired, [])
         finally:
             mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
             m._run_named, m.load_instances = old_run, old_load
+            m.MISSION_COLLECT_SECS = old_win
 
     def test_mission_caps(self):
         m = self.m
