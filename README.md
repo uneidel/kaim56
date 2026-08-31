@@ -45,10 +45,11 @@ The built-in **Architecture** view (rendered from the running manager):
 
 **Agent capabilities**
 - Built-in tools: shell, files, HTTP fetch, web search, PDF extraction, sub-agents, task scheduling
-- Missions — multi-step plans with progress that survive resets and restarts; a finished task instantly advances the next step
+- Missions — multi-step plans with progress that survives resets and restarts. Cross-instance: every agent may own one and delegate its steps to whichever instance has the needed tools; finished tasks are collected per owner and advance the mission in one push
 - Semantic long-term memory (embeddings, per-query recall) plus flat key/value memory
 - Playbooks — standing rules the agent learns from your corrections and always follows
-- Prompt templates as slash commands, auto-summarizing context, and large-output offloading
+- Prompt templates as slash commands, auto-summarizing context, and large-output offloading with type-aware previews (JSON becomes an outline, logs get duplicates folded and error lines kept — the full text stays readable via `offload_read`)
+- Skills — a catalog of 67 expert documents in the Claude-Code skill format, pulled into context on demand (`list_skills` names-only, descriptions via query)
 - Steering (interrupt a running turn), goal loops with a judge, and tree-chat (`/branch` … `/back` folds a side-question back into a one-line note)
 - Drop-in tool plugins (pi.dev-style) — add a tool as a single `.py` or a multi-file folder via drag-and-drop in the web UI, no image rebuild
 
@@ -65,6 +66,10 @@ The built-in **Architecture** view (rendered from the running manager):
 - Streaming web chat with Markdown, vision/image input, and a slash-command picker
 - Per-instance activity view with time filtering and token/cost usage
 
+**Glasses (in progress)**
+- Client for the Brilliant Labs Halo/Frame glasses in the Android app: BLE message protocol ported to Kotlin, device-side Lua app on the SDK's unmodified modules, voice command → glasses camera → image to the agent → reply on the display
+- Everything except the Bluetooth transport is proven without hardware: JVM tests for the protocol, the vendor's emulator for the device side (which caught real bugs — ASCII-only source, display geometry), a dry-run mode in the app
+
 **Security & guardrails**
 - Secret broker — API keys never touch a VM's disk, gated by source-IP allowlists
 - Credential-injection gateway — LLM keys never enter a VM; the manager injects them on egress
@@ -75,6 +80,7 @@ The built-in **Architecture** view (rendered from the running manager):
 - Task-frequency cap and orphaned-run recovery
 - Per-instance egress allowlist and a secret leak-filter on outgoing messages
 - Per-instance tool allowlists and a per-instance audit trail
+- HTTP surface moving from an if-chain to a routing table where exact paths beat prefixes and every route carries whether a guest VM may call it — enumerable for audits, with a test that guards the remaining chain against shadowed routes
 
 ## Layout
 

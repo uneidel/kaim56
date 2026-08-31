@@ -263,7 +263,7 @@
       <div class="num bp"><i class="tl"></i><i class="br"></i><b>1</b><span>process on the host</span></div>
       <div class="num bp"><i class="tl"></i><i class="br"></i><b>0</b><span>third-party packages in it</span></div>
       <div class="num bp"><i class="tl"></i><i class="br"></i><b>67</b><span>loadable expert skills</span></div>
-      <div class="num bp"><i class="tl"></i><i class="br"></i><b>80</b><span>end-to-end tests, green</span></div>
+      <div class="num bp"><i class="tl"></i><i class="br"></i><b>85</b><span>end-to-end tests, green</span></div>
     </div>
   </div>
 </section>
@@ -282,7 +282,7 @@
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">▦</span>One VM per agent</h4><p>Copy-on-write overlay rootfs: a shared read-only base plus a per-instance write layer. An optional persistent disk keeps installed packages across restarts; factory reset is one click.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⇄</span>Pluggable backends</h4><p>OpenRouter, OrcaRouter, Anthropic or a self-hosted llama.cpp — chosen per instance. Switch model or provider mid-conversation with <code>/model</code>, context preserved.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">→</span>Delegation by capability</h4><p>An agent lists the others, picks the one with the right tools or MCP server, and hands it a task. Home Assistant work goes to the agent that has Home Assistant.</p></div>
-      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">↻</span>Missions</h4><p>Multi-step plans with progress that survives resets and restarts. Every agent may own one; the steps run wherever they fit, and a finished task immediately advances the next.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">↻</span>Missions</h4><p>Multi-step plans with progress that survives resets and restarts. Every agent may own one; the steps run wherever they fit, and finished tasks are collected and advance the mission in a single push.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⧉</span>Ephemeral workers</h4><p>Isolated one-off jobs run in a fresh VM that is deleted afterwards. Nothing they touch outlives them.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⏱</span>Scheduling</h4><p>Tasks with intervals and clock times, a frequency cap that pauses runaway loops, and recovery for runs orphaned by a restart.</p></div>
     </div>
@@ -292,6 +292,7 @@
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">∞</span>Semantic memory</h4><p>The agent stores what future conversations will need and gets it back by meaning, not by keyword. A flat key/value store sits underneath for the things that need exact recall.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">§</span>Playbooks</h4><p>Standing rules learned from your corrections. Say "always do X this way" once and it holds — across resets, restarts and model changes.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">◫</span>Skills</h4><p>Expert documents pulled into context on demand, not carried in every prompt. Sixty-seven of them, in the Claude-Code skill format.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">≡</span>Type-aware previews</h4><p>Oversized tool outputs are offloaded in full; what stays in context is a preview with structure — JSON as an outline of keys and counts, logs with duplicates folded and every error line kept.</p></div>
       <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⌗</span>Task history</h4><p>Every run lands in a searchable database with its result, so an agent can check what was already done before doing it again.</p></div>
     </div>
 
@@ -390,7 +391,7 @@
       </details>
       <details>
         <summary>How is it kept honest?</summary>
-        <p>Eighty end-to-end tests run against the real manager on the standard library alone, the built-in Architecture view is rendered from the running system, and every change lands in a changelog you can read in the UI.</p>
+        <p>Eighty-five end-to-end tests run against the real manager on the standard library alone, the built-in Architecture view is rendered from the running system, and every change lands in a changelog you can read in the UI.</p>
       </details>
     </div>
   </div>

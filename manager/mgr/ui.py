@@ -751,7 +751,7 @@ footer{border-top:1px solid var(--color-divider)}
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px">
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>manager.py &#8212; the core</span>
-  <p class=card-body>Split into an <code>mgr/</code> package (ui, store, signal, missions, notify, rules, mcp, katfs, gateway); manager.py stays the systemd entry, facade and composition root (VM lifecycle, networking, secrets, the HTTP handler). mgr modules never import back (no cycles); cross-refs are injected. Single-file Python service (stdlib only), runs as root under systemd
+  <p class=card-body>Split into an <code>mgr/</code> package (ui, store, signal, missions, notify, rules, mcp, katfs, gateway, routes); manager.py stays the systemd entry, facade and composition root (VM lifecycle, networking, secrets, the HTTP handler). The HTTP surface is migrating from an if-chain to a routing table (<code>mgr/routes.py</code>): exact paths beat prefixes, every route carries whether a guest VM may call it, and the inventory is enumerable for audits. mgr modules never import back (no cycles); cross-refs are injected. Single-file Python service (stdlib only), runs as root under systemd
   (<code>firecracker-manager</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
   the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
   per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up
@@ -898,8 +898,9 @@ footer{border-top:1px solid var(--color-divider)}
   (<code>mission_start</code>: goal + steps), picks the capable instance per step
   (<code>list_agents</code>) and delegates via <code>create_task(target=&#8249;instance&#8250;)</code>,
   recording task-id <i>and</i> target on the step. Plan and execution therefore live on different
-  agents. When that task finishes, the worker <b>immediately</b> re-triggers the mission&#8217;s owner
-  to advance (event-driven, heartbeat only as fallback). Active missions are injected every turn as a
+  agents. When tasks finish, completions are <b>collected per owner</b> for a short window and flushed
+  as one push that advances the mission (event-driven, heartbeat only as fallback &#8212; a burst of
+  finished steps costs one turn, not one each). Active missions are injected every turn as a
   <code>[Missions]</code> block; each agent only ever sees its own (the manager keys reads/writes by
   the calling instance, ephemeral VMs excluded). Guardrails: max 5 active / 20 steps per owner, 7-day
   TTL auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
