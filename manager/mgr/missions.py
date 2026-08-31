@@ -143,7 +143,7 @@ def mission_finish(instance, mid, summary="", failed=False):
             return "unknown mission"
         m["status"] = "failed" if failed else "done"
         m["summary"] = str(summary)[:600]
-        _mi_log(m, ("Fehlgeschlagen: " if failed else "Abgeschlossen: ") + str(summary)[:150])
+        _mi_log(m, ("Failed: " if failed else "Completed: ") + str(summary)[:150])
         _save_missions(d)
     # Completion as a permanent note into long-term memory + push to the user.
     try:
@@ -182,12 +182,12 @@ def mission_admin(instance, mid, action):
         if not m:
             return "unknown mission"
         if action == "pause" and m.get("status") == "active":
-            m["status"] = "paused"; _mi_log(m, "Pausiert (UI)")
+            m["status"] = "paused"; _mi_log(m, "Paused (UI)")
         elif action == "resume" and m.get("status") == "paused":
-            m["status"] = "active"; _mi_log(m, "Fortgesetzt (UI)")
+            m["status"] = "active"; _mi_log(m, "Resumed (UI)")
         elif action == "abort" and m.get("status") in ("active", "paused"):
             m["status"] = "failed"; m["summary"] = "aborted (UI)"
-            _mi_log(m, "Abgebrochen (UI)")
+            _mi_log(m, "Aborted (UI)")
         else:
             return f"cannot {action} ({m.get('status')})"
         _save_missions(d)

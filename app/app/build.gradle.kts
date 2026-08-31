@@ -12,8 +12,8 @@ android {
         applicationId = "de.kat56.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 75
-        versionName = "5.25"
+        versionCode = 78
+        versionName = "5.28"
         ndk {
             // Xiaomi 15 = arm64-v8a. Only this ABI -> significantly smaller APK.
             abiFilters += "arm64-v8a"
@@ -81,4 +81,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // On-Device-LLM via LiteRT-LM (laedt .litertlm-Modelle inkl. Gemma 4; multimodal).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
+    // Only for the JVM tests of the glasses protocol layer (Halo.kt) — runs
+    // without a device and without an emulator: gradle testDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }

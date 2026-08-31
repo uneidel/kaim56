@@ -2462,6 +2462,67 @@ def _guard_check(inst):
     return True, ""
 
 
+# ---- Routing table ---------------------------------------------------------
+# Erster Schritt weg von der if-Kette (Strangler wie beim mgr/-Paket): wer hier
+# steht, wird ueber die Tabelle zugestellt; alles andere faellt weiter durch die
+# Kette. Eine Route liefert (body, content_type) und ueberlaesst das Senden dem
+# Verteiler — oder None, wenn sie selbst geantwortet hat.
+from mgr.routes import Router  # noqa: E402
+ROUTER = Router()
+
+
+@ROUTER.get("/api/instances", admin=True)
+def _rt_instances(h):
+    return (json.dumps([{**i, "running": is_running(i)} for i in load_instances()]).encode(),
+            "application/json")
+
+
+@ROUTER.get("/api/settings", admin=True)
+def _rt_settings(h):
+    return json.dumps(settings_for_ui()).encode(), "application/json"
+
+
+@ROUTER.get("/api/tasks", admin=True)
+def _rt_tasks(h):
+    return json.dumps(load_tasks()).encode(), "application/json"
+
+
+@ROUTER.get("/api/usage", admin=True)
+def _rt_usage(h):
+    return json.dumps(usage_summary()).encode(), "application/json"
+
+
+@ROUTER.get("/api/gateway", admin=True)
+def _rt_gateway(h):
+    g = load_gateway()
+    g["available"] = _clean_unicode is not None
+    return json.dumps(g).encode(), "application/json"
+
+
+@ROUTER.get("/api/personas")
+def _rt_personas(h):
+    return json.dumps(load_personas(), ensure_ascii=False).encode(), "application/json"
+
+
+@ROUTER.get("/api/skills")
+def _rt_skills(h):
+    return json.dumps(load_skills(), ensure_ascii=False).encode(), "application/json"
+
+
+@ROUTER.get("/api/skills/", prefix=True)
+def _rt_skill(h):
+    nm = re.sub(r"[^a-z0-9_-]", "", h.path.split("/api/skills/", 1)[1].lower())
+    sk = next((x for x in load_skills() if x.get("name") == nm), None)
+    return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),
+            "text/plain; charset=utf-8")
+
+
+@ROUTER.get("/logo.svg")
+@ROUTER.get("/favicon.ico")
+def _rt_logo(h):
+    return LOGO_SVG.encode(), "image/svg+xml"
+
+
 class H(BaseHTTPRequestHandler):
     # Protection layer: an unhandled exception in a route must NOT tear the
     # connection down hard (the agent would otherwise see "RemoteDisconnected").
@@ -2778,6 +2839,27 @@ class H(BaseHTTPRequestHandler):
 
     def _do_GET(self):
         if not self._auth():
+            return
+        # Tabelle zuerst. Was dort steht, kann von keiner spaeteren Praefix-
+        # Verzweigung mehr verdeckt werden — das ist der ganze Zweck.
+        hit = ROUTER.resolve("GET", self.path)
+        if hit is not None:
+            fn, admin_only = hit
+            if admin_only and instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"forbidden"}')
+                return
+            out = fn(self)
+            if out is None:
+                return                      # die Route hat selbst geantwortet
+            body, ct = out
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if self.path.split("?", 1)[0].rstrip("/") == "/chat":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -3175,21 +3257,16 @@ class H(BaseHTTPRequestHandler):
         # Admin UI only: guests have no business here. /api/settings served the
         # API keys in plain text until just now — bypassing broker and policy.
         _p = self.path.split("?", 1)[0]
-        if _p in ("/api/settings", "/api/instances", "/api/chats", "/api/tasks", "/api/usage",
-                  "/api/gateway", "/api/notifications"):
+        # Rest der Admin-Liste; die migrierten Pfade tragen ihr admin=True
+        # inzwischen an der Route selbst (siehe ROUTER oben).
+        if _p in ("/api/chats", "/api/notifications"):
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"error":"forbidden"}')
                 return
-        if self.path == "/api/instances":
-            body = json.dumps([{**i, "running": is_running(i)} for i in load_instances()]).encode()
-            ct = "application/json"
-        elif self.path == "/api/settings":
-            body = json.dumps(settings_for_ui()).encode()
-            ct = "application/json"
-        elif _p == "/api/chats":
+        if _p == "/api/chats":
             q = urllib.parse.parse_qs(self.path.partition("?")[2])
             if "since" in q or "wait" in q:
                 try:
@@ -3220,28 +3297,6 @@ class H(BaseHTTPRequestHandler):
                 body = json.dumps({"notifications": lst,
                                    "unread": sum(1 for n in lst if not n.get("read"))}).encode()
             ct = "application/json"
-        elif self.path == "/api/tasks":
-            body = json.dumps(load_tasks()).encode()
-            ct = "application/json"
-        elif _p == "/api/usage":
-            body = json.dumps(usage_summary()).encode()
-            ct = "application/json"
-        elif _p == "/api/gateway":
-            g = load_gateway()
-            g["available"] = _clean_unicode is not None
-            body = json.dumps(g).encode()
-            ct = "application/json"
-        elif self.path == "/api/personas":
-            body = json.dumps(load_personas(), ensure_ascii=False).encode()
-            ct = "application/json"
-        elif self.path == "/api/skills":
-            body = json.dumps(load_skills(), ensure_ascii=False).encode()
-            ct = "application/json"
-        elif self.path.startswith("/api/skills/"):
-            nm = re.sub(r"[^a-z0-9_-]", "", self.path.split("/api/skills/", 1)[1].lower())
-            s = next((x for x in load_skills() if x.get("name") == nm), None)
-            body = (s.get("content", "") if s else f"Skill '{nm}' not found").encode()
-            ct = "text/plain; charset=utf-8"
         elif self.path.startswith("/api/memory/"):
             seg = self.path[len("/api/memory/"):].split("/")
             # A guest may only read its OWN memory — the name then comes from the
@@ -3254,9 +3309,6 @@ class H(BaseHTTPRequestHandler):
             else:
                 body = json.dumps(mem_recall(inst), ensure_ascii=False).encode()
             ct = "application/json"
-        elif self.path in ("/logo.svg", "/favicon.ico"):
-            body = LOGO_SVG.encode()
-            ct = "image/svg+xml"
         elif self.path.startswith("/api/openrouter-models"):
             body = json.dumps(openrouter_models("refresh=1" in self.path,
                                                 "tools=1" in self.path,

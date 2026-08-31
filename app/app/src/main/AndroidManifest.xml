@@ -7,6 +7,18 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Voice control: record and send to the manager. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Brilliant glasses (Halo/Frame) over Bluetooth LE. neverForLocation:
+         we look for a specific device, not for locations — which drops the
+         location permission from Android 12 on. Below that the system still
+         demands it for scanning, hence the legacy entries with maxSdkVersion. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
         android:allowBackup="true"

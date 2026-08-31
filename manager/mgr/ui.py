@@ -1248,7 +1248,7 @@ async function loadMissions(){
         ${bar(m)}
         <span style="margin-left:auto;display:flex;gap:6px">
           ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause','${esc(m._inst||'')}')">Pause</button>`:''}
-          ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume','${esc(m._inst||'')}')">Weiter</button>`:''}
+          ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume','${esc(m._inst||'')}')">Resume</button>`:''}
           ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort','${esc(m._inst||'')}')">Cancel</button>`:''}
         </span>
       </div>
@@ -1259,11 +1259,11 @@ async function loadMissions(){
   document.getElementById('missions').innerHTML=cor+
     (open.length||closed.length
       ? open.map(row).join('')
-        + (closed.length?`<div class=text-muted style="margin:14px 0 4px;font-size:10px;letter-spacing:.1em;text-transform:uppercase">Zuletzt abgeschlossen</div>${closed.map(row).join('')}`:'')
+        + (closed.length?`<div class=text-muted style="margin:14px 0 4px;font-size:10px;letter-spacing:.1em;text-transform:uppercase">Recently completed</div>${closed.map(row).join('')}`:'')
       : '<span class=text-muted style="font-size:13px">No missions. Any agent creates them itself for multi-step jobs (mission_start) — e.g. via chat: "… — as a mission".</span>');
 }
 async function missionAct(id,action,instance){
-  if(action==='abort'&&!confirm('Mission '+id+' abbrechen?'))return;
+  if(action==='abort'&&!confirm('Abort mission '+id+'?'))return;
   await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,action,instance:instance||''})}).catch(()=>{});
   loadMissions();
@@ -1351,13 +1351,13 @@ async function refreshUsage(){
   let day=0,all=0;
   document.querySelectorAll('[data-usage]').forEach(el=>{
     const v=u[el.dataset.usage]; if(!v)return;
-    el.innerHTML='Tokens heute '+fmtTok(v.today.in)+'&nbsp;/&nbsp;'+fmtTok(v.today.out)+
-      ' · '+fmtCost(v.today.cost)+' &nbsp;·&nbsp; gesamt '+fmtTok(v.total.in)+
+    el.innerHTML='Tokens today '+fmtTok(v.today.in)+'&nbsp;/&nbsp;'+fmtTok(v.today.out)+
+      ' · '+fmtCost(v.today.cost)+' &nbsp;·&nbsp; total '+fmtTok(v.total.in)+
       '&nbsp;/&nbsp;'+fmtTok(v.total.out)+' · '+fmtCost(v.total.cost);
   });
   Object.values(u).forEach(v=>{day+=(v.today||{}).cost||0; all+=(v.total||{}).cost||0});
   const f=document.getElementById('spend');
-  if(f)f.textContent='LLM heute '+fmtCost(day)+' · gesamt '+fmtCost(all);
+  if(f)f.textContent='LLM today '+fmtCost(day)+' · total '+fmtCost(all);
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */

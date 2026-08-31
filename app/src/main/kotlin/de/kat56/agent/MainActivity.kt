@@ -2362,6 +2362,125 @@ fun SettingsScreen(
                 }
             }
 
+            // ── Glasses (Halo) ─────────────────────────────────────────────
+            // Dry run without hardware: HaloDryLink takes the same packets as
+            // the real glasses and shows what would be on the display. That way
+            // the whole chain can be clicked through before unboxing — only the
+            // Bluetooth path is missing then.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Glasses (Halo)", Modifier.padding(horizontal = 4.dp))
+                var haloStatus by remember { mutableStateOf("not connected") }
+                var haloScreen by remember { mutableStateOf(listOf<String>()) }
+                var dry by remember { mutableStateOf<HaloDryLink?>(null) }
+                var ble by remember { mutableStateOf<HaloBle?>(null) }
+                var ctrl by remember { mutableStateOf<HaloController?>(null) }
+                val scope = rememberCoroutineScope()
+
+                fun luaFromAssets(name: String): String =
+                    ctx.assets.open("halo/$name.lua").bufferedReader().use { it.readText() }
+
+                fun newController(link: HaloLink, fakeHeard: String?): HaloController {
+                    val c = HaloController(
+                        luaSource = ::luaFromAssets,
+                        transcribe = { wav ->
+                            fakeHeard ?: ManagerSync.stt(prefs.serverUrl, prefs.user, prefs.pass, wav, "audio/wav")
+                        },
+                        ask = { question ->
+                            ServerAgent.chat(prefs.serverUrl, prefs.instance, prefs.user, prefs.pass, question)
+                        },
+                        askWithImage = { question, jpeg ->
+                            // The same path as a photo from the app: base64 JPEG
+                            // into the chat stream, collect the reply.
+                            val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
+                            val sb = StringBuilder()
+                            val err = ServerAgent.chatStream(prefs.serverUrl, prefs.instance,
+                                prefs.user, prefs.pass, question, b64) { sb.append(it) }
+                            err ?: sb.toString()
+                        },
+                        awaitPhoto = { t -> ble?.awaitPhoto(t) ?: dry?.photo },
+                        onStatus = { haloStatus = it.ifBlank { "ready" } },
+                    )
+                    c.attach(link)
+                    return c
+                }
+
+                val blePerm = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+                    if (granted.values.any { !it }) haloStatus = "permission denied"
+                }
+
+                KatCard(padding = PaddingValues(12.dp), spacing = 10.dp) {
+                    Text(haloStatus, fontSize = 13.sp, fontFamily = Plex, color = Kat.textDim)
+                    // Preview of the glasses display — in the dry run the only
+                    // thing there is to see.
+                    if (haloScreen.isNotEmpty()) Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                            .background(Kat.tile).padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        haloScreen.forEach {
+                            Text(it, fontSize = 12.sp, fontFamily = PlexMono, color = Kat.accentText)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledPill("Connect", {
+                            val b = HaloBle(ctx)
+                            val missing = b.missingPermissions()
+                            if (missing.isNotEmpty()) { blePerm.launch(missing.toTypedArray()); return@FilledPill }
+                            haloStatus = "searching…"
+                            scope.launch {
+                                val err = withContext(Dispatchers.IO) {
+                                    b.connect(listener = object : HaloBle.Listener {
+                                        override fun onDisconnected(reason: String) { haloStatus = reason }
+                                        override fun onText(text: String) { haloStatus = text.take(120) }
+                                    })
+                                }
+                                if (err != null) { haloStatus = "⚠️ $err"; return@launch }
+                                ble = b
+                                withContext(Dispatchers.IO) { ctrl = newController(b, null) }
+                            }
+                        }, height = 36.dp)
+                        FilledPill("Dry run", {
+                            val l = HaloDryLink()
+                            dry = l; haloScreen = emptyList()
+                            scope.launch {
+                                withContext(Dispatchers.IO) { ctrl = newController(l, "What is the weather?") }
+                                haloScreen = l.display.toList()
+                                haloStatus = "dry run: ${l.uploaded.size} modules loaded"
+                            }
+                        }, height = 36.dp)
+                        if (ctrl != null) FilledPill("Disconnect", {
+                            ctrl?.detach(); ctrl = null
+                            ble?.disconnect(); ble = null; dry = null
+                            haloScreen = emptyList(); haloStatus = "not connected"
+                        }, height = 36.dp)
+                    }
+                    if (ctrl != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledPill("Listen", {
+                            ctrl?.startListening()
+                            dry?.let { haloScreen = it.display.toList() }
+                        }, height = 36.dp)
+                        FilledPill("Photo", {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { ctrl?.photoAndAsk() }
+                                dry?.let { haloScreen = it.display.toList() }
+                            }
+                        }, height = 36.dp)
+                        FilledPill("Ask", {
+                            scope.launch {
+                                // In the dry run there is no recording — the made-up
+                                // question still goes to the real instance.
+                                val wav = withContext(Dispatchers.IO) {
+                                    ble?.recordingAsWav() ?: ByteArray(0)
+                                }
+                                withContext(Dispatchers.IO) { ctrl?.stopAndAsk(wav) }
+                                dry?.let { haloScreen = it.display.toList() }
+                            }
+                        }, height = 36.dp)
+                    }
+                }
+            }
+
             // ── Chat ───────────────────────────────────────────────────────
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Kicker("Chat", Modifier.padding(horizontal = 4.dp))

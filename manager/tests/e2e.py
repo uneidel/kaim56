@@ -793,6 +793,64 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             kmod.katfs_proxy_fs = old
 
+    def test_no_route_is_shadowed_by_an_earlier_prefix(self):
+        """Guard for the if-chain: a prefix branch standing BEFORE an exact
+        branch swallows it, and the exact branch becomes dead code. That has
+        bitten twice (/api/skills/ vs /api/skills). Anything migrated into the
+        router is immune by construction; this covers what is still a chain."""
+        from mgr.routes import source_routes, shadowed
+        src = open(MANAGER_PATH).read()
+        get_src = src[src.index("    def _do_GET(self):"):src.index("    def _do_POST(self):")]
+        post_src = src[src.index("    def _do_POST(self):"):]
+        for name, part in (("GET", get_src), ("POST", post_src)):
+            bad = shadowed(source_routes(part))
+            self.assertEqual(bad, [], f"{name}: dead branches behind a prefix: {bad}")
+
+    def test_router_prefers_exact_over_prefix(self):
+        """The property the chain could not guarantee: registration order does
+        not decide who answers."""
+        from mgr.routes import Router
+        r = Router()
+        r.add("GET", "/api/skills/", lambda h: "prefix", prefix=True)   # first!
+        r.add("GET", "/api/skills", lambda h: "exact")
+        r.add("GET", "/api/skills/deep/", lambda h: "deeper", prefix=True)
+        self.assertEqual(r.resolve("GET", "/api/skills")[0](None), "exact")
+        self.assertEqual(r.resolve("GET", "/api/skills?x=1")[0](None), "exact")
+        self.assertEqual(r.resolve("GET", "/api/skills/docker")[0](None), "prefix")
+        # Longest prefix wins, whatever the order of registration.
+        self.assertEqual(r.resolve("GET", "/api/skills/deep/x")[0](None), "deeper")
+        self.assertIsNone(r.resolve("GET", "/nope"))
+        self.assertIsNone(r.resolve("POST", "/api/skills"))     # method matters
+
+    def test_router_refuses_duplicate_routes(self):
+        from mgr.routes import Router
+        r = Router()
+        r.add("GET", "/x", lambda h: 1)
+        with self.assertRaises(ValueError):
+            r.add("GET", "/x", lambda h: 2)
+        r.add("GET", "/y/", lambda h: 1, prefix=True)
+        with self.assertRaises(ValueError):
+            r.add("GET", "/y/", lambda h: 2, prefix=True)
+
+    def test_router_inventory_records_who_may_call(self):
+        """The inventory is what makes an access audit a loop instead of a
+        reading exercise: every route says whether guests may call it."""
+        m = self.m
+        inv = m.ROUTER.inventory()
+        self.assertTrue(inv, "the router should carry routes")
+        for method, kind, path, admin in inv:
+            self.assertIn(method, ("GET", "POST"))
+            self.assertIn(kind, ("exact", "prefix"))
+            self.assertTrue(path.startswith("/"))
+            self.assertIsInstance(admin, bool)
+        by_path = {p: admin for _, _, p, admin in inv}
+        # Settings once served the API keys in plain text — guests must not see it.
+        self.assertTrue(by_path["/api/settings"], "/api/settings must stay admin-only")
+        self.assertTrue(by_path["/api/instances"])
+        # The agents need these, so they are deliberately open to guests.
+        self.assertFalse(by_path["/api/skills"])
+        self.assertFalse(by_path["/api/personas"])
+
     def test_skills_page_carries_no_contents(self):
         """Regression: the page inlined the COMPLETE skills.json. With the
         imported catalog (~870 KB) that would ship on every page load — only
