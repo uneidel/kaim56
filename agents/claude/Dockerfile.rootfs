@@ -11,11 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Bridge + config + guest-init
 COPY bridge.py       /app/bridge.py
 COPY web_bridge.py   /app/web_bridge.py
+COPY kaim56_mcp.py   /app/kaim56_mcp.py
 COPY webterm.py      /app/webterm.py
 COPY config.env      /app/config.env
 COPY guest-init.sh   /init
 # Agent runs as 'node' (uid 1000) -> claude-code does not allow action mode as root
 RUN chmod +x /init && mkdir -p /home/node/.claude /home/node/workspace \
+    && printf '{"mcpServers":{"kaim56":{"command":"python3","args":["/app/kaim56_mcp.py"]}}}' \
+       > /app/kaim56-mcp.json \
     && chown -R node:node /home/node
 
 # (login /root/.claude/.credentials.json and kernel are added externally)

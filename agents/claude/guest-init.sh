@@ -132,9 +132,11 @@ if ! grep -q "## kAIm56 platform" "$PLATFORM_MD" 2>/dev/null; then
 
 ## kAIm56 platform
 
-You run inside a Firecracker microVM on the kAIm56 agent platform. The manager
-on the host offers APIs any guest may call with curl (base: http://${GW_IP}:8700).
-Persist knowledge with them — your session context does not survive /reset.
+You run inside a Firecracker microVM on the kAIm56 agent platform. You have
+MCP tools from the "kaim56" server: memory_store, memory_recall, web_search,
+list_skills, load_skill, notify — USE THOSE. Your session context does not
+survive /reset; when the user asks you to remember something, memory_store it.
+The same APIs are reachable with curl as a fallback (base: http://${GW_IP}:8700):
 
 - Long-term memory (per instance, survives restarts):
   store:  curl -s -X POST http://${GW_IP}:8700/api/memory/self \
@@ -151,8 +153,7 @@ Persist knowledge with them — your session context does not survive /reset.
   curl -s -X POST http://${GW_IP}:8700/api/notify \
     -H 'Content-Type: application/json' -d '{"title":"…","message":"…"}'
 
-When the user asks you to remember something, use the memory API — do not
-claim you have no memory.
+Do not claim you have no memory — you do, via memory_store/memory_recall.
 EOF
   chown node:node "$PLATFORM_MD" 2>/dev/null
 fi

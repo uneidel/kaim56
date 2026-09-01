@@ -55,7 +55,10 @@ def run_claude(msg):
 
 def _claude_once(msg, resume, keep_session):
     global _session
-    cmd = ["claude", "-p", msg, "--output-format", "json"]
+    cmd = ["claude", "-p", msg, "--output-format", "json",
+           # Platform tools (memory, search, skills, notify) as a real MCP
+           # server instead of curl recipes — Claude sees them in its catalog.
+           "--mcp-config", "/app/kaim56-mcp.json"]
     if _model:
         cmd += ["--model", _model]
     if resume:
