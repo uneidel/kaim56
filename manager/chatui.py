@@ -213,6 +213,12 @@ details.ast .row{margin-bottom:18px}
 #thumbs:empty{display:none}
 #thumbs .th{position:relative}
 #thumbs img{height:54px;display:block;border:1px solid var(--border)}
+#thumbs .doc{display:flex;flex-direction:column;gap:4px;max-width:520px;padding:8px 12px;
+  background:var(--panel-2);border:1px solid var(--border);cursor:pointer;font-size:12.5px}
+#thumbs .doc b{font-weight:600}
+#thumbs .doc small{color:var(--muted)}
+#thumbs .doc pre{margin:4px 0 0;max-height:180px;overflow:auto;white-space:pre-wrap;
+  font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:6px}
 #thumbs .x{position:absolute;top:-6px;right:-6px;background:var(--panel-2);border:1px solid var(--border);
   color:var(--text);width:18px;height:18px;font-size:.7rem;line-height:1;cursor:pointer}
 .inrow{display:flex;align-items:flex-end;gap:4px}
@@ -268,10 +274,10 @@ details.ast .row{margin-bottom:18px}
     <div id=box class=blueprint><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
       <div id=thumbs></div>
       <div class=inrow>
-        <button class=icon id=clipBtn title="Attach an image (vision-capable agents only)" onclick="document.getElementById('file').click()"></button>
+        <button class=icon id=clipBtn title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
         <button class=icon id=branchBtn title="Open a side branch: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()>⑂</button>
         <button class=icon id=micBtn title="Speak (tap again = done)" onclick=micToggle()>🎙</button>
-        <input type=file id=file accept="image/*" hidden onchange=addImage(this)>
+        <input type=file id=file accept="image/*,.pdf,.docx,.odt,.txt,.md,.csv,.html" hidden onchange=addAttachment(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
         <button id=send onclick=send(true) title="Send · during a reply: ■ = stop (Enter with text = interject)">➤</button>
       </div>
@@ -601,17 +607,41 @@ async function restartAgent(){
   setTimeout(refreshState,3000);
 }
 
-/* ---------- Images ---------- */
-function addImage(inp){
+/* ---------- Attachments ---------- */
+/* Images go to the model as vision input. Everything else goes to the
+   manager's /api/extract; what travels into the chat is the extracted TEXT
+   (the model never sees the binary). doc = {name, text, note}. */
+let doc=null, docOpen=false;
+function addAttachment(inp){
   const f=inp.files&&inp.files[0];inp.value='';
   if(!f)return;
-  const r=new FileReader();
-  r.onload=()=>{img=String(r.result).split(',')[1]||null;drawThumb()};
-  r.readAsDataURL(f);
+  if((f.type||'').startsWith('image/')){
+    const r=new FileReader();
+    r.onload=()=>{img=String(r.result).split(',')[1]||null;drawThumb()};
+    r.readAsDataURL(f);
+    return;
+  }
+  fetch('/api/extract?name='+encodeURIComponent(f.name),{method:'POST',body:f})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.error){alert('Extraction failed: '+d.error);return;}
+      doc={name:d.name,text:d.text,note:d.note||''};docOpen=false;drawThumb();
+    })
+    .catch(e=>alert('Extraction failed: '+e));
 }
 function drawThumb(){
-  $('thumbs').innerHTML=img?`<div class=th><img src="data:image/jpeg;base64,${img}" alt="">`+
-    `<button class=x onclick="img=null;drawThumb()">✕</button></div>`:'';
+  let h='';
+  if(img)h+=`<div class=th><img src="data:image/jpeg;base64,${img}" alt="">`+
+    `<button class=x onclick="img=null;drawThumb()">✕</button></div>`;
+  if(doc){
+    const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    h+=`<div class="th doc" onclick="docOpen=!docOpen;drawThumb()">`+
+      `<span>📄 <b>${esc(doc.name)}</b> <small>${doc.text.length} characters`+
+      `${doc.note?' · '+esc(doc.note):''}${docOpen?'':' · click to preview'}</small></span>`+
+      (docOpen?`<pre>${esc(doc.text.slice(0,4000))}${doc.text.length>4000?'\n…':''}</pre>`:'')+
+      `</div><div class=th><button class=x onclick="event.stopPropagation();doc=null;drawThumb()">✕</button></div>`;
+  }
+  $('thumbs').innerHTML=h;
 }
 
 /* ---------- Voice ----------
@@ -762,19 +792,24 @@ async function send(fromButton){
     ctrl.abort();return;                      /* button (■) aborts */
   }
   const raw=RAW; RAW=null;
-  const text=raw?raw.text:$('t').value.trim();
-  if(!text&&!img)return;
+  const typed=raw?raw.text:$('t').value.trim();
+  if(!typed&&!img&&!doc)return;
+  const text=doc
+    ?`[Attached document: ${doc.name}]\n${doc.text}\n[End of document]\n\n`+
+      (typed||'Please read the attached document and summarize it.')
+    :typed;
+  const shown=doc?('📄 '+doc.name+(typed?'\n'+typed:'')):typed;
   if(!agent)return alert('No instance with TRANSPORT=web available.');
-  if(!cur){cur={id:String(Date.now()),agent:agent,title:(text||'Image').slice(0,42),ts:Date.now(),msgs:[]};
+  if(!cur){cur={id:String(Date.now()),agent:agent,title:(typed||(doc?doc.name:'Image')).slice(0,42),ts:Date.now(),msgs:[]};
     convs.unshift(cur)}
   const tagU=raw?raw.u:((cur.abranch||0));
   const tagR=raw?raw.r:((cur.abranch||0));
-  cur.msgs.push({role:'user',content:text,image:img||undefined,branch:tagU||undefined});
+  cur.msgs.push({role:'user',content:shown,image:img||undefined,branch:tagU||undefined});
   const reply={role:'assistant',content:'',busy:true,branch:tagR||undefined};
   cur.msgs.push(reply);
   if(raw&&raw.cb)raw.cb();
   const payload={message:text,chat:cur.id}; if(img)payload.image=img;
-  img=null;drawThumb();if(!raw){$('t').value='';autogrow();}
+  img=null;doc=null;docOpen=false;drawThumb();if(!raw){$('t').value='';autogrow();}
   cur.ts=Date.now();save();draw();drawConvs();
   ctrl=new AbortController();
   $('send').textContent='■';$('send').classList.add('stop');

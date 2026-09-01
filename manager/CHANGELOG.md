@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-01 (web chat: document attachments too)
+- The web chat's paperclip now also takes PDF/DOCX/ODT/text, through the same `/api/extract` route as the app: the extracted TEXT travels into the turn (marked, capped), the model never sees the binary. The chip under the input shows name and size and expands on click to a scrollable preview of exactly what the model will get; the bubble carries a compact 📄 marker. Images keep going the vision path unchanged — one file input, branched by type. Verified live against the running manager.
+
 ## 2026-09-01 (app v5.30: tap the document chip to preview the extracted text)
 - The attachment chip now expands on tap: the first 4k characters of the extracted text, scrollable, exactly what the model will see (plus the rest). Point: PDF extraction without poppler is not perfect — better to check the result before sending than to let the model guess. Collapses again on tap; a newly attached document starts collapsed.
 
