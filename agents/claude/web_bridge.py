@@ -45,7 +45,7 @@ def run_claude(msg):
         if not rest:
             return "Usage: /fresh <task> — one-off request in a throwaway context."
         return _claude_once(rest, resume=None, keep_session=False)
-    for known in ("/branch", "/back", "/goal", "/steps", "/reasoning"):
+    for known in ("/aside", "/branch", "/back", "/goal", "/steps", "/reasoning"):
         if low == known or low.startswith(known + " "):
             return (f"ℹ️ {known} only exists on the OpenRouter agents, not on "
                     "Claude Code instances. Available here: /reset, /fresh, /model — "

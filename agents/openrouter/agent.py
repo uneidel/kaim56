@@ -1815,7 +1815,8 @@ def _inject_playbooks():
 # Recurring assignments as a command (pi.dev idea "prompt templates").
 # Expansion happens HERE in the agent — so it works in web, app and
 # Signal alike. "/daily please keep it short" -> template text + " please keep it short".
-_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps", "/branch", "/back")
+_BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps",
+                  "/aside", "/branch", "/back")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
 
@@ -1959,7 +1960,7 @@ def _drain_steer(hist, on_token=None):
 
 
 # --- branches (tree chat): side question in inherited context, clean return --
-# /branch opens a branch: a marker remembers the point. /back closes
+# /aside opens an aside: a marker remembers the point. /back closes
 # the innermost branch: everything after the marker is condensed into ONE sidenote
 # (or discarded without a trace with "drop") — the main topic stays unpolluted
 # but informed. Nesting is possible (a stack via markers in the history).
@@ -1974,11 +1975,16 @@ def _branch_depth():
 
 
 def _branch_open(cmd):
-    thema = cmd[len("/branch"):].strip()
+    # /aside is the name, /branch the silent alias (muscle memory, old
+    # playbooks — and Claude Code owns "/branch" for git worktrees, which made
+    # the old name collide in people's heads).
+    word = "/aside" if cmd.startswith("/aside") else "/branch"
+    thema = cmd[len(word):].strip()
     _history.append({"role": "system", "content":
-                     BRANCH_MARK + (f" Side branch: {thema}" if thema else " Side branch") +
+                     BRANCH_MARK + (f" Aside: {thema}" if thema else " Aside") +
                      " — the user asks a question aside from the main topic."})
-    return f"⑂ Side branch opened (depth {_branch_depth()})." +         (f" Topic: {thema}" if thema else "")
+    return f"⑂ Aside opened (depth {_branch_depth()})." + \
+        (f" Topic: {thema}" if thema else "")
 
 
 def _branch_close(cmd):
@@ -2053,7 +2059,7 @@ def run(user_message):
         return _set_model(user_message)
     if user_message.startswith("/steps"):
         return _set_steps(user_message)
-    if user_message.startswith("/branch"):
+    if user_message.startswith(("/aside", "/branch")):
         return _branch_open(user_message)
     if user_message.startswith("/back"):
         return _branch_close(user_message)
@@ -2239,7 +2245,7 @@ def run_stream(user_message, on_token, image=None):
     if user_message.startswith("/steps"):
         on_token(_set_steps(user_message))
         return
-    if user_message.startswith("/branch"):
+    if user_message.startswith(("/aside", "/branch")):
         on_token(_branch_open(user_message))
         return
     if user_message.startswith("/back"):

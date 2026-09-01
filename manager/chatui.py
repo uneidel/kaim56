@@ -267,7 +267,7 @@ details.ast .row{margin-bottom:18px}
 
   <div id=comp>
     <div id=branchbar style="max-width:760px;margin:0 auto 6px;display:none">
-      <span class=bb-label>⑂ Side branch active (depth <span id=bdepth>1</span>) — replies run in the inherited context</span>
+      <span class=bb-label>⑂ Aside active (depth <span id=bdepth>1</span>) — replies run in the inherited context</span>
       <button class=bb-btn onclick=backBranch()>↩ back to main thread</button>
     </div>
     <div id=slashhint style="max-width:760px;margin:0 auto 6px;display:none"></div>
@@ -275,7 +275,7 @@ details.ast .row{margin-bottom:18px}
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
-        <button class=icon id=branchBtn title="Open a side branch: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="4"/><rect x="1" y="10.5" width="5" height="4"/><rect x="10" y="10.5" width="5" height="4"/><path d="M8 5.5v2.5M8 8H3.5v2.5M8 8h4.5v2.5"/></svg></button>
+        <button class=icon id=branchBtn title="Open an aside: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="4"/><rect x="1" y="10.5" width="5" height="4"/><rect x="10" y="10.5" width="5" height="4"/><path d="M8 5.5v2.5M8 8H3.5v2.5M8 8h4.5v2.5"/></svg></button>
         <button class=icon id=micBtn title="Speak (tap again = done)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*,.pdf,.docx,.odt,.txt,.md,.csv,.html" hidden onchange=addAttachment(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
@@ -510,7 +510,7 @@ function draw(){
     let seg='';
     while(i<cur.msgs.length&&(cur.msgs[i].branch||0)>0){seg+=row(cur.msgs[i],i);i++;n++}
     const live=(i>=cur.msgs.length)&&(cur.abranch||0)>0;
-    html+=`<details class=ast ${live?'open':''}><summary>⑂ Side branch · ${n} messages</summary>${seg}</details>`;
+    html+=`<details class=ast ${live?'open':''}><summary>⑂ Aside · ${n} messages</summary>${seg}</details>`;
   }
   m.innerHTML=html;
   scroll();
@@ -701,7 +701,7 @@ function openBranch(){
   const t=$('t').value.trim();
   const d=((cur&&cur.abranch)||0)+1;
   /* send() creates a new chat itself if needed — in the callback cur exists. */
-  sendRaw('/branch'+(t?' '+t:''),d,d,()=>{
+  sendRaw('/aside'+(t?' '+t:''),d,d,()=>{
     cur.abranch=d;branchUi();
     if(t){$('t').value='';autogrow()}
   });
@@ -732,8 +732,8 @@ const SLASH_BUILTIN=[
   ['/goal','Set a goal — replies are refined against a judge'],
   ['/reset','Reset the context'],
   ['/fresh','One-off request in a throwaway context (history untouched)'],
-  ['/branch','Open a side branch — a follow-up aside from the main thread'],
-  ['/back','Close the side branch and summarise it as a note (/back drop = discard)'],
+  ['/aside','Open an aside — a follow-up beside the main thread (folds back into a note)'],
+  ['/back','Close the aside and summarise it as a note (/back drop = discard)'],
 ];
 let SLASH_PROMPTS=[],_spTs=0;
 async function slashPrompts(){

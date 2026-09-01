@@ -1519,7 +1519,7 @@ class ManagerHTTP(unittest.TestCase):
         self.assertEqual(st, 200)
         agents = json.loads(txt).get("agents", [])
         self.assertTrue(agents)
-        known = {"openrouter", "orcarouter", "anthropic", "pi", "prime", "llama"}
+        known = {"openrouter", "orcarouter", "anthropic", "pi", "prime", "llama", "claude"}
         for a in agents:
             self.assertIn("backend", a, f"{a.get('name')} without a backend field")
             self.assertIn("model", a)

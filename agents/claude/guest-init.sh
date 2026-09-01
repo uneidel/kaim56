@@ -121,6 +121,42 @@ fi
 export HOME=/home/node
 export CLAUDE_WORKDIR="$WORKDIR"
 TRANSPORT="${TRANSPORT:-signal}"
+# Platform knowledge for Claude Code: the manager APIs (memory, search,
+# skills, notify) are open to every guest — but Claude only knows that when it
+# stands in the CLAUDE.md it reads automatically. Written after the NFS mount;
+# an existing user CLAUDE.md is appended to, never overwritten.
+GW_IP=$(ip route | awk '/default/ {print $3; exit}')
+PLATFORM_MD="$WORKDIR/CLAUDE.md"
+if ! grep -q "## kAIm56 platform" "$PLATFORM_MD" 2>/dev/null; then
+  cat >> "$PLATFORM_MD" <<EOF
+
+## kAIm56 platform
+
+You run inside a Firecracker microVM on the kAIm56 agent platform. The manager
+on the host offers APIs any guest may call with curl (base: http://${GW_IP}:8700).
+Persist knowledge with them — your session context does not survive /reset.
+
+- Long-term memory (per instance, survives restarts):
+  store:  curl -s -X POST http://${GW_IP}:8700/api/memory/self \
+            -H 'Content-Type: application/json' -d '{"key":"<key>","value":"<value>"}'
+  recall: curl -s http://${GW_IP}:8700/api/memory/self            # all entries
+          curl -s http://${GW_IP}:8700/api/memory/self/<urlencoded-key>
+  (the instance in the path is ignored for guests — you always get your own)
+- Web search (Brave-backed, no key needed here):
+  curl -s "http://${GW_IP}:8700/api/websearch?q=<urlencoded>&count=5"
+- Expert skills (knowledge documents):
+  curl -s http://${GW_IP}:8700/api/skills?meta=1          # catalog
+  curl -s http://${GW_IP}:8700/api/skills/<name>          # one document
+- Notify the user's devices:
+  curl -s -X POST http://${GW_IP}:8700/api/notify \
+    -H 'Content-Type: application/json' -d '{"title":"…","message":"…"}'
+
+When the user asks you to remember something, use the memory API — do not
+claim you have no memory.
+EOF
+  chown node:node "$PLATFORM_MD" 2>/dev/null
+fi
+
 echo "[init] agent=claude(node) transport=$TRANSPORT workdir=$WORKDIR"
 cd "$WORKDIR"
 RUNAS="setpriv --reuid=1000 --regid=1000 --init-groups"

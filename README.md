@@ -50,7 +50,7 @@ The built-in **Architecture** view (rendered from the running manager):
 - Playbooks — standing rules the agent learns from your corrections and always follows
 - Prompt templates as slash commands, auto-summarizing context, and large-output offloading with type-aware previews (JSON becomes an outline, logs get duplicates folded and error lines kept — the full text stays readable via `offload_read`)
 - Skills — a catalog of 67 expert documents in the Claude-Code skill format, pulled into context on demand (`list_skills` names-only, descriptions via query)
-- Steering (interrupt a running turn), goal loops with a judge, and tree-chat (`/branch` … `/back` folds a side-question back into a one-line note)
+- Steering (interrupt a running turn), goal loops with a judge, and tree-chat (`/aside` … `/back` folds a side-question back into a one-line note; `/branch` stays as an alias)
 - Drop-in tool plugins (pi.dev-style) — add a tool as a single `.py` or a multi-file folder via drag-and-drop in the web UI, no image rebuild
 
 **Communication**
