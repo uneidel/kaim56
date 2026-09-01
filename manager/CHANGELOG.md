@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-01 (app v5.30: tap the document chip to preview the extracted text)
+- The attachment chip now expands on tap: the first 4k characters of the extracted text, scrollable, exactly what the model will see (plus the rest). Point: PDF extraction without poppler is not perfect — better to check the result before sending than to let the model guess. Collapses again on tap; a newly attached document starts collapsed.
+
 ## 2026-09-01 (app v5.29: PDF/DOCX attachments — and a poisoned-history fix)
 - **The chat can now attach documents, not just images.** New "File" tile in the app's attach sheet (PDF, DOCX, ODT, TXT/MD/CSV/HTML). The file goes to the new admin-only `POST /api/extract`; the manager extracts the TEXT and only that travels into the chat turn, clearly marked (`[Attached document: …]`), capped at 80k characters. The bubble shows a compact 📄 chip, not the payload. Extraction is stdlib-only (`mgr/extract.py`): DOCX/ODT via zipfile+XML; PDF prefers `pdftotext` when the host has poppler-utils and otherwise uses a built-in extractor (Flate streams, Tj/TJ operators) with an honesty check — a CID-font PDF yields a readable error instead of gibberish that would quietly poison the model's context. Five tests build their fixtures in-test (a real DOCX zip, a real Flate PDF).
 - The POST dispatcher now consults the routing table first, same as GET — `/api/extract` is its first table-registered POST route.

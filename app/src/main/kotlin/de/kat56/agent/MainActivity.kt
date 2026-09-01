@@ -342,9 +342,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     var menuOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
     var pendingImage by remember { mutableStateOf<Bitmap?>(null) }
-    // Attached document: the manager has already extracted the text; ONLY the
-    // text travels into the message, never the binary.
+    // Angehaengtes Dokument: der Manager hat den Text schon extrahiert; in die
+    // Nachricht wandert NUR der Text, nie die Binaerdatei.
     var pendingDoc by remember { mutableStateOf<ManagerSync.Extracted?>(null) }
+    // Preview of the extracted text, by tapping the chip: see BEFORE sending
+    // what the extraction really produced (PDF extraction without poppler is
+    // not perfect — better to check here than to let the model guess).
+    var docPreviewOpen by remember { mutableStateOf(false) }
     var web by remember { mutableStateOf(prefs.webAccess) }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
     // Header and settings show the sync state ("Syncing …" / "Synced · N chats").
@@ -450,7 +454,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     else ManagerSync.extract(prefs.serverUrl, prefs.user, prefs.pass, name, bytes)
                 }.getOrNull()
             }
-            if (r != null) { pendingDoc = r; status = "" }
+            if (r != null) { pendingDoc = r; docPreviewOpen = false; status = "" }
             else status = "⚠️ ${ManagerSync.lastStatus}"
         }
     }
@@ -908,10 +912,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if ((typed.isEmpty() && pendingImage == null && pendingDoc == null) || busy) return
         val img = pendingImage
         val imgB64 = img?.let { bitmapToBase64(it) }
-        // Attached document: the extracted text goes IN FRONT of the question,
-        // clearly marked — the model gets content + question in one turn. The
-        // bubble shows only a compact marker, not the 80k characters (the
-        // message to the model carries the full text).
+        // Angehaengtes Dokument: der extrahierte Text wird VOR die Frage
+        // gestellt, klar markiert — das Modell bekommt Inhalt + Frage in einem
+        // Turn. In der Blase erscheint nur eine kompakte Kennzeichnung, nicht
+        // die 80k Zeichen (die Nachricht ans Modell traegt den Volltext).
         val doc = pendingDoc
         val text = if (doc != null)
             "[Attached document: ${doc.name}]\n${doc.text}\n[End of document]\n\n" +
@@ -1215,26 +1219,47 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 // ── Attachment preview (not in the prototype, otherwise the
                 //    attached snapshot would be invisible) ─────────────────────
                 pendingDoc?.let { doc ->
-                    Row(
+                    Column(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
                             .clip(RoundedCornerShape(12.dp)).background(Kat.surface)
                             .border(1.dp, Kat.hairlineStrong, RoundedCornerShape(12.dp))
+                            .tap { docPreviewOpen = !docPreviewOpen }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Icon(Icons.Outlined.Description, null, tint = Kat.accentText,
-                            modifier = Modifier.size(20.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(doc.name, fontSize = 13.sp, fontFamily = Plex,
-                                color = Kat.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${doc.text.length} characters" +
-                                if (doc.note.isNotBlank()) " · ${doc.note}" else "",
-                                fontSize = 11.sp, fontFamily = Plex, color = Kat.textFaint)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(Icons.Outlined.Description, null, tint = Kat.accentText,
+                                modifier = Modifier.size(20.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(doc.name, fontSize = 13.sp, fontFamily = Plex,
+                                    color = Kat.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${doc.text.length} characters" +
+                                    (if (doc.note.isNotBlank()) " · ${doc.note}" else "") +
+                                    (if (docPreviewOpen) "" else " · tap to preview"),
+                                    fontSize = 11.sp, fontFamily = Plex, color = Kat.textFaint)
+                            }
+                            RoundIconButton({ pendingDoc = null; docPreviewOpen = false }, size = 32.dp) {
+                                Icon(Icons.Filled.Close, null, tint = Kat.textDim,
+                                    modifier = Modifier.size(16.dp))
+                            }
                         }
-                        RoundIconButton({ pendingDoc = null }, size = 32.dp) {
-                            Icon(Icons.Filled.Close, null, tint = Kat.textDim,
-                                modifier = Modifier.size(16.dp))
+                        // Expanded: the START of the extracted text, scrollable.
+                        // Exactly this (plus the rest) is what the model gets.
+                        AnimatedVisibility(docPreviewOpen) {
+                            Column {
+                                Hairline(Modifier.padding(vertical = 8.dp))
+                                Text(
+                                    doc.text.take(4000) +
+                                        (if (doc.text.length > 4000) "\n…" else ""),
+                                    fontSize = 11.5.sp, fontFamily = PlexMono,
+                                    color = Kat.textDim, lineHeight = 15.sp,
+                                    modifier = Modifier
+                                        .heightIn(max = 220.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                )
+                            }
                         }
                     }
                 }
