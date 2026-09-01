@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-01 (PDF extraction: poppler in a container as the fallback)
+- A user hit the honest error on a real PDF (subset/CID fonts — the built-in extractor cannot decode those, and the host has no poppler-utils). Rather than leaving that class of PDF broken until poppler is installed: `_pdf_text` now tries **pdftotext on the host → pdftotext from the `kaim56-pdftotext` container (alpine + poppler, built once; no network, read-only mount, memory cap) → the built-in extractor**. The host already runs Docker services, so this adds no new kind of dependency; the availability probe is cached. The error message, when everything fails, now names both fixes. Test forces the container path (host binary hidden, builtin disabled) against a well-formed PDF. 92 tests green.
+
 ## 2026-09-01 (web chat: document attachments too)
 - The web chat's paperclip now also takes PDF/DOCX/ODT/text, through the same `/api/extract` route as the app: the extracted TEXT travels into the turn (marked, capped), the model never sees the binary. The chip under the input shows name and size and expands on click to a scrollable preview of exactly what the model will get; the bubble carries a compact 📄 marker. Images keep going the vision path unchanged — one file input, branched by type. Verified live against the running manager.
 

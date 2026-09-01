@@ -913,6 +913,42 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIn("Hello from a tiny PDF.", text)
         self.assertIn("Second line.", text)
 
+    @unittest.skipUnless(
+        __import__("shutil").which("docker") and __import__("subprocess").run(
+            ["docker", "image", "inspect", "kaim56-pdftotext"],
+            capture_output=True).returncode == 0,
+        "kaim56-pdftotext image not available")
+    def test_extract_pdf_via_docker_fallback(self):
+        """The host has no pdftotext; the poppler container must cover what the
+        built-in extractor cannot (CID/subset fonts — the case a user hit)."""
+        import zlib
+        from mgr import extract as ex
+        content = zlib.compress(b"BT /F1 12 Tf (Container weg funktioniert.) Tj ET")
+        pdf = (b"%PDF-1.4\n"
+               b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+               b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+               b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+               b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+               b"4 0 obj\n<< /Length " + str(len(content)).encode()
+               + b" /Filter /FlateDecode >>\nstream\n" + content + b"\nendstream\nendobj\n"
+               b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+               b"trailer\n<< /Root 1 0 R >>\n%%EOF")
+        old_which, old_builtin = ex.shutil.which, ex._pdf_text_builtin
+        old_probe = ex._docker_image_ok
+        def no_pdftotext(name):
+            return None if name == "pdftotext" else old_which(name)
+        try:
+            ex.shutil.which = no_pdftotext
+            ex._pdf_text_builtin = lambda d: ""       # builtin "cannot" -> docker must
+            ex._docker_image_ok = None                # re-probe with real which()
+            ex.shutil.which = old_which               # probe needs real docker path
+            ex.shutil.which = no_pdftotext
+            text, _ = ex.extract_document("cid.pdf", pdf)
+        finally:
+            ex.shutil.which, ex._pdf_text_builtin = old_which, old_builtin
+            ex._docker_image_ok = old_probe
+        self.assertIn("Container weg funktioniert.", text)
+
     def test_extract_refuses_garbage_instead_of_feeding_it(self):
         """CID-font PDFs decode to noise — the caller must get an error, not
         gibberish that quietly poisons the model's context."""

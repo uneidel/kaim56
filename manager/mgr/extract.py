@@ -10,11 +10,13 @@ uploads the file here, and the extracted text travels into the chat message.
 
 Standard library only, like everything in the manager:
 - DOCX/ODT are ZIP containers with XML inside — zipfile + a tag strip.
-- PDF prefers ``pdftotext`` when the host has poppler-utils. Without it, a
-  small built-in extractor decompresses the content streams (zlib is stdlib)
-  and reads the text-showing operators. That covers simply-encoded PDFs well;
-  PDFs with CID/subset fonts come out garbled — in that case the caller gets
-  an honest error instead of gibberish (a heuristic checks readability).
+- PDF tries three ways, best first: ``pdftotext`` when the host has
+  poppler-utils; the ``kaim56-pdftotext`` Docker image (alpine + poppler,
+  built once — the host already runs Docker services, and this covers the
+  CID/subset-font PDFs a real inbox is full of); and finally a small built-in
+  extractor (zlib + text operators) for simply-encoded PDFs. When all three
+  fail, the caller gets an honest error instead of gibberish (a heuristic
+  checks readability).
 - Plain text/Markdown/CSV pass through with decoding.
 
 Part of the mgr package: no imports from manager.py (no cycles).
@@ -108,6 +110,31 @@ def _xml_to_text(xml_bytes):
 
 # ---- PDF -------------------------------------------------------------------
 
+PDF_IMAGE = "kaim56-pdftotext"       # alpine + poppler-utils, ENTRYPOINT pdftotext
+_docker_image_ok = None              # cached probe: is Docker + image available?
+
+
+def _pdf_text_docker(data):
+    """pdftotext from the container — no network, read-only mount, hard cap."""
+    global _docker_image_ok
+    if _docker_image_ok is None:
+        _docker_image_ok = bool(shutil.which("docker")) and subprocess.run(
+            ["docker", "image", "inspect", PDF_IMAGE],
+            capture_output=True, timeout=15).returncode == 0
+    if not _docker_image_ok:
+        return None
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as fh:
+        fh.write(data)
+        fh.flush()
+        r = subprocess.run(
+            ["docker", "run", "--rm", "--network", "none", "--memory", "512m",
+             "-v", f"{fh.name}:/in.pdf:ro", PDF_IMAGE, "-q", "/in.pdf", "-"],
+            capture_output=True, timeout=120)
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.decode("utf-8", "replace")
+    return None
+
+
 def _pdf_text(data):
     if shutil.which("pdftotext"):
         with tempfile.NamedTemporaryFile(suffix=".pdf") as fh:
@@ -117,6 +144,9 @@ def _pdf_text(data):
                                capture_output=True, timeout=60)
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout.decode("utf-8", "replace")
+    via_docker = _pdf_text_docker(data)
+    if via_docker is not None:
+        return via_docker
     text = _pdf_text_builtin(data)
     # Honesty check: with CID/subset fonts the operators carry glyph indices,
     # not characters — the result LOOKS like text but is noise. Better to say
@@ -127,8 +157,11 @@ def _pdf_text(data):
             or letters / max(len(text), 1) < 0.3:
         raise ValueError(
             "PDF text extraction failed — this PDF likely uses subset/CID "
-            "fonts the built-in extractor cannot decode. Installing "
-            "poppler-utils (pdftotext) on the host fixes this.")
+            "fonts the built-in extractor cannot decode. Fix: install "
+            "poppler-utils on the host, or build the helper image once: "
+            "docker build -t kaim56-pdftotext - <<< "
+            "'FROM alpine\nRUN apk add --no-cache poppler-utils\n"
+            "ENTRYPOINT [\"pdftotext\"]'")
     return text
 
 
