@@ -26,7 +26,7 @@ fi
 # (Cargo.lock checksums false-positive on the phone pattern, hence the filter.)
 LEAKS=$(git ls-files -z | xargs -0 grep -lE \
     'sk-or-v1-[A-Za-z0-9]{20}|hf_[A-Za-z0-9]{30}|ghp_[A-Za-z0-9]{30}|github_pat_|AKIA[0-9A-Z]{16}' \
-    2>/dev/null | grep -v 'tests/e2e.py$' || true)
+    2>/dev/null | grep -vE 'tests/e2e.py$|push-github.sh$' || true)
 if [ -n "$LEAKS" ]; then
     echo "✗ possible secrets in the tree — not publishing:" >&2
     echo "$LEAKS" >&2
