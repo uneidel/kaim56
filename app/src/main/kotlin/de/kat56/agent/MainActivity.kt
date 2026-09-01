@@ -56,6 +56,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Menu
@@ -341,6 +342,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     var menuOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
     var pendingImage by remember { mutableStateOf<Bitmap?>(null) }
+    // Attached document: the manager has already extracted the text; ONLY the
+    // text travels into the message, never the binary.
+    var pendingDoc by remember { mutableStateOf<ManagerSync.Extracted?>(null) }
     var web by remember { mutableStateOf(prefs.webAccess) }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
     // Header and settings show the sync state ("Syncing …" / "Synced · N chats").
@@ -428,6 +432,26 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 withContext(Dispatchers.IO) { try { gemma.load(path) } catch (e: Exception) { status = "⚠️ ${e.message}" } }
                 if (gemma.isReady()) status = "Model loaded ✅"
             } else status = "⚠️ Copy failed"
+        }
+    }
+    val docPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            status = "Extracting…"
+            val r = withContext(Dispatchers.IO) {
+                runCatching {
+                    val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (c.moveToFirst() && i >= 0) c.getString(i) else null
+                    } ?: uri.lastPathSegment ?: "upload"
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: return@runCatching null
+                    if (bytes.size > 50 * 1024 * 1024) null
+                    else ManagerSync.extract(prefs.serverUrl, prefs.user, prefs.pass, name, bytes)
+                }.getOrNull()
+            }
+            if (r != null) { pendingDoc = r; status = "" }
+            else status = "⚠️ ${ManagerSync.lastStatus}"
         }
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -880,14 +904,25 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 
     fun send() {
-        val text = input.trim()
-        if ((text.isEmpty() && pendingImage == null) || busy) return
+        val typed = input.trim()
+        if ((typed.isEmpty() && pendingImage == null && pendingDoc == null) || busy) return
         val img = pendingImage
         val imgB64 = img?.let { bitmapToBase64(it) }
+        // Attached document: the extracted text goes IN FRONT of the question,
+        // clearly marked — the model gets content + question in one turn. The
+        // bubble shows only a compact marker, not the 80k characters (the
+        // message to the model carries the full text).
+        val doc = pendingDoc
+        val text = if (doc != null)
+            "[Attached document: ${doc.name}]\n${doc.text}\n[End of document]\n\n" +
+                typed.ifBlank { "Please read the attached document and summarize it." }
+        else typed
         val msgs = current.messages
-        msgs.add(Msg(true, text, image = imgB64))
-        input = ""; pendingImage = null
-        if (text.startsWith("/") && handleSlash(text, msgs)) { persist(); return }
+        msgs.add(Msg(true, if (doc != null)
+            "\uD83D\uDCC4 ${doc.name}" + (if (typed.isNotBlank()) "\n$typed" else "")
+        else typed, image = imgB64))
+        input = ""; pendingImage = null; pendingDoc = null
+        if (typed.startsWith("/") && handleSlash(typed, msgs)) { persist(); return }
         busy = true
         persist()
 
@@ -1179,6 +1214,30 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
 
                 // ── Attachment preview (not in the prototype, otherwise the
                 //    attached snapshot would be invisible) ─────────────────────
+                pendingDoc?.let { doc ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(12.dp)).background(Kat.surface)
+                            .border(1.dp, Kat.hairlineStrong, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Outlined.Description, null, tint = Kat.accentText,
+                            modifier = Modifier.size(20.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(doc.name, fontSize = 13.sp, fontFamily = Plex,
+                                color = Kat.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${doc.text.length} characters" +
+                                if (doc.note.isNotBlank()) " · ${doc.note}" else "",
+                                fontSize = 11.sp, fontFamily = Plex, color = Kat.textFaint)
+                        }
+                        RoundIconButton({ pendingDoc = null }, size = 32.dp) {
+                            Icon(Icons.Filled.Close, null, tint = Kat.textDim,
+                                modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
                 pendingImage?.let { bmp ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1282,7 +1341,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 )
                             }
                             Spacer(Modifier.width(8.dp))
-                            val canSend = (input.isNotBlank() || pendingImage != null) || !busy
+                            val canSend = (input.isNotBlank() || pendingImage != null || pendingDoc != null) || !busy
                             fun sendOrSteer() {
                                 if (busy && input.isNotBlank()) {
                                     // Steering: call into the running turn instead of waiting.
@@ -1299,7 +1358,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 } else send()
                             }
                             RoundIconButton(
-                                { sendOrSteer() }, enabled = canSend && (input.isNotBlank() || pendingImage != null || !busy),
+                                { sendOrSteer() }, enabled = canSend && (input.isNotBlank() || pendingImage != null || pendingDoc != null || !busy),
                                 background = if (canSend) Kat.accent else Kat.tile,
                             ) {
                                 Icon(
@@ -1381,6 +1440,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         }
                         AttachTile("Gallery", Icons.Outlined.PhotoLibrary, Modifier.weight(1f)) {
                             attachOpen = false; imagePicker.launch("image/*")
+                        }
+                        AttachTile("File", Icons.Outlined.Description, Modifier.weight(1f)) {
+                            attachOpen = false
+                            docPicker.launch(arrayOf(
+                                "application/pdf",
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                "application/vnd.oasis.opendocument.text",
+                                "text/plain", "text/markdown", "text/csv", "text/html"))
                         }
                     }
                 }
@@ -2362,11 +2429,11 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Glasses (Halo) ─────────────────────────────────────────────
-            // Dry run without hardware: HaloDryLink takes the same packets as
-            // the real glasses and shows what would be on the display. That way
-            // the whole chain can be clicked through before unboxing — only the
-            // Bluetooth path is missing then.
+            // ── Brille (Halo) ──────────────────────────────────────────────
+            // Trockenlauf ohne Hardware: HaloDryLink nimmt dieselben Pakete
+            // entgegen wie die echte Brille und zeigt, was auf dem Display
+            // stuende. Damit laesst sich die ganze Kette vor dem Auspacken
+            // durchklicken — nur der Bluetooth-Weg fehlt dann.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Kicker("Glasses (Halo)", Modifier.padding(horizontal = 4.dp))
                 var haloStatus by remember { mutableStateOf("not connected") }
@@ -2389,8 +2456,8 @@ fun SettingsScreen(
                             ServerAgent.chat(prefs.serverUrl, prefs.instance, prefs.user, prefs.pass, question)
                         },
                         askWithImage = { question, jpeg ->
-                            // The same path as a photo from the app: base64 JPEG
-                            // into the chat stream, collect the reply.
+                            // Derselbe Weg wie beim Foto aus der App: Base64-JPEG
+                            // in den Chat-Strom, Antwort einsammeln.
                             val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
                             val sb = StringBuilder()
                             val err = ServerAgent.chatStream(prefs.serverUrl, prefs.instance,
@@ -2411,8 +2478,8 @@ fun SettingsScreen(
 
                 KatCard(padding = PaddingValues(12.dp), spacing = 10.dp) {
                     Text(haloStatus, fontSize = 13.sp, fontFamily = Plex, color = Kat.textDim)
-                    // Preview of the glasses display — in the dry run the only
-                    // thing there is to see.
+                    // Vorschau des Brillendisplays — im Trockenlauf das Einzige,
+                    // was man zu sehen bekommt.
                     if (haloScreen.isNotEmpty()) Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                             .background(Kat.tile).padding(10.dp),
@@ -2444,7 +2511,7 @@ fun SettingsScreen(
                             val l = HaloDryLink()
                             dry = l; haloScreen = emptyList()
                             scope.launch {
-                                withContext(Dispatchers.IO) { ctrl = newController(l, "What is the weather?") }
+                                withContext(Dispatchers.IO) { ctrl = newController(l, "Wie ist das Wetter?") }
                                 haloScreen = l.display.toList()
                                 haloStatus = "dry run: ${l.uploaded.size} modules loaded"
                             }
@@ -2468,8 +2535,8 @@ fun SettingsScreen(
                         }, height = 36.dp)
                         FilledPill("Ask", {
                             scope.launch {
-                                // In the dry run there is no recording — the made-up
-                                // question still goes to the real instance.
+                                // Im Trockenlauf gibt es keinen Mitschnitt — die
+                                // erfundene Frage geht trotzdem an die echte Instanz.
                                 val wav = withContext(Dispatchers.IO) {
                                     ble?.recordingAsWav() ?: ByteArray(0)
                                 }

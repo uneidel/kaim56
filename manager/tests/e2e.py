@@ -286,6 +286,31 @@ class AgentLogic(unittest.TestCase):
             self.a._TOOL_ALLOW = old
 
     # --- Tool-Hook / Guardrails ---------------------------------------------
+    def test_rejected_history_image_is_stripped_and_counted(self):
+        """A provider that rejects an image the history has long carried kills
+        EVERY later turn (found live: an instance whose memory stayed empty
+        because no turn ever reached the tools). The strip helper must remove
+        exactly the image parts and leave the text."""
+        a = self.a
+        hist = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": [
+                {"type": "text", "text": "was ist das?"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+            ]},
+            {"role": "assistant", "content": "eine Katze"},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,BBBB"}},
+            ]},
+        ]
+        n = a._strip_history_images(hist)
+        self.assertEqual(n, 2)
+        flat = __import__("json").dumps(hist)
+        self.assertNotIn("image_url", flat)             # no image parts left
+        self.assertIn("was ist das?", flat)             # text survives
+        self.assertIn("image removed", flat)
+        self.assertEqual(a._strip_history_images(hist), 0)   # idempotent
+
     def test_offload_preview_outlines_json(self):
         """A head-slice of a big JSON is an unclosed brace of the first record.
         The preview should say WHAT the payload is instead."""
@@ -849,6 +874,76 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(stats["files"], 2)
         finally:
             kmod.katfs_proxy_fs = old
+
+    def test_extract_docx(self):
+        """DOCX is a ZIP of XML — built in the test, no fixtures on disk."""
+        import io, zipfile
+        from mgr.extract import extract_document
+        W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        doc = (f'<?xml version="1.0"?><w:document xmlns:w="{W}"><w:body>'
+               f'<w:p><w:r><w:t>Erste Zeile mit Umlauten: äöü.</w:t></w:r></w:p>'
+               f'<w:p><w:r><w:t>Zweiter</w:t></w:r><w:r><w:t xml:space="preserve"> Absatz.</w:t></w:r></w:p>'
+               f'</w:body></w:document>')
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("word/document.xml", doc)
+        text, note = extract_document("brief.docx", buf.getvalue())
+        self.assertIn("Erste Zeile mit Umlauten: äöü.", text)
+        self.assertIn("Zweiter Absatz.", text)          # runs joined, paragraphs split
+        self.assertEqual(text.splitlines()[0], "Erste Zeile mit Umlauten: äöü.")
+        self.assertEqual(note, "")
+
+    def test_extract_pdf_builtin(self):
+        """A minimal Flate-compressed PDF, built in the test. Covers the
+        fallback path used when the host has no pdftotext."""
+        import zlib
+        from mgr import extract as ex
+        content = zlib.compress(
+            b"BT /F1 12 Tf (Hello from a ) Tj (tiny PDF.) Tj T* "
+            b"[(Second) ( line) (.)] TJ ET")
+        pdf = (b"%PDF-1.4\n1 0 obj\n<< /Length " + str(len(content)).encode()
+               + b" /Filter /FlateDecode >>\nstream\n" + content
+               + b"\nendstream\nendobj\ntrailer\n<<>>\n%%EOF")
+        old_which = ex.shutil.which
+        try:
+            ex.shutil.which = lambda _n: None          # force the builtin path
+            text, _ = ex.extract_document("doc.pdf", pdf)
+        finally:
+            ex.shutil.which = old_which
+        self.assertIn("Hello from a tiny PDF.", text)
+        self.assertIn("Second line.", text)
+
+    def test_extract_refuses_garbage_instead_of_feeding_it(self):
+        """CID-font PDFs decode to noise — the caller must get an error, not
+        gibberish that quietly poisons the model's context."""
+        import zlib
+        from mgr import extract as ex
+        noise = bytes(range(1, 32)) * 40               # unprintable soup
+        content = zlib.compress(b"BT (" + noise.replace(b"(", b"").replace(b")", b"")
+                                .replace(b"\\", b"") + b") Tj ET")
+        pdf = (b"%PDF-1.4\nstream\n" + content + b"\nendstream\n%%EOF")
+        old_which = ex.shutil.which
+        try:
+            ex.shutil.which = lambda _n: None
+            with self.assertRaises(ValueError):
+                ex.extract_document("scan.pdf", pdf)
+        finally:
+            ex.shutil.which = old_which
+
+    def test_extract_plain_and_unsupported(self):
+        from mgr.extract import extract_document
+        text, _ = extract_document("notes.md", "# Titel\nInhalt äöü".encode())
+        self.assertIn("Inhalt äöü", text)
+        with self.assertRaises(ValueError):
+            extract_document("video.mp4", b"\x00\x01\x02")
+        with self.assertRaises(ValueError):
+            extract_document("empty.txt", b"   ")
+
+    def test_extract_caps_huge_documents(self):
+        from mgr import extract as ex
+        text, note = ex.extract_document("big.txt", (b"x" * (ex.MAX_CHARS + 500)))
+        self.assertEqual(len(text), ex.MAX_CHARS)
+        self.assertIn("truncated", note)
 
     def test_no_route_is_shadowed_by_an_earlier_prefix(self):
         """Guard for the if-chain: a prefix branch standing BEFORE an exact

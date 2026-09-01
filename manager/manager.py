@@ -2549,6 +2549,29 @@ def _rt_skill(h):
             "text/plain; charset=utf-8")
 
 
+@ROUTER.post("/api/extract", admin=True)
+def _rt_extract(h):
+    # Chat attachment: PDF/DOCX/text in, extracted text out. The app puts the
+    # text into the message; the model never sees the binary. Admin-only: this
+    # is a client feature, agents extract inside their VM (read_pdf).
+    from mgr.extract import extract_document
+    name = urllib.parse.parse_qs(h.path.partition("?")[2]).get("name", ["upload"])[0]
+    ln = int(h.headers.get("Content-Length", 0) or 0)
+    if ln > 50 * 1024 * 1024:
+        return json.dumps({"error": "file larger than 50 MB"}).encode(), "application/json"
+    data = h.rfile.read(ln)
+    try:
+        text, note = extract_document(name, data)
+        out = {"name": name, "text": text, "chars": len(text)}
+        if note:
+            out["note"] = note
+    except ValueError as e:
+        out = {"error": str(e)}
+    except Exception as e:
+        out = {"error": f"extraction failed: {e!r}"}
+    return json.dumps(out, ensure_ascii=False).encode(), "application/json"
+
+
 @ROUTER.get("/logo.svg")
 @ROUTER.get("/favicon.ico")
 def _rt_logo(h):
@@ -3460,6 +3483,25 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"error":"forbidden"}')
+            return
+        hit = ROUTER.resolve("POST", _pp)
+        if hit is not None:
+            fn, admin_only = hit
+            if admin_only and instance_by_ip(self.client_address[0]) is not None:
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"forbidden"}')
+                return
+            out = fn(self)
+            if out is None:
+                return
+            body, ct = out
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if _pp.startswith("/api/llm/"):
             # LLM key injection: its own branch right up front, because the

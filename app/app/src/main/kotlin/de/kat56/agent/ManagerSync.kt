@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** A server agent (manager instance). */
+/** Ein Server-Agent (Manager-Instanz). */
 data class AgentInstance(
     val name: String,
     val running: Boolean,
@@ -18,7 +18,7 @@ data class AgentInstance(
     val model: String,
 )
 
-/** A background task (manager task). */
+/** Eine Hintergrundaufgabe (Manager-Task). */
 data class AgentTask(
     val id: String,
     val instance: String,
@@ -29,10 +29,10 @@ data class AgentTask(
     val updated: Long,
 )
 
-/** A persona (named system prompt). */
+/** Eine Persona (benannter System-Prompt). */
 data class Persona(val name: String, val prompt: String)
 
-/** Chat sync with the manager: GET/POST {base}/api/chats (Basic auth). */
+/** Chat-Sync mit dem Manager: GET/POST {base}/api/chats (Basic-Auth). */
 object ManagerSync {
 
     fun listPersonas(baseUrl: String, user: String, pass: String): String? =
@@ -76,7 +76,7 @@ object ManagerSync {
         } catch (e: Exception) { emptyList() }
     }
 
-    /** Result of the last request() – for meaningful error messages. */
+    /** Ergebnis des letzten request() – für aussagekräftige Fehlermeldungen. */
     var lastStatus: String = ""
         private set
 
@@ -99,9 +99,9 @@ object ManagerSync {
     }
 
     /**
-     * Send a recording to the manager and fetch the recognized text.
-     * The manager forwards to the speech service (Parakeet); the format does not
-     * matter, ffmpeg converts to 16-kHz mono there.
+     * Aufnahme zum Manager schicken und den erkannten Text holen.
+     * Der Manager reicht an den Sprachdienst durch (Parakeet); das Format ist
+     * egal, dort wandelt ffmpeg auf 16-kHz-Mono.
      */
     fun stt(baseUrl: String, user: String, pass: String, audio: ByteArray, mime: String): String? {
         val conn = URL("${baseUrl.trimEnd('/')}/api/stt").openConnection() as HttpURLConnection
@@ -126,7 +126,7 @@ object ManagerSync {
         } finally { conn.disconnect() }
     }
 
-    /** Speak the text; returns the WAV data or null. */
+    /** Text sprechen lassen; liefert die WAV-Daten oder null. */
     fun tts(baseUrl: String, user: String, pass: String, text: String): ByteArray? {
         val conn = URL("${baseUrl.trimEnd('/')}/api/tts").openConnection() as HttpURLConnection
         return try {
@@ -152,15 +152,15 @@ object ManagerSync {
     fun pull(baseUrl: String, user: String, pass: String): String? =
         request("GET", "${baseUrl.trimEnd('/')}/api/chats", user, pass, null)
 
-    /** Result of a chat long-poll: `chats` is null when nothing has changed. */
+    /** Ergebnis eines Chat-Long-Polls: `chats` ist null, wenn sich nichts getan hat. */
     data class ChatPoll(val rev: Long, val chats: String?, val tombstones: String?)
 
     /**
-     * Long-poll on the shared chat store: the manager only answers once someone
-     * (app OR web) writes — or after `waitSec` seconds without content. This way
-     * others' messages arrive here within fractions of a second, without constant
-     * polling. Older managers without `since`/`wait` return the bare list; the
-     * parser catches that and the caller falls back to waiting.
+     * Long-Poll auf den gemeinsamen Chat-Store: der Manager antwortet erst, wenn
+     * jemand (App ODER Web) schreibt — oder nach `waitSec` Sekunden ohne Inhalt.
+     * Dadurch stehen fremde Nachrichten hier binnen Sekundenbruchteilen, ohne
+     * Dauer-Polling. Aeltere Manager ohne `since`/`wait` liefern die blanke
+     * Liste; das faengt der Parser ab und der Aufrufer faellt auf Warten zurueck.
      */
     fun pollChats(baseUrl: String, user: String, pass: String, since: Long, waitSec: Int): ChatPoll? {
         val raw = request("GET", "${baseUrl.trimEnd('/')}/api/chats?since=$since&wait=$waitSec",
@@ -172,16 +172,38 @@ object ManagerSync {
         } catch (e: Exception) { null }
     }
 
+    /** Result of a document extraction in the manager. */
+    data class Extracted(val name: String, val text: String, val note: String)
+
+    /**
+     * Send a PDF/DOCX/text file to the manager; back comes the plain TEXT.
+     * The model never sees the binary — the text travels into the chat.
+     * Null = failed (reason in lastStatus).
+     */
+    fun extract(baseUrl: String, user: String, pass: String,
+                name: String, data: ByteArray): Extracted? {
+        val enc = java.net.URLEncoder.encode(name, "UTF-8")
+        val raw = request("POST", "${'$'}{baseUrl.trimEnd('/')}/api/extract?name=${'$'}enc",
+            user, pass, null, rawBody = data) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            val err = o.optString("error")
+            if (err.isNotBlank()) { lastStatus = err; return null }
+            Extracted(o.optString("name", name), o.optString("text"), o.optString("note"))
+        } catch (e: Exception) { lastStatus = e.message ?: "parse error"; null }
+    }
+
     fun push(baseUrl: String, user: String, pass: String, json: String): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/chats", user, pass, json) != null
 
-    /** One step of a mission. target = the instance the step was delegated to
-     *  (create_task target) — plan and execution may live on different agents. */
+    /** Ein Schritt einer Mission. target = Instanz, an die der Schritt
+     *  delegiert wurde (create_task-Ziel) — Plan und Ausfuehrung koennen auf
+     *  verschiedenen Agenten liegen. */
     data class MissionStep(val n: Int, val text: String, val status: String,
                            val taskId: String, val target: String)
 
-    /** A mission: plan + progress live in the manager. instance = the owner
-     *  (the agent that planned it) — every agent may own missions. */
+    /** Eine Mission: Plan + Fortschritt liegen im Manager. instance = Eigentuemer
+     *  (der Agent, der geplant hat) — jeder Agent kann Missionen besitzen. */
     data class Mission(val id: String, val goal: String, val status: String,
                        val steps: List<MissionStep>, val summary: String, val lastLog: String,
                        val instance: String)
@@ -199,9 +221,9 @@ object ManagerSync {
             if (log != null && log.length() > 0) log.optString(log.length() - 1) else "", inst)
     }
 
-    /** Missions of ALL agents (admin view): the manager returns them grouped by
-     *  owner (by_instance). `missions` is the fallback for older managers that
-     *  only knew the orchestrator's. */
+    /** Missionen ALLER Agenten (Admin-Sicht): der Manager liefert sie nach
+     *  Eigentuemer gruppiert (by_instance). `missions` ist der Fallback fuer
+     *  aeltere Manager, die nur die des Orchestrators kannten. */
     fun listMissions(baseUrl: String, user: String, pass: String): List<Mission>? {
         val raw = request("GET", "${baseUrl.trimEnd('/')}/api/missions", user, pass, null)
             ?: return null
@@ -222,15 +244,15 @@ object ManagerSync {
         } catch (e: Exception) { null }
     }
 
-    /** pause | resume | abort a mission (admin). The instance comes along because
-     *  missions can belong to any agent (empty = the manager resolves the owner). */
+    /** pause | resume | abort einer Mission (Admin). Die Instanz muss mit, weil
+     *  Missionen jedem Agenten gehoeren koennen (leer = Manager sucht selbst). */
     fun missionAction(baseUrl: String, user: String, pass: String, id: String,
                       action: String, instance: String = ""): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/mission-admin", user, pass,
             JSONObject().put("id", id).put("action", action)
                 .put("instance", instance).toString()) != null
 
-    /** Prompt templates (slash commands) from the manager. */
+    /** Prompt-Templates (Slash-Kommandos) vom Manager. */
     fun listPrompts(baseUrl: String, user: String, pass: String): List<Pair<String, String>> {
         val raw = request("GET", "${baseUrl.trimEnd('/')}/api/prompts", user, pass, null)
             ?: return emptyList()
@@ -243,22 +265,22 @@ object ManagerSync {
         } catch (e: Exception) { emptyList() }
     }
 
-    /** Feed a message into a RUNNING turn (steering). true = queued. */
+    /** Nachricht in einen LAUFENDEN Turn einspeisen (Steering). true = queued. */
     fun steer(baseUrl: String, user: String, pass: String, instance: String, message: String): Boolean {
         val raw = request("POST", "${baseUrl.trimEnd('/')}/i/$instance/api/steer", user, pass,
             JSONObject().put("message", message).toString()) ?: return false
         return try { JSONObject(raw).optBoolean("queued") } catch (e: Exception) { false }
     }
 
-    /** A push notification from the manager. */
+    /** Eine Push-Benachrichtigung aus dem Manager. */
     data class NotifItem(val id: String, val ts: Long, val title: String,
                          val body: String, val instance: String, val read: Boolean,
                          val link: String = "")
 
-    /** Result of the notification long-poll: `items` is null on timeout. */
+    /** Ergebnis des Notification-Long-Polls: `items` ist null bei Zeitablauf. */
     data class NotifPoll(val rev: Long, val items: List<NotifItem>?, val unread: Int)
 
-    /** Long-poll on /api/notifications — analogous to pollChats. */
+    /** Long-Poll auf /api/notifications — analog zu pollChats. */
     fun pollNotifications(baseUrl: String, user: String, pass: String,
                           since: Long, waitSec: Int): NotifPoll? {
         val raw = request("GET", "${baseUrl.trimEnd('/')}/api/notifications?since=$since&wait=$waitSec",
@@ -276,13 +298,13 @@ object ManagerSync {
         } catch (e: Exception) { null }
     }
 
-    /** Acknowledge all notifications as read. */
+    /** Alle Benachrichtigungen als gelesen quittieren. */
     fun markNotifRead(baseUrl: String, user: String, pass: String): Boolean =
         request("POST", "${baseUrl.trimEnd('/')}/api/notifications/read", user, pass, "{\"all\":true}") != null
 
-    /** Security gateway: which chats are filtered and how much has been removed
-     *  so far. The state lives in the manager, not on the device — otherwise it
-     *  would differ between app and web. */
+    /** Security Gateway: welche Chats gefiltert werden und wieviel bisher
+     *  entfernt wurde. Der Zustand liegt am Manager, nicht im Geraet — sonst
+     *  waere er in App und Web verschieden. */
     data class Gateway(val on: Set<String>, val chars: Map<String, Int>, val images: Map<String, Int>,
                        val available: Boolean)
 
@@ -314,7 +336,7 @@ object ManagerSync {
     fun action(baseUrl: String, user: String, pass: String, name: String, act: String): String? =
         request("POST", "${baseUrl.trimEnd('/')}/api/instances/$name/$act", user, pass, "")
 
-    /** Create + start a server agent (manager instance). Returns a status message. */
+    /** Server-Agent (Manager-Instanz) anlegen + starten. Gibt eine Status-Meldung. */
     fun createAndStart(
         baseUrl: String, user: String, pass: String,
         name: String, template: String, config: JSONObject,
@@ -322,19 +344,19 @@ object ManagerSync {
         val base = baseUrl.trimEnd('/')
         val cBody = JSONObject().put("name", name).put("template", template).put("config", config).toString()
         val c = request("POST", "$base/api/create", user, pass, cBody)
-            ?: return "⚠️ Creation failed: $lastStatus"
+            ?: return "⚠️ Anlegen fehlgeschlagen: $lastStatus"
         val cMsg = try { JSONObject(c).optString("msg", c) } catch (e: Exception) { c }
-        // The manager returns errors as HTTP 200 + {msg:"…failed/exists…"} too; match its tokens
-        if (cMsg.contains("exists") || cMsg.contains("invalid") || cMsg.contains("unknown"))
+        // Der Manager antwortet auch bei Fehlern mit HTTP 200 + {msg:"…fehlgeschlagen/existiert…"}
+        if (cMsg.contains("existiert") || cMsg.contains("ungültig") || cMsg.contains("unbekannt"))
             return "⚠️ $cMsg"
         val s = request("POST", "$base/api/instances/$name/start", user, pass, "")
-            ?: return "$cMsg · ⚠️ Start failed: $lastStatus"
+            ?: return "$cMsg · ⚠️ Start fehlgeschlagen: $lastStatus"
         val sMsg = try { JSONObject(s).optString("msg", s) } catch (e: Exception) { s }
         return "$cMsg · $sMsg"
     }
 
     private fun request(method: String, url: String, user: String, pass: String, body: String?,
-                        readTimeoutMs: Int = 30000): String? {
+                        readTimeoutMs: Int = 30000, rawBody: ByteArray? = null): String? {
         val conn = URL(url).openConnection() as HttpURLConnection
         return try {
             conn.requestMethod = method
@@ -348,12 +370,17 @@ object ManagerSync {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.outputStream.use { it.write(body.toByteArray()) }
+            } else if (rawBody != null) {
+                // Binary upload (document extraction): bytes as they are.
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/octet-stream")
+                conn.outputStream.use { it.write(rawBody) }
             }
             val code = conn.responseCode
             if (code !in 200..299) {
                 lastStatus = "HTTP $code" + when (code) {
-                    401 -> " (check username/password)"
-                    404 -> " (endpoint/instance not found)"
+                    401 -> " (Benutzer/Passwort prüfen)"
+                    404 -> " (Endpunkt/Instanz nicht gefunden)"
                     else -> ""
                 }
                 return null

@@ -1611,7 +1611,13 @@ def or_chat(messages, tools, model=None):
             report_usage(d.get("usage"))
             return d["choices"][0]["message"]
         except urllib.error.HTTPError as e:
-            last = f"⚠️ {LLM_NAME} HTTP {e.code}: {e.read().decode()[:300]}"
+            err_body = e.read().decode("utf-8", "replace")[:400]
+            if e.code == 400 and "image" in err_body.lower() \
+                    and _strip_history_images(messages):
+                _b["messages"] = messages
+                body = json.dumps(_b).encode()
+                continue           # images gone -> the turn gets another chance
+            last = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
             return {"content": last}
@@ -1946,6 +1952,28 @@ def run(user_message):
         _busy[0] = False
 
 
+def _strip_history_images(messages):
+    """Replace image parts in the history with a marker; returns the count.
+
+    Why: a provider can reject an image the history has long carried ("Provided
+    image is not valid", e.g. after a model switch with different image rules) —
+    and from then on EVERY turn dies before the model runs, silently breaking
+    the whole agent (found on a live instance whose memory stayed empty because
+    no turn ever reached the tools). The text context is worth more than a dead
+    conversation, so on that error the images go and the turn is retried."""
+    n = 0
+    for m in messages:
+        c = m.get("content")
+        if not isinstance(c, list):
+            continue
+        for i, part in enumerate(c):
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                c[i] = {"type": "text",
+                        "text": "[image removed: the provider rejected it]"}
+                n += 1
+    return n
+
+
 def or_chat_stream(messages, tools, on_token):
     """Like or_chat, but streaming: calls on_token(text) per delta. Reassembles
     the (assistant) message including any tool_calls from the stream."""
@@ -1987,6 +2015,12 @@ def or_chat_stream(messages, tools, on_token):
                 body = _build_llm_body(False)
                 on_token("\n⚠️ Invalid tool-call JSON from the local model — "
                          "round retried without tools (answer as text).\n")
+                continue
+            if e.code == 400 and "image" in err_body.lower() \
+                    and _strip_history_images(messages):
+                body = _build_llm_body(tools_on)
+                on_token("\n⚠️ The provider rejected an image in the history — "
+                         "images removed, turn retried.\n")
                 continue
             m = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
