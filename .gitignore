@@ -1,0 +1,70 @@
+# Note: .gitignore has NO end-of-line comments — a "# …" after the pattern
+# becomes part of the pattern and the rule never matches. Comments therefore
+# always go on their own lines.
+
+# --- Laufzeit & Daten: gehoeren auf den Host, nie ins Repo -------------------
+# API-Keys (0600)
+manager/settings.json
+# Standort-Config (Domains/IPs/Interface) -> examples/site.example.json
+manager/site.json
+# MCP-Katalog mit echten LAN-Endpunkten -> examples/mcp-catalog.example.json
+manager/mcp-catalog.json
+# Plugin-Integritaets-Pins (Content-Hashes) -> deployment-spezifisch
+manager/plugins/.pins.json
+# chat history, tasks, memory, watermarks
+manager/chats.json
+manager/chats_tombstones.json
+manager/tasks.json
+manager/memory.json
+manager/inbox_wm.json
+# Aufgaben-History inkl. SQLite-WAL-Sidecars (-wal/-shm)
+manager/history.db*
+# findings about the own installation
+manager/security.json
+# enthaelt den basicAuth-Hash -> examples/traefik-agents.example.yml
+manager/traefik-agents.yml
+manager/audit/
+manager/run/
+manager/instances/
+manager/bin/
+
+# --- Build-Artefakte ---------------------------------------------------------
+__pycache__/
+*.pyc
+*.bak-*
+app/app/build/
+app/build/
+app/.gradle/
+app/dist/
+local.properties
+katfs/**/target/
+katfs/dist/
+*.log
+
+# --- Nothing large and nothing secret ---------------------------------------
+# Releases gehoeren an die Gitea-Releases
+*.apk
+# rootfs images (GB range) and kernels are built, not versioned
+*.ext4
+vmlinux
+# the app signing key
+app/keystore/
+# iroh-Node-Identitaet (katfs)
+secret.key
+*.jks
+*.p12
+
+# built Rust binaries (iroh-gw, katfs-node)
+dist/
+iroh-gw/target/
+iroh-gw/.out/
+
+# native iroh module: generated per-ABI libs + UniFFI Kotlin bindings
+app/src/main/jniLibs/
+app/app/src/main/jniLibs/
+app/src/main/kotlin/uniffi/
+app/app/src/main/kotlin/uniffi/
+app/iroh-android/.out/
+
+# Imported skill catalog (github.com/daedalus/skills — no license upstream)
+manager/skills.json

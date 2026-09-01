@@ -1,0 +1,17 @@
+[package]
+name = "kaim_iroh"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "kaim_iroh"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+iroh = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "net", "time", "sync"] }
+uniffi = { version = "0.28", features = ["cli"] }
+thiserror = "1"
+
+[profile.release]
+opt-level = 2

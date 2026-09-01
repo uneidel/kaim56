@@ -1,0 +1,39 @@
+{
+  "template": "llama",
+  "description": "Self-hosted LLM via llama.cpp (OpenAI-compatible)",
+  "rootfs": "instances/openrouter-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport",
+      "type": "select",
+      "options": [
+        "signal",
+        "web"
+      ],
+      "default": "web"
+    },
+    {
+      "key": "SIGNAL_NUMBER",
+      "label": "Signal number (bot)",
+      "default": ""
+    },
+    {
+      "key": "ALLOWED_SENDERS",
+      "label": "Allowed number(s)",
+      "default": ""
+    },
+    {
+      "key": "LLAMA_ENDPOINT",
+      "label": "llama.cpp endpoint (blank = from Settings tab)",
+      "default": ""
+    },
+    {
+      "key": "LLAMA_MODEL",
+      "label": "Model name served by llama.cpp",
+      "default": "local-model"
+    }
+  ]
+}

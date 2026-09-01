@@ -1,0 +1,21 @@
+[Unit]
+Description=Claude Signal Bridge (Firecracker microVM)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ulrich/claude-signal-firecracker
+# Set up networking before each start (idempotent), then start the VM:
+ExecStartPre=/home/ulrich/claude-signal-firecracker/net.sh
+ExecStart=/home/ulrich/claude-signal-firecracker/run.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation:
+#   sudo cp claude-fc.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now claude-fc.service
+#   journalctl -u claude-fc -f

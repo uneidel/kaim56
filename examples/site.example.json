@@ -1,0 +1,9 @@
+{
+  "_comment": "Site-specific values. Copy to manager/site.json (gitignored). All optional; sane public defaults apply when omitted.",
+  "PUBLIC_HOST": "agents.example.com",
+  "SIGNAL_HOST": "signal-api.example.com",
+  "KATFS_HOST": "katfs.example.com",
+  "GUEST_DNS": "1.1.1.1",
+  "HOSTIF": "eth0",
+  "CODE_URL": "http://192.168.0.10:8443/"
+}

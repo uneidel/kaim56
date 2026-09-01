@@ -1,0 +1,43 @@
+{
+  "template": "openrouter",
+  "description": "OpenRouter agent (tool calling)",
+  "rootfs": "instances/openrouter-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 1024,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport",
+      "type": "select",
+      "options": [
+        "signal",
+        "web"
+      ],
+      "default": "signal"
+    },
+    {
+      "key": "SIGNAL_NUMBER",
+      "label": "Signal number (bot)",
+      "default": ""
+    },
+    {
+      "key": "ALLOWED_SENDERS",
+      "label": "Allowed number(s)",
+      "default": ""
+    },
+    {
+      "key": "OPENROUTER_MODEL",
+      "label": "Model (tool-capable, shortlist)",
+      "type": "select",
+      "source": "openrouter",
+      "tools": true,
+      "default": "google/gemini-2.5-flash",
+      "relevant": true
+    },
+    {
+      "key": "MCP_CONFIG",
+      "label": "MCP servers JSON (optional)",
+      "default": ""
+    }
+  ]
+}

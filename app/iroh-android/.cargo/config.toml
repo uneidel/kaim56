@@ -1,0 +1,7 @@
+# Android 15+ devices use 16 KB memory pages; native libs must be 16 KB aligned
+# or the app can hard-crash while loading the .so. NDK r26 defaults to 4 KB.
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]

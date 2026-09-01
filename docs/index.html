@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kAIm56 — A fleet of AI agents, each in its own microVM</title>
+<meta name="description" content="kAIm56 is a self-hosted AI agent platform. Every agent runs in its own Firecracker microVM, LLM keys never enter a VM, and the manager is a single Python process with no third-party dependencies. Chat from Android, the web, or Signal. AGPL." />
+<style>
+  /* Palette taken from the manager UI (mgr/ui.py) so the site speaks the same
+     language as the product. Dark first — this is an infrastructure tool — but
+     both themes are defined at token level. */
+  :root{
+    --bg:#0f1113; --bg-soft:#141618; --panel:#1c1f22; --panel-2:#22262a;
+    --line:#2e3438; --line-soft:#262b2f;
+    --text:#e8e9ea; --muted:#a3abb1; --faint:#7c858b;
+    --accent:#94bce3; --accent-2:#b5d9fd; --accent-dim:#22333f;
+    --ok:#7fbf9d;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --head:"Barlow Condensed",system-ui,-apple-system,sans-serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:light){
+    :root:not([data-theme="dark"]){
+      --bg:#f2f2f3; --bg-soft:#ececed; --panel:#e9e9ea; --panel-2:#ffffff;
+      --line:#d3d6d8; --line-soft:#e0e2e4;
+      --text:#1d1f20; --muted:#535a5f; --faint:#7d858a;
+      --accent:#43698c; --accent-2:#2c455d; --accent-dim:#dfeaf4;
+      --ok:#3f7a5e;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f2f2f3; --bg-soft:#ececed; --panel:#e9e9ea; --panel-2:#ffffff;
+    --line:#d3d6d8; --line-soft:#e0e2e4;
+    --text:#1d1f20; --muted:#535a5f; --faint:#7d858a;
+    --accent:#43698c; --accent-2:#2c455d; --accent-dim:#dfeaf4;
+    --ok:#3f7a5e;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.62;font-size:16px;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  em{font-style:normal;color:var(--accent)}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+
+  /* ---------- nav ---------- */
+  .nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 86%,transparent);
+       backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .nav-inner{display:flex;align-items:center;gap:28px;height:62px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--head);
+         font-weight:600;font-size:21px;letter-spacing:.01em}
+  .brand-mark{width:28px;height:28px;flex:none;display:grid;place-items:center;
+              border:1px solid var(--accent);color:var(--accent);
+              font-family:var(--mono);font-size:12px;font-weight:600}
+  .nav-links{display:flex;gap:24px;margin-left:auto;font-size:14.5px;color:var(--muted)}
+  .nav-links a:hover{color:var(--text)}
+  @media (max-width:760px){.nav-links{display:none}}
+
+  /* ---------- buttons ---------- */
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;
+       font-weight:600;font-size:15px;border:1px solid transparent;cursor:pointer;
+       transition:transform .12s ease,background .12s ease,border-color .12s ease}
+  .btn:hover{transform:translateY(-1px)}
+  .btn-primary{background:var(--accent);color:var(--bg)}
+  .btn-ghost{border-color:var(--line);color:var(--text)}
+  .btn-ghost:hover{border-color:var(--accent)}
+
+  /* ---------- blueprint panel: the product's own signature ---------- */
+  .bp{position:relative;background:var(--panel);border:1px solid var(--line)}
+  .bp>i{position:absolute;width:9px;height:9px;border:0 solid var(--accent);opacity:.6}
+  .bp>i.tl{top:-1px;left:-1px;border-top-width:2px;border-left-width:2px}
+  .bp>i.tr{top:-1px;right:-1px;border-top-width:2px;border-right-width:2px}
+  .bp>i.bl{bottom:-1px;left:-1px;border-bottom-width:2px;border-left-width:2px}
+  .bp>i.br{bottom:-1px;right:-1px;border-bottom-width:2px;border-right-width:2px}
+
+  /* ---------- hero ---------- */
+  .hero{padding:86px 0 64px;border-bottom:1px solid var(--line)}
+  h1{font-family:var(--head);font-weight:600;font-size:clamp(38px,7vw,64px);
+     line-height:1.03;letter-spacing:.01em;text-wrap:balance;max-width:16ch}
+  .lead{margin-top:22px;font-size:18px;color:var(--muted);max-width:62ch}
+  .lead b{color:var(--text);font-weight:600}
+  .hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+  .hero-shot{margin:56px 0 0}
+  .hero-shot .bp{padding:8px}
+  .hero-shot img{display:block;width:100%;height:auto}
+  figcaption{margin-top:10px;font-size:13px;color:var(--faint)}
+
+  /* ---------- strip ---------- */
+  .strip{border-bottom:1px solid var(--line);background:var(--bg-soft)}
+  .strip-inner{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+               gap:22px;padding:26px 0}
+  .strip-item{display:flex;gap:11px;font-size:14px;color:var(--muted)}
+  .strip-item b{display:block;color:var(--text);font-size:14.5px}
+  .strip-ico{font-family:var(--mono);color:var(--accent);flex:none}
+
+  /* ---------- sections ---------- */
+  section{padding:74px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;
+          text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+  h2{font-family:var(--head);font-weight:600;font-size:clamp(28px,4.4vw,40px);
+     line-height:1.1;text-wrap:balance;max-width:22ch}
+  .sec-head p{margin-top:14px;color:var(--muted);max-width:64ch}
+  h3{font-family:var(--head);font-weight:600;font-size:22px;letter-spacing:.01em;
+     margin:44px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--line-soft)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+  .card{padding:18px 18px 20px}
+  .card h4{font-size:15.5px;font-weight:600;margin-bottom:7px;display:flex;gap:9px;align-items:baseline}
+  .card .ico{font-family:var(--mono);color:var(--accent);font-size:13px}
+  .card p{font-size:14px;color:var(--muted)}
+
+  /* ---------- diagram ---------- */
+  .diagram{margin-top:34px;padding:26px 20px;overflow-x:auto}
+  .diagram svg{display:block;min-width:640px;width:100%;height:auto}
+  .d-label{font-family:var(--mono);font-size:11px;fill:var(--faint)}
+  .d-box{fill:var(--panel-2);stroke:var(--line)}
+  .d-vm{fill:var(--accent-dim);stroke:var(--accent);stroke-opacity:.55}
+  .d-text{font-family:var(--sans);font-size:13px;fill:var(--text)}
+  .d-sub{font-family:var(--mono);font-size:10.5px;fill:var(--faint)}
+  .d-line{stroke:var(--line);stroke-width:1.5;fill:none}
+  .d-flow{stroke:var(--accent);stroke-width:1.5;fill:none}
+
+  /* ---------- numbers ---------- */
+  .nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:30px}
+  .num{padding:18px}
+  .num b{display:block;font-family:var(--head);font-size:34px;line-height:1;color:var(--accent)}
+  .num span{font-size:13px;color:var(--muted);display:block;margin-top:6px}
+
+  /* ---------- faq ---------- */
+  .faq{max-width:780px}
+  .faq details{border-bottom:1px solid var(--line-soft);padding:16px 0}
+  .faq summary{cursor:pointer;font-weight:600;font-size:16.5px;list-style:none;
+               display:flex;gap:12px;align-items:baseline}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::before{content:"+";font-family:var(--mono);color:var(--accent);flex:none}
+  .faq details[open] summary::before{content:"\2013"}
+  .faq p{margin-top:10px;color:var(--muted);font-size:15px}
+
+  footer{padding:40px 0 56px;color:var(--faint);font-size:13.5px}
+  .foot-inner{display:flex;flex-wrap:wrap;gap:18px;align-items:center}
+  .foot-links{display:flex;gap:20px;margin-left:auto}
+  .foot-links a:hover{color:var(--text)}
+  @media (max-width:760px){
+    .hero{padding:58px 0 46px}
+    section{padding:56px 0}
+    .foot-links{margin-left:0}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top"><span class="brand-mark">k56</span>kAIm56</a>
+    <nav class="nav-links">
+      <a href="#what">What it is</a>
+      <a href="#features">Features</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-primary" href="https://github.com/uneidel/kaim56">Source</a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="wrap">
+    <h1>A fleet of AI agents, each in <em>its own microVM</em>.</h1>
+    <p class="lead">
+      kAIm56 is a self-hosted agent platform for your own hardware. Every agent runs in a hardened
+      <b>Firecracker microVM</b> with its own kernel — not as a process on your box. The manager is a
+      <b>single Python file</b> with no framework and no third-party packages. Your LLM keys
+      <b>never enter a VM</b>. Talk to it from Android, the browser, or Signal.
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/uneidel/kaim56">Read the source</a>
+      <a class="btn btn-ghost" href="#what">See how it works</a>
+    </div>
+    <figure class="hero-shot">
+      <div class="bp"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+        <img src="img/instances.png" alt="The web manager listing agent instances with their model, backend, status, vCPU/RAM and per-instance token usage" loading="lazy" />
+      </div>
+      <figcaption>The manager — one microVM per agent, live model and backend, per-instance spend (names and figures blurred here).</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ===================== STRIP ===================== -->
+<div class="strip">
+  <div class="wrap strip-inner">
+    <div class="strip-item"><span class="strip-ico">[ ]</span><span><b>Isolated by construction</b>One Firecracker microVM per agent, own kernel, overlay rootfs.</span></div>
+    <div class="strip-item"><span class="strip-ico">key</span><span><b>Keys stay on the host</b>The manager injects them on egress. A compromised VM has nothing to steal.</span></div>
+    <div class="strip-item"><span class="strip-ico">&lt;/&gt;</span><span><b>Standard library only</b>No framework, no npm tree, no supply chain to audit.</span></div>
+    <div class="strip-item"><span class="strip-ico">§</span><span><b>AGPL-3.0</b>Yours to run, read and change. Nothing phones home.</span></div>
+  </div>
+</div>
+
+<!-- ===================== WHAT IT IS ===================== -->
+<section id="what">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="kicker">What it is</p>
+      <h2>One host, many agents, and a manager that keeps the keys.</h2>
+      <p>
+        Messages arrive from the phone, the web chat or Signal. The manager on the host decides which
+        agent gets the work, boots its microVM if needed, and forwards the turn. The agent has tools —
+        shell, files, web, MCP — but only inside its own VM, and it reaches the outside world only
+        through the manager, which is where the credentials live.
+      </p>
+    </div>
+
+    <div class="diagram bp"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+      <svg viewBox="0 0 900 260" role="img" aria-label="Clients talk to the manager on the host; the manager runs one microVM per agent and injects API keys on the way out to the LLM providers.">
+        <!-- clients -->
+        <text class="d-label" x="20" y="24">CLIENTS</text>
+        <rect class="d-box" x="20" y="38" width="150" height="42" rx="2"/>
+        <text class="d-text" x="34" y="59">Android app</text>
+        <text class="d-sub" x="34" y="73">chat · voice · missions</text>
+        <rect class="d-box" x="20" y="96" width="150" height="42" rx="2"/>
+        <text class="d-text" x="34" y="117">Web chat</text>
+        <text class="d-sub" x="34" y="131">streaming · images</text>
+        <rect class="d-box" x="20" y="154" width="150" height="42" rx="2"/>
+        <text class="d-text" x="34" y="175">Signal</text>
+        <text class="d-sub" x="34" y="189">in and out</text>
+
+        <!-- manager -->
+        <path class="d-flow" d="M170 59 H250 M170 117 H250 M170 175 H250"/>
+        <text class="d-label" x="270" y="24">HOST</text>
+        <rect class="d-box" x="270" y="38" width="200" height="158" rx="2"/>
+        <text class="d-text" x="288" y="66">Manager</text>
+        <text class="d-sub" x="288" y="84">one process, stdlib only</text>
+        <text class="d-sub" x="288" y="106">· routing &amp; missions</text>
+        <text class="d-sub" x="288" y="124">· secret broker</text>
+        <text class="d-sub" x="288" y="142">· content gateway</text>
+        <text class="d-sub" x="288" y="160">· budgets &amp; audit</text>
+        <text class="d-sub" x="288" y="178">· chat store &amp; history</text>
+
+        <!-- vms -->
+        <path class="d-flow" d="M470 78 H540 M470 117 H540 M470 156 H540"/>
+        <text class="d-label" x="560" y="24">MICROVMS</text>
+        <rect class="d-vm" x="560" y="58" width="180" height="40" rx="2"/>
+        <text class="d-text" x="576" y="83">agent · own kernel</text>
+        <rect class="d-vm" x="560" y="106" width="180" height="40" rx="2"/>
+        <text class="d-text" x="576" y="131">agent · own tools</text>
+        <rect class="d-vm" x="560" y="154" width="180" height="40" rx="2"/>
+        <text class="d-text" x="576" y="179">ephemeral · deleted after</text>
+
+        <!-- egress -->
+        <path class="d-line" d="M740 117 H800 M800 117 V60 H860"/>
+        <text class="d-label" x="770" y="52">EGRESS</text>
+        <text class="d-sub" x="748" y="112">no keys inside</text>
+        <rect class="d-box" x="790" y="130" width="95" height="40" rx="2"/>
+        <text class="d-text" x="802" y="155">LLM / MCP</text>
+        <path class="d-flow" d="M470 210 H838 V170"/>
+        <text class="d-sub" x="500" y="204">the manager attaches the API key here</text>
+      </svg>
+    </div>
+
+    <div class="nums">
+      <div class="num bp"><i class="tl"></i><i class="br"></i><b>1</b><span>process on the host</span></div>
+      <div class="num bp"><i class="tl"></i><i class="br"></i><b>0</b><span>third-party packages in it</span></div>
+      <div class="num bp"><i class="tl"></i><i class="br"></i><b>67</b><span>loadable expert skills</span></div>
+      <div class="num bp"><i class="tl"></i><i class="br"></i><b>85</b><span>end-to-end tests, green</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FEATURES ===================== -->
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="kicker">Features</p>
+      <h2>Everything an agent needs — and a place to put it.</h2>
+      <p>Each agent is configured on its own: model, backend, tools, MCP servers, budget. What they share is the manager: chats, memory, missions and the audit trail.</p>
+    </div>
+
+    <h3>Agents &amp; fleet</h3>
+    <div class="grid">
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">▦</span>One VM per agent</h4><p>Copy-on-write overlay rootfs: a shared read-only base plus a per-instance write layer. An optional persistent disk keeps installed packages across restarts; factory reset is one click.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⇄</span>Pluggable backends</h4><p>OpenRouter, OrcaRouter, Anthropic or a self-hosted llama.cpp — chosen per instance. Switch model or provider mid-conversation with <code>/model</code>, context preserved.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">→</span>Delegation by capability</h4><p>An agent lists the others, picks the one with the right tools or MCP server, and hands it a task. Home Assistant work goes to the agent that has Home Assistant.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">↻</span>Missions</h4><p>Multi-step plans with progress that survives resets and restarts. Every agent may own one; the steps run wherever they fit, and finished tasks are collected and advance the mission in a single push.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⧉</span>Ephemeral workers</h4><p>Isolated one-off jobs run in a fresh VM that is deleted afterwards. Nothing they touch outlives them.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⏱</span>Scheduling</h4><p>Tasks with intervals and clock times, a frequency cap that pauses runaway loops, and recovery for runs orphaned by a restart.</p></div>
+    </div>
+
+    <h3>Memory &amp; knowledge</h3>
+    <div class="grid">
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">∞</span>Semantic memory</h4><p>The agent stores what future conversations will need and gets it back by meaning, not by keyword. A flat key/value store sits underneath for the things that need exact recall.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">§</span>Playbooks</h4><p>Standing rules learned from your corrections. Say "always do X this way" once and it holds — across resets, restarts and model changes.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">◫</span>Skills</h4><p>Expert documents pulled into context on demand, not carried in every prompt. Sixty-seven of them, in the Claude-Code skill format.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">≡</span>Type-aware previews</h4><p>Oversized tool outputs are offloaded in full; what stays in context is a preview with structure — JSON as an outline of keys and counts, logs with duplicates folded and every error line kept.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⌗</span>Task history</h4><p>Every run lands in a searchable database with its result, so an agent can check what was already done before doing it again.</p></div>
+    </div>
+
+    <h3>Reach</h3>
+    <div class="grid">
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">▤</span>Android app</h4><p>KatAgent: chat, voice, missions and tasks — plus an offline on-device Gemma mode that works with no network at all.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">◐</span>Web chat</h4><p>Token streaming, Markdown, image input, a slash-command picker, and a collapsible view of the model's thinking.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">✆</span>Signal</h4><p>Messages in and out. An incoming message wakes the orchestrator within seconds instead of waiting for the next heartbeat.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">↯</span>P2P transport</h4><p>The app reaches the manager over iroh: NAT-traversed, end-to-end encrypted, no VPN and no exposed port. Paired devices only.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">♪</span>Voice</h4><p>Speech to text and back, with selectable voices and speed. Dictate on the phone, hear the answer.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⇪</span>Folder sharing</h4><p>katfs hands a folder from your browser straight to an agent over P2P — no upload to a server in between.</p></div>
+    </div>
+
+    <h3>Extending it</h3>
+    <div class="grid">
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">+</span>Tool plugins</h4><p>A tool is one <code>.py</code> file or a folder, dropped into the web UI. No image rebuild, and it runs inside the VM sandbox like everything else.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⊞</span>MCP servers</h4><p>Per instance, from a host-side catalog. The endpoint credentials stay with the manager; the VM only ever sees the server name.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">◨</span>Personas &amp; prompts</h4><p>Named system prompts and prompt templates as slash commands, editable in the web UI and shared across clients.</p></div>
+    </div>
+
+    <figure class="hero-shot">
+      <div class="bp"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+        <img src="img/skills.png" alt="The Skills tab: a grid of expert knowledge documents with one-line descriptions, each loadable into an agent's context on demand" loading="lazy" />
+      </div>
+      <figcaption>Skills — expert documents an agent pulls in when it needs them, not carried in every prompt.</figcaption>
+    </figure>
+
+    <figure class="hero-shot" style="margin-top:34px">
+      <div class="bp"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+        <img src="img/mcp.png" alt="The MCP servers tab: a catalog of servers that can be switched on per instance, with their credentials kept on the host" loading="lazy" />
+      </div>
+      <figcaption>MCP servers — enabled per instance, with the endpoint credentials staying on the host.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ===================== SECURITY ===================== -->
+<section id="security">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="kicker">Security</p>
+      <h2>Written for the day an agent does the wrong thing.</h2>
+      <p>
+        An agent that can run shell commands is a program that will eventually run the wrong one —
+        because a page it read told it to. The design assumes that, instead of hoping otherwise.
+      </p>
+    </div>
+    <div class="grid" style="margin-top:30px">
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">▣</span>Isolation first</h4><p>Tools execute inside the agent's microVM, never on the host. Host folders appear only where you mount them explicitly.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">key</span>Credential-injection gateway</h4><p>Agents call the manager instead of the provider; the key is attached on the way out. A compromised VM can spend budget, but it cannot exfiltrate a key.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">◇</span>Secret broker</h4><p>Tokens for tools are handed out per request against a source-IP allowlist and never written to a VM's disk.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⌫</span>Content gateway</h4><p>Invisible-Unicode carriers and image metadata are stripped from what enters and leaves a chat — the quiet channel prompt injection likes.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">✋</span>Human in the loop</h4><p>Risky tools ask you over Signal and wait. A hard shell denylist blocks the classics outright, and an "oracle" second opinion is required before destructive actions.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⊘</span>Circuit breakers</h4><p>Per-instance daily token budget, calls per minute, task frequency caps, egress allowlists, and a leak filter that redacts secrets from outgoing messages.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">#</span>Plugin pinning</h4><p>Every tool plugin is hashed on approval. Edited out of band, it is flagged as changed instead of quietly running.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">☰</span>Audit trail</h4><p>Per-instance tool allowlists and a per-instance record of what ran, alongside token and cost accounting per time window.</p></div>
+      <div class="card bp"><i class="tl"></i><i class="br"></i><h4><span class="ico">⌸</span>Routes you can enumerate</h4><p>The HTTP surface is moving from a hand-written if-chain to a table where every route carries whether a guest VM may call it — so "which endpoint is open to the agents?" is a loop over the table, not a reading exercise. A test guards the rest of the chain against a prefix silently swallowing a later route.</p></div>
+    </div>
+
+    <figure class="hero-shot">
+      <div class="bp"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+        <img src="img/policy.png" alt="The Policy tab: per instance the model, the secrets it may broker, its MCP servers and a checkbox list of the tools it is allowed to call" loading="lazy" />
+      </div>
+      <figcaption>Policy — what each agent may do, in one place: model, secrets, MCP, and the tools it is allowed to call. Instance names and spend are blurred here.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ===================== FAQ ===================== -->
+<section id="faq">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="kicker">FAQ</p>
+      <h2>Fair questions.</h2>
+    </div>
+    <div class="faq" style="margin-top:26px">
+      <details open>
+        <summary>Why microVMs and not containers?</summary>
+        <p>Because the threat here is not a bug in the agent's code, it is the agent being talked into something by text it read. A container shares the host kernel; a Firecracker VM brings its own. Boot time is still well under a second, and each agent gets its own kernel, its own filesystem and its own network segment.</p>
+      </details>
+      <details>
+        <summary>What does it cost to run?</summary>
+        <p>The platform itself costs electricity — it runs on your own KVM host. What costs money is the model you point it at, and that is metered per instance and per time window, with a daily token budget and a calls-per-minute cap you set yourself. Point an agent at a self-hosted llama.cpp and it costs nothing per token at all.</p>
+      </details>
+      <details>
+        <summary>Does it work without the internet?</summary>
+        <p>The platform does. Agents that use a hosted model obviously need to reach it, but the Android app also carries an on-device Gemma mode that answers with no network at all, and a local llama.cpp backend keeps a full agent running inside your own four walls.</p>
+      </details>
+      <details>
+        <summary>Is this a product?</summary>
+        <p>No. It is one person's platform, run in production by that person, published under AGPL because it might be useful. There is no company behind it, no support contract, and no roadmap you can hold anyone to. The code is honest about what is finished and what is not.</p>
+      </details>
+      <details>
+        <summary>What do I need to run it?</summary>
+        <p>A Linux host with KVM, Firecracker plus a kernel image, and Python 3 — no other runtime, no database server, no message broker. There is a one-command installer that provisions the stack on a fresh host, and everything host-specific lives in two small JSON files that are kept out of the repository.</p>
+      </details>
+      <details>
+        <summary>How is it kept honest?</summary>
+        <p>Eighty-five end-to-end tests run against the real manager on the standard library alone, the built-in Architecture view is rendered from the running system, and every change lands in a changelog you can read in the UI.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>kAIm56 — self-hosted agent platform. AGPL-3.0-or-later.</span>
+    <span class="foot-links">
+      <a href="https://github.com/uneidel/kaim56">Source</a>
+      <a href="#features">Features</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

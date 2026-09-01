@@ -1,0 +1,11 @@
+# Build environment for the app's native iroh module: Rust + Android NDK +
+# cargo-ndk + the UniFFI bindings generator. Produces the per-ABI .so files and
+# the Kotlin bindings that the Gradle build then packages into the APK.
+FROM rust:latest
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*
+ENV NDK_VER=r26d
+RUN curl -fsSL -o /tmp/ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" \
+    && unzip -q /tmp/ndk.zip -d /opt && rm /tmp/ndk.zip
+ENV ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VER}
+RUN rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android \
+    && cargo install cargo-ndk

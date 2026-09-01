@@ -1,0 +1,19 @@
+# On .198, add into the Traefik dynamic config (file provider) —
+# the same file/directory that also holds rtr-agents/srv-agents/agents-auth.
+http:
+  routers:
+    rtr-katfs:
+      rule: "Host(`katfs.example.com`)"
+      entryPoints: ["websecure"]
+      middlewares: ["agents-auth@file"]     # gleiche Basic-Auth wie agents (admin / AGENTS_PASS)
+      service: "srv-katfs"
+      tls:
+        certResolver: "desec"
+        domains:
+          - main: "example.com"
+            sans: ["*.example.com"]
+  services:
+    srv-katfs:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.10:8790"

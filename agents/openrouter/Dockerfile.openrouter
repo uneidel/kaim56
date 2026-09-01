@@ -1,0 +1,23 @@
+# Rootfs of the OpenRouter agent. node:24-slim = current node/npx (for MCP servers)
+# + existing user 'node' (uid 1000). python3 for the agent.
+FROM node:24-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git curl python3 python3-pip iproute2 iputils-ping nfs-common poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# stdio<->SSE bridge for remote MCP servers (e.g. Home Assistant MCP).
+RUN npm install -g mcp-remote && npm cache clean --force
+
+# mcp-portainer is DELIBERATELY no longer here: the MCP processes run in the
+# MCP hub on the host (see /home/ulrich/mcp-hub), the guest only speaks
+# JSON-RPC through the manager. mcp-remote stays as a fallback for managers
+# without /api/mcp.
+
+COPY agent.py                 /app/agent.py
+COPY run_agent.py             /app/run_agent.py
+COPY webterm.py               /app/webterm.py
+COPY config-openrouter.env    /app/config.env
+COPY guest-init-openrouter.sh /init
+RUN chmod +x /init && mkdir -p /home/node/workspace /home/node/.config \
+    && chown -R node:node /home/node

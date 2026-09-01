@@ -1,0 +1,34 @@
+[Unit]
+Description=Firecracker Manager (Web-UI + microVM control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ulrich/firecracker
+Environment=PORT=8700
+# Only set HOSTIF if the default route does NOT run over the desired uplink —
+# otherwise the manager determines it itself. A NIC hard-coded here and later
+# renamed silently breaks the guests' NAT.
+# Environment=HOSTIF=eth0
+# Web auth (empty = no auth -> run only behind Traefik/SSO!):
+Environment=MANAGER_USER=admin
+Environment=MANAGER_PASS=
+ExecStart=/usr/bin/python3 /home/ulrich/firecracker/manager.py
+Restart=always
+RestartSec=5
+# The microVMs are child processes of the manager and thus live in its
+# cgroup: without this, every `systemctl restart` takes all running instances
+# with it. KillMode=process stops only the manager itself, the VMs keep running
+# and stay controllable via their pidfiles.
+KillMode=process
+# Muss root sein (kvm, ip, iptables):
+User=root
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation:
+#   sudo cp firecracker-manager.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
+#   journalctl -u firecracker-manager -f

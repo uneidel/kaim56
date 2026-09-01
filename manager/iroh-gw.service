@@ -1,0 +1,18 @@
+[Unit]
+Description=kAIm56 iroh gateway (app<->manager transport over iroh, P2P)
+After=network-online.target firecracker-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Persisted node secret => stable NodeId (the address the app dials).
+Environment=IROHGW_SECRET=/home/ulrich/firecracker/iroh-gw/secret.key
+Environment=IROHGW_ALLOW=/home/ulrich/firecracker/iroh-gw/allow.txt
+Environment=IROHGW_NODEID=/home/ulrich/firecracker/iroh-gw/nodeid.txt
+Environment=IROHGW_MANAGER=127.0.0.1:8700
+ExecStart=/home/ulrich/firecracker/bin/iroh-gw
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
