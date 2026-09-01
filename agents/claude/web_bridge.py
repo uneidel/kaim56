@@ -19,22 +19,53 @@ FABRIC_DEFAULT_PATTERN = os.environ.get("FABRIC_DEFAULT_PATTERN", "ai")
 _session = None
 
 
+_model = None      # set via /model; None = the installation's default
+
+
 def run_claude(msg):
-    global _session
-    # /reset clears the Claude Code session (new context) — the same the
-    # OpenRouter agent can do. The app now passes /reset through.
-    if msg.strip() == "/reset":
+    global _session, _model
+    m = msg.strip()
+    low = m.lower()
+    # Platform slash commands: Claude Code has its OWN slash commands
+    # (/branch = git worktrees!) that only confuse here. What the bridge can
+    # do it does itself; what does not exist on Claude instances it says so
+    # honestly — instead of passing Claude Code's "isn't available in this
+    # environment" through.
+    if low == "/reset":
         _session = None
-        return "🔄 Neue Unterhaltung."
+        return "🔄 New conversation."
+    if low.startswith("/model"):
+        rest = m[6:].strip()
+        if not rest:
+            return f"🧠 Model: {_model or 'installation default'} · /model sonnet|opus|haiku|<id> · /model default"
+        _model = None if rest.lower() in ("default", "reset", "aus", "off") else rest
+        return f"🧠 Model from now on: {_model or 'installation default'}"
+    if low.startswith("/fresh"):
+        rest = m[6:].strip()
+        if not rest:
+            return "Usage: /fresh <task> — one-off request in a throwaway context."
+        return _claude_once(rest, resume=None, keep_session=False)
+    for known in ("/branch", "/back", "/goal", "/steps", "/reasoning"):
+        if low == known or low.startswith(known + " "):
+            return (f"ℹ️ {known} only exists on the OpenRouter agents, not on "
+                    "Claude Code instances. Available here: /reset, /fresh, /model — "
+                    "everything else goes to Claude itself as a Claude Code command.")
+    return _claude_once(m, resume=_session, keep_session=True)
+
+
+def _claude_once(msg, resume, keep_session):
+    global _session
     cmd = ["claude", "-p", msg, "--output-format", "json"]
-    if _session:
-        cmd += ["--resume", _session]
+    if _model:
+        cmd += ["--model", _model]
+    if resume:
+        cmd += ["--resume", resume]
     if ALLOW_ACTIONS:
         cmd += ["--dangerously-skip-permissions"]
     p = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, timeout=TIMEOUT)
     try:
         d = json.loads(p.stdout)
-        if d.get("session_id"):
+        if keep_session and d.get("session_id"):
             _session = d["session_id"]
         return d.get("result") or "(empty reply)"
     except json.JSONDecodeError:
@@ -56,9 +87,9 @@ def run(msg):
     try:
         return run_fabric(msg) if AGENT == "fabric" else run_claude(msg)
     except subprocess.TimeoutExpired:
-        return f"⏱️ Time limit ({TIMEOUT}s) reached."
+        return f"⏱️ Zeitlimit ({TIMEOUT}s) erreicht."
     except Exception as e:
-        return f"⚠️ Error: {e!r}"
+        return f"⚠️ Fehler: {e!r}"
 
 
 PAGE = """<!doctype html><html lang=de><head><meta charset=utf-8>
@@ -79,13 +110,13 @@ button{padding:.6rem 1rem;font-size:1rem;border:none;border-radius:10px;backgrou
 </style></head><body>
 <header>🤖 __AGENT__</header>
 <div id=log></div>
-<form id=f><textarea id=t placeholder="Message… (Enter sends)" autofocus></textarea><button>➤</button></form>
+<form id=f><textarea id=t placeholder="Nachricht… (Enter sendet)" autofocus></textarea><button>➤</button></form>
 <script>
 const log=document.getElementById('log'),t=document.getElementById('t');
 function add(txt,cls){const d=document.createElement('div');d.className='msg '+cls;d.textContent=txt;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 async function send(){const m=t.value.trim();if(!m)return;t.value='';add(m,'me');const b=add('…','bot');
   try{const r=await fetch('api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});
-    const j=await r.json();b.textContent=j.reply||'(empty)';}catch(e){b.textContent='⚠️ '+e}log.scrollTop=log.scrollHeight}
+    const j=await r.json();b.textContent=j.reply||'(leer)';}catch(e){b.textContent='⚠️ '+e}log.scrollTop=log.scrollHeight}
 document.getElementById('f').onsubmit=e=>{e.preventDefault();send()};
 t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 </script></body></html>"""

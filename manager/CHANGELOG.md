@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-01 (claude bridge: platform slashes stop leaking into Claude Code)
+- On a Claude instance, `/branch` fell through to Claude Code's OWN /branch (git worktrees) and answered "isn't available in this environment" — a confusing collision between the platform's tree-chat command and Claude Code's namesake, spotted in a live chat. The web bridge now intercepts the platform built-ins: `/fresh <task>` runs a one-off without touching the session, `/model sonnet|opus|haiku|<id>` switches the model per session (`/model default` clears), and `/branch`, `/back`, `/goal`, `/steps`, `/reasoning` get an honest "OpenRouter agents only — here you have /reset, /fresh, /model". Everything else still goes to Claude untouched, so Claude Code's own slash commands keep working. Verified live on the running instance.
+
 ## 2026-09-01 (branch icon drawn in-house; app picker completes the built-ins)
 - The web chat's branch button shows a proper branching diagram now (one node forking into two) instead of the `⑂` glyph — drawn as an inline SVG in `currentColor`, NOT copied from the commercial icon set that inspired it (proprietary license, and this repo is public AGPL).
 - App v5.31: the slash picker gains the three built-ins it was missing (`/fresh`, `/branch`, `/back`); the web picker already had the full set.
