@@ -112,7 +112,13 @@ SYSTEM += (
 SYSTEM += (f"\n\nRuntime: You run via {LLM_NAME} with the model "
            f"'{OR_MODEL}'. If anyone asks about your model/backend, name exactly "
            f"that — do NOT use list_agents for it (that lists other agents to "
-           f"delegate to, not you).")
+           f"delegate to, not you). Your TOOLS (shell, http_fetch, web_search, "
+           f"files) execute inside YOUR OWN microVM on the user's host and reach "
+           f"the internet through the host's connection — NOT on the model "
+           f"provider's servers. Never claim a fetch failed because of where the "
+           f"model runs; when a fetch fails, quote the actual error, and when an "
+           f"earlier attempt failed, just try again instead of concluding you "
+           f"are blocked.")
 
 # Appended to EVERY system prompt, personas included: the memory tools are
 # built in, so the instruction for them belongs here — not in each persona
@@ -302,7 +308,11 @@ def t_http_fetch(url, method="GET", raw=False):
     markup and scripts — hard-truncated raw HTML used to cut content off before
     it ever appeared, and the model concluded pages were "too complex").
     raw=true returns the unconverted body for the cases that need markup."""
-    req = urllib.request.Request(url, method=method, headers={"User-Agent": "or-agent"})
+    req = urllib.request.Request(url, method=method, headers={
+        # A browser UA: big job/news portals 403 obvious bot agents outright.
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) "
+                      "Gecko/20100101 Firefox/120.0",
+        "Accept-Language": "de,en;q=0.7"})
     r = urllib.request.urlopen(req, timeout=30)
     body = r.read(5_000_000).decode("utf-8", "replace")
     ctype = (r.headers.get("Content-Type") or "").lower()

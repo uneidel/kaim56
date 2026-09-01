@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-01 (the agent stopped blaming Google for its own tools)
+- Fourth find from the job-search session, this one a confabulation rather than a bug: the model told the user its requests "run on Google's servers" and get blocked by career portals — while the exact same page fetched fine through the exact same tool (the Stadtwerke job board returned actual listings, HTTP 200, even with the old bot-ish user agent). The model had generalised the session's EARLIER failures — all fixed today — into "the web blocks me" and rationalised it with its provider self-image instead of retrying.
+- Two changes: the runtime block of the system prompt now states WHERE tools execute (in the agent's own microVM on the user's host, egress via the host connection — never on the model provider's servers), tells the model to quote real errors and to retry instead of concluding it is blocked. And `http_fetch` sends a browser user agent plus Accept-Language — big portals do 403 obvious bot agents, so the story should not become true by accident.
+- Verified live: the "blocked" page returns three job titles through the VM. 98 tests green.
+
 ## 2026-09-01 (memory: a key with a space could be stored but never recalled)
 - Live bug, third of the day from the same job-search session: the agent stored 60 companies under the key `"jobsuche Firmen"` — and could not read them back, apologising about an "invalid key format". Cause: **store takes the key via the JSON body (any string fine), recall glues it raw into the URL path**, where a space kills the request. `memory_recall` URL-quotes the key now, the manager URL-decodes path segments, and a slash inside a key stays one key (everything after the instance). `load_skill` quotes its name too. HTTP-level test covers space and slash keys round-trip; verified live — the exact failing recall now returns the company list. 98 tests green.
 
