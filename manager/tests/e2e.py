@@ -286,6 +286,42 @@ class AgentLogic(unittest.TestCase):
             self.a._TOOL_ALLOW = old
 
     # --- Tool-Hook / Guardrails ---------------------------------------------
+    def test_web_search_reports_blocked_backends_instead_of_no_results(self):
+        """DDG went behind a bot challenge (HTTP 202 + anomaly page); the old
+        tool turned that into "no results" and the model concluded the thing
+        searched for does not exist. A dead backend must be NAMED."""
+        a = self.a
+        old_d, old_b = a._ddg_search, a._bing_search
+        try:
+            a._ddg_search = lambda q, c: None                # challenge
+            a._bing_search = lambda q, c: (_ for _ in ()).throw(OSError("net down"))
+            out = a.t_web_search("anything")
+            self.assertIn("unavailable", out)
+            self.assertIn("duckduckgo: blocked", out)
+            self.assertIn("bing", out)
+            self.assertIn("NOT an empty result", out)
+            # A backend that answers with an EMPTY list is a real empty result.
+            a._ddg_search = lambda q, c: []
+            self.assertEqual(a.t_web_search("gibberishquery"), "no results")
+            # And the fallback chain: DDG blocked, Bing delivers.
+            a._ddg_search = lambda q, c: None
+            a._bing_search = lambda q, c: [("Titel", "https://x.de", "Schnipsel")]
+            out = a.t_web_search("x")
+            self.assertIn("Titel", out)
+            self.assertIn("https://x.de", out)
+        finally:
+            a._ddg_search, a._bing_search = old_d, old_b
+
+    def test_bing_redirect_urls_are_decoded(self):
+        import base64
+        a = self.a
+        target = "https://de.wikipedia.org/wiki/Unternehmen"
+        b64 = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+        href = f"https://www.bing.com/ck/a?!&amp;&amp;p=xyz&amp;u=a1{b64}&amp;ntb=1"
+        self.assertEqual(a._bing_real_url(href), target)
+        # Without the redirect wrapper the URL passes through untouched.
+        self.assertEqual(a._bing_real_url("https://example.org/x"), "https://example.org/x")
+
     def test_rejected_history_image_is_stripped_and_counted(self):
         """A provider that rejects an image the history has long carried kills
         EVERY later turn (found live: an instance whose memory stayed empty

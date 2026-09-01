@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-01 (web_search: DDG went behind a bot wall — multi-backend with honest errors)
+- **Why the agent found "no companies": DuckDuckGo's HTML endpoint now serves a bot challenge to datacenter IPs** (HTTP 202 + an "anomaly" page, zero results in the markup). The old tool had two compounding flaws: `urlopen` does not raise on 202, and an empty regex match returned the string "no results" — so the model concluded the companies do not exist and told the user it would "try again later".
+- `web_search` is multi-backend now: DDG first (challenge detected and named), then Bing HTML (per-block parsing, snippet included, `/ck/a` redirect URLs base64-decoded back to their targets). **A dead backend produces a spoken error** — "web search unavailable (duckduckgo: blocked …)" with an explicit "this is NOT an empty result" so the model reports infrastructure instead of inventing absence. An empty result list stays "no results".
+- Known limitation, stated rather than hidden: Bing softens rare terms for datacenter callers (a query for a specific product may come back generic). Verified end-to-end from a real VM. 94 tests green.
+
 ## 2026-09-01 (PDF extraction: poppler in a container as the fallback)
 - A user hit the honest error on a real PDF (subset/CID fonts — the built-in extractor cannot decode those, and the host has no poppler-utils). Rather than leaving that class of PDF broken until poppler is installed: `_pdf_text` now tries **pdftotext on the host → pdftotext from the `kaim56-pdftotext` container (alpine + poppler, built once; no network, read-only mount, memory cap) → the built-in extractor**. The host already runs Docker services, so this adds no new kind of dependency; the availability probe is cached. The error message, when everything fails, now names both fixes. Test forces the container path (host binary hidden, builtin disabled) against a well-formed PDF. 92 tests green.
 

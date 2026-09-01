@@ -325,37 +325,104 @@ def t_read_pdf(path, pages=""):
                 pass
 
 
-def t_web_search(query, count=5):
-    """Web search via DuckDuckGo HTML (no API key). Returns title + URL + snippet."""
-    import urllib.parse
-    import re
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        count = 5
+def _ddg_search(query, count):
+    """DuckDuckGo HTML. Returns a result list, or None when DDG serves its
+    bot challenge instead of results (HTTP 202 + "anomaly" page — since
+    2026-09 the norm for datacenter IPs, found via a user's empty search)."""
     q = urllib.parse.quote(query)
     req = urllib.request.Request(
         "https://html.duckduckgo.com/html/?q=" + q,
         headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"})
-    html = urllib.request.urlopen(req, timeout=30).read(1_000_000).decode("utf-8", "replace")
+    r = urllib.request.urlopen(req, timeout=30)
+    html = r.read(1_000_000).decode("utf-8", "replace")
+    if r.status != 200 or "anomaly" in html[:4000] or "challenge" in html[:4000]:
+        return None                       # blocked -> let the caller try elsewhere
     hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', html)
     titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, re.S)
     snips = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.S)
-
-    def clean(s):
-        return re.sub(r"<[^>]+>", "", s).replace("&amp;", "&").replace("&#x27;", "'").strip()
 
     def real(h):
         m = re.search(r"uddg=([^&]+)", h)
         return urllib.parse.unquote(m.group(1)) if m else h
 
-    out = []
-    for i in range(min(count, len(hrefs))):
-        t = clean(titles[i]) if i < len(titles) else ""
-        s = clean(snips[i]) if i < len(snips) else ""
-        out.append(f"{i+1}. {t}\n   {real(hrefs[i])}\n   {s}")
-    return "\n".join(out) or "no results"
+    return [(_ws_clean(titles[i]) if i < len(titles) else "",
+             real(hrefs[i]),
+             _ws_clean(snips[i]) if i < len(snips) else "")
+            for i in range(min(count, len(hrefs)))]
 
+
+def _bing_search(query, count):
+    """Bing HTML. Result URLs are /ck/a redirects carrying the target
+    base64-encoded in u=a1<payload> — decoded here."""
+    q = urllib.parse.quote(query)
+    req = urllib.request.Request(
+        "https://www.bing.com/search?q=" + q + "&count=" + str(max(count, 10)),
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+                 "Accept-Language": "de,en;q=0.7"})
+    html = urllib.request.urlopen(req, timeout=30).read(2_000_000).decode("utf-8", "replace")
+    out = []
+    # Per result block, not one regex across the page: the snippet <p> sits at
+    # varying depths and a greedy pattern either misses it or bleeds across
+    # blocks.
+    for block in html.split('<li class="b_algo"')[1:]:
+        block = block.split("</li>", 1)[0]
+        a = re.search(r'<h2[^>]*>.*?<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        if not a:
+            continue
+        p = re.search(r"<p[^>]*>(.*?)</p>", block, re.S)
+        out.append((_ws_clean(a.group(2)), _bing_real_url(a.group(1)),
+                    _ws_clean(p.group(1)) if p else ""))
+        if len(out) >= count:
+            break
+    return out
+
+
+def _bing_real_url(href):
+    """Bing /ck/a redirect -> target URL (u=a1<urlsafe-base64>)."""
+    import base64
+    h = urllib.parse.unquote(href.replace("&amp;", "&"))
+    m = re.search(r"[&?]u=a1([A-Za-z0-9_\-]+)", h)
+    if not m:
+        return h
+    raw = m.group(1)
+    try:
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode(
+            "utf-8", "replace")
+    except Exception:
+        return h
+
+
+def _ws_clean(s):
+    return re.sub(r"<[^>]+>", "", s).replace("&amp;", "&").replace("&#x27;", "'").strip()
+
+
+def t_web_search(query, count=5):
+    """Web search without an API key: DuckDuckGo first, Bing when DDG serves
+    its bot challenge. The distinction matters downstream: "no results" means
+    the query found nothing; a blocked/unreachable backend must SAY so —
+    otherwise the model concludes the thing searched for does not exist."""
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = 5
+    errors = []
+    for name, backend in (("duckduckgo", _ddg_search), ("bing", _bing_search)):
+        try:
+            rows = backend(query, count)
+        except Exception as e:
+            errors.append(f"{name}: {e!r}")
+            continue
+        if rows is None:
+            errors.append(f"{name}: blocked (bot challenge)")
+            continue
+        if rows:
+            return "\n".join(f"{i+1}. {t}\n   {u}\n   {sn}"
+                              for i, (t, u, sn) in enumerate(rows))
+        return "no results"
+    return ("⚠️ web search unavailable — every backend failed ("
+            + "; ".join(errors) + "). This is an infrastructure problem, "
+            "NOT an empty result: tell the user instead of concluding "
+            "nothing exists.")
 
 def _manager_base():
     """Manager URL as seen from the guest: host gateway (.1 of the /30) on port 8700."""
