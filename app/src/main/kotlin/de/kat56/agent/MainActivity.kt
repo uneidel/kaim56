@@ -277,6 +277,9 @@ private val SLASH_CMDS = listOf(
     SlashCmd("/goal", "Set a goal; the answer is refined against a judge (off = disable)", arg = true),
     SlashCmd("/model", "Switch model (e.g. orcarouter:anthropic/claude-sonnet-4.6)", arg = true),
     SlashCmd("/steps", "Max. tool steps per turn: 30 or unlimited", arg = true),
+    SlashCmd("/fresh", "One-off request in a throwaway context (history untouched)", arg = true),
+    SlashCmd("/branch", "Open a side branch — a follow-up aside from the main thread"),
+    SlashCmd("/back", "Close the side branch and summarise it (/back drop = discard)"),
     SlashCmd("/reset", "Reset conversation context"),
     SlashCmd("/agents", "Open agent management"),
     SlashCmd("/help", "Show commands"),
@@ -345,9 +348,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // Angehaengtes Dokument: der Manager hat den Text schon extrahiert; in die
     // Nachricht wandert NUR der Text, nie die Binaerdatei.
     var pendingDoc by remember { mutableStateOf<ManagerSync.Extracted?>(null) }
-    // Preview of the extracted text, by tapping the chip: see BEFORE sending
-    // what the extraction really produced (PDF extraction without poppler is
-    // not perfect — better to check here than to let the model guess).
+    // Vorschau des extrahierten Texts, per Tipp auf den Chip: VOR dem Senden
+    // sehen, was die Extraktion wirklich hergibt (PDF-Extraktion ohne Poppler
+    // ist nicht perfekt — besser hier pruefen als das Modell raten lassen).
     var docPreviewOpen by remember { mutableStateOf(false) }
     var web by remember { mutableStateOf(prefs.webAccess) }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
@@ -1245,8 +1248,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                     modifier = Modifier.size(16.dp))
                             }
                         }
-                        // Expanded: the START of the extracted text, scrollable.
-                        // Exactly this (plus the rest) is what the model gets.
+                        // Aufgeklappt: der ANFANG des extrahierten Texts, scrollbar.
+                        // Genau das (plus Rest) bekommt das Modell zu sehen.
                         AnimatedVisibility(docPreviewOpen) {
                             Column {
                                 Hairline(Modifier.padding(vertical = 8.dp))

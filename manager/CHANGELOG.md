@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-01 (branch icon drawn in-house; app picker completes the built-ins)
+- The web chat's branch button shows a proper branching diagram now (one node forking into two) instead of the `⑂` glyph — drawn as an inline SVG in `currentColor`, NOT copied from the commercial icon set that inspired it (proprietary license, and this repo is public AGPL).
+- App v5.31: the slash picker gains the three built-ins it was missing (`/fresh`, `/branch`, `/back`); the web picker already had the full set.
+
 ## 2026-09-01 (the agent stopped blaming Google for its own tools)
 - Fourth find from the job-search session, this one a confabulation rather than a bug: the model told the user its requests "run on Google's servers" and get blocked by career portals — while the exact same page fetched fine through the exact same tool (the Stadtwerke job board returned actual listings, HTTP 200, even with the old bot-ish user agent). The model had generalised the session's EARLIER failures — all fixed today — into "the web blocks me" and rationalised it with its provider self-image instead of retrying.
 - Two changes: the runtime block of the system prompt now states WHERE tools execute (in the agent's own microVM on the user's host, egress via the host connection — never on the model provider's servers), tells the model to quote real errors and to retry instead of concluding it is blocked. And `http_fetch` sends a browser user agent plus Accept-Language — big portals do 403 obvious bot agents, so the story should not become true by accident.

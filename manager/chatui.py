@@ -275,7 +275,7 @@ details.ast .row{margin-bottom:18px}
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
-        <button class=icon id=branchBtn title="Open a side branch: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()>⑂</button>
+        <button class=icon id=branchBtn title="Open a side branch: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="4"/><rect x="1" y="10.5" width="5" height="4"/><rect x="10" y="10.5" width="5" height="4"/><path d="M8 5.5v2.5M8 8H3.5v2.5M8 8h4.5v2.5"/></svg></button>
         <button class=icon id=micBtn title="Speak (tap again = done)" onclick=micToggle()>🎙</button>
         <input type=file id=file accept="image/*,.pdf,.docx,.odt,.txt,.md,.csv,.html" hidden onchange=addAttachment(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
