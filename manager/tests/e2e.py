@@ -911,6 +911,45 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             kmod.katfs_proxy_fs = old
 
+    def test_websearch_backend_order_and_key_stays_home(self):
+        """Brave first WHEN the key is set; without it the reason is named.
+        The key itself never leaves the manager — the agents only see results."""
+        from mgr import websearch as ws
+        old_get, old_ddg, old_bing = ws.get_setting, ws._ddg, ws._bing
+        try:
+            ws._ddg = lambda q, c: None                       # challenge
+            ws._bing = lambda q, c: [("BingTitel", "https://b.example", "s")]
+            # Without a key: brave is skipped WITH the reason, bing delivers.
+            ws.get_setting = lambda k: ""
+            out = ws.web_search("x", 3)
+            self.assertIn("BingTitel", out)
+            # All dead -> the error names every backend and the why.
+            ws._bing = lambda q, c: (_ for _ in ()).throw(OSError("down"))
+            out = ws.web_search("x", 3)
+            self.assertIn("brave: no API key", out)
+            self.assertIn("duckduckgo: blocked", out)
+            self.assertIn("NOT an empty result", out)
+            # With a key, brave's results win outright.
+            ws.get_setting = lambda k: "fake-key" if k == "BRAVE_API_KEY" else ""
+            old_brave = ws._brave
+            ws._brave = lambda q, c: [("BraveTitel", "https://brave.example", "sn")]
+            try:
+                out = ws.web_search("x", 3)
+            finally:
+                ws._brave = old_brave
+            self.assertIn("BraveTitel", out)
+        finally:
+            ws.get_setting, ws._ddg, ws._bing = old_get, old_ddg, old_bing
+
+    def test_websearch_bing_redirects_decoded(self):
+        import base64
+        from mgr.websearch import bing_real_url
+        target = "https://de.wikipedia.org/wiki/Unternehmen"
+        b64 = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+        self.assertEqual(bing_real_url(
+            f"https://www.bing.com/ck/a?!&amp;&amp;p=x&amp;u=a1{b64}&amp;ntb=1"), target)
+        self.assertEqual(bing_real_url("https://example.org/y"), "https://example.org/y")
+
     def test_extract_docx(self):
         """DOCX is a ZIP of XML — built in the test, no fixtures on disk."""
         import io, zipfile

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-01 (web search moved into the manager; Brave Search as the first-choice backend)
+- **`GET /api/websearch` + `mgr/websearch.py`:** the agents' web search is served by the manager now, for the same reason the LLM keys are — **the Brave API key never enters a VM**. Backend order: Brave Search API when `BRAVE_API_KEY` is set (new settings field; free tier at brave.com/search/api), then DuckDuckGo HTML (the bot challenge is intermittent — detected when it strikes, used when it does not; **ad results filtered**, DDG routes them through y.js click counters), then Bing. The agent tool calls the route first and keeps its direct backends only for older managers.
+- DDG's inner `vqd`-token flow was probed too: also behind the challenge (JS proof-of-work) — no way through without a real browser, so an API-backed first choice it is.
+- Verified end-to-end from a VM: "Softwareunternehmen Koeln Bonn" returns real regional companies with snippets. 96 tests green (backend order, key gating, ad filter, redirect decoding).
+
 ## 2026-09-01 (web_search: DDG went behind a bot wall — multi-backend with honest errors)
 - **Why the agent found "no companies": DuckDuckGo's HTML endpoint now serves a bot challenge to datacenter IPs** (HTTP 202 + an "anomaly" page, zero results in the markup). The old tool had two compounding flaws: `urlopen` does not raise on 202, and an empty regex match returned the string "no results" — so the model concluded the companies do not exist and told the user it would "try again later".
 - `web_search` is multi-backend now: DDG first (challenge detected and named), then Bing HTML (per-block parsing, snippet included, `/ck/a` redirect URLs base64-decoded back to their targets). **A dead backend produces a spoken error** — "web search unavailable (duckduckgo: blocked …)" with an explicit "this is NOT an empty result" so the model reports infrastructure instead of inventing absence. An empty result list stays "no results".

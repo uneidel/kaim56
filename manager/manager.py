@@ -61,6 +61,7 @@ SETTINGS_FILE = os.path.join(BASE, "settings.json")
 # template parameters of the same name.
 SETTINGS_SCHEMA = [
     {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API key"},
+    {"key": "BRAVE_API_KEY", "label": "Brave Search API key (web search for the agents; free tier at brave.com/search/api)"},
     {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API key"},
     {"key": "OPENAI_API_KEY", "label": "OpenAI API key"},
     {"key": "ORCAROUTER_API_KEY", "label": "OrcaRouter API key (sk-orca-…)"},
@@ -2492,6 +2493,9 @@ def _guard_check(inst):
 # steht, wird ueber die Tabelle zugestellt; alles andere faellt weiter durch die
 # Kette. Eine Route liefert (body, content_type) und ueberlaesst das Senden dem
 # Verteiler — oder None, wenn sie selbst geantwortet hat.
+from mgr import websearch as _websearch_mod  # noqa: E402
+_websearch_mod.configure(lambda key: (load_settings().get(key) or ""))
+
 from mgr.routes import Router  # noqa: E402
 ROUTER = Router()
 
@@ -2547,6 +2551,20 @@ def _rt_skill(h):
     sk = next((x for x in load_skills() if x.get("name") == nm), None)
     return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),
             "text/plain; charset=utf-8")
+
+
+@ROUTER.get("/api/websearch")
+def _rt_websearch(h):
+    # Web search for the agents: the Brave key stays on the host, the VM only
+    # ever sees results. Same principle as the LLM key proxy.
+    from mgr import websearch
+    q = urllib.parse.parse_qs(h.path.partition("?")[2])
+    query = q.get("q", [""])[0].strip()
+    if not query:
+        return json.dumps({"error": "q missing"}).encode(), "application/json"
+    count = q.get("count", ["5"])[0]
+    out = {"result": websearch.web_search(query, count)}
+    return json.dumps(out, ensure_ascii=False).encode(), "application/json"
 
 
 @ROUTER.post("/api/extract", admin=True)

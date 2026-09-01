@@ -397,14 +397,25 @@ def _ws_clean(s):
 
 
 def t_web_search(query, count=5):
-    """Web search without an API key: DuckDuckGo first, Bing when DDG serves
-    its bot challenge. The distinction matters downstream: "no results" means
-    the query found nothing; a blocked/unreachable backend must SAY so —
-    otherwise the model concludes the thing searched for does not exist."""
+    """Web search. First choice: the manager's /api/websearch — it holds the
+    Brave API key (never enters the VM) and falls back to DDG/Bing itself.
+    The direct backends below only run when the manager route is missing
+    (older manager). "no results" means the query found nothing; a dead
+    backend must SAY so — otherwise the model concludes the thing searched
+    for does not exist."""
     try:
         count = int(count)
     except (TypeError, ValueError):
         count = 5
+    try:
+        q = urllib.parse.urlencode({"q": query, "count": count})
+        d = json.loads(_mgr_get(_manager_base(), "/api/websearch?" + q))
+        if d.get("result"):
+            return d["result"]
+        if d.get("error"):
+            raise ValueError(d["error"])
+    except Exception:
+        pass                      # manager route missing/broken -> go direct
     errors = []
     for name, backend in (("duckduckgo", _ddg_search), ("bing", _bing_search)):
         try:
