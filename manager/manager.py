@@ -3371,7 +3371,12 @@ class H(BaseHTTPRequestHandler):
                                    "unread": sum(1 for n in lst if not n.get("read"))}).encode()
             ct = "application/json"
         elif self.path.startswith("/api/memory/"):
-            seg = self.path[len("/api/memory/"):].split("/")
+            # Path segments are URL-decoded: keys may carry spaces/umlauts, and
+            # a slash inside a key stays one key (everything after the instance).
+            seg = [urllib.parse.unquote(x)
+                   for x in self.path[len("/api/memory/"):].split("/")]
+            if len(seg) > 2:
+                seg = [seg[0], "/".join(seg[1:])]
             # A guest may only read its OWN memory — the name then comes from the
             # source IP, not from the path. Only the host (admin, not an instance)
             # may specify a foreign name in the path.

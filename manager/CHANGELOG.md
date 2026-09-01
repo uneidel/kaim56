@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-01 (memory: a key with a space could be stored but never recalled)
+- Live bug, third of the day from the same job-search session: the agent stored 60 companies under the key `"jobsuche Firmen"` — and could not read them back, apologising about an "invalid key format". Cause: **store takes the key via the JSON body (any string fine), recall glues it raw into the URL path**, where a space kills the request. `memory_recall` URL-quotes the key now, the manager URL-decodes path segments, and a slash inside a key stays one key (everything after the instance). `load_skill` quotes its name too. HTTP-level test covers space and slash keys round-trip; verified live — the exact failing recall now returns the company list. 98 tests green.
+
 ## 2026-09-01 (http_fetch: readable text instead of truncated tag soup)
 - **Why the agent called a results page "too complex to extract": `http_fetch` returned raw HTML, hard-truncated** — on a modern page the first kilobytes are head, scripts and cookie banners, so the actual content often never made it past the cut. The tool now converts HTML to readable text (scripts/styles dropped, block tags as line breaks, entities resolved, `\r` stripped) and **keeps link targets in brackets** so the model can follow them with another fetch; `raw=true` still returns the unconverted body. Read cap raised to 5 MB — oversized results go through the offload previews anyway.
 - Tool schemas caught up with reality: `web_search` now says it is Brave-backed (a user instruction "use Brave Search" had the model apologising that it only has a generic tool), and `http_fetch` documents the text conversion and `raw`.

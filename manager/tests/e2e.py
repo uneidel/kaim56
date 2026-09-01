@@ -1574,6 +1574,26 @@ class ManagerHTTP(unittest.TestCase):
         self.assertIn("unread", d)
         self.assertIsInstance(d["unread"], int)
 
+    def test_memory_key_with_space_survives_the_url(self):
+        """Store takes the key via JSON body, recall via URL path — a key like
+        "jobsuche Firmen" could be stored but never retrieved (live bug). The
+        path segments are URL-decoded now, and a slash inside a key stays one
+        key."""
+        import urllib.parse as up
+        st, _ = _http("/api/memory/e2e-memtest", "POST",
+                      {"key": "jobsuche Firmen", "value": "Ford, Bayer"})
+        self.assertEqual(st, 200)
+        st, txt = _http("/api/memory/e2e-memtest/" + up.quote("jobsuche Firmen", safe=""))
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(txt).get("value"), "Ford, Bayer")
+        # Slash inside a key: everything after the instance is ONE key.
+        st, _ = _http("/api/memory/e2e-memtest", "POST",
+                      {"key": "a/b c", "value": "x"})
+        self.assertEqual(st, 200)
+        st, txt = _http("/api/memory/e2e-memtest/" + up.quote("a/b c", safe=""))
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(txt).get("value"), "x")
+
     def test_notify_route_rejects_empty(self):
         # Empty notification -> 429, id null: the route exists, without
         # polluting the live store (no ping to the device).

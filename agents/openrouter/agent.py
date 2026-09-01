@@ -840,7 +840,7 @@ def t_list_skills(query=""):
 def t_load_skill(name):
     """Load a skill into the context (returns the knowledge document)."""
     try:
-        return _mgr_get(_manager_base(), f"/api/skills/{name}")
+        return _mgr_get(_manager_base(), f"/api/skills/{urllib.parse.quote(str(name), safe='')}")
     except Exception as e:
         return f"Error: {e!r}"
 
@@ -858,7 +858,12 @@ def t_memory_recall(key=None):
     """Retrieve a stored value (without key: all entries for this instance)."""
     inst = os.environ.get("FC_INSTANCE", "default")
     try:
-        return _mgr_get(_manager_base(), f"/api/memory/{inst}" + (f"/{key}" if key else ""))
+        # Store takes the key via JSON body — ANY string works there. Recall
+        # puts it into the URL path, so it must be quoted, or a key with a
+        # space/umlaut can be stored but never retrieved (bit a live agent:
+        # "jobsuche Firmen" saved fine, recall exploded).
+        tail = f"/{urllib.parse.quote(str(key), safe='')}" if key else ""
+        return _mgr_get(_manager_base(), f"/api/memory/{inst}" + tail)
     except Exception as e:
         return f"Error: {e!r}"
 
