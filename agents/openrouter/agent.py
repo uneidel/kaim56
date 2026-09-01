@@ -280,10 +280,35 @@ def t_list_dir(path="."):
     return "\n".join(sorted(os.listdir(_safe(path)))) or "(empty)"
 
 
-def t_http_fetch(url, method="GET"):
+def _html_to_text(html):
+    """Readable text out of an HTML page: scripts/styles gone, block tags as
+    line breaks, entities resolved, whitespace collapsed. Links keep their
+    target in brackets so the model can follow them with another fetch."""
+    import html as _h
+    t = html.replace("\r", "")
+    t = re.sub(r"(?is)<(script|style|noscript|svg|head)[^>]*>.*?</\1>", " ", t)
+    t = re.sub(r'(?is)<a[^>]*href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>',
+               lambda m: re.sub(r"<[^>]+>", "", m.group(2)) + " [" + m.group(1) + "]", t)
+    t = re.sub(r"(?i)<(br|/p|/div|/li|/tr|/h[1-6]|/section|/article)[^>]*>", "\n", t)
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    t = _h.unescape(t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n[ \t]*", "\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def t_http_fetch(url, method="GET", raw=False):
+    """Fetch a URL. HTML is converted to readable text (a modern page is 90%
+    markup and scripts — hard-truncated raw HTML used to cut content off before
+    it ever appeared, and the model concluded pages were "too complex").
+    raw=true returns the unconverted body for the cases that need markup."""
     req = urllib.request.Request(url, method=method, headers={"User-Agent": "or-agent"})
     r = urllib.request.urlopen(req, timeout=30)
-    return r.read(MAX_TOOL_OUT).decode("utf-8", "replace")
+    body = r.read(5_000_000).decode("utf-8", "replace")
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    if raw or not ("html" in ctype or body.lstrip()[:200].lower().startswith(("<!doctype", "<html"))):
+        return body
+    return _html_to_text(body)
 
 
 def t_read_pdf(path, pages=""):
@@ -954,14 +979,23 @@ BUILTIN = {
                    {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
     "list_dir": (t_list_dir, "List a directory",
                  {"path": {"type": "string"}}, []),
-    "http_fetch": (t_http_fetch, "Fetch a URL (HTTP)",
-                   {"url": {"type": "string"}, "method": {"type": "string"}}, ["url"]),
+    "http_fetch": (t_http_fetch,
+                   "Fetch a URL. HTML comes back as readable TEXT with link targets "
+                   "in brackets — follow them with another fetch. raw=true for the "
+                   "unconverted body.",
+                   {"url": {"type": "string"},
+                    "method": {"type": "string", "description": "GET (default) or POST"},
+                    "raw": {"type": "boolean", "description": "true = raw HTML/body"}},
+                   ["url"]),
     "read_pdf": (t_read_pdf, "Extract text from a PDF — path is a workspace file OR an http(s) URL; pages optional as a range (e.g. '1-5').",
                  {"path": {"type": "string", "description": "file in the workspace or http(s) URL"},
                   "pages": {"type": "string", "description": "optional page range, e.g. '1-5'"}}, ["path"]),
-    "web_search": (t_web_search, "Search the web (DuckDuckGo) – returns title, URL and snippet; then optionally http_fetch to read the page",
-                   {"query": {"type": "string", "description": "search term"},
-                    "count": {"type": "integer", "description": "number of hits (default 5)"}}, ["query"]),
+    "web_search": (t_web_search,
+                   "Web search (Brave Search API via the manager; DuckDuckGo/Bing "
+                   "as fallback). Returns title + URL + snippet.",
+                   {"query": {"type": "string", "description": "search terms"},
+                    "count": {"type": "integer", "description": "results (1-10, default 5)"}},
+                   ["query"]),
     "spawn_subagent": (t_spawn_subagent,
                        "Start an ephemeral subagent (new instance), delegate a subtask, fetch the result; the instance is deleted automatically afterwards. For parallel/self-contained subtasks.",
                        {"task": {"type": "string", "description": "task for the subagent"},

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-01 (http_fetch: readable text instead of truncated tag soup)
+- **Why the agent called a results page "too complex to extract": `http_fetch` returned raw HTML, hard-truncated** — on a modern page the first kilobytes are head, scripts and cookie banners, so the actual content often never made it past the cut. The tool now converts HTML to readable text (scripts/styles dropped, block tags as line breaks, entities resolved, `\r` stripped) and **keeps link targets in brackets** so the model can follow them with another fetch; `raw=true` still returns the unconverted body. Read cap raised to 5 MB — oversized results go through the offload previews anyway.
+- Tool schemas caught up with reality: `web_search` now says it is Brave-backed (a user instruction "use Brave Search" had the model apologising that it only has a generic tool), and `http_fetch` documents the text conversion and `raw`.
+- Verified from a real VM (a marketing-heavy page: zero `<div` in the tool output, link markers present). 97 tests green.
+
 ## 2026-09-01 (web search moved into the manager; Brave Search as the first-choice backend)
 - **`GET /api/websearch` + `mgr/websearch.py`:** the agents' web search is served by the manager now, for the same reason the LLM keys are — **the Brave API key never enters a VM**. Backend order: Brave Search API when `BRAVE_API_KEY` is set (new settings field; free tier at brave.com/search/api), then DuckDuckGo HTML (the bot challenge is intermittent — detected when it strikes, used when it does not; **ad results filtered**, DDG routes them through y.js click counters), then Bing. The agent tool calls the route first and keeps its direct backends only for older managers.
 - DDG's inner `vqd`-token flow was probed too: also behind the challenge (JS proof-of-work) — no way through without a real browser, so an API-backed first choice it is.

@@ -286,6 +286,26 @@ class AgentLogic(unittest.TestCase):
             self.a._TOOL_ALLOW = old
 
     # --- Tool-Hook / Guardrails ---------------------------------------------
+    def test_http_fetch_html_becomes_readable_text(self):
+        """A modern page is 90% markup — hard-truncated raw HTML cut content
+        off before it appeared and the model called pages "too complex". The
+        conversion must drop scripts/tags, resolve entities, keep link targets."""
+        a = self.a
+        html = ("<html><head><title>x</title><script>var a=1;</script>"
+                "<style>.x{}</style></head><body>\r\n"
+                "<div class='nav'><a href='https://firma.de/jobs'>Karriere</a></div>"
+                "<h1>Die gr&ouml;&szlig;ten Medizintechnik-Firmen</h1>"
+                "<ul><li>Alpha GmbH &amp; Co.</li><li>Beta AG</li></ul>"
+                "<p>Umsatz: 3&nbsp;Mio.</p></body></html>")
+        t = a._html_to_text(html)
+        self.assertNotIn("<", t)                       # no tags survive
+        self.assertNotIn("var a=1", t)                 # scripts gone
+        self.assertIn("Die größten Medizintechnik-Firmen", t)
+        self.assertIn("Alpha GmbH & Co.", t)
+        self.assertIn("Beta AG", t)
+        self.assertIn("Karriere [https://firma.de/jobs]", t)   # link target kept
+        self.assertNotIn("\n\n\n", t)                 # no blank-line runs
+
     def test_web_search_reports_blocked_backends_instead_of_no_results(self):
         """DDG went behind a bot challenge (HTTP 202 + anomaly page); the old
         tool turned that into "no results" and the model concluded the thing
