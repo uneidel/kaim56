@@ -1,7 +1,7 @@
 # Changelog
 
-## 2026-09-02 (skill catalog: +36 from wdm0006/python-skills)
-- Second catalog imported: **github.com/wdm0006/python-skills** — 36 engineering-practice skills (Python testing/APIs/packaging/security, plus Rust, Go, JS, Swift, Scala equivalents), **MIT licensed** this time, so no repo hygiene needed beyond the existing gitignore. The import script learned the nested layout (`skills/<lang>/<topic>/SKILL.md`, companion documents inlined as before); no name collisions with the existing 67. Catalog now 103 skills; verified live (`?meta=1` list, one body fetched, agent-side `list_skills(query=…)` finds the new entries).
+## 2026-09-02 (wdm0006/python-skills: dev skills for the repo, not agent catalog)
+- **github.com/wdm0006/python-skills** (MIT, © Will McGinnis) — first imported into the platform agents' skill catalog, then reverted on clarification: these are meant for the humans-and-Claude working ON kaim56, not for the agents running IN it. 31 of the 36 (python/*, rust/*, common/* — swift/scala/go/js have no code here) now live in **`.claude/skills/`** next to the existing security/architecture skills, prefixed `python-`/`rust-` to keep names unambiguous, with the MIT text as `LICENSE-python-skills`. The agents' catalog is back to 67. Side benefit kept: the import script walks nested layouts now.
 
 ## 2026-09-02 (task store: the read-modify-write race is closed)
 - Found while stress-testing the "port it to Rust?" question: `_tasks_lock` guarded only the WRITE. Worker thread and HTTP routes both did load→modify→save, so an interleaving lost updates — a task created between the worker's load and its save silently vanished. The one thing Rust's ownership model would have forced on us, retrofitted in Python instead.
