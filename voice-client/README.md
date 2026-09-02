@@ -1,37 +1,45 @@
-# kAIm56 Sprachclient (Fedora)
+# kAIm56 Sprachclient (Linux-Desktop, Go)
 
 Freihändig mit einer Plattform-Instanz sprechen — standardmäßig `myassistant`,
-umschaltbar im Menü. Ein Icon in der Topbar zeigt den Zustand (hört / denkt /
-spricht / aus); ein Energie-VAD erkennt Äußerungen von selbst, Push-to-talk
-gibt es nicht.
+umschaltbar im Menü. Ein Icon in der Topbar zeigt den Zustand (grün hört /
+bernstein denkt / blau spricht / grau aus); ein Energie-VAD erkennt Äußerungen
+von selbst, Push-to-talk gibt es nicht.
 
 Der Client ist bewusst dumm: Aufnahme → `/api/stt` → `/api/chat/<instanz>` →
 `/api/tts` → Wiedergabe. STT, LLM und Piper-TTS laufen alle auf dem Server;
 der Verlauf lebt im Agenten selbst, „Neues Gespräch" schickt schlicht `/reset`.
 
-## Installation (Fedora Workstation)
+Ein einziges statisches Binary (pures Go, kein cgo, keine Python-Umgebung).
+Audio läuft über PipeWire-Werkzeuge als Subprozess (parec/pw-record/arecord
+bzw. paplay/pw-play/aplay — das erste, das da ist; mit PipeWire schon an Bord).
+
+## Bauen
 
 ```bash
-# Audio-Werkzeuge sind mit PipeWire schon da (parec/paplay).
-# Für das Topbar-Icon:
-sudo dnf install python3-gobject gtk3 libappindicator-gtk3 \
-                 gnome-shell-extension-appindicator
-# GNOME: Extension einschalten, danach ab- und wieder anmelden:
-gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+go build -o kaim56-voice .          # oder: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
 ```
 
-KDE braucht keine Extension — der Indicator landet direkt im Systray.
+## Topbar-Icon (StatusNotifier)
+
+KDE kann es nativ. GNOME braucht die AppIndicator-Extension:
+
+```bash
+sudo dnf install gnome-shell-extension-appindicator
+gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com   # dann ab-/anmelden
+```
 
 ## Einrichten
 
 ```bash
-python3 kaim56_voice.py        # erster Lauf schreibt ~/.config/kaim56-voice.json
-$EDITOR ~/.config/kaim56-voice.json   # base_url, user, pass, instance
-python3 kaim56_voice.py        # ab jetzt: Icon in der Topbar
+./kaim56-voice                      # erster Lauf schreibt ~/.config/kaim56-voice.json
+$EDITOR ~/.config/kaim56-voice.json # base_url, user, pass, instance
+./kaim56-voice --probe "Wie spät ist es?"   # Selbsttest ohne Mikrofon:
+                                    # TTS -> STT -> Chat -> Antwort wird gesprochen
+./kaim56-voice                      # ab jetzt: Icon in der Topbar
 ```
 
 Autostart: `kaim56-voice.desktop` nach `~/.config/autostart/` kopieren und
-darin den Pfad zum Skript anpassen.
+darin den Pfad zum Binary anpassen.
 
 ## Bedienung
 
@@ -41,7 +49,8 @@ vom Manager). Während der Client denkt oder spricht, ist das Mikrofon stumm —
 er hört sich sonst selbst zu.
 
 Ohne Topbar (SSH, Test): `--headless` loggt Zustände und Transkripte auf
-stdout, `--once` verarbeitet genau eine Äußerung und beendet sich.
+stdout, `--once` verarbeitet genau eine Äußerung und beendet sich,
+`--instance <name>` überstimmt die Config.
 
 ## VAD einstellen
 
@@ -62,5 +71,6 @@ Zu empfindlich (reagiert auf Tastatur): `threshold_factor` oder
 ## Tests
 
 ```bash
-python3 tests.py    # VAD an synthetischem PCM, WAV-Header, Vorlese-Filter, Config
+go vet ./... && go test ./...   # VAD an synthetischem PCM, WAV-Header,
+                                # Vorlese-Filter, Config — ohne Mikrofon/Manager
 ```

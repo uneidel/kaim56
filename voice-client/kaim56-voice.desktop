@@ -2,7 +2,7 @@
 Type=Application
 Name=kAIm56 Voice
 Comment=Sprachclient für die kAIm56-Plattform (VAD, Topbar)
-Exec=python3 /PFAD/ANPASSEN/voice-client/kaim56_voice.py
+Exec=/PFAD/ANPASSEN/kaim56-voice
 Icon=audio-input-microphone
 Terminal=false
 Categories=Utility;
