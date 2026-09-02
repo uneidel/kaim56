@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-02 (task store: the read-modify-write race is closed)
+- Found while stress-testing the "port it to Rust?" question: `_tasks_lock` guarded only the WRITE. Worker thread and HTTP routes both did load→modify→save, so an interleaving lost updates — a task created between the worker's load and its save silently vanished. The one thing Rust's ownership model would have forced on us, retrofitted in Python instead.
+- **`with_tasks(mutator)`** in `mgr/store.py` is now the only way to change the store: load → mutate → save as ONE critical section, saving only when the mutator reports dirty. All ten call sites converted — `add_task`, `update_task`, the worker's CLAIM (candidates are found on a snapshot but claimed on a fresh load under the lock, so a task edited or deleted in between is re-checked), the post-run status update, the frequency-cap throttle, both orphan resets and both delete routes.
+- New test hammers the store from five threads (4×25 creates plus a worker-style toucher) and demands the exact final set — the lost-update class fails loudly now. 102 tests green; create/delete verified live after restart.
+
 ## 2026-09-02 (regression protection: the undefined-name gate)
 - Answer to "how do we make sure our work stops breaking existing functionality": the week's regressions were one CLASS — a name used without its import, which Python happily compiles and only crashes when the line runs. If no test runs that line, nobody notices (task creation was dead for 13 days).
 - **`tests/check_names.py`**: pyflakes-light in ~150 lines of stdlib AST, tuned to this codebase (declared injection placeholders make the configure() contract visible). Proven against both historical bugs — and on first run it flagged **four dormant production defects**: `save_gateway` missing from manager's import list (the per-chat gateway toggle 500'd), `base64` missing in `mgr/gateway.py` (data:-URL image stripping), and BOTH secret functions in `mgr/mcp.py` never injected (every MCP call from a VM would have NameError'd — unnoticed because the only MCP instance is off). All four fixed; the mcp contract is now explicit via configure().

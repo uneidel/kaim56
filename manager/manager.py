@@ -762,7 +762,7 @@ _store.configure(BASE)
 from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_lock, _hist_conn,  # noqa: E402,F401
                        usage_add, usage_summary, usage_for, history_add, history_search,
                        load_tasks, save_tasks, add_task, update_task, _next_run,
-                       _embed, sem_store, sem_search, load_memory, mem_store, mem_recall)
+                       _embed, sem_store, sem_search, load_memory, mem_store, mem_recall, with_tasks)
 _missions.sem_store = sem_store   # injection (mgr/missions)
 
 
@@ -975,14 +975,15 @@ def reclaim_stuck_tasks():
     """Reset orphaned 'running' tasks at startup. Exactly ONE worker runs — what
     is still 'running' at startup belongs to a crashed run (e.g. the store bug
     on Aug 20) and would otherwise never fire again."""
-    tasks = load_tasks()
-    n = 0
-    for t in tasks:
-        if t.get("status") == "running":
-            t["status"] = "scheduled" if t.get("schedule") else "pending"
-            n += 1
+    def mut(tasks):
+        n = 0
+        for t in tasks:
+            if t.get("status") == "running":
+                t["status"] = "scheduled" if t.get("schedule") else "pending"
+                n += 1
+        return bool(n), n
+    n = with_tasks(mut)
     if n:
-        save_tasks(tasks)
         print(f"[worker] {n} orphaned 'running' task(s) reset", flush=True)
 
 
@@ -992,37 +993,50 @@ def _task_worker():
     while True:
         ran = False
         try:
-            tasks = load_tasks()
             now = int(time.time())
-            for t in tasks:
+
+            def due(t, now):
                 if t.get("status") == "running":
-                    continue
-                sched = bool(t.get("schedule"))
-                if sched:
-                    if t.get("next_run", 0) > now:
+                    return False
+                if t.get("schedule"):
+                    return t.get("next_run", 0) <= now
+                return t.get("status") == "pending"
+
+            # Candidates come from a snapshot; the CLAIM happens on a fresh
+            # load inside the store lock — the snapshot may be stale by then
+            # (a route may have edited or deleted the task), so everything is
+            # re-checked there. This is what closes the lost-update window
+            # between worker and HTTP threads.
+            throttled = []
+
+            def claim(tasks):
+                for t in tasks:
+                    if not due(t, now):
                         continue
-                elif t.get("status") != "pending":
-                    continue
-                # Frequency cap: more than 6 runs/h of the same task is ALWAYS
-                # a defect (loop bug Aug 20) — pause it for an hour.
-                runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
-                if len(runs) >= 6:
-                    t["recent_runs"] = runs
-                    t["next_run"] = now + 3600
-                    save_tasks(tasks)
-                    _wlog(f"{t['id']}: >6 runs/h — paused for 1 h (loop protection)")
-                    try:
-                        notify_add("guardrail", f"Task loop throttled: {t['id']}",
-                                   str(t.get("message", ""))[:120] + " — ran >6x/h, paused 1 h.",
-                                   link="tasks")
-                    except Exception:
-                        pass
-                    continue
-                t["recent_runs"] = runs + [now]
-                # Claim the task
-                t["status"] = "running"
-                t["updated"] = now
-                save_tasks(tasks)
+                    # Frequency cap: more than 6 runs/h of the same task is
+                    # ALWAYS a defect (loop bug Aug 20) — pause it for an hour.
+                    runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
+                    if len(runs) >= 6:
+                        t["recent_runs"] = runs
+                        t["next_run"] = now + 3600
+                        throttled.append((t["id"], str(t.get("message", ""))[:120]))
+                        continue
+                    t["recent_runs"] = runs + [now]
+                    t["status"] = "running"
+                    t["updated"] = now
+                    return True, dict(t)
+                return bool(throttled), None
+
+            t = with_tasks(claim)
+            for tid, tmsg in throttled:
+                _wlog(f"{tid}: >6 runs/h — paused for 1 h (loop protection)")
+                try:
+                    notify_add("guardrail", f"Task loop throttled: {tid}",
+                               tmsg + " — ran >6x/h, paused 1 h.", link="tasks")
+                except Exception:
+                    pass
+            if t is not None:
+                sched = bool(t.get("schedule"))
                 # From here on EVERYTHING is guarded individually: an error
                 # anywhere must never leave the task as a "running" orphan
                 # (bug Aug 20: exception in the follow-up -> outer except ->
@@ -1032,18 +1046,20 @@ def _task_worker():
                 except Exception as e:
                     ok, res = False, f"worker-exception (run): {e!r}"
                     _wlog(f"{t['id']}: {res}")
+                def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched):
+                    tt = next((x for x in fresh if x["id"] == _tid), None)
+                    if tt is None:
+                        return False, None
+                    tt["updated"] = int(time.time())
+                    tt["result"] = _res
+                    if _sched:
+                        tt["status"] = "scheduled"
+                        tt["next_run"] = _next_run(tt["schedule"], int(time.time()))
+                    else:
+                        tt["status"] = "done" if _ok else "error"
+                    return True, None
                 try:
-                    fresh = load_tasks()
-                    tt = next((x for x in fresh if x["id"] == t["id"]), None)
-                    if tt is not None:
-                        tt["updated"] = int(time.time())
-                        tt["result"] = res
-                        if sched:
-                            tt["status"] = "scheduled"
-                            tt["next_run"] = _next_run(tt["schedule"], int(time.time()))
-                        else:
-                            tt["status"] = "done" if ok else "error"
-                        save_tasks(fresh)
+                    with_tasks(done_mut)
                 except Exception as e:
                     _wlog(f"{t['id']}: status update failed: {e!r}")
                 try:
@@ -1061,7 +1077,6 @@ def _task_worker():
                 except Exception as e:
                     _wlog(f"{t['id']}: mission-advance: {e!r}")
                 ran = True
-                break
         except Exception as e:
             _wlog(f"worker-loop: {e!r}")
         if not ran:
@@ -1069,16 +1084,17 @@ def _task_worker():
             # Orphan watch: if a task hangs on "running" for more than 30 min,
             # its run is lost (the timeout is 10 min) -> reset it.
             try:
-                tasks2 = load_tasks()
                 cut = int(time.time()) - 1800
-                dirty = False
-                for t2 in tasks2:
-                    if t2.get("status") == "running" and t2.get("updated", 0) < cut:
-                        t2["status"] = "scheduled" if t2.get("schedule") else "pending"
-                        _wlog(f"{t2.get('id')}: running orphan reset")
-                        dirty = True
-                if dirty:
-                    save_tasks(tasks2)
+
+                def orphan_mut(tasks2):
+                    hit = []
+                    for t2 in tasks2:
+                        if t2.get("status") == "running" and t2.get("updated", 0) < cut:
+                            t2["status"] = "scheduled" if t2.get("schedule") else "pending"
+                            hit.append(t2.get("id"))
+                    return bool(hit), hit
+                for tid in with_tasks(orphan_mut):
+                    _wlog(f"{tid}: running orphan reset")
             except Exception as e:
                 _wlog(f"orphan-watch: {e!r}")
             # TTL sweep while idle, at most once per hour.
@@ -3677,11 +3693,12 @@ class H(BaseHTTPRequestHandler):
             ln = int(self.headers.get("Content-Length", 0) or 0)
             b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
             tid = str(b.get("id") or "")
-            before = load_tasks()
-            after = [x for x in before if x.get("id") != tid]
-            gone = len(before) - len(after)
-            if gone:
-                save_tasks(after)
+            def del_mut(tasks):
+                keep = [x for x in tasks if x.get("id") != tid]
+                gone = len(tasks) - len(keep)
+                tasks[:] = keep
+                return bool(gone), gone
+            gone = with_tasks(del_mut)
             out = json.dumps({"deleted": gone, "id": tid}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out))); self.end_headers()
@@ -4029,7 +4046,8 @@ class H(BaseHTTPRequestHandler):
                     msg = f"task {t['id']} created ({t['status']})"
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "delete":
                 tid = parts[2]
-                save_tasks([x for x in load_tasks() if x["id"] != tid])
+                with_tasks(lambda ts, _tid=tid: (True, ts.__setitem__(
+                    slice(None), [x for x in ts if x["id"] != _tid])))
                 msg = f"task {tid} deleted"
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "update":
                 ln = int(self.headers.get("Content-Length", 0) or 0)

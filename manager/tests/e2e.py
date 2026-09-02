@@ -1439,6 +1439,45 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE = old_file
 
+    def test_task_store_survives_concurrent_writers(self):
+        """The lock used to guard only the WRITE: worker and HTTP threads both
+        did load→modify→save, and an interleaving silently dropped tasks. All
+        mutations go through with_tasks() now — this hammers the store from
+        four threads and demands an exact result."""
+        import mgr.store as st
+        tmp = tempfile.mkdtemp(prefix="e2e-race-")
+        old = st.TASKS_FILE
+        try:
+            st.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            ids, errs = [], []
+
+            def adder(n):
+                try:
+                    for i in range(25):
+                        ids.append(st.add_task(f"inst{n}", f"job {n}-{i}")["id"])
+                except Exception as e:
+                    errs.append(repr(e))
+
+            threads = [threading.Thread(target=adder, args=(n,)) for n in range(4)]
+            for th in threads:
+                th.start()
+            # Waehrenddessen mutiert ein fuenfter Thread Status-Felder — die
+            # Rolle des Workers.
+            def toucher():
+                for _ in range(40):
+                    st.with_tasks(lambda ts: (bool(ts), [t.update(
+                        {"updated": int(time.time())}) for t in ts] and True))
+            tt = threading.Thread(target=toucher)
+            tt.start()
+            for th in threads + [tt]:
+                th.join()
+            self.assertEqual(errs, [])
+            stored = {t["id"] for t in st.load_tasks()}
+            self.assertEqual(len(ids), 100)
+            self.assertEqual(stored, set(ids), "lost update: created tasks vanished")
+        finally:
+            st.TASKS_FILE = old
+
     def test_add_task_roundtrip(self):
         """Regression: the mgr/ split shipped store.py without `import uuid`,
         and for 13 days NO new task could be created (UI, app, create_task) —

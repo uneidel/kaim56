@@ -160,10 +160,30 @@ def load_tasks():
 
 def save_tasks(tasks):
     with _tasks_lock:
-        tmp = TASKS_FILE + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(tasks, fh, indent=2)
-        os.replace(tmp, TASKS_FILE)
+        _save_tasks_locked(tasks)
+
+
+def _save_tasks_locked(tasks):
+    tmp = TASKS_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(tasks, fh, indent=2)
+    os.replace(tmp, TASKS_FILE)
+
+
+def with_tasks(mutator):
+    """The ONLY safe way to change the task store: load → mutate → save as one
+    critical section. `mutator(tasks)` edits the list in place and returns
+    (dirty, result); saving happens only when dirty.
+
+    Why: the lock used to guard just the WRITE. Worker thread and HTTP routes
+    both did load→modify→save, and an interleaving lost updates — a task
+    created between the worker's load and its save simply vanished."""
+    with _tasks_lock:
+        tasks = load_tasks()
+        dirty, result = mutator(tasks)
+        if dirty:
+            _save_tasks_locked(tasks)
+        return result
 
 
 def add_task(instance, message, schedule=""):
@@ -172,10 +192,11 @@ def add_task(instance, message, schedule=""):
          "schedule": schedule, "status": "scheduled" if schedule else "pending",
          "result": "", "created": int(time.time()), "updated": int(time.time()),
          "next_run": _next_run(schedule, int(time.time())) if schedule else int(time.time())}
-    tasks = load_tasks()
-    tasks.append(t)
-    save_tasks(tasks)
-    return t
+
+    def mut(tasks):
+        tasks.append(t)
+        return True, t
+    return with_tasks(mut)
 
 
 def update_task(task_id, message=None, schedule=None):
@@ -183,12 +204,17 @@ def update_task(task_id, message=None, schedule=None):
     otherwise the task would run once more on the old plan. An empty plan
     turns the repetition into a one-off task (due now); a task that is
     currently running is left untouched."""
-    tasks = load_tasks()
+    def mut(tasks):
+        return _update_task_locked(tasks, task_id, message, schedule)
+    return with_tasks(mut)
+
+
+def _update_task_locked(tasks, task_id, message, schedule):
     t = next((x for x in tasks if x.get("id") == task_id), None)
     if t is None:
-        return "unknown"
+        return False, "unknown"
     if t.get("status") == "running":
-        return "task is running — try again when it is done"
+        return False, "task is running — try again when it is done"
     now = int(time.time())
     if message is not None and str(message).strip():
         t["message"] = str(message).strip()
@@ -199,9 +225,8 @@ def update_task(task_id, message=None, schedule=None):
             t["next_run"] = _next_run(sched, now) if sched else now
             t["status"] = "scheduled" if sched else "pending"
     t["updated"] = now
-    save_tasks(tasks)
     when = time.strftime("%d.%m. %H:%M", time.localtime(t["next_run"]))
-    return f"task {task_id} updated (next run {when})"
+    return True, f"task {task_id} updated (next run {when})"
 
 
 def _next_run(schedule, from_ts):
