@@ -931,6 +931,59 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             kmod.katfs_proxy_fs = old
 
+    def test_audit_records_error_text_and_result(self):
+        """ok alone cannot distinguish a healthy call from one that failed
+        politely — the trail now carries the error text, a result excerpt and
+        the turn id (that is what makes a saddler review possible at all)."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-audit-")
+        old = m.AUDIT_DIR
+        try:
+            m.AUDIT_DIR = tmp
+            m.audit_append("inst-a", "http_fetch", "https://x.example", False,
+                           err="⚠️ HTTP 403: blocked", turn="t1234")
+            m.audit_append("inst-a", "web_search", "cronn", True,
+                           result="1. cronn GmbH …", turn="t1234")
+            recs = m.audit_read("inst-a")     # newest first
+            self.assertEqual(len(recs), 2)
+            self.assertEqual(recs[1]["err"], "⚠️ HTTP 403: blocked")
+            self.assertNotIn("result", recs[1])
+            self.assertEqual(recs[0]["result"], "1. cronn GmbH …")
+            self.assertEqual({r["turn"] for r in recs}, {"t1234"})
+        finally:
+            m.AUDIT_DIR = old
+
+    def test_saddler_digest_groups_and_reflects(self):
+        """Failures grouped by error SHAPE (digits/urls normalised), current
+        week next to the previous one — the drop after a patch is the
+        reflection step."""
+        import mgr.saddler as sad
+        tmp = tempfile.mkdtemp(prefix="e2e-sad-")
+        old = sad.AUDIT_DIR
+        now = int(time.time())
+        try:
+            sad.AUDIT_DIR = tmp
+            with open(os.path.join(tmp, "aiagent.jsonl"), "w") as fh:
+                for ts, ok, err in (
+                        (now - 3600, False, "⚠️ HTTP 403: https://a.example/x blocked"),
+                        (now - 7200, False, "⚠️ HTTP 403: https://b.example/y blocked"),
+                        (now - 8 * 86400, False, "⚠️ HTTP 403: https://c.example/z blocked"),
+                        (now - 3600, True, "")):
+                    fh.write(json.dumps({"ts": ts, "tool": "http_fetch",
+                                         "target": "t", "ok": ok, "err": err}) + "\n")
+            d = sad.digest(days=7)
+            self.assertEqual(d["totals"]["cur_failed"], 2)
+            self.assertEqual(d["totals"]["prev_failed"], 1)
+            self.assertEqual(len(d["groups"]), 1, "same error shape must be ONE group")
+            g = d["groups"][0]
+            self.assertEqual((g["cur"], g["prev"]), (2, 1))
+            self.assertIn("<url>", g["error"])
+            txt = sad.render(d)
+            self.assertIn("2x (1x)", txt)
+            self.assertIn("http_fetch", txt)
+        finally:
+            sad.AUDIT_DIR = old
+
     def test_websearch_backend_order_and_key_stays_home(self):
         """Brave first WHEN the key is set; without it the reason is named.
         The key itself never leaves the manager — the agents only see results."""

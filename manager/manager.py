@@ -2120,11 +2120,20 @@ AUDIT_DIR = os.path.join(BASE, "audit")
 AUDIT_MAX_LINES = 2000
 
 
-def audit_append(inst_name, tool, target, ok):
+def audit_append(inst_name, tool, target, ok, err="", result="", turn=""):
     os.makedirs(AUDIT_DIR, exist_ok=True)
     p = os.path.join(AUDIT_DIR, f"{inst_name}.jsonl")
     rec = {"ts": int(time.time()), "tool": str(tool)[:64],
            "target": str(target)[:400], "ok": bool(ok)}
+    # Rich fields (additive, old readers unaffected): the error text and a
+    # result excerpt are what makes the trail reviewable — ok alone cannot
+    # distinguish a healthy call from one that failed politely.
+    if err:
+        rec["err"] = str(err)[:300]
+    if result:
+        rec["result"] = str(result)[:300]
+    if turn:
+        rec["turn"] = str(turn)[:16]
     with open(p, "a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     # trim occasionally so the file doesn't grow without bound
@@ -2493,6 +2502,9 @@ def _guard_check(inst):
 # steht, wird ueber die Tabelle zugestellt; alles andere faellt weiter durch die
 # Kette. Eine Route liefert (body, content_type) und ueberlaesst das Senden dem
 # Verteiler — oder None, wenn sie selbst geantwortet hat.
+from mgr import saddler as _saddler_mod  # noqa: E402
+_saddler_mod.configure(AUDIT_DIR)
+
 from mgr import websearch as _websearch_mod  # noqa: E402
 _websearch_mod.configure(lambda key: (load_settings().get(key) or ""))
 
@@ -2551,6 +2563,24 @@ def _rt_skill(h):
     sk = next((x for x in load_skills() if x.get("name") == nm), None)
     return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),
             "text/plain; charset=utf-8")
+
+
+@ROUTER.get("/api/saddler")
+def _rt_saddler(h):
+    # Weekly failure digest over ALL instances' audits. That is cross-instance
+    # information, so guests may not read it — except the orchestrator, whose
+    # scheduled saddler task is the intended consumer.
+    g = instance_by_ip(h.client_address[0])
+    if g is not None and g.get("name") != ORCH_INSTANCE:
+        return json.dumps({"error": "orchestrator only"}).encode(), "application/json"
+    q = urllib.parse.parse_qs(h.path.partition("?")[2])
+    try:
+        days = max(1, min(int(q.get("days", ["7"])[0]), 60))
+    except ValueError:
+        days = 7
+    d = _saddler_mod.digest(days)
+    d["text"] = _saddler_mod.render(d)
+    return json.dumps(d, ensure_ascii=False).encode(), "application/json"
 
 
 @ROUTER.get("/api/websearch")
@@ -3855,7 +3885,9 @@ class H(BaseHTTPRequestHandler):
             if inst is not None:   # only log real guests, silently discard otherwise
                 try:
                     audit_append(inst["name"], body.get("tool", ""),
-                                 body.get("target", ""), body.get("ok", True))
+                                 body.get("target", ""), body.get("ok", True),
+                                 err=body.get("err", ""), result=body.get("result", ""),
+                                 turn=body.get("turn", ""))
                 except Exception:
                     pass
             self.send_response(204); self.end_headers(); return

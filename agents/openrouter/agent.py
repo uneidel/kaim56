@@ -1359,16 +1359,35 @@ def _audit_target(name, args):
     return ""
 
 
-def audit(name, args, ok=True):
-    """Log a tool call at the manager (per instance, on the host —
-    survives VM restarts). Best-effort: if the broker fails, the
-    agent continues normally. Contains tool, target field (URL/path/query) and ok flag,
-    NEVER secret values or file contents."""
+# One id per user turn: lets a trace reviewer group the tool calls of a turn
+# and line them up with the chat log. Set in run()/run_stream().
+_turn_id = [""]
+
+
+def audit(name, args, ok=True, err="", result=""):
+    """Log a tool call at the manager (per instance, on the host — survives VM
+    restarts). Best-effort: if the broker fails, the agent continues normally.
+    Carries tool, target (URL/path/query), ok, a short ERROR TEXT and a short
+    RESULT excerpt — without those a reviewer cannot tell a healthy call from
+    one that failed politely (the audit used to say ok:true while a tool
+    returned "⚠️ blocked"). NEVER secret values or full file contents."""
     try:
         _mgr(_manager_base(), "/api/audit",
-             {"tool": name, "target": _audit_target(name, args), "ok": bool(ok)}, timeout=5)
+             {"tool": name, "target": _audit_target(name, args), "ok": bool(ok),
+              "err": str(err)[:300], "result": str(result)[:300],
+              "turn": _turn_id[0]}, timeout=5)
     except Exception:
         pass
+
+
+# Result strings that mean "the tool ran but the CALL failed" — tools report
+# errors as text, not exceptions, so the audit has to look at the words.
+_ERR_PREFIXES = ("⚠️", "Error:", "Tool error", "error:")
+
+
+def _looks_failed(out):
+    t = str(out).lstrip()
+    return t.startswith(_ERR_PREFIXES) or "web search unavailable" in t[:120]
 
 
 def exec_tool(name, args):
@@ -1380,18 +1399,22 @@ def exec_tool(name, args):
     try:
         if name in BUILTIN:
             if not tool_enabled(name):
-                audit(name, args, ok=False)
+                audit(name, args, ok=False, err="tool not enabled")
                 return f"Tool '{name}' is not enabled for this instance."
-            audit(name, args)
-            return _finalize_output(name, str(BUILTIN[name][0](**args)))
-        if name in _mcp_tools:
-            audit(name, args)
+            out = str(BUILTIN[name][0](**args))
+        elif name in _mcp_tools:
             srv, tool = _mcp_tools[name]
-            return _finalize_output(name, _mcp[srv].call(tool, args))
-        audit(name, args, ok=False)
-        return f"unknown tool: {name}"
+            out = str(_mcp[srv].call(tool, args))
+        else:
+            audit(name, args, ok=False, err="unknown tool")
+            return f"unknown tool: {name}"
     except Exception as e:
+        audit(name, args, ok=False, err=repr(e))
         return f"Tool error ({name}): {e!r}"
+    failed = _looks_failed(out)
+    audit(name, args, ok=not failed,
+          err=out[:300] if failed else "", result="" if failed else out[:200])
+    return _finalize_output(name, out)
 
 
 # --- report usage -----------------------------------------------------------
@@ -2047,6 +2070,7 @@ def _tool_loop(hist):
 
 
 def run(user_message):
+    _turn_id[0] = uuid.uuid4().hex[:8]
     user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
@@ -2225,6 +2249,7 @@ def or_chat_stream(messages, tools, on_token):
 
 
 def run_stream(user_message, on_token, image=None):
+    _turn_id[0] = uuid.uuid4().hex[:8]
     """Like run(), but streams the answer tokens via on_token. Tool rounds
     produce no text; the final answer is streamed.
     image: optional base64 JPEG -> sent as vision content to OpenRouter."""

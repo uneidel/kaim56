@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-02 (the saddler: weekly trace review, and an audit that can carry it)
+- **Rich tool-call traces.** The audit used to log a call BEFORE execution — `ok: true` even when the tool came back with "⚠️ blocked", no error text, no result, no linkage ("the Google-blocks-me week was invisible in the trail"). `exec_tool` now audits AFTER running: `ok` reflects whether the output looks like a failure, and the record carries the error text, a short result excerpt and a per-turn id that groups a turn's calls. Fields are additive; old readers are unaffected.
+- **`mgr/saddler.py` + `GET /api/saddler`** (idea from Microsoft's AutoSaddler, reduced to this platform's size and rules — stdlib, no framework, no auto-apply): the manager renders a failure digest over all instances' audits, grouped by error SHAPE (digits/URLs normalised), this week next to last week — the week-over-week movement is the reflection step. Guests may not read it, except the orchestrator.
+- **A weekly scheduled task** hands the digest to the orchestrator: diagnose each group (code defect → human, behavioural → propose playbook lines, external outage → note), reflect on the counts, send ONE notify. **Applying patches stays a human decision** — the saddler proposes, never patches. First live run diagnosed correctly: 97% of the week's failures were the notify path (external), failure rate 6.1%→3.5% week-over-week.
+- Found on the way: `mgr/store.py` lost its `uuid` import in the package split — admin task creation (`/api/tasks`, the UI's "New task") threw a NameError. Fixed. 100 tests green.
+
 ## 2026-09-01 (Claude instances: platform APIs as real MCP tools)
 - The curl recipes from this morning were the stopgap; Claude Code has a native tool mechanism. New `kaim56_mcp.py` in the Claude guest — a stdlib-only MCP stdio server exposing the manager APIs as typed tools: `memory_store`, `memory_recall`, `web_search`, `list_skills`, `load_skill`, `notify`. Wired via `--mcp-config` on every claude call; the CLAUDE.md platform section now points at the tools first, curl stays documented as a fallback. Protocol-tested standalone (initialize/list/call incl. the error path) and live: claudy lists all six tools, stores a memory on request (arrives in the manager store), and searches Brave through the tool.
 

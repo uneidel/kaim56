@@ -12,6 +12,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 import urllib.request
 
 HISTORY_DB = None
