@@ -360,7 +360,7 @@ from mgr.signal import (signal_send, signal_recipients, hitl_create, hitl_status
 # ---- Security gateway: moved out to mgr/gateway.py -------------------------
 from mgr import gateway as _gateway  # noqa: E402
 _gateway.configure(BASE)
-from mgr.gateway import (load_gateway, gateway_on, gateway_clean, gateway_count,  # noqa: E402,F401
+from mgr.gateway import (load_gateway, save_gateway, gateway_on, gateway_clean, gateway_count,  # noqa: E402,F401
                          StreamGuard, strip_image_meta, _clean_unicode)
 
 
@@ -2169,6 +2169,9 @@ def effective_policy(inst):
         "katfs_share": cfg.get("KATFS_SHARE", ""),
     }
 
+
+# mgr/mcp needs the secret functions; they are defined above by now.
+_mcp.configure(BASE, load_instances, allowed_secret_keys, secret_store)
 
 def audit_read(inst_name, limit=200):
     p = os.path.join(AUDIT_DIR, f"{inst_name}.jsonl")

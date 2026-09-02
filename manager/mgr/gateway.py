@@ -5,6 +5,7 @@
 """Security Gateway: unsichtbare-Unicode-Filter (Text) + Bild-Metadaten-Strip.
 Toggleable per chat; state in gateway.json. Part of the mgr package, only BASE.
 """
+import base64
 import json
 import os
 import re

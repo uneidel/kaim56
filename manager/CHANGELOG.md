@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-02 (regression protection: the undefined-name gate)
+- Answer to "how do we make sure our work stops breaking existing functionality": the week's regressions were one CLASS — a name used without its import, which Python happily compiles and only crashes when the line runs. If no test runs that line, nobody notices (task creation was dead for 13 days).
+- **`tests/check_names.py`**: pyflakes-light in ~150 lines of stdlib AST, tuned to this codebase (declared injection placeholders make the configure() contract visible). Proven against both historical bugs — and on first run it flagged **four dormant production defects**: `save_gateway` missing from manager's import list (the per-chat gateway toggle 500'd), `base64` missing in `mgr/gateway.py` (data:-URL image stripping), and BOTH secret functions in `mgr/mcp.py` never injected (every MCP call from a VM would have NameError'd — unnoticed because the only MCP instance is off). All four fixed; the mcp contract is now explicit via configure().
+- The gate is **step 0 of `run-tests.sh`** and a **pre-commit hook** in the repo runs the suite before every commit (`--no-verify` for emergencies). CLAUDE.md's update cycle documents it. Gateway toggle verified live after the fix. 101 tests green.
+
 ## 2026-09-02 (task creation: 13 days broken, now regression-tested)
 - Archaeology on yesterday's `uuid` find: the mgr/ split (Aug 20) shipped `store.py` without the import from its FIRST version, and `tasks.json` shows the blast radius — the last successfully created task before the fix dates to Aug 19. For ~13 days no new task could be created on any path (web UI, app `/task`, agent `create_task` without wait), unnoticed because the pre-split scheduled tasks kept running (the worker does not call `add_task`) and `wait=true` bypasses it too.
 - The suite never called `add_task` — `test_tasks_file_wired` only proves `load_tasks` is wired. New `test_add_task_roundtrip` exercises the real function (pending + scheduled, id shape, next_run, store contents). All three creation paths verified live. 101 tests green.

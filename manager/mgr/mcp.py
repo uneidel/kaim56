@@ -15,11 +15,25 @@ MCP_HUB = "http://127.0.0.1:" + os.environ.get("MCP_HUB_PORT", "8771")
 load_instances = lambda: []
 
 
-def configure(base, load_instances_fn=None):
-    global MCP_CATALOG_FILE, load_instances
+# Injected from the composition root (manager.py). Declared here so the
+# undefined-name gate can SEE the contract — mcp_hub_call and
+# build_mcp_config were calling these without any injection for weeks, and
+# every MCP call from a VM would have NameError'd (unnoticed: the only MCP
+# instance was off).
+allowed_secret_keys = lambda inst: set()
+secret_store = lambda: {}
+
+
+def configure(base, load_instances_fn=None, allowed_secret_keys_fn=None,
+              secret_store_fn=None):
+    global MCP_CATALOG_FILE, load_instances, allowed_secret_keys, secret_store
     MCP_CATALOG_FILE = os.path.join(base, "mcp-catalog.json")
     if load_instances_fn:
         load_instances = load_instances_fn
+    if allowed_secret_keys_fn:
+        allowed_secret_keys = allowed_secret_keys_fn
+    if secret_store_fn:
+        secret_store = secret_store_fn
 
 
 # ---- MCP catalog (selectable MCP servers per instance) --------------------
