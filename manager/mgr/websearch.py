@@ -29,14 +29,16 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from typing import Callable
 
-get_setting = lambda key: ""      # injected: manager settings (holds the key)
+# Injected from the composition root (manager.py): reads one settings value.
+get_setting: "Callable[[str], str]" = lambda key: ""
 
 _UA = ("Mozilla/5.0 (X11; Linux x86_64; rv:120.0) "
        "Gecko/20100101 Firefox/120.0")
 
 
-def configure(settings_getter):
+def configure(settings_getter: "Callable[[str], str]") -> None:
     global get_setting
     get_setting = settings_getter
 

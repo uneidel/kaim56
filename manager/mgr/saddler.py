@@ -26,7 +26,7 @@ import time
 AUDIT_DIR = None      # via configure()
 
 
-def configure(audit_dir):
+def configure(audit_dir: str) -> None:
     global AUDIT_DIR
     AUDIT_DIR = audit_dir
 

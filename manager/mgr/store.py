@@ -23,7 +23,7 @@ _mem_lock = threading.Lock()
 EMBED_URL = "http://127.0.0.1:" + os.environ.get("EMBED_PORT", "8772")
 
 
-def configure(base):
+def configure(base: str) -> None:
     global HISTORY_DB, MEMORY_FILE, TASKS_FILE
     HISTORY_DB = os.path.join(base, "history.db")
     MEMORY_FILE = os.path.join(base, "memory.json")

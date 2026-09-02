@@ -13,13 +13,16 @@ import os
 import threading
 import time
 import uuid
+from typing import Callable
 
 MISSIONS_FILE = None          # via configure(BASE)
-notify_add = lambda *a, **k: (None, "notify not configured")
-sem_store = lambda *a, **k: False
+notify_add: "Callable[..., tuple]" = lambda *a, **k: (None, "notify not configured")
+sem_store: "Callable[..., bool]" = lambda *a, **k: False
 
 
-def configure(base, notify=None, sem=None):
+def configure(base: str,
+              notify: "Callable[..., tuple] | None" = None,
+              sem: "Callable[..., bool] | None" = None) -> None:
     global MISSIONS_FILE, notify_add, sem_store
     MISSIONS_FILE = os.path.join(base, "missions.json")
     if notify:
@@ -151,8 +154,8 @@ def mission_finish(instance, mid, summary="", failed=False):
             sem_store(instance, f"Mission '{m['goal']}' "
                       + ("failed" if failed else "completed")
                       + f": {summary}", key="mission-" + str(mid))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[quiet] mission summary -> memory failed: {e!r}", flush=True)
     try:
         notify_add(instance, ("Mission failed" if failed else "Mission completed"),
                    f"{m['goal']}\n{summary}"[:900], link="missions")

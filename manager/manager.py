@@ -23,9 +23,6 @@ import hashlib
 import shutil
 import signal
 import socket
-import ssl
-import struct
-import sqlite3
 import subprocess
 import threading
 import time
@@ -311,8 +308,8 @@ def openrouter_models(force=False, tools_only=False, relevant_only=False):
                                 "name": name, "ctx": ctx, "price": tag})
             if out:
                 _ormodels["ts"], _ormodels["data"] = time.time(), out
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[quiet] openrouter model list refresh failed: {e!r}", flush=True)
     data = _ormodels["data"]
     if tools_only:
         data = [m for m in data if m.get("tools")]
@@ -385,8 +382,9 @@ def save_tombstones(t):
     try:
         with open(TOMBSTONES_FILE, "w") as fh:
             json.dump(t, fh)
-    except OSError:
-        pass
+    except OSError as e:
+        # a lost tombstone resurrects deleted chats on the next sync
+        print(f"[quiet] tombstones save failed: {e!r}", flush=True)
     return t
 
 
@@ -489,8 +487,9 @@ def inbox_since(peek=False):
         try:
             with open(INBOX_WM_FILE, "w") as fh:
                 json.dump({"ts": maxts}, fh)
-        except OSError:
-            pass
+        except OSError as e:
+            # a stale watermark re-delivers old inbox messages to the orchestrator
+            print(f"[quiet] inbox watermark save failed: {e!r}", flush=True)
     return items
 
 
@@ -596,8 +595,9 @@ def _save_plugin_pins(d):
     try:
         with open(PLUGIN_PINS_FILE, "w") as fh:
             json.dump(d, fh, indent=2)
-    except OSError:
-        pass
+    except OSError as e:
+        # unpinned plugins = the integrity check silently stops checking
+        print(f"[quiet] plugin pins save failed: {e!r}", flush=True)
 
 
 def plugin_pin(name):
@@ -652,8 +652,6 @@ def plugin_write_py(name, code):
 
 
 def plugin_write_zip(name, raw):
-    import zipfile
-    import io
     name = _safe_tool_name(name)
     if not name:
         return "invalid name"
@@ -817,8 +815,9 @@ def _run_ephemeral(message, model=None):
         try:
             stop(inst)
             delete_instance(name)
-        except Exception:
-            pass
+        except Exception as e:
+            # a leaked ephemeral VM keeps its tap, its disk and its RAM
+            print(f"[quiet] ephemeral cleanup of {name} failed: {e!r}", flush=True)
 
 
 def _run_task_now(instance, message):
@@ -1103,8 +1102,8 @@ def _task_worker():
                 _mi_sweep_ts[0] = now
                 try:
                     mission_ttl_sweep()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _wlog(f"mission-ttl-sweep failed: {e!r}")
 
 
 def load_templates():
@@ -1575,8 +1574,9 @@ def ensure_agent_crossmnt():
         os.makedirs(EXPORTS_D, exist_ok=True)
         open(AGENT_EXPORTS, "w").write(line)
         sh("exportfs", "-ra", check=False)
-    except OSError:
-        pass
+    except OSError as e:
+        # without the export the guest boots with an empty workspace
+        print(f"[quiet] NFS export update failed: {e!r}", flush=True)
 
 
 def mount_specs(inst):
@@ -1606,8 +1606,8 @@ def write_desired(inst):
         with open(os.path.join(d, "desired.list"), "w") as f:
             for s in mount_specs(inst):
                 f.write(f"{s['sub']}|{s['guest']}|{'ro' if s['ro'] else 'rw'}\n")
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[quiet] desired.list for {inst.get('name')} failed: {e!r}", flush=True)
 
 
 def setup_mounts(inst):
@@ -2104,9 +2104,21 @@ from mgr.mcp import (MCP_HUB, MCP_CATALOG_FILE, load_mcps, save_mcps, upsert_mcp
 # sees everything — the route is admin-only like /api/secret-keys (guests
 # blocked by source IP) and sits behind the same auth as the UI.
 
+# The picker exists to choose folders for guest mounts — it has no business
+# mapping /etc or /root. Admin auth still applies; this bounds what a stolen
+# admin password can enumerate.
+BROWSE_ROOTS = tuple((SITE.get("BROWSE_ROOTS") or ["/home", "/srv", "/mnt", "/media"]))
+
+
 def list_dirs(path, show_hidden=False):
     p = os.path.abspath(path or "/") or "/"
     parent = "" if p == "/" else os.path.dirname(p)
+    inside = any(p == r or p.startswith(r.rstrip("/") + "/") for r in BROWSE_ROOTS)
+    if not inside:
+        # Outside the allowed roots the picker shows the roots themselves —
+        # that keeps "/" navigable without exposing the rest of the tree.
+        roots = [r for r in BROWSE_ROOTS if os.path.isdir(r)]
+        return {"path": "/", "parent": "", "dirs": [r.lstrip("/") for r in roots]}
     if not os.path.isdir(p):
         return {"path": p, "parent": parent, "dirs": [], "error": "not a directory"}
     try:
@@ -2159,8 +2171,8 @@ def audit_append(inst_name, tool, target, ok, err="", result="", turn=""):
         if len(lines) > AUDIT_MAX_LINES + 200:
             with open(p, "w") as fh:
                 fh.writelines(lines[-AUDIT_MAX_LINES:])
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[quiet] audit trim for {inst_name} failed: {e!r}", flush=True)
 
 
 def effective_policy(inst):
@@ -2299,8 +2311,8 @@ def render():
                 f" · {_fmt_cost(ud.get('cost'))}"
                 f" &nbsp;·&nbsp; total {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
                 f" · {_fmt_cost(ut['cost'])}</span>")
-        st = (f"<span class='tag tag-accent'>● running</span>" if run
-              else f"<span class='tag tag-neutral'>○ off</span>")
+        st = ("<span class='tag tag-accent'>● running</span>" if run
+              else "<span class='tag tag-neutral'>○ off</span>")
         net = inst.get("internet", True)
         tools_cfg = (inst.get("config") or {}).get("AGENT_TOOLS", "")
         ntag = (f"<button class='tag {'tag-accent' if net else 'tag-neutral'}' "
@@ -3955,8 +3967,9 @@ class H(BaseHTTPRequestHandler):
                 try:
                     chat_log_append(inst["name"], body.get("sender", ""),
                                     body.get("user", ""), body.get("reply", ""))
-                except Exception:
-                    pass
+                except Exception as e:
+                    # a swallowed append is a hole in the shared chat history
+                    print(f"[quiet] chat_log_append failed: {e!r}", flush=True)
                 try:
                     orchestrator_ping()   # Signal message -> orchestrator immediately
                 except Exception:

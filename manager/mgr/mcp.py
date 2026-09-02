@@ -9,10 +9,11 @@ import json
 import os
 import re
 import urllib.request
+from typing import Callable
 
 MCP_CATALOG_FILE = None
 MCP_HUB = "http://127.0.0.1:" + os.environ.get("MCP_HUB_PORT", "8771")
-load_instances = lambda: []
+load_instances: "Callable[[], list]" = lambda: []
 
 
 # Injected from the composition root (manager.py). Declared here so the
@@ -20,12 +21,14 @@ load_instances = lambda: []
 # build_mcp_config were calling these without any injection for weeks, and
 # every MCP call from a VM would have NameError'd (unnoticed: the only MCP
 # instance was off).
-allowed_secret_keys = lambda inst: set()
-secret_store = lambda: {}
+allowed_secret_keys: "Callable[[dict], set]" = lambda inst: set()
+secret_store: "Callable[[], dict]" = lambda: {}
 
 
-def configure(base, load_instances_fn=None, allowed_secret_keys_fn=None,
-              secret_store_fn=None):
+def configure(base: str,
+              load_instances_fn: "Callable[[], list] | None" = None,
+              allowed_secret_keys_fn: "Callable[[dict], set] | None" = None,
+              secret_store_fn: "Callable[[], dict] | None" = None) -> None:
     global MCP_CATALOG_FILE, load_instances, allowed_secret_keys, secret_store
     MCP_CATALOG_FILE = os.path.join(base, "mcp-catalog.json")
     if load_instances_fn:

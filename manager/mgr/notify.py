@@ -17,7 +17,7 @@ from mgr.gateway import redact_secrets
 NOTIF_FILE = None
 
 
-def configure(base):
+def configure(base: str) -> None:
     global NOTIF_FILE, _notif_rev
     NOTIF_FILE = os.path.join(base, "notifications.json")
     try:

@@ -17,7 +17,7 @@ PLAYBOOKS_FILE = None
 PROMPTS_FILE = None
 
 
-def configure(base):
+def configure(base: str) -> None:
     global PLAYBOOKS_FILE, PROMPTS_FILE
     PLAYBOOKS_FILE = os.path.join(base, "playbooks.json")
     PROMPTS_FILE = os.path.join(base, "prompts.json")
@@ -45,8 +45,9 @@ def _save_playbooks(d):
         with open(tmp, "w") as fh:
             json.dump(d, fh, indent=2, ensure_ascii=False)
         os.replace(tmp, PLAYBOOKS_FILE)
-    except OSError:
-        pass
+    except OSError as e:
+        # a lost save means a rule the user just taught is silently gone
+        print(f"[quiet] playbooks save failed: {e!r}", flush=True)
 
 
 def pb_list(instance):

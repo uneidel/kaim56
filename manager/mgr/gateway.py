@@ -9,7 +9,6 @@ import base64
 import json
 import os
 import re
-import struct
 import threading
 
 GATEWAY_FILE = None
@@ -20,7 +19,7 @@ except Exception:
     _clean_unicode = None
 
 
-def configure(base):
+def configure(base: str) -> None:
     global GATEWAY_FILE
     GATEWAY_FILE = os.path.join(base, "gateway.json")
 
@@ -82,8 +81,9 @@ def gateway_count(chat_id, key, n):
         try:
             with open(GATEWAY_FILE, "w") as fh:
                 json.dump(d, fh)
-        except OSError:
-            pass
+        except OSError as e:
+            # a lost save silently reverts the user's gateway toggle
+            print(f"[quiet] gateway save failed: {e!r}", flush=True)
 
 
 def gateway_clean(text, chat_id, key):

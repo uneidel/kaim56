@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-02 (skill-guided review of the Python tree — all four findings fixed)
+- Reviewed against the new dev skills (`python-code-quality`, `python-security-audit`). The heavy checklist items pass clean: all SQL parameterized, no pickle/eval, no duplicate module-level definitions, no mutable defaults, no hardcoded secrets, user-controlled paths guarded. `shell=True` in the agent's bash tool and SHA-1 in the websocket handshake are by-design/RFC, not findings.
+- **Silent excepts got voices where silence hid damage:** of 56 truly silent `except: pass` sites, 14 now log — lost playbook saves (a rule the user just taught vanishing), leaked ephemeral VMs, failed NFS export updates, tombstone/watermark/plugin-pin saves, chat-log holes, gateway toggle saves, unreadable iroh allowlists, dead TTL sweeps. Cleanup paths and parse-fallthroughs stay silent on purpose.
+- **The folder picker is bounded:** `/api/browse` used to enumerate the whole filesystem as root (names only, admin-auth'd). It now serves only `BROWSE_ROOTS` (default /home, /srv, /mnt, /media — overridable in site.json); outside paths get the root list. Verified live: `/etc` is not browsable, `/home/ulrich` is.
+- **The injected `configure()` contracts are typed** across all mgr modules, placeholders included — the exact seam where two of this week's bugs sat now states its shape in the signature.
+- **ruff (pyflakes rules) is step 0b of `run-tests.sh`** — optional, dev-tool only, skipped where not installed. Its first run found 10 issues (5 dead imports, 2 shadowed re-imports, 2 empty f-strings, 1 in gateway); all fixed. 102 tests green.
+
 ## 2026-09-02 (wdm0006/python-skills: dev skills for the repo, not agent catalog)
 - **github.com/wdm0006/python-skills** (MIT, © Will McGinnis) — first imported into the platform agents' skill catalog, then reverted on clarification: these are meant for the humans-and-Claude working ON kaim56, not for the agents running IN it. 31 of the 36 (python/*, rust/*, common/* — swift/scala/go/js have no code here) now live in **`.claude/skills/`** next to the existing security/architecture skills, prefixed `python-`/`rust-` to keep names unambiguous, with the MIT text as `LICENSE-python-skills`. The agents' catalog is back to 67. Side benefit kept: the import script walks nested layouts now.
 

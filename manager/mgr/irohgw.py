@@ -22,7 +22,7 @@ ALLOW_FILE = None
 _NODEID_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
-def configure(base):
+def configure(base: str) -> None:
     global GW_DIR, NODEID_FILE, ALLOW_FILE
     GW_DIR = os.path.join(base, "iroh-gw")
     NODEID_FILE = os.path.join(GW_DIR, "nodeid.txt")
@@ -52,8 +52,9 @@ def load_allow():
                 nid = nid.strip()
                 if _NODEID_RE.match(nid):
                     out.append({"id": nid, "label": label.strip()})
-    except OSError:
-        pass
+    except OSError as e:
+        # unreadable allowlist = every phone is locked out, better say so
+        print(f"[quiet] iroh allowlist read failed: {e!r}", flush=True)
     return out
 
 

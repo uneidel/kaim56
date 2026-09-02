@@ -18,16 +18,20 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from typing import Callable
 
 from mgr.gateway import redact_secrets
 
 SIGNAL_LOG = None
-load_settings = lambda: {}
-chat_log_append = lambda *a, **k: None
-orchestrator_ping = lambda: None
+load_settings: "Callable[[], dict]" = lambda: {}
+chat_log_append: "Callable[..., None]" = lambda *a, **k: None
+orchestrator_ping: "Callable[[], None]" = lambda: None
 
 
-def configure(base, settings_fn=None, chat_log_fn=None, ping_fn=None):
+def configure(base: str,
+              settings_fn: "Callable[[], dict] | None" = None,
+              chat_log_fn: "Callable[..., None] | None" = None,
+              ping_fn: "Callable[[], None] | None" = None) -> None:
     global SIGNAL_LOG, load_settings, chat_log_append, orchestrator_ping
     SIGNAL_LOG = os.path.join(base, "signal-debug.log")
     if settings_fn:

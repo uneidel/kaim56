@@ -15,4 +15,16 @@ python3 tests/check_names.py \
     /home/ulrich/claude-signal-firecracker/web_bridge.py \
     /home/ulrich/claude-signal-firecracker/kaim56_mcp.py || exit 1
 
+# Schritt 0b: ruff (Pyflakes-Klasse), optional — reines Dev-Werkzeug, keine
+# Laufzeit-Abhaengigkeit. Faellt still aus, wo ruff nicht installiert ist.
+if command -v ruff >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ruff" ]; then
+    RUFF=$(command -v ruff || echo "$HOME/.local/bin/ruff")
+    "$RUFF" check --select F --isolated --quiet \
+        manager.py chatui.py webterm.py text_unicode.py mgr/ \
+        /home/ulrich/openrouter-agent/agent.py \
+        /home/ulrich/openrouter-agent/run_agent.py \
+        /home/ulrich/claude-signal-firecracker/web_bridge.py \
+        /home/ulrich/claude-signal-firecracker/kaim56_mcp.py || exit 1
+fi
+
 exec python3 tests/e2e.py "$@"
