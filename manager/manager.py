@@ -3825,8 +3825,12 @@ class H(BaseHTTPRequestHandler):
                                    body.get("body") or body.get("message", ""),
                                    link=("chat:" + _nm) if inst else "")
             try:
+                # The WHY travels along ("empty" / "rate limit: …") — without it
+                # the saddler once diagnosed the e2e suite's intentional empty
+                # notification as an external service outage.
                 audit_append(inst["name"] if inst else "admin", "notify",
-                             (body.get("title") or "")[:60], bool(nid))
+                             (body.get("title") or "")[:60], bool(nid),
+                             err="" if nid else str(note))
             except Exception:
                 pass
             out = json.dumps({"id": nid, "note": note}).encode()

@@ -1204,9 +1204,15 @@ function actRender(){
   const ev = ACT_EVENTS.filter(e=>(e.ts||0) >= cut);
   document.getElementById('actrows').innerHTML=ev.map(e=>{
     const d=new Date((e.ts||0)*1000).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    // Failed calls show WHY (the audit carries the error text now); healthy
+    // ones show a peek at the result. The word changed too: "denied" implied
+    // policy, but ok:false mostly means the call itself failed.
+    const extra = e.ok===false
+      ? (e.err?`<div style="font-size:11px;color:var(--color-neutral-600)">${escT(e.err)}</div>`:'')
+      : (e.result?`<div class=text-muted style="font-size:11px">${escT(e.result)}</div>`:'');
     return `<tr><td class=text-muted style="white-space:nowrap;font-size:12px">${d}</td>`+
-      `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">denied</span>':''}</td>`+
-      `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}</td></tr>`;
+      `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">failed</span>':''}</td>`+
+      `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}${extra}</td></tr>`;
   }).join('')||'<tr><td class=text-muted style="padding:12px">nothing in the selected range</td></tr>';
   actUsage(cut, ev.length);
 }

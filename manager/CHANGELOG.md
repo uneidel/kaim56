@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-02 (the saddler's first finding, closed the same day)
+- **The 38 notify "failures" were our own e2e suite**: `test_notify_route_rejects_empty` deliberately posts an empty notification against the live manager on every run, and the suite ran dozens of times this week. Not a defect — but the trail was unreadable: the notify route audited `ok:false` without a reason, and the saddler's first run mis-diagnosed the pattern as an external service outage. The route now records the WHY (`empty` / `rate limit: …`); re-run with the reason present, the saddler pinpoints the cause correctly ("called with an empty payload"). A working demonstration of why the rich fields exist.
+- **The Activity panel shows the new fields**: failed calls display their error text under the target, healthy ones a short result peek — and the badge says `failed` instead of `denied`, which wrongly implied a policy decision.
+
 ## 2026-09-02 (the saddler: weekly trace review, and an audit that can carry it)
 - **Rich tool-call traces.** The audit used to log a call BEFORE execution — `ok: true` even when the tool came back with "⚠️ blocked", no error text, no result, no linkage ("the Google-blocks-me week was invisible in the trail"). `exec_tool` now audits AFTER running: `ok` reflects whether the output looks like a failure, and the record carries the error text, a short result excerpt and a per-turn id that groups a turn's calls. Fields are additive; old readers are unaffected.
 - **`mgr/saddler.py` + `GET /api/saddler`** (idea from Microsoft's AutoSaddler, reduced to this platform's size and rules — stdlib, no framework, no auto-apply): the manager renders a failure digest over all instances' audits, grouped by error SHAPE (digits/URLs normalised), this week next to last week — the week-over-week movement is the reflection step. Guests may not read it, except the orchestrator.
