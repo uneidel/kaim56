@@ -357,7 +357,7 @@ from mgr.signal import (signal_send, signal_recipients, hitl_create, hitl_status
 # ---- Security gateway: moved out to mgr/gateway.py -------------------------
 from mgr import gateway as _gateway  # noqa: E402
 _gateway.configure(BASE)
-from mgr.gateway import (load_gateway, save_gateway, gateway_on, gateway_clean, gateway_count,  # noqa: E402,F401
+from mgr.gateway import (load_gateway, save_gateway, with_gateway, gateway_on, gateway_clean, gateway_count,  # noqa: E402,F401
                          StreamGuard, strip_image_meta, _clean_unicode)
 
 
@@ -386,6 +386,12 @@ def save_tombstones(t):
         # a lost tombstone resurrects deleted chats on the next sync
         print(f"[quiet] tombstones save failed: {e!r}", flush=True)
     return t
+
+
+# One lock for every load->modify->save cycle on chats.json: the task worker
+# appends results while the app's sync POST merges its state — unguarded, the
+# later save silently drops the other side's messages.
+_chats_rmw_lock = threading.Lock()
 
 
 def load_chats():
@@ -504,20 +510,21 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
         sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "signal"))[:20] or "signal"
         cid = f"sig-{inst_name}-{sid}"
         title = f"Signal · {inst_name}"
-    chats = load_chats()
-    conv = next((c for c in chats if isinstance(c, dict) and c.get("id") == cid), None)
-    now = int(time.time() * 1000)
-    if conv is None:
-        conv = {"id": cid, "title": title, "mode": "server",
-                "instance": inst_name, "messages": [], "updatedAt": now}
-        chats.append(conv)
-    if user_text:
-        conv["messages"].append({"user": True, "text": str(user_text)})
-    if reply_text:
-        conv["messages"].append({"user": False, "text": str(reply_text)})
-    conv["messages"] = conv["messages"][-500:]
-    conv["updatedAt"] = now
-    return save_chats(chats)
+    with _chats_rmw_lock:
+        chats = load_chats()
+        conv = next((c for c in chats if isinstance(c, dict) and c.get("id") == cid), None)
+        now = int(time.time() * 1000)
+        if conv is None:
+            conv = {"id": cid, "title": title, "mode": "server",
+                    "instance": inst_name, "messages": [], "updatedAt": now}
+            chats.append(conv)
+        if user_text:
+            conv["messages"].append({"user": True, "text": str(user_text)})
+        if reply_text:
+            conv["messages"].append({"user": False, "text": str(reply_text)})
+        conv["messages"] = conv["messages"][-500:]
+        conv["updatedAt"] = now
+        return save_chats(chats)
 
 
 # ---- Manage tool plugins (drag & drop in the web manager) ------------------
@@ -724,29 +731,30 @@ def merge_chats(incoming):
             except (TypeError, ValueError):
                 continue
 
-    by_id = {}
-    for c in load_chats():
-        if isinstance(c, dict) and c.get("id") and c.get("messages"):
-            by_id[str(c["id"])] = c
-    for c in chats_in if isinstance(chats_in, list) else []:
-        if not isinstance(c, dict) or not c.get("id") or not c.get("messages"):
-            continue
-        cid = str(c["id"])
-        cur = by_id.get(cid)
-        if cur is None or c.get("updatedAt", 0) >= cur.get("updatedAt", 0):
-            by_id[cid] = c
+    with _chats_rmw_lock:
+        by_id = {}
+        for c in load_chats():
+            if isinstance(c, dict) and c.get("id") and c.get("messages"):
+                by_id[str(c["id"])] = c
+        for c in chats_in if isinstance(chats_in, list) else []:
+            if not isinstance(c, dict) or not c.get("id") or not c.get("messages"):
+                continue
+            cid = str(c["id"])
+            cur = by_id.get(cid)
+            if cur is None or c.get("updatedAt", 0) >= cur.get("updatedAt", 0):
+                by_id[cid] = c
 
-    # Apply tombstones
-    for cid, dat in list(tombs.items()):
-        c = by_id.get(cid)
-        if c is not None and c.get("updatedAt", 0) > dat:
-            tombs.pop(cid, None)        # chat is newer -> resurrection ok
-        else:
-            by_id.pop(cid, None)        # deleted stays deleted
+        # Apply tombstones
+        for cid, dat in list(tombs.items()):
+            c = by_id.get(cid)
+            if c is not None and c.get("updatedAt", 0) > dat:
+                tombs.pop(cid, None)        # chat is newer -> resurrection ok
+            else:
+                by_id.pop(cid, None)        # deleted stays deleted
 
-    save_tombstones(tombs)
-    merged = sorted(by_id.values(), key=lambda x: x.get("updatedAt", 0), reverse=True)
-    return save_chats(merged)
+        save_tombstones(tombs)
+        merged = sorted(by_id.values(), key=lambda x: x.get("updatedAt", 0), reverse=True)
+        return save_chats(merged)
 
 
 
@@ -1008,9 +1016,41 @@ def _task_worker():
             # between worker and HTTP threads.
             throttled = []
 
+            def heartbeat_idle(t):
+                """The 30-min heartbeat is a full /fresh turn whose usual
+                outcome is "nothing to do": ~1.560 of the orchestrator's 1.774
+                audit entries in 14 days were its idle ritual. When the inbox
+                holds nothing new AND no mission is active, the manager can
+                answer that question itself — without waking the model. Costs
+                are no argument anymore (hy3 is ~free), but the audit noise
+                drowns the saddler and the free tier is a cluster risk."""
+                # Only the SCHEDULED heartbeat: a one-off with the same text
+                # (mission advance, manual poke) must run — and skipping a
+                # pending one-off would just re-skip it every worker cycle.
+                if not t.get("schedule") \
+                        or not str(t.get("message", "")).startswith("/fresh Heartbeat"):
+                    return False
+                try:
+                    if inbox_since(peek=True):
+                        return False
+                    if any(m.get("status") == "active"
+                           for lst in load_missions().values() for m in lst):
+                        return False
+                except Exception:
+                    return False          # in doubt: run it
+                return True
+
+            skipped_hb = []
+
             def claim(tasks):
                 for t in tasks:
                     if not due(t, now):
+                        continue
+                    if heartbeat_idle(t):
+                        t["next_run"] = _next_run(t["schedule"], now)
+                        t["result"] = "skipped: inbox empty, no active mission"
+                        t["updated"] = now
+                        skipped_hb.append(t["id"])
                         continue
                     # Frequency cap: more than 6 runs/h of the same task is
                     # ALWAYS a defect (loop bug Aug 20) — pause it for an hour.
@@ -1027,6 +1067,8 @@ def _task_worker():
                 return bool(throttled), None
 
             t = with_tasks(claim)
+            for tid in skipped_hb:
+                _wlog(f"{tid}: heartbeat skipped (idle — no inbox, no mission)")
             for tid, tmsg in throttled:
                 _wlog(f"{tid}: >6 runs/h — paused for 1 h (loop protection)")
                 try:
@@ -2534,7 +2576,7 @@ def _guard_check(inst):
 # Kette. Eine Route liefert (body, content_type) und ueberlaesst das Senden dem
 # Verteiler — oder None, wenn sie selbst geantwortet hat.
 from mgr import saddler as _saddler_mod  # noqa: E402
-_saddler_mod.configure(AUDIT_DIR)
+_saddler_mod.configure(AUDIT_DIR, HISTORY_DB)
 
 from mgr import websearch as _websearch_mod  # noqa: E402
 _websearch_mod.configure(lambda key: (load_settings().get(key) or ""))
@@ -2649,6 +2691,32 @@ def _rt_extract(h):
     except Exception as e:
         out = {"error": f"extraction failed: {e!r}"}
     return json.dumps(out, ensure_ascii=False).encode(), "application/json"
+
+
+@ROUTER.get("/api/prompts")
+def _rt_prompts(h):
+    return (json.dumps({"prompts": load_prompts()}, ensure_ascii=False).encode(),
+            "application/json")
+
+
+@ROUTER.get("/api/resources")
+def _rt_resources(h):
+    return json.dumps({"resources": resource_stats()}).encode(), "application/json"
+
+
+@ROUTER.get("/api/iroh")
+def _rt_iroh_status(h):
+    return json.dumps(irohgw_status()).encode(), "application/json"
+
+
+@ROUTER.get("/api/voice-health")
+def _rt_voice_health(h):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{VOICE_PORT}/health", timeout=5) as r:
+            out = r.read()
+    except Exception as e:
+        out = json.dumps({"ready": False, "error": str(e)}).encode()
+    return out, "application/json"
 
 
 @ROUTER.get("/logo.svg")
@@ -3303,35 +3371,11 @@ class H(BaseHTTPRequestHandler):
             self.send_response(st); self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data))); self.end_headers()
             self.wfile.write(data); return
-        if self.path.split("?", 1)[0] == "/api/resources":
-            body = json.dumps({"resources": resource_stats()}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.split("?", 1)[0] == "/api/iroh":
-            body = json.dumps(irohgw_status()).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
         if self.path.split("?", 1)[0] == "/api/plugins":
             body = json.dumps({"plugins": list_plugins()}, ensure_ascii=False).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
-        if self.path.split("?", 1)[0] == "/api/prompts":
-            body = json.dumps({"prompts": load_prompts()}, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.startswith("/api/voice-health"):
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{VOICE_PORT}/health", timeout=5) as r:
-                    out = r.read()
-            except Exception as e:
-                out = json.dumps({"ready": False, "error": str(e)}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
         if self.path.startswith("/api/hitl/"):
             hid = self.path[len("/api/hitl/"):].split("?", 1)[0].strip()
             out = json.dumps({"status": hitl_status(hid)}).encode()
@@ -4030,12 +4074,12 @@ class H(BaseHTTPRequestHandler):
                     if not cid:
                         msg = "chat missing"
                     else:
-                        d = load_gateway()
-                        if b.get("on"):
-                            d["chats"][cid] = True
-                        else:
-                            d["chats"].pop(cid, None)
-                        save_gateway(d)
+                        def gw_mut(d, _cid=cid, _on=bool(b.get("on"))):
+                            if _on:
+                                d["chats"][_cid] = True
+                            else:
+                                d["chats"].pop(_cid, None)
+                        with_gateway(gw_mut)
                         msg = f"gateway {'on' if b.get('on') else 'off'} for {cid}"
             elif parts == ["api", "models"]:
                 ln = int(self.headers.get("Content-Length", 0))
@@ -4101,12 +4145,12 @@ class H(BaseHTTPRequestHandler):
                 b = json.loads(self.rfile.read(ln) or b"{}")
                 guest = instance_by_ip(self.client_address[0])
                 target = guest["name"] if guest else parts[2]
-                key, value = b.get("key", ""), b.get("value", "")
+                key, value = b.get("key", ""), b.get("value")   # null = delete
                 msg = mem_store(target, key, value)
                 # Additionally store the same thing semantically. If the embedder
                 # fails, the flat memory above stays written anyway.
-                sem = sem_store(target, value, key)
-                msg += " (+semantic)" if sem else " (semantic off)"
+                sem = sem_store(target, value, key) if value is not None else False
+                msg += " (+semantic)" if sem else ("" if value is None else " (semantic off)")
             elif parts == ["api", "create"]:
                 ln = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(ln) or b"{}")

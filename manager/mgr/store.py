@@ -336,12 +336,19 @@ def mem_store(instance, key, value):
         return "instance/key missing"
     with _mem_lock:
         m = load_memory()
-        m.setdefault(instance, {})[key] = value
+        # value None deletes the key — tests clean up after themselves, and an
+        # agent can retract a note. An empty instance dict goes entirely.
+        if value is None:
+            m.get(instance, {}).pop(key, None)
+            if not m.get(instance):
+                m.pop(instance, None)
+        else:
+            m.setdefault(instance, {})[key] = value
         tmp = MEMORY_FILE + ".tmp"
         with open(tmp, "w") as fh:
             json.dump(m, fh, indent=2, ensure_ascii=False)
         os.replace(tmp, MEMORY_FILE)
-    return f"saved: {key}"
+    return f"deleted: {key}" if value is None else f"saved: {key}"
 
 
 def mem_recall(instance, key=None):

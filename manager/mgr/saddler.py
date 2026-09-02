@@ -24,11 +24,13 @@ import re
 import time
 
 AUDIT_DIR = None      # via configure()
+HISTORY_DB = None     # via configure(); read-only here (llm_usage)
 
 
-def configure(audit_dir: str) -> None:
-    global AUDIT_DIR
+def configure(audit_dir: str, history_db: "str | None" = None) -> None:
+    global AUDIT_DIR, HISTORY_DB
     AUDIT_DIR = audit_dir
+    HISTORY_DB = history_db
 
 
 def _signature(err):
@@ -53,6 +55,8 @@ def digest(days=7):
         if not fn.endswith(".jsonl"):
             continue
         inst = fn[:-6]
+        if inst.startswith("e2e-"):
+            continue          # the test suite's own traces are not operations
         try:
             lines = open(os.path.join(AUDIT_DIR, fn)).readlines()
         except OSError:
@@ -79,7 +83,34 @@ def digest(days=7):
                 g["example_ts"] = ts
                 g["example_target"] = str(r.get("target", ""))[:200]
     out = sorted(groups.values(), key=lambda g: (-g["cur"], -g["prev"]))
-    return {"days": days, "totals": totals, "groups": out}
+    return {"days": days, "totals": totals, "groups": out,
+            "usage": _usage(cur_from, prev_from)}
+
+
+def _usage(cur_from, prev_from):
+    """LLM calls and cost per instance, both windows. This is the half of a
+    feature review that used to be hand work — and the half a wrong hunch
+    about "what costs money" cannot survive (the idle heartbeat turned out to
+    cost $0.004 while the assumption said 90% of spend)."""
+    if not HISTORY_DB:
+        return []
+    import sqlite3
+    try:
+        db = sqlite3.connect(HISTORY_DB)
+        rows = db.execute(
+            """SELECT instance,
+                      SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END),
+                      ROUND(SUM(CASE WHEN ts >= ? THEN cost ELSE 0 END), 4),
+                      SUM(CASE WHEN ts < ? THEN 1 ELSE 0 END),
+                      ROUND(SUM(CASE WHEN ts < ? THEN cost ELSE 0 END), 4)
+               FROM llm_usage WHERE ts >= ? AND instance NOT LIKE 'e2e-%'
+               GROUP BY instance ORDER BY 3 DESC""",
+            (cur_from, cur_from, cur_from, cur_from, prev_from)).fetchall()
+        db.close()
+    except Exception:
+        return []
+    return [{"instance": r[0], "cur_calls": r[1] or 0, "cur_cost": r[2] or 0,
+             "prev_calls": r[3] or 0, "prev_cost": r[4] or 0} for r in rows]
 
 
 def render(d):
@@ -100,4 +131,9 @@ def render(d):
             + (f" | e.g. target: {g['example_target']}" if g["example_target"] else ""))
     if len(d["groups"]) > 30:
         lines.append(f"- … {len(d['groups']) - 30} more groups omitted")
+    if d.get("usage"):
+        lines.append("LLM usage per instance (previous window in brackets):")
+        for u in d["usage"][:12]:
+            lines.append(f"- {u['instance']}: {u['cur_calls']} calls, "
+                         f"${u['cur_cost']} ({u['prev_calls']} calls, ${u['prev_cost']})")
     return "\n".join(lines)

@@ -12,7 +12,6 @@ import re
 import threading
 
 GATEWAY_FILE = None
-_gw_lock = threading.Lock()
 try:
     from text_unicode import clean_text as _clean_unicode
 except Exception:
@@ -49,6 +48,21 @@ def load_gateway():
             return {"chats": d.get("chats") or {}, "stats": d.get("stats") or {}}
     except (FileNotFoundError, ValueError):
         return {"chats": {}, "stats": {}}
+
+
+def with_gateway(mutator):
+    """Load -> mutate -> save as ONE critical section — the toggle route used
+    to do the cycle around the lock while gateway_count bumped stats under it,
+    the same lost-update shape the task store had."""
+    with _gateway_lock:
+        d = load_gateway()
+        result = mutator(d)
+        try:
+            with open(GATEWAY_FILE, "w") as fh:
+                json.dump(d, fh)
+        except OSError as e:
+            print(f"[quiet] gateway save failed: {e!r}", flush=True)
+        return result
 
 
 def save_gateway(d):
