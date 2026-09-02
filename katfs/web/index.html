@@ -119,6 +119,18 @@
     <div class="row">
       <label class="field-label" for="nodeid">Host node-id</label>
       <input id="nodeid" type="text" placeholder="node-id (hex) or ticket" value="%%NODE_ID%%" />
+      <script>
+        // Also usable when hosted statically (e.g. the public katfs-web page):
+        // no server substitutes the node-id then, so ?key=<node-id> or
+        // #<node-id> may supply it — filtered like the manager's proxy filter.
+        // With server substitution present, the param simply overrides.
+        (function () {
+          var k = new URLSearchParams(location.search).get('key')
+               || location.hash.replace(/^#/, '');
+          k = (k || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 200);
+          if (k) document.getElementById('nodeid').value = k;
+        })();
+      </script>
     </div>
 
     <div class="row">

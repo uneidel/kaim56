@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-02 (katfs web client published as a standalone site)
+- The browser file provider is now hosted externally at **https://uneidel.github.io/katfs-web/** (own public repo `uneidel/katfs-web`, GitHub Pages). It could go anywhere static: the P2P transport runs over iroh's public n0 relays, so the page needs zero own infrastructure — only a secure context for the File System Access API, which Pages provides. Sharing flow: open with `?key=<host-node-id>` (or paste it), pick a folder, done; file contents only ever travel between the two iroh endpoints.
+- For static hosting the `%%NODE_ID%%` server substitution has a client-side sibling: the page reads `?key=`/`#` itself, filtered exactly like the manager's proxy filters it. The source copy in `katfs/web/` carries the same snippet, so node-served and statically-served pages behave alike. AGPL notice and source pointer ship with the site.
+
 ## 2026-09-02 (skill-guided review of the Python tree — all four findings fixed)
 - Reviewed against the new dev skills (`python-code-quality`, `python-security-audit`). The heavy checklist items pass clean: all SQL parameterized, no pickle/eval, no duplicate module-level definitions, no mutable defaults, no hardcoded secrets, user-controlled paths guarded. `shell=True` in the agent's bash tool and SHA-1 in the websocket handshake are by-design/RFC, not findings.
 - **Silent excepts got voices where silence hid damage:** of 56 truly silent `except: pass` sites, 14 now log — lost playbook saves (a rule the user just taught vanishing), leaked ephemeral VMs, failed NFS export updates, tombstone/watermark/plugin-pin saves, chat-log holes, gateway toggle saves, unreadable iroh allowlists, dead TTL sweeps. Cleanup paths and parse-fallthroughs stay silent on purpose.
