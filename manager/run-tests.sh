@@ -27,4 +27,13 @@ if command -v ruff >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ruff" ]; then
         /home/ulrich/claude-signal-firecracker/kaim56_mcp.py || exit 1
 fi
 
+# Schritt 0c: Desktop-Sprachclient (lebt nur im Repo, laeuft auf dem
+# Nutzer-PC — hier laufen seine mikrofonfreien Unit-Tests plus beide Gates).
+VC=/home/ulrich/kaim56/voice-client
+if [ -d "$VC" ]; then
+    python3 tests/check_names.py "$VC" || exit 1
+    [ -n "$RUFF" ] && { "$RUFF" check --select F --isolated --quiet "$VC" || exit 1; }
+    python3 "$VC/tests.py" 2>/dev/null || { echo "voice-client tests FAILED"; python3 "$VC/tests.py"; exit 1; }
+fi
+
 exec python3 tests/e2e.py "$@"

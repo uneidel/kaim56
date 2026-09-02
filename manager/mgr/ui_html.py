@@ -586,7 +586,10 @@ HTML_BOTTOM = """
   voice and speed are picked in the Settings tab and injected by the manager into every
   <code>/api/tts</code> call, so clients keep sending only the text. The app records AAC, the service
   converts via ffmpeg. Speech-to-send, tap-bubble-to-stop and barge-in live in the app; the
-  long-press assistant key starts listening immediately.</p></div>
+  long-press assistant key starts listening immediately. A Linux desktop client
+  (<code>voice-client/</code> in the repo) sits in the GNOME/KDE topbar and runs hands-free
+  conversations over the same three endpoints: an energy VAD segments utterances, the mic is
+  muted while the agent thinks or speaks, and the target instance is picked from the tray menu.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
   <p class=card-body>Two directions, both through the signal-cli REST API
