@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-02 (task creation: 13 days broken, now regression-tested)
+- Archaeology on yesterday's `uuid` find: the mgr/ split (Aug 20) shipped `store.py` without the import from its FIRST version, and `tasks.json` shows the blast radius — the last successfully created task before the fix dates to Aug 19. For ~13 days no new task could be created on any path (web UI, app `/task`, agent `create_task` without wait), unnoticed because the pre-split scheduled tasks kept running (the worker does not call `add_task`) and `wait=true` bypasses it too.
+- The suite never called `add_task` — `test_tasks_file_wired` only proves `load_tasks` is wired. New `test_add_task_roundtrip` exercises the real function (pending + scheduled, id shape, next_run, store contents). All three creation paths verified live. 101 tests green.
+
 ## 2026-09-02 (the saddler's first finding, closed the same day)
 - **The 38 notify "failures" were our own e2e suite**: `test_notify_route_rejects_empty` deliberately posts an empty notification against the live manager on every run, and the suite ran dozens of times this week. Not a defect — but the trail was unreadable: the notify route audited `ok:false` without a reason, and the saddler's first run mis-diagnosed the pattern as an external service outage. The route now records the WHY (`empty` / `rate limit: …`); re-run with the reason present, the saddler pinpoints the cause correctly ("called with an empty payload"). A working demonstration of why the rich fields exist.
 - **The Activity panel shows the new fields**: failed calls display their error text under the target, healthy ones a short result peek — and the badge says `failed` instead of `denied`, which wrongly implied a policy decision.

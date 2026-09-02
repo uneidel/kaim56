@@ -1439,6 +1439,27 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE = old_file
 
+    def test_add_task_roundtrip(self):
+        """Regression: the mgr/ split shipped store.py without `import uuid`,
+        and for 13 days NO new task could be created (UI, app, create_task) —
+        unnoticed because the pre-split scheduled tasks kept running and
+        wait=true bypasses add_task. This test calls the real thing."""
+        import mgr.store as st
+        tmp = tempfile.mkdtemp(prefix="e2e-task-")
+        old = st.TASKS_FILE
+        try:
+            st.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            t = st.add_task("someinst", "do the thing")
+            self.assertTrue(t["id"] and len(t["id"]) == 12)
+            self.assertEqual(t["status"], "pending")
+            t2 = st.add_task("someinst", "recurring", "every 7d")
+            self.assertEqual(t2["status"], "scheduled")
+            self.assertGreater(t2["next_run"], int(time.time()) - 5)
+            ids = {x["id"] for x in st.load_tasks()}
+            self.assertEqual(ids, {t["id"], t2["id"]})
+        finally:
+            st.TASKS_FILE = old
+
     def test_tasks_file_wired(self):
         """Regression: TASKS_FILE must be set in store.configure() — otherwise
         load_tasks crashes (bug from 2026-08-20, /api/tasks returned nothing)."""
