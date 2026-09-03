@@ -190,7 +190,10 @@ func TestWakeWordGate(t *testing.T) {
 	}
 }
 
-func TestTemplateRoundtripAndMode(t *testing.T) {
+func TestTemplateIsWrittenButRefusedUnedited(t *testing.T) {
+	// Der Platzhalter darf NICHT lauffaehig sein: mit "manager.example"
+	// loszulaufen zeigt den Fehler erst beim ersten Satz (DNS-Fehler statt
+	// "Config ausfuellen").
 	p := filepath.Join(t.TempDir(), "cfg.json")
 	if err := writeConfigTemplate(p); err != nil {
 		t.Fatal(err)
@@ -198,12 +201,22 @@ func TestTemplateRoundtripAndMode(t *testing.T) {
 	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %o, will 600 — da steht ein Passwort drin", st.Mode().Perm())
 	}
+	if _, err := loadConfig(p); err == nil || !strings.Contains(err.Error(), "iroh") {
+		t.Fatalf("unbearbeitetes Template muss mit Hinweis scheitern, err=%v", err)
+	}
+}
+
+func TestIrohOnlyConfigIsValid(t *testing.T) {
+	// Der iroh-Weg braucht weder base_url noch user/pass (kein Traefik im Spiel).
+	p := filepath.Join(t.TempDir(), "cfg.json")
+	os.WriteFile(p, []byte(`{"iroh":"9954327fe3926b1e430a3b75e21a860666dab6de"}`), 0o600)
 	cfg, err := loadConfig(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Instance != "myassistant" || cfg.Vad.StartFrames != 5 || cfg.WakeWord != "Kat" {
-		t.Fatalf("Template-Defaults kaputt: %+v", cfg)
+	if cfg.IrohListen != "127.0.0.1:8701" || cfg.Instance != "myassistant" ||
+		cfg.Vad.StartFrames != 5 {
+		t.Fatalf("iroh-Defaults kaputt: %+v", cfg)
 	}
 }
 

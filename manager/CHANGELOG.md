@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-03 (voice client: iroh is the normal way now — the client starts the tunnel itself)
+- `"iroh": "<manager-node-id>"` in the config is all it takes: the voice client finds `kaim56-tunnel` (next to its own binary, then PATH), starts it as a child process, waits for the local port and points itself at it. The child dies with the client (Pdeathsig), the tunnel identity is shown at startup for one-time allowlist pairing. With `iroh` set, `base_url`/`user`/`pass` are unnecessary — no Traefik in the path.
+- Fail loud, part two: a config still carrying the template placeholder (`manager.example`) is now refused at startup with a fill-this-in message — it used to run and surface as a DNS error on the first spoken sentence. Existing real configs are untouched; the HTTP(S) path stays available when `iroh` is empty.
+- Proven live: config containing ONLY the node id, client spawned the tunnel, full probe chain (TTS → STT → chat → reply) through iroh, test identity removed from the allowlist afterwards. 25 client tests green.
+
 ## 2026-09-03 (voice client: wake word for conference-call days)
 - New `"wake_word"` in the voice client config (template default `"Kat"`, empty = old always-on behavior; existing configs keep theirs). In a call the mic hears speech nonstop — now only transcripts STARTING with the word reach the agent ("Kat, fass mir das zusammen"), the word alone gets a spoken "Ja?", everything else is dropped after transcription and forwarded nowhere. No model on the desktop: STT already runs locally on this server per utterance, the gate is a text comparison afterwards — case-insensitive, tolerant of STT punctuation, but word-boundary strict ("Katalog" does not wake "Kat"). 24 client tests green (9-case wake table incl. the boundary and the config-compat cases).
 

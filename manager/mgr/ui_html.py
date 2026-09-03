@@ -592,8 +592,8 @@ HTML_BOTTOM = """
   muted while the agent thinks or speaks, and the target instance is picked from the tray menu.
   An optional wake word gates busy rooms (conference calls): STT still runs locally on this
   server for every utterance, but only transcripts starting with the word reach the agent.
-  Remotely it rides the iroh transport: <code>kaim56-tunnel</code> exposes the manager on a
-  local port, no HTTPS endpoint needed.</p></div>
+  It rides the iroh transport by default: given the gateway NodeId in its config it starts
+  <code>kaim56-tunnel</code> itself as a child process — no HTTPS endpoint, no VPN.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
   <p class=card-body>Two directions, both through the signal-cli REST API

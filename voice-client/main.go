@@ -52,6 +52,18 @@ func main() {
 		cfg.Instance = *instance
 	}
 
+	// iroh-Transport: Tunnel als Kindprozess, base_url zeigt auf dessen
+	// lokalen Port. Pdeathsig raeumt ihn auch bei hartem Exit mit ab.
+	if cfg.Iroh != "" {
+		base, stop, err := startTunnel(cfg.Iroh, cfg.IrohListen)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer stop()
+		cfg.BaseURL = base
+	}
+
 	client := NewVoiceClient(cfg, *headless || *once || *probe != "")
 
 	if *probe != "" {

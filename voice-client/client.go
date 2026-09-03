@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,12 +17,14 @@ import (
 // ---- Config ----------------------------------------------------------------
 // Dieselbe Datei wie die fruehere Python-Fassung: ~/.config/kaim56-voice.json.
 type Config struct {
-	BaseURL  string    `json:"base_url"`
-	User     string    `json:"user"`
-	Pass     string    `json:"pass"`
-	Instance string    `json:"instance"`
-	WakeWord string    `json:"wake_word"` // leer = jede Aeusserung geht durch
-	Vad      VadConfig `json:"vad"`
+	Iroh       string    `json:"iroh"`     // Gateway-NodeId: Client startet kaim56-tunnel selbst
+	IrohListen string    `json:"iroh_listen,omitempty"` // lokaler Tunnel-Port
+	BaseURL    string    `json:"base_url"` // Alternative: direkter HTTP(S)-Weg
+	User       string    `json:"user"`
+	Pass       string    `json:"pass"`
+	Instance   string    `json:"instance"`
+	WakeWord   string    `json:"wake_word"` // leer = jede Aeusserung geht durch
+	Vad        VadConfig `json:"vad"`
 }
 
 func configPath() string {
@@ -41,11 +44,23 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}
-	for k, v := range map[string]string{"base_url": cfg.BaseURL,
-		"user": cfg.User, "pass": cfg.Pass} {
-		if v == "" {
-			return cfg, fmt.Errorf("config: '%s' fehlt in %s", k, path)
+	// Ein Transport muss echt konfiguriert sein: entweder iroh (Gateway-
+	// NodeId) oder eine base_url, die nicht mehr der Template-Platzhalter
+	// ist. Mit dem Platzhalter loszulaufen hiesse "manager.example" waehlen
+	// und den Fehler erst beim ersten Satz zeigen.
+	if cfg.Iroh == "" {
+		if cfg.BaseURL == "" || strings.Contains(cfg.BaseURL, "manager.example") {
+			return cfg, fmt.Errorf("config %s: bitte 'iroh' (Manager-NodeId aus dem "+
+				"Web-UI, iroh-Tab) ODER eine echte 'base_url' eintragen — "+
+				"'%s' ist noch der Platzhalter", path, cfg.BaseURL)
 		}
+		if cfg.User == "" || cfg.Pass == "" {
+			return cfg, fmt.Errorf("config %s: 'user'/'pass' fehlen (noetig fuer "+
+				"den HTTP(S)-Weg; der iroh-Weg braucht sie nicht)", path)
+		}
+	}
+	if cfg.IrohListen == "" {
+		cfg.IrohListen = "127.0.0.1:8701"
 	}
 	if cfg.Instance == "" {
 		cfg.Instance = "myassistant"
@@ -54,8 +69,8 @@ func loadConfig(path string) (Config, error) {
 }
 
 func writeConfigTemplate(path string) error {
-	tpl := Config{BaseURL: "http://manager.example:8700", User: "admin",
-		Pass: "geheim", Instance: "myassistant", WakeWord: "Kat",
+	tpl := Config{Iroh: "", BaseURL: "http://manager.example:8700",
+		User: "admin", Pass: "geheim", Instance: "myassistant", WakeWord: "Kat",
 		Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
