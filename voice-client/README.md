@@ -16,7 +16,10 @@ bzw. paplay/pw-play/aplay — das erste, das da ist; mit PipeWire schon an Bord)
 ## Bauen
 
 ```bash
-go build -o kaim56-voice .          # oder: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
+./build.sh          # Release: EIN Binary, kaim56-tunnel eingebettet
+                    # (baut den Tunnel bei Bedarf zuerst, Docker)
+go build .          # Dev-Build ohne eingebetteten Tunnel — sucht ihn
+                    # neben dem Binary bzw. im PATH
 ```
 
 ## Topbar-Icon (StatusNotifier)
@@ -31,8 +34,9 @@ gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com   # dann ab-/anme
 ## Einrichten (iroh — der normale Weg)
 
 Wie die App erreicht der Client den Manager über iroh (P2P, E2E-verschlüsselt,
-kein offener HTTPS-Port, kein VPN). `kaim56-tunnel` (aus `iroh-gw/`, Binary in
-`dist/`) liegt neben `kaim56-voice` — der Client startet ihn selbst.
+kein offener HTTPS-Port, kein VPN). Der Tunnel steckt im Binary: beim Start
+wird er nach `~/.cache/kaim56-voice/` ausgepackt und als Kindprozess gefahren —
+eine Datei kopieren genügt.
 
 ```bash
 ./kaim56-voice                      # erster Lauf schreibt ~/.config/kaim56-voice.json

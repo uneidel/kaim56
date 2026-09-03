@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-03 (voice client and tunnel are ONE binary now)
+- "Can we combine tunnel and voice?" Yes, without giving up either build's strengths: the release build (`voice-client/build.sh`, `-tags embedtunnel`) embeds the Rust tunnel via `go:embed`; at startup it is materialized to `~/.cache/kaim56-voice/kaim56-tunnel-<hash>` (temp-file + rename, hash-named so releases replace themselves) and run as the child process. One 31 MB file to copy — truly linking them would mean cgo and the end of the static Go build. The dev/gate build stays embed-free (`embed_off.go`), so `go test` works in a fresh checkout; external `kaim56-tunnel` next to the binary or in PATH remains the fallback.
+- Proven live: no external tunnel present, config only `{"iroh": <node-id>}`, embedded tunnel unpacked, full probe chain through iroh. 26 client tests green (incl. materialize cache-hit/new-version cases).
+
 ## 2026-09-03 (voice client: iroh is the normal way now — the client starts the tunnel itself)
 - `"iroh": "<manager-node-id>"` in the config is all it takes: the voice client finds `kaim56-tunnel` (next to its own binary, then PATH), starts it as a child process, waits for the local port and points itself at it. The child dies with the client (Pdeathsig), the tunnel identity is shown at startup for one-time allowlist pairing. With `iroh` set, `base_url`/`user`/`pass` are unnecessary — no Traefik in the path.
 - Fail loud, part two: a config still carrying the template placeholder (`manager.example`) is now refused at startup with a fill-this-in message — it used to run and surface as a DNS error on the first spoken sentence. Existing real configs are untouched; the HTTP(S) path stays available when `iroh` is empty.

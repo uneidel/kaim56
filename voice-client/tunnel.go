@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
@@ -21,8 +22,51 @@ import (
 // (Pdeathsig); die Tunnel-Identitaet liegt in ~/.config/kaim56-tunnel.key
 // und muss einmalig in die Gateway-Allowlist (Web-UI, iroh-Tab).
 
-// findTunnel sucht das Tunnel-Binary: neben dem eigenen Binary, dann im PATH.
+// materializeTunnel legt eingebettete Tunnel-Bytes als ausfuehrbare Datei in
+// den Cache — Dateiname traegt den Hash, ein neues Release ersetzt sich also
+// selbst und alte Versionen kollidieren nicht. Schreiben via Tempfile+Rename,
+// damit ein paralleler Start keine halbe Datei ausfuehrt.
+func materializeTunnel(data []byte, dir string) (string, error) {
+	sum := sha256.Sum256(data)
+	path := filepath.Join(dir, fmt.Sprintf("kaim56-tunnel-%x", sum[:6]))
+	if st, err := os.Stat(path); err == nil && st.Size() == int64(len(data)) {
+		return path, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ".tunnel-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	tmp.Close()
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// findTunnel: erst der eingebettete Tunnel (Release-Build, versionsgleich),
+// sonst neben dem eigenen Binary, dann im PATH.
 func findTunnel() string {
+	if len(embeddedTunnel) > 0 {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			cache = os.TempDir()
+		}
+		if p, err := materializeTunnel(embeddedTunnel, filepath.Join(cache, "kaim56-voice")); err == nil {
+			return p
+		}
+		fmt.Fprintln(os.Stderr, "[kaim56-voice] eingebetteter Tunnel nicht auspackbar, suche extern")
+	}
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), "kaim56-tunnel")
 		if st, err := os.Stat(p); err == nil && st.Mode()&0o111 != 0 {

@@ -70,3 +70,4 @@ app/iroh-android/.out/
 manager/skills.json
 voice-client/kaim56-voice
 voice-client/kaim56-tunnel
+voice-client/embedded/

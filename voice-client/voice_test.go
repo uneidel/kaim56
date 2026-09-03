@@ -190,6 +190,26 @@ func TestWakeWordGate(t *testing.T) {
 	}
 }
 
+func TestMaterializeTunnel(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("#!/bin/sh\necho fake-tunnel\n")
+	p1, err := materializeTunnel(data, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p1); st.Mode().Perm()&0o111 == 0 {
+		t.Fatal("nicht ausfuehrbar")
+	}
+	p2, err := materializeTunnel(data, dir) // zweiter Lauf: Cache-Treffer
+	if err != nil || p2 != p1 {
+		t.Fatalf("Cache-Treffer erwartet: %v %v", p2, err)
+	}
+	p3, _ := materializeTunnel([]byte("andere version"), dir)
+	if p3 == p1 {
+		t.Fatal("neue Version muss neuen Pfad bekommen")
+	}
+}
+
 func TestTemplateIsWrittenButRefusedUnedited(t *testing.T) {
 	// Der Platzhalter darf NICHT lauffaehig sein: mit "manager.example"
 	// loszulaufen zeigt den Fehler erst beim ersten Satz (DNS-Fehler statt
