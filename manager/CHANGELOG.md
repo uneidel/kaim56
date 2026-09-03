@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-03 (heartbeat skip: the reschedule was never saved)
+- The "ist noch was offen?" sweep checked the pending live proof for the idle-heartbeat skip and found 9,961 log lines instead: the claim pass advanced the task's `next_run` on a skip but reported dirty=False to `with_tasks` (the return only counted throttles), so the mutation was thrown away and the same heartbeat was re-skipped every 5-second worker cycle. Functionally harmless — real inbox traffic would still have run it — but the rescheduling was dead and the log unreadable.
+- The claim pass is now a module-level `worker_claim()` with an explicit dirty contract (skips and throttles mutate, so they save), and the old admittedly-weak heartbeat test is replaced by a real contract test: skip → dirty=True + next_run advanced; five seconds later → no re-skip; not idle → task claimed. Verified live after restart: exactly one skip entry, `next_run` +30 min, log silent. 103 tests green.
+
 ## 2026-09-03 (local wake-word model — audio leaves the desktop only AFTER the word)
 - The voice client can now gate on the desktop itself (`"wake_mode": "local"`): no pretrained network (openWakeWord doesn't know "Kaim", Porcupine is commercial) but query-by-example keyword spotting on the user's own voice — `--enroll` records the word three times, stored as MFCC templates; every VAD utterance start is held against them with subsequence DTW (free start/end), threshold derived from the enrollment's own cross-distances. Speaker-dependent by design: in a conference call, other voices match poorly — that's the point. Pure Go (own FFT/mel/DCT), no ONNX, no cgo.
 - The neat part: on a hit the word is cut in the AUDIO (DTW knows the alignment end) and only the remainder goes to STT — so the wake word can be anything, including "Kaim", and STT can never mangle or swallow it again. `--wake-test` shows live scores without sending anything; `"wake_threshold"` overrides the enrollment threshold.

@@ -994,6 +994,45 @@ def reclaim_stuck_tasks():
         print(f"[worker] {n} orphaned 'running' task(s) reset", flush=True)
 
 
+def worker_claim(tasks, now, hb_idle, skipped_hb, throttled):
+    """One claim pass over the task store (runs INSIDE with_tasks): skip idle
+    heartbeats, throttle loops, claim the first runnable task. Module-level so
+    the dirty contract is testable — the bug this guards against: a skip
+    mutates next_run, and returning dirty=False threw that mutation away, so
+    the same heartbeat was re-skipped every 5 s (9,961 log lines)."""
+    def due(t):
+        if t.get("status") == "running":
+            return False
+        if t.get("schedule"):
+            return t.get("next_run", 0) <= now
+        return t.get("status") == "pending"
+
+    for t in tasks:
+        if not due(t):
+            continue
+        if hb_idle(t):
+            t["next_run"] = _next_run(t["schedule"], now)
+            t["result"] = "skipped: inbox empty, no active mission"
+            t["updated"] = now
+            skipped_hb.append(t["id"])
+            continue
+        # Frequency cap: more than 6 runs/h of the same task is ALWAYS a
+        # defect (loop bug Aug 20) — pause it for an hour.
+        runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
+        if len(runs) >= 6:
+            t["recent_runs"] = runs
+            t["next_run"] = now + 3600
+            throttled.append((t["id"], str(t.get("message", ""))[:120]))
+            continue
+        t["recent_runs"] = runs + [now]
+        t["status"] = "running"
+        t["updated"] = now
+        return True, dict(t)
+    # Skips und Drosselungen VERAENDERN Tasks (next_run!) — ohne dirty=True
+    # verfiele das Weiterplanen beim naechsten Zyklus.
+    return bool(throttled) or bool(skipped_hb), None
+
+
 def _task_worker():
     """Processes due/pending tasks sequentially in the background."""
     reclaim_stuck_tasks()
@@ -1002,17 +1041,8 @@ def _task_worker():
         try:
             now = int(time.time())
 
-            def due(t, now):
-                if t.get("status") == "running":
-                    return False
-                if t.get("schedule"):
-                    return t.get("next_run", 0) <= now
-                return t.get("status") == "pending"
-
-            # Candidates come from a snapshot; the CLAIM happens on a fresh
-            # load inside the store lock — the snapshot may be stale by then
-            # (a route may have edited or deleted the task), so everything is
-            # re-checked there. This is what closes the lost-update window
+            # The CLAIM happens on a fresh load inside the store lock
+            # (worker_claim above) — this closes the lost-update window
             # between worker and HTTP threads.
             throttled = []
 
@@ -1041,32 +1071,8 @@ def _task_worker():
                 return True
 
             skipped_hb = []
-
-            def claim(tasks):
-                for t in tasks:
-                    if not due(t, now):
-                        continue
-                    if heartbeat_idle(t):
-                        t["next_run"] = _next_run(t["schedule"], now)
-                        t["result"] = "skipped: inbox empty, no active mission"
-                        t["updated"] = now
-                        skipped_hb.append(t["id"])
-                        continue
-                    # Frequency cap: more than 6 runs/h of the same task is
-                    # ALWAYS a defect (loop bug Aug 20) — pause it for an hour.
-                    runs = [x for x in t.get("recent_runs", []) if now - x < 3600]
-                    if len(runs) >= 6:
-                        t["recent_runs"] = runs
-                        t["next_run"] = now + 3600
-                        throttled.append((t["id"], str(t.get("message", ""))[:120]))
-                        continue
-                    t["recent_runs"] = runs + [now]
-                    t["status"] = "running"
-                    t["updated"] = now
-                    return True, dict(t)
-                return bool(throttled), None
-
-            t = with_tasks(claim)
+            t = with_tasks(lambda ts: worker_claim(ts, now, heartbeat_idle,
+                                                   skipped_hb, throttled))
             for tid in skipped_hb:
                 _wlog(f"{tid}: heartbeat skipped (idle — no inbox, no mission)")
             for tid, tmsg in throttled:
