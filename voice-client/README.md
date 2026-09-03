@@ -52,6 +52,28 @@ Ohne Topbar (SSH, Test): `--headless` loggt Zustände und Transkripte auf
 stdout, `--once` verarbeitet genau eine Äußerung und beendet sich,
 `--instance <name>` überstimmt die Config.
 
+## Unterwegs: iroh statt HTTPS
+
+Wie die App kann auch der Desktop den Manager über iroh erreichen (P2P,
+E2E-verschlüsselt, kein offener HTTPS-Port, keine VPN). `kaim56-tunnel`
+(aus `iroh-gw/`, Binary in `dist/`) legt den Manager auf einen lokalen Port:
+
+```bash
+./kaim56-tunnel --id                 # eigene NodeId anzeigen -> im Web-UI
+                                     # (iroh-Tab) zur Allowlist hinzufuegen
+./kaim56-tunnel <manager-node-id> &  # lauscht auf 127.0.0.1:8701
+```
+
+Die Manager-NodeId steht im Web-UI im iroh-Tab. Danach in der Config:
+
+```json
+"base_url": "http://127.0.0.1:8701"
+```
+
+Der Sprachclient bleibt unverändert — er sieht nur einen lokalen HTTP-Port.
+Die Tunnel-Identität liegt in `~/.config/kaim56-tunnel.key` (einmal pairen,
+bleibt stabil).
+
 ## VAD einstellen
 
 In der Config unter `vad`:

@@ -289,7 +289,7 @@ HTML_TOP = """</head><body>
   </div>
   <div class=sec-head style="margin-top:36px">
     <div><h6>App &#8596; Manager</h6><h3 style="font-size:22px">App transport (iroh)</h3></div>
-    <span class="note text-muted">The Android app reaches the manager over iroh (P2P) &#183; no VPN, no exposed HTTPS port &#183; only allow-listed phone node-ids get through</span>
+    <span class="note text-muted">The Android app reaches the manager over iroh (P2P) &#183; no VPN, no exposed HTTPS port &#183; only allow-listed node-ids get through &#183; desktops use the same path via <code>kaim56-tunnel</code> (local port &#8594; iroh), so any plain-HTTP client rides the tunnel</span>
   </div>
   <div class="panel blueprint">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
@@ -589,7 +589,9 @@ HTML_BOTTOM = """
   long-press assistant key starts listening immediately. A Linux desktop client
   (<code>voice-client/</code> in the repo) sits in the GNOME/KDE topbar and runs hands-free
   conversations over the same three endpoints: an energy VAD segments utterances, the mic is
-  muted while the agent thinks or speaks, and the target instance is picked from the tray menu.</p></div>
+  muted while the agent thinks or speaks, and the target instance is picked from the tray menu.
+  Remotely it rides the iroh transport: <code>kaim56-tunnel</code> exposes the manager on a
+  local port, no HTTPS endpoint needed.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
   <p class=card-body>Two directions, both through the signal-cli REST API

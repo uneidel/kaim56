@@ -14,12 +14,14 @@ docker run --rm \
     mkdir -p /work/.out
     cp target/release/iroh-gw /work/.out/iroh-gw
     cp target/release/testclient /work/.out/testclient 2>/dev/null || true
-    chmod 0755 /work/.out/iroh-gw
+    cp target/release/tunnel /work/.out/kaim56-tunnel
+    chmod 0755 /work/.out/iroh-gw /work/.out/kaim56-tunnel
     chown -R '"$(id -u)":"$(id -g)"' /work/.out
   '
 
 mkdir -p "$HERE/../dist"
 mv "$HERE/.out/iroh-gw" "$HERE/../dist/iroh-gw"
+mv "$HERE/.out/kaim56-tunnel" "$HERE/../dist/kaim56-tunnel"
 cp "$HERE/.out/testclient" "$HERE/../dist/testclient" 2>/dev/null || true
 rmdir "$HERE/.out" 2>/dev/null || true
 echo "built: $HERE/../dist/iroh-gw"
