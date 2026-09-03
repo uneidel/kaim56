@@ -81,18 +81,23 @@ verarbeitet genau eine Äußerung und beendet sich, `--instance <name>`
 
 ## Hotword
 
-`"wake_word": "Kat"` in der Config (Template-Default; leer = jede Äußerung
-geht durch). Gedacht für Telefonkonferenzen: das Mikro hört dauernd Sprache,
-aber nur Äußerungen, die mit dem Wort beginnen, erreichen den Agenten —
-„Kat, fass mir das Dokument zusammen“. Das Wort allein („Kat?“) antwortet
-mit einem kurzen „Ja?“.
+`"wake_word": "Kati, Katharina"` in der Config — eine **Komma-Liste von
+Varianten**; leer = jede Äußerung geht durch. Gedacht für Telefonkonferenzen:
+nur Äußerungen, die mit einer Variante beginnen, erreichen den Agenten.
+Die Variante allein („Kati?“) antwortet mit einem kurzen „Ja?“.
 
-Es läuft **kein** Modell auf dem Desktop: STT läuft ohnehin für jede
-Äußerung auf dem eigenen Server (Parakeet, lokal), das Gate ist ein
-Textvergleich auf dem Transkript danach — case-insensitiv, STT-Interpunktion
-egal, aber mit Wortgrenze („Katalog“ weckt „Kat“ nicht). Verworfenes wird
-nirgendwohin weitergeleitet und nicht gespeichert. Wähle ein Wort, das STT
-zuverlässig trifft — kurz, betont, keine Homophone des Alltagsvokabulars.
+Wortwahl ist entscheidend, und zwar **gemessen an STT, nicht am Gefühl**:
+Parakeet verstümmelt kurze Wörter („Kat“ wurde „Tat“/„Card“ oder fiel ganz
+weg; „Kaim“ wird „Kein“). Robust getestet: **Kati, Katharina, Computer**.
+Pro Variante ab 4 Buchstaben ist ein Tippfehler erlaubt (Levenshtein 1);
+bei 3 Buchstaben nicht — sonst weckt „hat“ das Wort „Kat“. Wortgrenze bleibt
+Pflicht („Katalog“ weckt „Kat“ nicht).
+
+Verworfene Äußerungen sind sichtbar: im Topbar-Status als ✕ mit Transkript,
+im `--headless`-Modus als `(ignoriert: …)` — so kalibriert man das Wort,
+statt zu raten. Es läuft kein Modell auf dem Desktop: STT läuft ohnehin für
+jede Äußerung auf dem eigenen Server, das Gate ist ein Textvergleich danach;
+Verworfenes wird nirgendwohin weitergeleitet und nicht gespeichert.
 
 ## Tunnel von Hand (curl, Browser, andere Clients)
 

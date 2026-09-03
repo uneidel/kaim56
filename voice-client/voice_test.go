@@ -180,6 +180,13 @@ func TestWakeWordGate(t *testing.T) {
 		{"Übernimm das mal bitte jemand", "Kat", "", false},
 		{"Kat, 5 mal 3?", "Kat", "5 mal 3?", true},
 		{"wie spät ist es", "", "wie spät ist es", true}, // kein Wake-Word -> alles durch
+		// Varianten-Liste + Fuzzy (gemessene STT-Verstuemmelungen):
+		{"Kati, wie spät ist es?", "Kati, Kat", "wie spät ist es?", true},
+		{"Katie, wie spät ist es?", "Kati", "wie spät ist es?", true},  // Levenshtein 1
+		{"Keim fasst das Dokument zusammen.", "Kati, Keim", "fasst das Dokument zusammen.", true},
+		{"hat jemand noch Fragen", "Kat", "", false},  // 3 Buchstaben: KEIN Fuzzy ("hat"!)
+		{"hat jemand noch Fragen", "Kati", "", false}, // Distanz 2 -> kein Treffer
+		{"Tat, fass mir das zusammen", "Kati, Kat", "", false}, // ehrlich: Kat bleibt exakt
 	}
 	for _, c := range cases {
 		rest, ok := wakeMatch(c.text, c.word)

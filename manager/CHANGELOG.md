@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-03 (wake word, measured against reality — variants + fuzzy + visible drops)
+- "Hears me, but nothing happens after the hotword": diagnosed server-side with a Piper→Parakeet round trip — STT mangles short wake words. "Kat" came back as "Tat"/"Card" or was dropped entirely; "Kaim" normalizes to the everyday word "Kein" (which can never be a variant — it would fire on every "Kein Problem" in a call). "Kati", "Katharina" and "Computer" survived every test verbatim.
+- The gate now takes a comma-list of variants (`"wake_word": "Kati, Katharina"`, new template default), tolerates one edit (Levenshtein 1) per variant of 4+ letters — three-letter words stay exact, otherwise "hat" wakes "Kat" — and keeps the word-boundary rule. And drops are visible now: the tray status shows discarded utterances as ✕ with transcript (headless already printed them), so calibrating the word is observation, not guesswork. 31 client tests green.
+
 ## 2026-09-03 (voice client and tunnel are ONE binary now)
 - "Can we combine tunnel and voice?" Yes, without giving up either build's strengths: the release build (`voice-client/build.sh`, `-tags embedtunnel`) embeds the Rust tunnel via `go:embed`; at startup it is materialized to `~/.cache/kaim56-voice/kaim56-tunnel-<hash>` (temp-file + rename, hash-named so releases replace themselves) and run as the child process. One 31 MB file to copy — truly linking them would mean cgo and the end of the static Go build. The dev/gate build stays embed-free (`embed_off.go`), so `go test` works in a fresh checkout; external `kaim56-tunnel` next to the binary or in PATH remains the fallback.
 - Proven live: no external tunnel present, config only `{"iroh": <node-id>}`, embedded tunnel unpacked, full probe chain through iroh. 26 client tests green (incl. materialize cache-hit/new-version cases).

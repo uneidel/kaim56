@@ -70,8 +70,8 @@ func loadConfig(path string) (Config, error) {
 
 func writeConfigTemplate(path string) error {
 	tpl := Config{Iroh: "", BaseURL: "http://manager.example:8700",
-		User: "admin", Pass: "geheim", Instance: "myassistant", WakeWord: "Kat",
-		Vad: defaultVadConfig()}
+		User: "admin", Pass: "geheim", Instance: "myassistant",
+		WakeWord: "Kati, Katharina", Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -229,6 +229,11 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	// ("Kat?") bekommt ein kurzes "Ja?" als Lebenszeichen.
 	msg, ok := wakeMatch(text, c.wakeWord)
 	if !ok {
+		// Sichtbar verwerfen: sonst ist "hoert, aber reagiert nicht" vom
+		// Kalibrierproblem nicht zu unterscheiden (Tray zeigt es als ✕).
+		c.mu.Lock()
+		c.lastHeard = "✕ " + text
+		c.mu.Unlock()
 		if c.headless {
 			fmt.Printf("  (ignoriert: %s)\n", text)
 		}
