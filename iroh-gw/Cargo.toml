@@ -14,3 +14,4 @@ anyhow = "1"
 
 [profile.release]
 opt-level = 2
+strip = "symbols"   # Debug-Symbole gehoeren nicht ins Release (22 MB -> ~9 MB)
