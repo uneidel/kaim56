@@ -79,25 +79,41 @@ stdout (auch verworfene Äußerungen, als `(ignoriert: …)`), `--once`
 verarbeitet genau eine Äußerung und beendet sich, `--instance <name>`
 überstimmt die Config.
 
-## Hotword
+## Hotword — zwei Stufen
 
-`"wake_word": "Kati, Katharina"` in der Config — eine **Komma-Liste von
-Varianten**; leer = jede Äußerung geht durch. Gedacht für Telefonkonferenzen:
-nur Äußerungen, die mit einer Variante beginnen, erreichen den Agenten.
-Die Variante allein („Kati?“) antwortet mit einem kurzen „Ja?“.
+**Stufe 1, Text-Gate** (Default): `"wake_word": "Kati, Katharina"` — eine
+Komma-Liste von Varianten; leer = jede Äußerung geht durch. Nur Transkripte,
+die mit einer Variante beginnen, erreichen den Agenten. Pro Variante ab
+4 Buchstaben ist ein Tippfehler erlaubt (Levenshtein 1; bei 3 nicht — sonst
+weckt „hat“ das Wort „Kat“), Wortgrenze bleibt Pflicht. Wortwahl an STT
+messen, nicht am Gefühl: Parakeet verstümmelt kurze Wörter („Kat“ → „Tat“,
+„Kaim“ → „Kein“); robust getestet sind **Kati, Katharina, Computer**.
+Audio geht dabei zur Transkription an den eigenen Server; Verworfenes wird
+nirgendwohin weitergeleitet.
 
-Wortwahl ist entscheidend, und zwar **gemessen an STT, nicht am Gefühl**:
-Parakeet verstümmelt kurze Wörter („Kat“ wurde „Tat“/„Card“ oder fiel ganz
-weg; „Kaim“ wird „Kein“). Robust getestet: **Kati, Katharina, Computer**.
-Pro Variante ab 4 Buchstaben ist ein Tippfehler erlaubt (Levenshtein 1);
-bei 3 Buchstaben nicht — sonst weckt „hat“ das Wort „Kat“. Wortgrenze bleibt
-Pflicht („Katalog“ weckt „Kat“ nicht).
+**Stufe 2, lokales Modell** (`"wake_mode": "local"`): Audio verlässt den
+Desktop erst NACH dem Wort — für Telefonkonferenzen die richtige Stufe.
+Kein vortrainiertes Netz, sondern die eigene Stimme als Referenz
+(MFCC-Templates + Subsequenz-DTW, pures Go):
 
-Verworfene Äußerungen sind sichtbar: im Topbar-Status als ✕ mit Transkript,
-im `--headless`-Modus als `(ignoriert: …)` — so kalibriert man das Wort,
-statt zu raten. Es läuft kein Modell auf dem Desktop: STT läuft ohnehin für
-jede Äußerung auf dem eigenen Server, das Gate ist ein Textvergleich danach;
-Verworfenes wird nirgendwohin weitergeleitet und nicht gespeichert.
+```bash
+./kaim56-voice --enroll      # Wake-Word dreimal einsprechen -> Modell
+./kaim56-voice --wake-test   # Scores live ansehen, nichts wird gesendet
+# dann in der Config: "wake_mode": "local"
+```
+
+Bei einem Treffer wird das Wort im Audio abgeschnitten (das DTW kennt das
+Alignment-Ende) und nur die Nachricht dahinter geht zu STT — das Wort kann
+also beliebig heißen, auch „Kaim“; STT sieht es nie. Sprecherabhängig:
+fremde Stimmen in der Telko matchen schlecht, genau richtig. Die Schwelle
+kommt aus dem Enrollment; `"wake_threshold"` überstimmt sie (kleiner =
+strenger), `--wake-test` zeigt, wo eigene Sätze landen. Ähnlich klingende
+Wörter („Kein …“ vs. „Kaim“) bleiben die Grenze des Verfahrens — im
+Zweifel ein markanteres Wort einsprechen. Das Wort allein quittiert ein
+gesprochenes „Ja?“; Modell liegt in `~/.config/kaim56-voice-wake.json`.
+
+Verworfene Äußerungen sind sichtbar: Topbar-Status als ✕ (mit Score bzw.
+Transkript), `--headless` druckt sie als `(ignoriert/lokal verworfen: …)`.
 
 ## Tunnel von Hand (curl, Browser, andere Clients)
 

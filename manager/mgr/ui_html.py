@@ -590,8 +590,9 @@ HTML_BOTTOM = """
   (<code>voice-client/</code> in the repo) sits in the GNOME/KDE topbar and runs hands-free
   conversations over the same three endpoints: an energy VAD segments utterances, the mic is
   muted while the agent thinks or speaks, and the target instance is picked from the tray menu.
-  An optional wake word gates busy rooms (conference calls): STT still runs locally on this
-  server for every utterance, but only transcripts starting with the word reach the agent.
+  An optional wake word gates busy rooms (conference calls) — as a transcript check, or as a
+  LOCAL model (own-voice MFCC/DTW templates, enrolled in 30 seconds): then audio leaves the
+  desktop only after the word, which is cut from the audio before STT ever sees it.
   It rides the iroh transport by default: given the gateway NodeId in its config it runs the
   embedded <code>kaim56-tunnel</code> as a child process — one binary, no HTTPS endpoint, no VPN.</p></div>
 

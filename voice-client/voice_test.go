@@ -197,6 +197,100 @@ func TestWakeWordGate(t *testing.T) {
 	}
 }
 
+// Ein "Pseudo-Wort" fuer Wake-Tests: eine charakteristische Tonfolge.
+// Verschiedene Folgen unterscheiden sich in MFCC deutlich staerker als
+// Wiederholungen derselben Folge — genau die Eigenschaft, die das Gate traegt.
+func toneWord(freqs []float64, msEach int) []byte {
+	var out []byte
+	n := sampleRate * msEach / 1000
+	for _, f := range freqs {
+		for i := 0; i < n; i++ {
+			v := int16(8000 * math.Sin(2*math.Pi*f*float64(i)/sampleRate))
+			b := make([]byte, 2)
+			binary.LittleEndian.PutUint16(b, uint16(v))
+			out = append(out, b...)
+		}
+	}
+	return out
+}
+
+func TestMfccBasics(t *testing.T) {
+	a := mfccFrames(toneWord([]float64{440, 880}, 200))
+	if len(a) < 30 {
+		t.Fatalf("zu wenige Frames: %d", len(a))
+	}
+	if len(a[0]) != mfccCoeffs {
+		t.Fatalf("Koeffizienten: %d", len(a[0]))
+	}
+	// Zwei Toene muessen unterscheidbare Frames liefern.
+	same, _ := dtwSubseq(mfccFrames(toneWord([]float64{440}, 200)),
+		mfccFrames(toneWord([]float64{440}, 200)))
+	diff, _ := dtwSubseq(mfccFrames(toneWord([]float64{440}, 200)),
+		mfccFrames(toneWord([]float64{2600}, 200)))
+	if same > diff/2 {
+		t.Fatal("MFCC trennt Frequenzen nicht")
+	}
+}
+
+func TestDtwSeparatesWords(t *testing.T) {
+	wordA := func() [][]float64 { return mfccFrames(toneWord([]float64{300, 1200, 500}, 150)) }
+	wordB := mfccFrames(toneWord([]float64{2000, 600, 3000}, 150))
+	same, _ := dtwSubseq(wordA(), wordA())
+	diff, _ := dtwSubseq(wordA(), wordB)
+	if same >= diff/3 {
+		t.Fatalf("DTW trennt nicht: gleich=%f verschieden=%f", same, diff)
+	}
+}
+
+func TestWakeModelGate(t *testing.T) {
+	// Drei "Takes" desselben Pseudo-Worts, leicht gestaucht/gedehnt.
+	takes := [][]byte{
+		toneWord([]float64{300, 1200, 500}, 150),
+		toneWord([]float64{300, 1200, 500}, 165),
+		toneWord([]float64{300, 1200, 500}, 140),
+	}
+	m, err := buildWakeModel(takes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Aeusserung, die mit dem Wort beginnt (plus "Satz" dahinter) -> Wake.
+	utt := append(toneWord([]float64{300, 1200, 500}, 155),
+		toneWord([]float64{700, 900, 400, 1100}, 120)...)
+	score, cut, hit := m.Match(utt)
+	if !hit {
+		t.Fatalf("Wort am Anfang nicht erkannt (Score %.3f, Schwelle %.3f)", score, m.Threshold)
+	}
+	// Der Schnitt muss ungefaehr am Wortende liegen (450 ms +- 150 ms).
+	if sec := float64(cut) / 2 / sampleRate; sec < 0.3 || sec > 0.6 {
+		t.Fatalf("Schnitt bei %.2f s, erwartet ~0.45 s", sec)
+	}
+	// Fremde Aeusserung -> kein Wake.
+	other := toneWord([]float64{2000, 600, 3000, 800}, 150)
+	if score, _, hit := m.Match(other); hit {
+		t.Fatalf("Fremdes Wort weckte (Score %.3f, Schwelle %.3f)", score, m.Threshold)
+	}
+}
+
+func TestWakeModelRoundtripAndValidation(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "wake.json")
+	m, err := buildWakeModel([][]byte{
+		toneWord([]float64{300, 1200}, 150), toneWord([]float64{300, 1200}, 160)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.save(p); err != nil {
+		t.Fatal(err)
+	}
+	m2, err := loadWakeModel(p)
+	if err != nil || len(m2.Templates) != 2 || m2.Threshold != m.Threshold {
+		t.Fatalf("Roundtrip kaputt: %v", err)
+	}
+	if _, err := buildWakeModel([][]byte{toneWord([]float64{300}, 30)}); err == nil {
+		t.Fatal("zu kurze/wenige Takes muessen scheitern")
+	}
+}
+
 func TestMaterializeTunnel(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte("#!/bin/sh\necho fake-tunnel\n")

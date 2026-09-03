@@ -23,7 +23,9 @@ type Config struct {
 	User       string    `json:"user"`
 	Pass       string    `json:"pass"`
 	Instance   string    `json:"instance"`
-	WakeWord   string    `json:"wake_word"` // leer = jede Aeusserung geht durch
+	WakeWord   string    `json:"wake_word"`                // leer = jede Aeusserung geht durch
+	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW-Gate VOR dem Upload
+	WakeThresh float64   `json:"wake_threshold,omitempty"` // Override; 0 = aus dem Enrollment
 	Vad        VadConfig `json:"vad"`
 }
 
@@ -105,6 +107,7 @@ type VoiceClient struct {
 	mgr       *Manager
 	vad       *Vad
 	wakeWord  string
+	wakeModel *WakeModel // nil = kein lokales Gate
 	instance  string
 	chatID    string
 	listening bool
@@ -216,18 +219,54 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 			c.setState("aus")
 		}
 	}()
+	// Lokales Wake-Gate zuerst: KEIN Byte verlaesst den Desktop, wenn der
+	// Aeusserungsanfang nicht wie das eingesprochene Wort klingt. Bei einem
+	// Treffer wird das Wort im AUDIO abgeschnitten (DTW kennt das Alignment-
+	// Ende) — STT bekommt nur die Nachricht und kann das Wort nicht mehr
+	// verstuemmeln oder verschlucken.
+	if c.wakeModel != nil {
+		score, cut, hit := c.wakeModel.Match(pcm)
+		if !hit {
+			c.mu.Lock()
+			c.lastHeard = fmt.Sprintf("✕ wake %.2f (Schwelle %.2f)", score, c.wakeModel.Threshold)
+			c.mu.Unlock()
+			if c.headless {
+				fmt.Printf("  (lokal verworfen: Score %.3f, Schwelle %.3f)\n",
+					score, c.wakeModel.Threshold)
+			}
+			return
+		}
+		if c.headless {
+			fmt.Printf("  (wake: Score %.3f)\n", score)
+		}
+		pcm = pcm[cut:]
+		if len(pcm) < sampleRate/5*2 { // < 200 ms Rest: nur das Wort -> "Ja?"
+			if err := c.Speak("Ja?"); err != nil {
+				c.notify("Wiedergabe fehlgeschlagen", err.Error())
+			}
+			return
+		}
+	}
 	text, err := c.mgr.STT(wavWrap(pcm))
 	if err != nil {
 		c.notify("STT fehlgeschlagen", err.Error())
 		return
 	}
 	if len([]rune(text)) < 2 {
+		if c.wakeModel != nil { // geweckt, aber kein verwertbarer Satz
+			if err := c.Speak("Ja?"); err != nil {
+				c.notify("Wiedergabe fehlgeschlagen", err.Error())
+			}
+		}
 		return
 	}
-	// Wake-Word-Gate: in Telefonkonferenzen hoert das Mikro dauernd Sprache —
-	// nur was den Agenten anspricht, erreicht ihn auch. Das Wort allein
-	// ("Kat?") bekommt ein kurzes "Ja?" als Lebenszeichen.
-	msg, ok := wakeMatch(text, c.wakeWord)
+	// Text-Gate (nur ohne lokales Modell): in Telefonkonferenzen hoert das
+	// Mikro dauernd Sprache — nur was den Agenten anspricht, erreicht ihn
+	// auch. Das Wort allein ("Kati?") bekommt ein kurzes "Ja?".
+	msg, ok := text, true
+	if c.wakeModel == nil {
+		msg, ok = wakeMatch(text, c.wakeWord)
+	}
 	if !ok {
 		// Sichtbar verwerfen: sonst ist "hoert, aber reagiert nicht" vom
 		// Kalibrierproblem nicht zu unterscheiden (Tray zeigt es als ✕).
@@ -299,6 +338,44 @@ func (c *VoiceClient) Speak(text string) error {
 	c.playCmd = nil
 	c.mu.Unlock()
 	return err
+}
+
+// captureSegments nimmt n VAD-Aeusserungen auf (fuer Enrollment und
+// Wake-Test) — eigene VAD-Instanz mit kurzer Mindestdauer, ein einzelnes
+// Wort ist ja kuerzer als ein Satz.
+func captureSegments(vadCfg VadConfig, n int, prompt func(i int), got func(i int, pcm []byte)) error {
+	cmd := pickCmd(recorders)
+	if cmd == nil {
+		return fmt.Errorf("kein Aufnahmewerkzeug: parec, pw-record oder arecord installieren")
+	}
+	vadCfg.MinMs = 250
+	vadCfg.EndMs = 600
+	vad := NewVad(vadCfg)
+	rec := exec.Command(cmd[0], cmd[1:]...)
+	out, err := rec.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := rec.Start(); err != nil {
+		return err
+	}
+	defer func() { rec.Process.Kill(); rec.Wait() }()
+	frame := make([]byte, frameBytes)
+	for i := 0; i < n; {
+		prompt(i)
+		vad.Reset()
+		for {
+			if _, err := io.ReadFull(out, frame); err != nil {
+				return fmt.Errorf("Aufnahme abgerissen: %w", err)
+			}
+			if seg := vad.Feed(frame); seg != nil {
+				got(i, seg)
+				i++
+				break
+			}
+		}
+	}
+	return nil
 }
 
 // ---- Menue-Aktionen --------------------------------------------------------

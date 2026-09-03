@@ -32,6 +32,8 @@ func main() {
 	headless := flag.Bool("headless", false, "ohne Topbar-Icon, Status auf stdout")
 	once := flag.Bool("once", false, "eine Aeusserung verarbeiten, dann beenden (Test)")
 	probe := flag.String("probe", "", "Selbsttest ohne Mikrofon: Text per TTS erzeugen, durch STT zurueck, an die Instanz schicken, Antwort sprechen")
+	enroll := flag.Bool("enroll", false, "lokales Wake-Word einsprechen (3 Aufnahmen) und Modell speichern")
+	wakeTest := flag.Bool("wake-test", false, "Wake-Modell testen: Scores je Aeusserung anzeigen, nichts wird gesendet")
 	flag.Parse()
 
 	if _, err := os.Stat(*cfgPath); err != nil {
@@ -52,6 +54,22 @@ func main() {
 		cfg.Instance = *instance
 	}
 
+	// Enrollment und Wake-Test brauchen weder Manager noch Tunnel.
+	if *enroll {
+		if err := runEnroll(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *wakeTest {
+		if err := runWakeTest(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// iroh-Transport: Tunnel als Kindprozess, base_url zeigt auf dessen
 	// lokalen Port. Pdeathsig raeumt ihn auch bei hartem Exit mit ab.
 	if cfg.Iroh != "" {
@@ -65,6 +83,21 @@ func main() {
 	}
 
 	client := NewVoiceClient(cfg, *headless || *once || *probe != "")
+	if cfg.WakeMode == "local" {
+		model, err := loadWakeModel(wakeModelPath())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wake_mode \"local\", aber kein Modell: %v\n"+
+				"Einmal einsprechen mit: kaim56-voice --enroll\n", err)
+			os.Exit(1)
+		}
+		if cfg.WakeThresh > 0 {
+			model.Threshold = cfg.WakeThresh
+		}
+		client.wakeModel = model
+		fmt.Fprintf(os.Stderr, "[kaim56-voice] lokales Wake-Gate aktiv "+
+			"(%d Templates, Schwelle %.2f) — Audio geht erst nach dem Wort zum Server\n",
+			len(model.Templates), model.Threshold)
+	}
 
 	if *probe != "" {
 		if err := runProbe(client, *probe); err != nil {
@@ -95,6 +128,57 @@ func main() {
 		}
 	}()
 	runTray(client, done)
+}
+
+// runEnroll: das Wake-Word 3x einsprechen, Modell bauen, speichern.
+func runEnroll(cfg Config) error {
+	const takesN = 3
+	var takes [][]byte
+	fmt.Println("Wake-Word einsprechen — dreimal, mit kurzer Pause dazwischen.")
+	err := captureSegments(cfg.Vad, takesN,
+		func(i int) { fmt.Printf("Aufnahme %d/%d: jetzt sprechen …\n", i+1, takesN) },
+		func(i int, pcm []byte) {
+			fmt.Printf("  aufgenommen (%.1f s)\n", float64(len(pcm))/2/sampleRate)
+			takes = append(takes, pcm)
+		})
+	if err != nil {
+		return err
+	}
+	model, err := buildWakeModel(takes)
+	if err != nil {
+		return fmt.Errorf("%w — bitte --enroll wiederholen", err)
+	}
+	if err := model.save(wakeModelPath()); err != nil {
+		return err
+	}
+	fmt.Printf("Modell gespeichert: %s (Schwelle %.2f)\n", wakeModelPath(), model.Threshold)
+	fmt.Println("Aktivieren mit \"wake_mode\": \"local\" in der Config; pruefen mit --wake-test.")
+	return nil
+}
+
+// runWakeTest: Aeusserungen aufnehmen und nur die Scores zeigen — nichts
+// verlaesst den Rechner. Zum Kalibrieren der Schwelle.
+func runWakeTest(cfg Config) error {
+	model, err := loadWakeModel(wakeModelPath())
+	if err != nil {
+		return err
+	}
+	if cfg.WakeThresh > 0 {
+		model.Threshold = cfg.WakeThresh
+	}
+	fmt.Printf("Wake-Test (Schwelle %.2f) — sprich Wake-Word und Gegenbeispiele; Ctrl-C beendet.\n",
+		model.Threshold)
+	return captureSegments(cfg.Vad, 1<<30,
+		func(i int) {},
+		func(i int, pcm []byte) {
+			score, cut, hit := model.Match(pcm)
+			mark := "✕"
+			if hit {
+				mark = fmt.Sprintf("✓ WAKE (Wort endet bei %.2f s)",
+					float64(cut)/2/sampleRate)
+			}
+			fmt.Printf("  Score %.3f  %s\n", score, mark)
+		})
 }
 
 // runProbe beweist die Kette ohne Mikrofon: Text -> TTS -> STT -> Chat ->
