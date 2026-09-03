@@ -166,6 +166,30 @@ func TestCodeAndLinks(t *testing.T) {
 	}
 }
 
+func TestWakeWordGate(t *testing.T) {
+	cases := []struct {
+		text, word, rest string
+		ok               bool
+	}{
+		{"Kat, wie spät ist es", "Kat", "wie spät ist es", true},
+		{"kat wie spät ist es", "Kat", "wie spät ist es", true},
+		{"...Kat: mach das Licht an", "Kat", "mach das Licht an", true}, // STT-Interpunktion
+		{"Kat?", "Kat", "", true},                                      // Wort allein -> "Ja?"
+		{"Katalog öffnen", "Kat", "", false},                           // Wortgrenze
+		{"wie spät ist es", "Kat", "", false},                          // Telko-Gemurmel
+		{"Übernimm das mal bitte jemand", "Kat", "", false},
+		{"Kat, 5 mal 3?", "Kat", "5 mal 3?", true},
+		{"wie spät ist es", "", "wie spät ist es", true}, // kein Wake-Word -> alles durch
+	}
+	for _, c := range cases {
+		rest, ok := wakeMatch(c.text, c.word)
+		if ok != c.ok || rest != c.rest {
+			t.Errorf("wakeMatch(%q, %q) = (%q, %v), will (%q, %v)",
+				c.text, c.word, rest, ok, c.rest, c.ok)
+		}
+	}
+}
+
 func TestTemplateRoundtripAndMode(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cfg.json")
 	if err := writeConfigTemplate(p); err != nil {
@@ -178,7 +202,7 @@ func TestTemplateRoundtripAndMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Instance != "myassistant" || cfg.Vad.StartFrames != 5 {
+	if cfg.Instance != "myassistant" || cfg.Vad.StartFrames != 5 || cfg.WakeWord != "Kat" {
 		t.Fatalf("Template-Defaults kaputt: %+v", cfg)
 	}
 }
@@ -202,5 +226,8 @@ func TestPartialVadConfigIsFilled(t *testing.T) {
 	}
 	if cfg.Vad.EndMs != 500 || cfg.Vad.MinMs != 400 {
 		t.Fatalf("Teil-VAD-Config nicht aufgefuellt: %+v", cfg.Vad)
+	}
+	if cfg.WakeWord != "" {
+		t.Fatalf("Bestands-Config ohne wake_word muss beim Alt-Verhalten bleiben, hat %q", cfg.WakeWord)
 	}
 }

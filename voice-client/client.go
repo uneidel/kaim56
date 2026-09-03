@@ -20,6 +20,7 @@ type Config struct {
 	User     string    `json:"user"`
 	Pass     string    `json:"pass"`
 	Instance string    `json:"instance"`
+	WakeWord string    `json:"wake_word"` // leer = jede Aeusserung geht durch
 	Vad      VadConfig `json:"vad"`
 }
 
@@ -54,7 +55,8 @@ func loadConfig(path string) (Config, error) {
 
 func writeConfigTemplate(path string) error {
 	tpl := Config{BaseURL: "http://manager.example:8700", User: "admin",
-		Pass: "geheim", Instance: "myassistant", Vad: defaultVadConfig()}
+		Pass: "geheim", Instance: "myassistant", WakeWord: "Kat",
+		Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -87,6 +89,7 @@ type VoiceClient struct {
 	mu        sync.Mutex
 	mgr       *Manager
 	vad       *Vad
+	wakeWord  string
 	instance  string
 	chatID    string
 	listening bool
@@ -103,6 +106,7 @@ func NewVoiceClient(cfg Config, headless bool) *VoiceClient {
 	return &VoiceClient{
 		mgr:       NewManager(cfg.BaseURL, cfg.User, cfg.Pass),
 		vad:       NewVad(cfg.Vad),
+		wakeWord:  cfg.WakeWord,
 		instance:  cfg.Instance,
 		chatID:    fmt.Sprintf("voice-%d", time.Now().Unix()),
 		listening: true,
@@ -205,6 +209,23 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	if len([]rune(text)) < 2 {
 		return
 	}
+	// Wake-Word-Gate: in Telefonkonferenzen hoert das Mikro dauernd Sprache —
+	// nur was den Agenten anspricht, erreicht ihn auch. Das Wort allein
+	// ("Kat?") bekommt ein kurzes "Ja?" als Lebenszeichen.
+	msg, ok := wakeMatch(text, c.wakeWord)
+	if !ok {
+		if c.headless {
+			fmt.Printf("  (ignoriert: %s)\n", text)
+		}
+		return
+	}
+	if msg == "" {
+		if err := c.Speak("Ja?"); err != nil {
+			c.notify("Wiedergabe fehlgeschlagen", err.Error())
+		}
+		return
+	}
+	text = msg
 	c.mu.Lock()
 	c.lastHeard = text
 	inst, chatID := c.instance, c.chatID

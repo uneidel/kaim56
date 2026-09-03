@@ -49,8 +49,24 @@ vom Manager). Während der Client denkt oder spricht, ist das Mikrofon stumm —
 er hört sich sonst selbst zu.
 
 Ohne Topbar (SSH, Test): `--headless` loggt Zustände und Transkripte auf
-stdout, `--once` verarbeitet genau eine Äußerung und beendet sich,
-`--instance <name>` überstimmt die Config.
+stdout (auch verworfene Äußerungen, als `(ignoriert: …)`), `--once`
+verarbeitet genau eine Äußerung und beendet sich, `--instance <name>`
+überstimmt die Config.
+
+## Hotword
+
+`"wake_word": "Kat"` in der Config (Template-Default; leer = jede Äußerung
+geht durch). Gedacht für Telefonkonferenzen: das Mikro hört dauernd Sprache,
+aber nur Äußerungen, die mit dem Wort beginnen, erreichen den Agenten —
+„Kat, fass mir das Dokument zusammen“. Das Wort allein („Kat?“) antwortet
+mit einem kurzen „Ja?“.
+
+Es läuft **kein** Modell auf dem Desktop: STT läuft ohnehin für jede
+Äußerung auf dem eigenen Server (Parakeet, lokal), das Gate ist ein
+Textvergleich auf dem Transkript danach — case-insensitiv, STT-Interpunktion
+egal, aber mit Wortgrenze („Katalog“ weckt „Kat“ nicht). Verworfenes wird
+nirgendwohin weitergeleitet und nicht gespeichert. Wähle ein Wort, das STT
+zuverlässig trifft — kurz, betont, keine Homophone des Alltagsvokabulars.
 
 ## Unterwegs: iroh statt HTTPS
 
