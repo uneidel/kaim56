@@ -393,7 +393,7 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-architecture>
   <div class=sec-head>
     <div><h6>System</h6><h3>Architecture</h3></div>
-    <span class="note text-muted">every box below runs on this host, except the phone, the user PC and the external services</span>
+    <span class="note text-muted">every box below runs on this host, except the phone, the Halo glasses, the Linux desktop, the user PC and the external services &#183; app and desktop reach the manager over iroh (P2P), no public port</span>
   </div>
 
   <div class="panel blueprint" style="padding:18px">
@@ -404,27 +404,39 @@ ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:a
       <defs><marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
         <path d="M0 0 L8 4 L0 8 z" fill="var(--color-neutral-500)"/></marker></defs>
 
-      <rect class="bx" x="40" y="16" width="230" height="56"/>
-      <text class="tt" x="155" y="38" text-anchor="middle">KatAgent app (Android)</text>
-      <text class="ss" x="155" y="56" text-anchor="middle">chat sync &#183; voice &#183; assistant key</text>
-      <rect class="bx" x="330" y="16" width="230" height="56"/>
-      <text class="tt" x="445" y="38" text-anchor="middle">Browser</text>
-      <text class="ss" x="445" y="56" text-anchor="middle">admin UI / &#183; chat UI /chat</text>
-      <rect class="bx" x="660" y="16" width="260" height="56"/>
-      <text class="tt" x="790" y="38" text-anchor="middle">Signal (phone)</text>
-      <text class="ss" x="790" y="56" text-anchor="middle">chat with katbot</text>
+      <rect class="bx" x="40" y="16" width="120" height="56"/>
+      <text class="tt" x="100" y="38" text-anchor="middle">Halo glasses</text>
+      <text class="ss" x="100" y="56" text-anchor="middle">BLE &#183; photo &#183; voice</text>
+      <rect class="bx" x="176" y="16" width="176" height="56"/>
+      <text class="tt" x="264" y="38" text-anchor="middle">KatAgent (Android)</text>
+      <text class="ss" x="264" y="56" text-anchor="middle">chat &#183; voice &#183; assistant key</text>
+      <rect class="bx" x="368" y="16" width="130" height="56"/>
+      <text class="tt" x="433" y="38" text-anchor="middle">Browser</text>
+      <text class="ss" x="433" y="56" text-anchor="middle">admin + chat UI</text>
+      <rect class="bx" x="514" y="16" width="176" height="56"/>
+      <text class="tt" x="602" y="38" text-anchor="middle">Fedora voice client</text>
+      <text class="ss" x="602" y="56" text-anchor="middle">VAD &#183; wake word &#183; TTS out</text>
+      <rect class="bx" x="760" y="16" width="160" height="56"/>
+      <text class="tt" x="840" y="38" text-anchor="middle">Signal (phone)</text>
+      <text class="ss" x="840" y="56" text-anchor="middle">chat with katbot</text>
 
-      <rect class="bx" x="185" y="124" width="230" height="52"/>
-      <text class="tt" x="300" y="145" text-anchor="middle">Traefik &#183; TLS + basicAuth</text>
-      <text class="ss" x="300" y="162" text-anchor="middle">__PUBLIC_HOST__</text>
+      <rect class="bx" x="40" y="124" width="300" height="52"/>
+      <text class="tt" x="190" y="145" text-anchor="middle">iroh-gw &#183; P2P relay</text>
+      <text class="ss" x="190" y="162" text-anchor="middle">NodeId allowlist &#183; no public port</text>
+      <rect class="bx" x="368" y="124" width="180" height="52"/>
+      <text class="tt" x="458" y="145" text-anchor="middle">Traefik &#183; TLS+auth</text>
+      <text class="ss" x="458" y="162" text-anchor="middle">__PUBLIC_HOST__</text>
       <rect class="bx" x="660" y="124" width="260" height="52"/>
       <text class="tt" x="790" y="145" text-anchor="middle">signal-cli REST</text>
       <text class="ss" x="790" y="162" text-anchor="middle">__SIGNAL_HOST__</text>
 
-      <path class="ln" d="M155 72 L282 124"/>
-      <path class="ln" d="M445 72 L318 124"/>
-      <path class="ln" d="M790 72 L790 124"/>
-      <path class="ln" d="M300 176 L300 224"/>
+      <path class="ln" d="M160 44 L176 44" marker-end="url(#arw)"/><text class="lb" x="150" y="34">BLE</text>
+      <path class="ln" d="M264 72 L210 124"/><text class="lb" x="205" y="102">iroh</text>
+      <path class="ln" d="M433 72 L448 124"/>
+      <path class="ln" d="M602 72 L290 124"/><text class="lb" x="470" y="104">iroh tunnel</text>
+      <path class="ln" d="M840 72 L790 124"/>
+      <path class="ln" d="M190 176 L210 224"/>
+      <path class="ln" d="M458 176 L430 224"/>
 
       <rect class="bx2" x="40" y="224" width="560" height="186"/>
       <text class="tt" x="60" y="248">manager.py &#183; :8700 (root, systemd)</text>
@@ -620,7 +632,25 @@ HTML_BOTTOM = """
   <code>/i/&#8249;name&#8250;/api/chat[/stream]</code>, sync via long-poll, voice via <code>/api/stt|tts</code>,
   gateway toggle via <code>/api/gateway</code>. Registers as the digital assistant (long-press power)
   and starts recording on invocation; silence auto-sends (adaptive threshold, 1.8&#8201;s hang).
-  Local Gemma mode works offline on-device.</p></div>
+  Local Gemma mode works offline on-device. Over iroh it dials the manager by NodeId
+  (no public port); it is also the bridge for the Halo glasses (BLE).</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Halo glasses</span>
+  <p class=card-body>Brilliant Labs Halo, a BLE peripheral of the KatAgent app &#8212; not a direct
+  manager client. GATT framing <code>[0x01, code, len_hi, len_lo, payload]</code>, receiver-paced
+  acks; the device runs an ASCII-only Lua app (runtime reads latin-1). Photo capture (0x07/0x08)
+  and mic audio (0x05/0x06) travel over BLE to the app, which forwards a photo or a WAV to the
+  same <code>/api/stt</code> the app dictation uses; a voice command triggers the shot. Built and
+  proven against a vendor-faithful emulator and a JVM-testable protocol layer before hardware.</p></div>
+
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Fedora / Linux voice client</span>
+  <p class=card-body>One static Go binary in the GNOME/KDE topbar (<code>voice-client/</code>). Hands-free:
+  an energy VAD segments utterances, an optional wake word gates busy rooms &#8212; as a transcript
+  check or a LOCAL own-voice model (MFCC/DTW, enrolled in 30&#8201;s) that keeps audio on the desktop
+  until the word is heard. Then record &#8594; <code>/api/stt</code> &#8594; <code>/api/chat/&#8249;inst&#8250;</code>
+  (sentence-streamed to the first spoken reply) &#8594; <code>/api/tts</code>. Reaches the manager over
+  iroh via an <b>embedded</b> <code>kaim56-tunnel</code> (started as a child process) &#8212; one file,
+  no HTTPS endpoint. Target instance and a custom prompt are configurable.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
