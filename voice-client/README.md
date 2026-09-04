@@ -79,6 +79,14 @@ stdout (auch verworfene Äußerungen, als `(ignoriert: …)`), `--once`
 verarbeitet genau eine Äußerung und beendet sich, `--instance <name>`
 überstimmt die Config.
 
+## Custom-Prompt
+
+`"prompt": "…"` in der Config wird jeder gesprochenen Nachricht vorangestellt
+(gekennzeichnet als `[Voice-Client] …`, der Agent sieht Anweisung und Satz
+getrennt). Template-Default: kurz und vorlesbar antworten, ohne Listen/Links.
+`--prompt "…"` überstimmt die Config für einen Lauf, `--prompt -` schaltet
+ihn ab. Leer = Nachricht geht unverändert raus.
+
 ## Hotword — zwei Stufen
 
 **Stufe 1, Text-Gate** (Default): `"wake_word": "Kati, Katharina"` — eine

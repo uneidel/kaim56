@@ -81,3 +81,13 @@ func wakeMatch(text, word string) (string, bool) {
 	return "", false
 }
 
+// withPrompt stellt den konfigurierten Prompt vor die gesprochene Nachricht —
+// gekennzeichnet, damit der Agent Anweisung und Nutzersatz auseinanderhaelt.
+func withPrompt(prompt, text string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return text
+	}
+	return "[Voice-Client] " + prompt + "\n\n" + text
+}
+

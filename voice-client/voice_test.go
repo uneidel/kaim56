@@ -197,6 +197,52 @@ func TestWakeWordGate(t *testing.T) {
 	}
 }
 
+func TestSentenceStreamer(t *testing.T) {
+	var got []string
+	ss := newSentenceStreamer(func(s string) { got = append(got, s) })
+	for _, tok := range []string{"Hal", "lo. Wie geht", " es dir? Und", " nun"} {
+		ss.Feed(tok)
+	}
+	ss.Close()
+	want := []string{"Hallo.", "Wie geht es dir?", "Und nun"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("chunks = %q, will %q", got, want)
+	}
+}
+
+func TestSentenceStreamerHoldsThinkAndFences(t *testing.T) {
+	var got []string
+	ss := newSentenceStreamer(func(s string) { got = append(got, s) })
+	ss.Feed("⟦think⟧Erst. Denken. ")
+	if len(got) != 0 {
+		t.Fatalf("offener Denk-Block darf nicht emittieren: %q", got)
+	}
+	ss.Feed("⟦/think⟧Klar. ")
+	if len(got) != 1 || got[0] != "Klar." {
+		t.Fatalf("got %q", got)
+	}
+	ss.Feed("```py\nprint(1)\n")
+	ss.Feed("``` Fertig. ")
+	ss.Close()
+	all := strings.Join(got, " | ")
+	if !strings.Contains(all, "Codeblock übersprungen") || !strings.Contains(all, "Fertig.") {
+		t.Fatalf("Fence-Handling kaputt: %q", got)
+	}
+	if strings.Contains(all, "print(1)") || strings.Contains(all, "Denken") {
+		t.Fatalf("Inhalt haette wegfallen muessen: %q", got)
+	}
+}
+
+func TestWithPrompt(t *testing.T) {
+	if got := withPrompt("", "Wie spät ist es?"); got != "Wie spät ist es?" {
+		t.Fatalf("leerer Prompt darf nichts aendern: %q", got)
+	}
+	got := withPrompt("Antworte kurz.", "Wie spät ist es?")
+	if got != "[Voice-Client] Antworte kurz.\n\nWie spät ist es?" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // Ein "Pseudo-Wort" fuer Wake-Tests: eine charakteristische Tonfolge.
 // Verschiedene Folgen unterscheiden sich in MFCC deutlich staerker als
 // Wiederholungen derselben Folge — genau die Eigenschaft, die das Gate traegt.

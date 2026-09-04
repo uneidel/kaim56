@@ -29,6 +29,7 @@ import (
 func main() {
 	cfgPath := flag.String("config", configPath(), "Pfad zur Config-Datei")
 	instance := flag.String("instance", "", "Zielinstanz (statt Config-Wert)")
+	prompt := flag.String("prompt", "", "Custom-Prompt vor jeder gesprochenen Nachricht (statt Config-Wert; \"-\" = keiner)")
 	headless := flag.Bool("headless", false, "ohne Topbar-Icon, Status auf stdout")
 	once := flag.Bool("once", false, "eine Aeusserung verarbeiten, dann beenden (Test)")
 	probe := flag.String("probe", "", "Selbsttest ohne Mikrofon: Text per TTS erzeugen, durch STT zurueck, an die Instanz schicken, Antwort sprechen")
@@ -52,6 +53,11 @@ func main() {
 	}
 	if *instance != "" {
 		cfg.Instance = *instance
+	}
+	if *prompt == "-" {
+		cfg.Prompt = ""
+	} else if *prompt != "" {
+		cfg.Prompt = *prompt
 	}
 
 	// Enrollment und Wake-Test brauchen weder Manager noch Tunnel.
@@ -195,7 +201,7 @@ func runProbe(c *VoiceClient, text string) error {
 	}
 	fmt.Println("probe: STT verstand:", heard)
 	_, inst, _, _ := c.State()
-	reply, err := c.mgr.Chat(inst, heard, "voice-probe")
+	reply, err := c.mgr.Chat(inst, withPrompt(c.prompt, heard), "voice-probe")
 	if err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}

@@ -23,6 +23,7 @@ type Config struct {
 	User       string    `json:"user"`
 	Pass       string    `json:"pass"`
 	Instance   string    `json:"instance"`
+	Prompt     string    `json:"prompt,omitempty"`         // wird jeder gesprochenen Nachricht vorangestellt
 	WakeWord   string    `json:"wake_word"`                // leer = jede Aeusserung geht durch
 	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW-Gate VOR dem Upload
 	WakeThresh float64   `json:"wake_threshold,omitempty"` // Override; 0 = aus dem Enrollment
@@ -73,6 +74,8 @@ func loadConfig(path string) (Config, error) {
 func writeConfigTemplate(path string) error {
 	tpl := Config{Iroh: "", BaseURL: "http://manager.example:8700",
 		User: "admin", Pass: "geheim", Instance: "myassistant",
+		Prompt: "Du wirst über einen Sprachclient bedient: antworte kurz und " +
+			"in vorlesbarer Prosa, ohne Listen, Links oder Code.",
 		WakeWord: "Kati, Katharina", Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -108,6 +111,7 @@ type VoiceClient struct {
 	vad       *Vad
 	wakeWord  string
 	wakeModel *WakeModel // nil = kein lokales Gate
+	prompt    string     // Praefix fuer jede gesprochene Nachricht
 	instance  string
 	chatID    string
 	listening bool
@@ -125,6 +129,7 @@ func NewVoiceClient(cfg Config, headless bool) *VoiceClient {
 		mgr:       NewManager(cfg.BaseURL, cfg.User, cfg.Pass),
 		vad:       NewVad(cfg.Vad),
 		wakeWord:  cfg.WakeWord,
+		prompt:    cfg.Prompt,
 		instance:  cfg.Instance,
 		chatID:    fmt.Sprintf("voice-%d", time.Now().Unix()),
 		listening: true,
@@ -247,10 +252,14 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 			return
 		}
 	}
+	tSTT := time.Now()
 	text, err := c.mgr.STT(wavWrap(pcm))
 	if err != nil {
 		c.notify("STT fehlgeschlagen", err.Error())
 		return
+	}
+	if c.headless {
+		fmt.Printf("  (stt: %.1f s)\n", time.Since(tSTT).Seconds())
 	}
 	if len([]rune(text)) < 2 {
 		if c.wakeModel != nil { // geweckt, aber kein verwertbarer Satz
@@ -292,17 +301,29 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	if c.headless {
 		fmt.Printf("  > %s\n", text)
 	}
-	reply, err := c.mgr.Chat(inst, text, chatID)
+	// Satzweises Streaming: der erste fertige Satz wird gesprochen, waehrend
+	// das Modell noch schreibt — die gefuehlte Latenz haengt am ERSTEN Satz,
+	// nicht an der Gesamtlaenge der Antwort (gemini-pro denkt gern lange).
+	tChat := time.Now()
+	var speakErr error
+	spoke := false
+	ss := newSentenceStreamer(func(chunk string) {
+		if c.headless {
+			if !spoke {
+				fmt.Printf("  (erster Satz: %.1f s)\n", time.Since(tChat).Seconds())
+			}
+			fmt.Printf("  < %s\n", chunk)
+		}
+		spoke = true
+		if err := c.Speak(chunk); err != nil && speakErr == nil {
+			speakErr = err
+			c.notify("Wiedergabe fehlgeschlagen", err.Error())
+		}
+	})
+	_, err = c.mgr.ChatStream(inst, withPrompt(c.prompt, text), chatID, ss.Feed)
+	ss.Close()
 	if err != nil {
 		c.notify("Chat fehlgeschlagen", err.Error())
-		return
-	}
-	say := speakable(reply)
-	if c.headless {
-		fmt.Printf("  < %s\n", say)
-	}
-	if err := c.Speak(say); err != nil {
-		c.notify("Wiedergabe fehlgeschlagen", err.Error())
 	}
 }
 

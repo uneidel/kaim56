@@ -90,8 +90,10 @@ func (m *Manager) STT(wav []byte) (string, error) {
 	return strings.TrimSpace(out.Text), nil
 }
 
-// Chat schickt einen Turn und liest den Token-Stream bis zum Ende.
-func (m *Manager) Chat(instance, message, chatID string) (string, error) {
+// ChatStream schickt einen Turn und reicht Tokens durch, sobald sie kommen —
+// die Latenz bis zum ersten gesprochenen Satz haengt daran, nicht an der
+// Gesamtlaenge der Antwort.
+func (m *Manager) ChatStream(instance, message, chatID string, onTok func(string)) (string, error) {
 	body, _ := json.Marshal(map[string]string{"message": message, "chat": chatID})
 	resp, err := m.req("POST", "/api/chat/"+url.PathEscape(instance),
 		"application/json", body)
@@ -99,8 +101,28 @@ func (m *Manager) Chat(instance, message, chatID string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	var all []byte
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			all = append(all, buf[:n]...)
+			if onTok != nil {
+				onTok(string(buf[:n]))
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return string(all), nil
+			}
+			return string(all), err
+		}
+	}
+}
+
+// Chat wartet die komplette Antwort ab (Probe, /reset).
+func (m *Manager) Chat(instance, message, chatID string) (string, error) {
+	return m.ChatStream(instance, message, chatID, nil)
 }
 
 func (m *Manager) TTS(text string) ([]byte, error) {
