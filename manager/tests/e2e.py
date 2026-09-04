@@ -953,6 +953,142 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.AUDIT_DIR = old
 
+    def test_ha_alias_learns_via_fake_websocket(self):
+        """learn_alias speaks the HA WebSocket protocol: handshake -> auth ->
+        read current aliases -> append -> update. Verified against a fake HA
+        server on a real loopback socket (frames masked from us, unmasked from
+        it), so the framing itself is exercised, not mocked away."""
+        import threading, struct as _st, socket as _sock, mgr.haalias as ha
+
+        def ws_recv(conn, buf):
+            def need(n):
+                while len(buf) < n:
+                    buf.extend(conn.recv(4096))
+            need(2)
+            masked = buf[1] & 0x80
+            ln = buf[1] & 0x7f
+            i = 2
+            if ln == 126:
+                need(4); ln = _st.unpack(">H", bytes(buf[2:4]))[0]; i = 4
+            need(i + (4 if masked else 0) + ln)
+            if masked:
+                m = bytes(buf[i:i + 4]); i += 4
+                data = bytes(buf[i + k] ^ m[k % 4] for k in range(ln))
+            else:
+                data = bytes(buf[i:i + ln])
+            del buf[:i + ln]
+            return json.loads(data)
+
+        def ws_send(conn, obj):
+            d = json.dumps(obj).encode(); ln = len(d)
+            hdr = bytearray([0x81])
+            if ln < 126:
+                hdr.append(ln)
+            else:
+                hdr += bytes([126]) + _st.pack(">H", ln)
+            conn.sendall(bytes(hdr) + d)   # server frames unmasked
+
+        srv = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        srv.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        captured = {}
+
+        def fake_ha():
+            conn, _ = srv.accept()
+            buf = bytearray()
+            hs = b""
+            while b"\r\n\r\n" not in hs:
+                hs += conn.recv(4096)
+            import hashlib as _h, base64 as _b
+            key = [l.split(": ", 1)[1] for l in hs.decode().split("\r\n")
+                   if l.lower().startswith("sec-websocket-key")][0]
+            acc = _b.b64encode(_h.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+                                       .encode()).digest()).decode()
+            conn.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                          f"Connection: Upgrade\r\nSec-WebSocket-Accept: {acc}\r\n\r\n").encode())
+            ws_send(conn, {"type": "auth_required"})
+            auth = ws_recv(conn, buf); captured["token"] = auth.get("access_token")
+            ws_send(conn, {"type": "auth_ok"})
+            get = ws_recv(conn, buf); captured["get"] = get
+            ws_send(conn, {"id": get["id"], "success": True,
+                           "result": {"aliases": ["schon da"]}})
+            upd = ws_recv(conn, buf); captured["upd"] = upd
+            ws_send(conn, {"id": upd["id"], "success": True,
+                           "result": {"entity_entry": {"aliases": upd["aliases"]}}})
+            conn.close()
+
+        t = threading.Thread(target=fake_ha, daemon=True); t.start()
+        old_tgt, old_tok = ha.ha_ws_target, ha.ha_token
+        try:
+            ha.configure(lambda: ("127.0.0.1", port), lambda: "tok-123")
+            msg = ha.learn_alias("Gartenhaus denke rechts", "light.gartenhaus_decke_rechts")
+        finally:
+            ha.configure(old_tgt, old_tok)
+            srv.close()
+        t.join(timeout=5)
+        self.assertEqual(captured["token"], "tok-123")
+        self.assertEqual(captured["get"]["entity_id"], "light.gartenhaus_decke_rechts")
+        self.assertEqual(captured["upd"]["aliases"], ["schon da", "Gartenhaus denke rechts"])
+        self.assertIn("learned", msg)
+
+    def test_ha_alias_rejects_bad_input(self):
+        import mgr.haalias as ha
+        self.assertIn("error", ha.learn_alias("", "light.x"))
+        self.assertIn("error", ha.learn_alias("Wort", "noentityid"))
+
+    def test_ha_control_matches_exact_area_and_fuzzy(self):
+        """control() picks the right target server-side: a strong single match
+        beats the area (even when it contains the area word), an area name plus
+        a group cue switches the whole room, and a fuzzy single hit learns the
+        alias. HA REST/WS are stubbed — the MATCHING logic is what's tested."""
+        import mgr.haalias as ha
+        idx = {"areas": {"gh": "Gartenhaus"}, "entities": [
+            {"entity_id": "light.gartenhaus_decke_rechts",
+             "names": ["Gartenhaus Decke rechts"], "area_id": "gh"},
+            {"entity_id": "light.gartenhaus_decke_links",
+             "names": ["Gartenhaus Decke links"], "area_id": "gh"},
+            {"entity_id": "light.kitchen", "names": ["Küche"], "area_id": "k"}]}
+        calls, learned = [], []
+        old = (ha._entity_index, ha._rest, ha.learn_alias)
+        try:
+            ha._entity_index = lambda: idx
+            ha._rest = lambda path, payload=None: calls.append((path, payload))
+            ha.learn_alias = lambda spoken, eid: learned.append((spoken, eid)) or "learned"
+
+            # exact -> single lamp, no learning
+            calls.clear(); learned.clear()
+            r = ha.control("Gartenhaus Decke rechts", "on")
+            self.assertIn("turn_on", calls[0][0])
+            self.assertEqual(calls[0][1]["entity_id"], "light.gartenhaus_decke_rechts")
+            self.assertEqual(learned, [])
+
+            # mishearing -> strong fuzzy single, learns alias (NOT the area)
+            calls.clear(); learned.clear()
+            r = ha.control("Gartenhaus Tecke rechts", "off")
+            self.assertEqual(calls[0][1]["entity_id"], "light.gartenhaus_decke_rechts")
+            self.assertEqual(learned, [("Gartenhaus Tecke rechts", "light.gartenhaus_decke_rechts")])
+
+            # area + cue -> whole room (list of both lights)
+            calls.clear(); learned.clear()
+            r = ha.control("Licht im Gartenhaus", "off")
+            self.assertEqual(sorted(calls[0][1]["entity_id"]),
+                             ["light.gartenhaus_decke_links", "light.gartenhaus_decke_rechts"])
+
+            # nonsense -> no switch
+            calls.clear()
+            r = ha.control("völliger Unsinn xyz", "on")
+            self.assertIn("error", r)
+            self.assertEqual(calls, [])
+        finally:
+            ha._entity_index, ha._rest, ha.learn_alias = old
+
+    def test_ha_control_validates_action(self):
+        import mgr.haalias as ha
+        self.assertIn("error", ha.control("Licht", "blink"))
+        self.assertIn("error", ha.control("", "on"))
+
     def test_saddler_digest_groups_and_reflects(self):
         """Failures grouped by error SHAPE (digits/urls normalised), current
         week next to the previous one — the drop after a patch is the

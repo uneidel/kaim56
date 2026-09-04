@@ -670,6 +670,9 @@ HTML_BOTTOM = """
   <code>mcp-hub</code> container on the host (127.0.0.1:8771), one per (instance, server). Guests speak
   plain JSON-RPC to the manager (<code>/api/mcp</code>); the manager authorizes by source IP against the
   instance&#8217;s <code>MCP_SERVERS</code>, injects the secrets host-side and forwards to the hub &#8212;
+  and for voice light control the <code>ha_control</code> tool matches a spoken target against HA
+  entities/areas server-side (exact &#8594; area &#8594; fuzzy) and auto-learns a spoken alias on a
+  fuzzy hit, so &#8220;Gartenhaus denke rechts&#8221; keeps working after STT mishears &#8220;Decke&#8221; &#8212;
   tokens and LAN never reach a VM. Every <code>tools/call</code> lands in the audit trail. A server is
   active only when listed in <code>MCP_SERVERS</code>; the hub respawns dead processes and replays
   their initialization.</p></div>

@@ -100,7 +100,7 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
-                    "/api/mission-finish")
+                    "/api/mission-finish", "/api/ha-alias", "/api/ha-control")
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
 # Credential injection gateway (OneCLI pattern): the agent sends its chat
 # requests to /api/llm/<backend>/chat/completions instead of directly to the
@@ -1194,6 +1194,8 @@ AGENT_TOOLS_CATALOG = [
     {"name": "mission_finish", "desc": "Complete a mission (orchestrator only)"},
     {"name": "send_signal", "desc": "Send a Signal message to the user (allowed numbers only)"},
     {"name": "notify", "desc": "Push notification to app + web manager (title + text)"},
+    {"name": "ha_control", "desc": "Turn a Home Assistant device/area on or off by spoken name (matches + auto-learns aliases)"},
+    {"name": "ha_learn_alias", "desc": "Teach Home Assistant a spoken-name alias for an entity (STT mishears names)"},
     {"name": "oracle", "desc": "Second opinion before risky actions (challenges assumptions, never acts)"},
     {"name": "list_agents", "desc": "Available agents + capabilities (routing)"},
     {"name": "recall_tasks", "desc": "Query earlier tasks/results (institutional knowledge)"},
@@ -2586,6 +2588,25 @@ _saddler_mod.configure(AUDIT_DIR, HISTORY_DB)
 
 from mgr import websearch as _websearch_mod  # noqa: E402
 _websearch_mod.configure(lambda key: (load_settings().get(key) or ""))
+
+
+def _ha_ws_target():
+    """(host, port) des Home-Assistant-WebSocket aus dem MCP-Katalog. Der
+    'homeassistant'-Eintrag traegt die URL in args[0]; wir leiten daraus die
+    WS-Adresse ab (kein zusaetzlicher Config-Ort)."""
+    for m in load_mcps():
+        if m.get("name") == "homeassistant":
+            for a in m.get("args", []):
+                a = str(a)
+                if a.startswith(("http://", "https://")):
+                    hostport = a.split("//", 1)[1].split("/", 1)[0]
+                    host, _, port = hostport.partition(":")
+                    return host, int(port or "8123")
+    return None
+
+
+from mgr import haalias as _haalias  # noqa: E402
+_haalias.configure(_ha_ws_target, lambda: secret_store().get("HA_TOKEN"))
 
 from mgr.routes import Router  # noqa: E402
 ROUTER = Router()
@@ -4146,6 +4167,21 @@ class H(BaseHTTPRequestHandler):
                 msg = upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""))
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "skills" and parts[3] == "delete":
                 msg = delete_skill(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
+            elif parts == ["api", "ha-alias"]:
+                # Guest teaches HA a spoken-name alias (STT mishears "Decke"
+                # as "denke"). The HA token stays on the host — the guest sends
+                # only (spoken, entity_id); the manager writes the alias.
+                ln = int(self.headers.get("Content-Length", 0))
+                b = json.loads(self.rfile.read(ln) or b"{}")
+                msg = _haalias.learn_alias(b.get("spoken", ""), b.get("entity", ""))
+            elif parts == ["api", "ha-control"]:
+                # Deterministic voice control of HA: the manager matches the
+                # spoken target server-side (exact -> area -> fuzzy), switches
+                # it, and auto-learns the alias on a fuzzy hit. No LLM in the
+                # matching loop, so a small/fast model stays reliable.
+                ln = int(self.headers.get("Content-Length", 0))
+                b = json.loads(self.rfile.read(ln) or b"{}")
+                msg = _haalias.control(b.get("spoken", ""), b.get("action", ""))
             elif len(parts) == 3 and parts[0] == "api" and parts[1] == "memory":
                 ln = int(self.headers.get("Content-Length", 0))
                 b = json.loads(self.rfile.read(ln) or b"{}")

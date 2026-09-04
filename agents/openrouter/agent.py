@@ -684,6 +684,41 @@ def t_oracle(plan, kontext=""):
     return (r.get("content") or "").strip() or "(Oracle gave no answer — when in doubt do NOT act)"
 
 
+def t_ha_control(spoken, action):
+    """Turn a Home Assistant device or whole room on/off by the name you HEARD —
+    the manager matches it against real entities and areas server-side (exact,
+    then area, then closest-sounding) and auto-learns a spoken alias on a fuzzy
+    hit, so the same wording is instant next time. PREFER this for voice light/
+    device control over the raw homeassistant intents: pass the spoken target
+    verbatim ('Gartenhaus denke rechts', 'Licht im Gartenhaus') and action
+    'on'/'off'. It also handles rooms ('Licht im Gartenhaus' -> all lights of
+    that area)."""
+    try:
+        return _mgr(_manager_base(), "/api/ha-control",
+                    {"spoken": spoken, "action": action}, timeout=25)
+    except urllib.error.HTTPError as e:
+        return f"⚠️ HA control failed: HTTP {e.code}"
+    except Exception as e:
+        return f"⚠️ HA control failed: {e!r}"
+
+
+def t_ha_learn_alias(spoken, entity):
+    """Teach Home Assistant that a spoken/misheard name refers to an entity, so
+    the SAME wording matches natively next time. Use this after you recovered
+    from a failed HA intent: you heard e.g. 'Gartenhaus denke rechts', found the
+    real entity 'light.gartenhaus_decke_rechts' via GetLiveContext, and switched
+    it — then call ha_learn_alias('Gartenhaus denke rechts',
+    'light.gartenhaus_decke_rechts'). The HA token stays on the host; you pass
+    only the words and the entity id."""
+    try:
+        return _mgr(_manager_base(), "/api/ha-alias",
+                    {"spoken": spoken, "entity": entity}, timeout=20)
+    except urllib.error.HTTPError as e:
+        return f"⚠️ alias not learned: HTTP {e.code}"
+    except Exception as e:
+        return f"⚠️ alias not learned: {e!r}"
+
+
 def t_notify(title, message=""):
     """Send a push notification to the user's devices (app as an
     Android system notification, web manager as a bell). For important
@@ -1070,6 +1105,23 @@ BUILTIN = {
                {"plan": {"type": "string", "description": "planned action + reasoning"},
                 "kontext": {"type": "string", "description": "facts: IDs, wordings, assignment"}},
                ["plan"]),
+    "ha_control": (t_ha_control,
+                   "Turn a Home Assistant device OR whole room on/off by the SPOKEN name "
+                   "(manager matches real entities/areas server-side and auto-learns the "
+                   "alias on a fuzzy hit). Prefer this over raw HA intents for voice control: "
+                   "pass the heard target verbatim and action on/off. Handles rooms too "
+                   "('Licht im Gartenhaus').",
+                   {"spoken": {"type": "string", "description": "the spoken target, e.g. 'Gartenhaus denke rechts' or 'Licht im Gartenhaus'"},
+                    "action": {"type": "string", "description": "'on' or 'off'"}},
+                   ["spoken", "action"]),
+    "ha_learn_alias": (t_ha_learn_alias,
+                       "Teach Home Assistant a spoken-name alias for an entity so the same "
+                       "misheard wording matches natively next time (STT hears 'Decke' as "
+                       "'denke'). Call it after recovering from a failed HA intent, with the "
+                       "words you originally heard and the real entity id.",
+                       {"spoken": {"type": "string", "description": "the spoken/misheard name, e.g. 'Gartenhaus denke rechts'"},
+                        "entity": {"type": "string", "description": "real entity id, e.g. 'light.gartenhaus_decke_rechts'"}},
+                       ["spoken", "entity"]),
     "notify": (t_notify,
                "Push notification to the user's devices (app system notification + "
                "web-manager bell). For important events/results when they are not in the "
