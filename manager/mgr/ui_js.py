@@ -305,7 +305,7 @@ function editTask(id){
   const t=TASKS.find(x=>x.id===id); if(!t)return;
   TK_EDIT=id;
   const inst=document.getElementById('tk-inst');
-  inst.value=t.instance; inst.disabled=true;
+  inst.value=t.instance; inst.disabled=false;
   document.getElementById('tk-sched').value=t.schedule||'';
   document.getElementById('tk-msg').value=t.message||'';
   document.getElementById('tk-head').textContent='Edit task · '+t.instance;
@@ -331,7 +331,7 @@ function saveTask(){
   if(TK_EDIT){
     fetch('/api/tasks/'+encodeURIComponent(TK_EDIT)+'/update',
       {method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({message,schedule})})
+       body:JSON.stringify({message,schedule,instance})})
       .then(r=>r.json()).then(d=>{
         document.getElementById('tkmsg').textContent=(d.msg||'saved')+' ✓';
         cancelEdit();loadTasks();});

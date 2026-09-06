@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-06 (MSFT task failed silently for two mornings: target validation, failure push, dead-target sweep, instance editable)
+
+- "Die Aktie war über 500, kein Alert": the daily MSFT task had been rewritten by the orchestrator on 09-04 with target `@orchestrator` (with an @). No such instance — the worker failed on 09-05 and 09-06 with `instance '@orchestrator' unknown`, the result sat unread in the Tasks tab, and the rewrite had also dropped the "over 500" condition. Yahoo answered fine the whole time (previous close 510.12).
+- "Wie stellen wir sicher, dass sowas nicht mehr vorkommt?" — four gates, each closing one way it could have stayed silent: (1) `resolve_task_target()` strips a leading `@` and refuses unknown names **when the task is created or edited** (guest `/api/task`, admin `/api/tasks`, `/api/tasks/<id>/update`), so a typo fails in the agent's face, not at 08:00 next day; (2) the worker pushes "Scheduled task failed: <id>" (link to Tasks) when a scheduled run fails — once per distinct failure text, not once per day; (3) an hourly `task_target_sweep()` in the idle worker pushes "Task target unknown: <id>" for existing tasks whose instance is gone (renamed/deleted after creation) — once, the mark is cleared when the task is edited; (4) the Tasks editor can move a task to another instance (`update_task(..., instance=)`). The MSFT task itself: target `orchestrator`, text restored to the alert rule (notify only above 500 USD). Tests for resolution, edit, the sweep's once-only push. 117 tests green.
+
 ## 2026-09-06 (web UI broken by one escape — fixed, and a JS syntax gate so it cannot ship again)
 
 - "Die Webseite ist kaputt": the missions edit dialog joined/split its steps with `'\n'` written as a Python escape inside `mgr/ui_js.py` (a normal, not raw, string) — Python turned it into a real newline inside a JavaScript string literal, the browser's parser gave up on the whole script and every tab was dead. The route still answered HTTP 200 and all 116 tests were green, because nothing parsed the script. Fixed to `'\\n'` like the neighbouring MCP editor code.

@@ -1499,6 +1499,49 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_task_target_resolved_and_validated(self):
+        """'@orchestrator' (an agent's typo) failed daily with 'instance unknown'
+        and nobody was told. Targets lose a leading '@', unknown names are
+        refused at creation, and an edit may move a task to another instance."""
+        m = self.m
+        import mgr.store as st
+        old_load, old_file = m.load_instances, st.TASKS_FILE
+        try:
+            m.load_instances = lambda: [{"name": "orchestrator"}, {"name": "hass"}]
+            self.assertEqual(m.resolve_task_target("@orchestrator"), ("orchestrator", ""))
+            self.assertEqual(m.resolve_task_target(" hass "), ("hass", ""))
+            self.assertEqual(m.resolve_task_target(""), ("ephemeral", ""))
+            self.assertEqual(m.resolve_task_target(None), ("ephemeral", ""))
+            self.assertEqual(m.resolve_task_target("@")[0], "ephemeral")
+            name, err = m.resolve_task_target("orchestartor")
+            self.assertEqual(name, "")
+            self.assertIn("unknown", err)
+            tmp = tempfile.mkdtemp(prefix="e2e-tasktarget-")
+            st.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            t = st.add_task("orchestrator", "msft", "daily 08:00")
+            msg = st.update_task(t["id"], instance="hass")
+            self.assertIn("updated", msg)
+            self.assertEqual(st.load_tasks()[0]["instance"], "hass")
+            self.assertEqual(st.load_tasks()[0]["schedule"], "daily 08:00")   # untouched
+            # hourly sweep: a task whose target died is pushed ONCE, edit clears the mark
+            st.add_task("@orchestrator", "typo target", "daily 08:00")
+            pushes = []
+            old_notify = m.notify_add
+            m.notify_add = lambda *a, **k: pushes.append(a)
+            try:
+                hit = m.task_target_sweep()
+                self.assertEqual([h[1] for h in hit], ["@orchestrator"])
+                self.assertEqual(len(pushes), 1)
+                self.assertIn("@orchestrator", pushes[0][2])
+                self.assertEqual(m.task_target_sweep(), [])          # not again
+                bad = next(t for t in st.load_tasks() if t["instance"] == "@orchestrator")
+                st.update_task(bad["id"], instance="orchestrator")   # fixed -> mark gone
+                self.assertNotIn("target_warned", next(t for t in st.load_tasks() if t["id"] == bad["id"]))
+            finally:
+                m.notify_add = old_notify
+        finally:
+            m.load_instances, st.TASKS_FILE = old_load, old_file
+
     def test_mission_edit_and_delete_any_status(self):
         """The UI may correct or remove a mission in ANY state: goal/steps/
         status editable (positions keep their progress, reopening respects the

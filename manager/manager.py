@@ -863,6 +863,51 @@ def _run_ephemeral(message, model=None):
             print(f"[quiet] ephemeral cleanup of {name} failed: {e!r}", flush=True)
 
 
+def resolve_task_target(target):
+    """('name', '') or ('', error). Strips a leading '@' — an agent once wrote
+    '@orchestrator' and the task then failed every morning for days with
+    'instance unknown' while nobody was told — and refuses unknown names at
+    creation time instead of at 08:00 the next day."""
+    t = (target or "").strip().lstrip("@").strip() or "ephemeral"
+    if t == "ephemeral" or any(i.get("name") == t for i in load_instances()):
+        return t, ""
+    return "", f"instance '{t}' unknown (targets: ephemeral or an existing instance name)"
+
+
+def unknown_target_tasks(tasks, names):
+    """Scheduled/pending tasks whose instance does not exist (and is not
+    'ephemeral') and that were not reported yet — the ones that would fail at
+    their next run without anyone hearing about it."""
+    out = []
+    for t in tasks:
+        inst = str(t.get("instance") or "")
+        if t.get("status") in ("scheduled", "pending") and inst != "ephemeral" \
+                and inst not in names and not t.get("target_warned"):
+            out.append(t)
+    return out
+
+
+def task_target_sweep():
+    """Hourly (idle worker): push once per task with a dead target, then mark
+    it so the push does not repeat. Editing the task clears the mark."""
+    names = {i.get("name") for i in load_instances()}
+    hit = []
+
+    def mut(tasks):
+        for t in unknown_target_tasks(tasks, names):
+            t["target_warned"] = int(time.time())
+            hit.append((t.get("id"), t.get("instance"), str(t.get("message", ""))[:120]))
+        return bool(hit), None
+    with_tasks(mut)
+    for tid, inst, msg in hit:
+        try:
+            notify_add("task", f"Task target unknown: {tid}",
+                       f"instance '{inst}' does not exist — {msg}", link="tasks")
+        except Exception as e:
+            _wlog(f"{tid}: target-sweep notify: {e!r}")
+    return hit
+
+
 def _run_task_now(instance, message):
     """Run a task — on a named instance (routing to the capability) or in an
     ephemeral VM (target == 'ephemeral')."""
@@ -1180,6 +1225,17 @@ def _task_worker():
                     _mission_advance_fire(t["id"])
                 except Exception as e:
                     _wlog(f"{t['id']}: mission-advance: {e!r}")
+                # A scheduled task that fails would otherwise fail again
+                # tomorrow, silently — the result only sits in the Tasks tab.
+                # One push per DISTINCT failure text (not one per day).
+                if sched and not ok and res != t.get("result"):
+                    try:
+                        notify_add(t.get("instance") or "task",
+                                   f"Scheduled task failed: {t['id']}",
+                                   (str(t.get("message", ""))[:120] + " — " + str(res))[:900],
+                                   link="tasks")
+                    except Exception as e:
+                        _wlog(f"{t['id']}: failure notify: {e!r}")
                 ran = True
         except Exception as e:
             _wlog(f"worker-loop: {e!r}")
@@ -1209,6 +1265,10 @@ def _task_worker():
                     mission_ttl_sweep()
                 except Exception as e:
                     _wlog(f"mission-ttl-sweep failed: {e!r}")
+                try:
+                    task_target_sweep()
+                except Exception as e:
+                    _wlog(f"task-target-sweep failed: {e!r}")
 
 
 def load_templates():
@@ -4152,12 +4212,14 @@ class H(BaseHTTPRequestHandler):
             if inst["name"].startswith(("task-", "sub-")):
                 out = {"error": "ephemeral VMs may not create tasks"}
             else:
-                target = (body.get("target") or "ephemeral").strip()
+                target, terr = resolve_task_target(body.get("target"))
                 message = str(body.get("message", "")).strip()
                 schedule = str(body.get("schedule", "")).strip()
                 wait = bool(body.get("wait"))
                 if not message:
                     out = {"error": "message missing"}
+                elif terr:
+                    out = {"error": terr}
                 elif not guest_may_target(inst, target):
                     out = {"error": f"target '{target}' not allowed for this instance "
                                     "(own name, 'ephemeral', or a DELEGATE_TARGETS entry "
@@ -4267,10 +4329,13 @@ class H(BaseHTTPRequestHandler):
             elif parts == ["api", "tasks"]:
                 ln = int(self.headers.get("Content-Length", 0))
                 b = json.loads(self.rfile.read(ln) or b"{}")
+                target, terr = resolve_task_target(b.get("instance"))
                 if not b.get("instance") or not b.get("message"):
                     msg = "instance/message missing"
+                elif terr:
+                    msg = terr
                 else:
-                    t = add_task(b.get("instance", ""), b.get("message", ""), b.get("schedule", ""))
+                    t = add_task(target, b.get("message", ""), b.get("schedule", ""))
                     msg = f"task {t['id']} created ({t['status']})"
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "delete":
                 tid = parts[2]
@@ -4280,7 +4345,10 @@ class H(BaseHTTPRequestHandler):
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "update":
                 ln = int(self.headers.get("Content-Length", 0) or 0)
                 b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-                msg = update_task(parts[2], b.get("message"), b.get("schedule"))
+                inst_new, terr = (resolve_task_target(b.get("instance"))
+                                  if b.get("instance") else (None, ""))
+                msg = terr or update_task(parts[2], b.get("message"), b.get("schedule"),
+                                          instance=inst_new)
             elif parts == ["api", "secret-policy"]:
                 if instance_by_ip(self.client_address[0]) is not None:
                     msg = "forbidden (admin only)"

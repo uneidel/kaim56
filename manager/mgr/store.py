@@ -205,23 +205,27 @@ def add_task(instance, message, schedule=""):
     return with_tasks(mut)
 
 
-def update_task(task_id, message=None, schedule=None):
+def update_task(task_id, message=None, schedule=None, instance=None):
     """Change a task. A changed schedule is re-scheduled immediately —
     otherwise the task would run once more on the old plan. An empty plan
     turns the repetition into a one-off task (due now); a task that is
-    currently running is left untouched."""
+    currently running is left untouched. `instance` moves the task to another
+    target (the caller validates the name)."""
     def mut(tasks):
-        return _update_task_locked(tasks, task_id, message, schedule)
+        return _update_task_locked(tasks, task_id, message, schedule, instance)
     return with_tasks(mut)
 
 
-def _update_task_locked(tasks, task_id, message, schedule):
+def _update_task_locked(tasks, task_id, message, schedule, instance=None):
     t = next((x for x in tasks if x.get("id") == task_id), None)
     if t is None:
         return False, "unknown"
     if t.get("status") == "running":
         return False, "task is running — try again when it is done"
     now = int(time.time())
+    if instance:
+        t["instance"] = str(instance).strip()
+        t.pop("target_warned", None)
     if message is not None and str(message).strip():
         t["message"] = str(message).strip()
     if schedule is not None:
