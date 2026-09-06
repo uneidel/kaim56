@@ -197,6 +197,84 @@ def mission_admin(instance, mid, action):
         return "ok"
 
 
+MISSION_STATUSES = ("active", "paused", "done", "failed")
+
+
+def _owner_in(d, instance, mid):
+    """Resolve the owner when the caller only knows the id (UI, app)."""
+    if instance:
+        return instance
+    return next((i for i, lst in d.items()
+                 if any(x.get("id") == str(mid) for x in lst)), "")
+
+
+def mission_delete(instance, mid):
+    """UI: remove a mission for good — whatever its status. Pause/abort keep
+    the record; this is for the ones nobody wants to see again."""
+    with _mi_lock:
+        d = load_missions()
+        instance = _owner_in(d, instance, mid)
+        lst = d.get(instance, [])
+        keep = [x for x in lst if x.get("id") != str(mid)]
+        if len(keep) == len(lst):
+            return "unknown mission"
+        if keep:
+            d[instance] = keep
+        else:
+            d.pop(instance, None)
+        _save_missions(d)
+        return "ok"
+
+
+def mission_edit(instance, mid, goal=None, steps=None, status=None):
+    """UI: rewrite goal, steps and/or status — in ANY state (a done or failed
+    mission can be corrected or reopened). Steps are matched by position:
+    existing ones keep status/result/task_id, extra ones start open, missing
+    ones are dropped. Nothing given or nothing different -> 'unchanged'."""
+    with _mi_lock:
+        d = load_missions()
+        instance = _owner_in(d, instance, mid)
+        m = next((x for x in d.get(instance, []) if x.get("id") == str(mid)), None)
+        if not m:
+            return "unknown mission"
+        changed = []
+        if goal is not None:
+            g = str(goal).strip()[:300]
+            if not g:
+                return "goal missing"
+            if g != m.get("goal"):
+                m["goal"] = g
+                changed.append("goal")
+        if steps is not None:
+            texts = [str(x).strip()[:200] for x in steps if str(x).strip()][:MISSION_MAX_STEPS]
+            if not texts:
+                return "steps missing"
+            old = m.get("steps", [])
+            new = []
+            for i, t in enumerate(texts):
+                st = dict(old[i]) if i < len(old) else {"status": "open"}
+                st["n"], st["text"] = i + 1, t
+                new.append(st)
+            if new != old:
+                m["steps"] = new
+                changed.append(f"steps ({len(new)})")
+        if status is not None:
+            if status not in MISSION_STATUSES:
+                return f"unknown status {status}"
+            if status != m.get("status"):
+                if status == "active" and sum(
+                        1 for x in d.get(instance, [])
+                        if x is not m and x.get("status") == "active") >= MISSION_MAX_ACTIVE:
+                    return f"max {MISSION_MAX_ACTIVE} active missions"
+                m["status"] = status
+                changed.append(f"status {status}")
+        if not changed:
+            return "unchanged"
+        _mi_log(m, "Edited (UI): " + ", ".join(changed))
+        _save_missions(d)
+        return "ok"
+
+
 def mission_ttl_sweep():
     """Pause inactive missions instead of letting them run on silently."""
     cutoff = int(time.time()) - MISSION_TTL_DAYS * 86400

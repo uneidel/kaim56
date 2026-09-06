@@ -254,7 +254,7 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-missions>
   <div class=sec-head>
     <div><h6>Multi-step work</h6><h3>Missions</h3></div>
-    <span class="note text-muted">Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step</span>
+    <span class="note text-muted">Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step · every mission can be edited or deleted here, whatever its status</span>
   </div>
   <div id=missions class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
     <span class=text-muted style="font-size:13px">…</span>
@@ -767,6 +767,21 @@ HTML_BOTTOM = """
   </div>
 </div>
 
+<div id=midlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)midlgClose()">
+  <div class="dialog blueprint" style="width:min(720px,100%)">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div class=dialog-title>Edit mission &#8212; <span id=midlgid class=mono style="font-size:16px"></span></div>
+    <div class=dialog-body>Any status. Steps are matched by position: existing ones keep their status and result, new lines start open, removed lines are dropped. Setting the status back to <b>active</b> reopens the mission for its owner.</div>
+    <div class=field><label>Goal</label><input class=input id=migoal maxlength=300></div>
+    <div class=field><label>Steps (one per line)</label><textarea class=input id=misteps rows=8 style="font-family:var(--font-mono);font-size:12.5px"></textarea></div>
+    <div class=field><label>Status</label><select class=input id=mistatus><option value=active>active</option><option value=paused>paused</option><option value=done>done</option><option value=failed>failed</option></select></div>
+    <div id=mihint class=text-muted style="font-size:12px"></div>
+    <div class=dialog-actions>
+      <button class="btn btn-secondary" onclick=midlgClose()>Cancel</button>
+      <button class="btn btn-primary" onclick=missionSave()>Save</button>
+    </div>
+  </div>
+</div>
 <div id=plugdlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)plugDlgClose()">
   <div class="dialog blueprint" style="width:min(960px,100%)">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>

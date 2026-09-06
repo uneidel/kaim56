@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-06 (Missions tab: edit and delete, whatever the status)
+
+- Missions could only be paused, resumed or aborted while open; a done or failed one stayed forever (and only the last three were shown). Now every mission row has **Edit** and **Delete**. Edit opens a dialog for goal, steps (one per line) and status — steps are matched by position so existing ones keep status/result/task id, new lines start open, removed lines are dropped; setting status back to *active* reopens the mission for its owner (the active cap of 5 still applies). Delete removes the record for good, any status, after a confirm. Both go through `POST /api/mission-admin` (admin-only) as actions `edit` / `delete`; the owner is resolved from the id when the caller does not know it. The tab lists all completed/failed missions now, not three. One new test covers edit-by-position, reopen, the cap, validation and delete. 116 tests green.
+
 ## 2026-09-06 (Plugins tab: see what you approve)
 
 - "I can approve but not view" — the Approve button re-pins a tool's SHA-256 after an out-of-band edit, but the tab offered no way to read the files behind that hash, so approval was blind. Now every file name in a plugin card opens a read-only source viewer (`GET /api/plugins/<name>/file?path=…`, admin-only, router-registered). The reader resolves paths inside the tool's own folder only (realpath, no `../`, no symlink walk-out, 512 KB cap), so it cannot become a file browser; the test covers nested files, single-file tools, traversal attempts and the pins file. 115 tests green.

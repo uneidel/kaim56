@@ -215,7 +215,7 @@ async function loadMissions(){
   const all=d.by_instance?Object.entries(d.by_instance).flatMap(([i,l])=>l.map(m=>({...m,_inst:i})))
             :(d.missions||[]).map(m=>({...m,_inst:'orchestrator'}));
   const open=all.filter(m=>m.status==='active'||m.status==='paused');
-  const closed=all.filter(m=>m.status==='done'||m.status==='failed').slice(-3);
+  const closed=all.filter(m=>m.status==='done'||m.status==='failed');   // all of them: they can be edited/deleted
   const cor='<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
   const bar=m=>{const t=(m.steps||[]).length||1,dn=(m.steps||[]).filter(s=>s.status==='done').length;
     return `<div style="display:flex;align-items:center;gap:8px;min-width:130px">
@@ -236,6 +236,8 @@ async function loadMissions(){
           ${m.status==='active'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','pause','${esc(m._inst||'')}')">Pause</button>`:''}
           ${m.status==='paused'?`<button class="btn btn-secondary btn-sm" onclick="missionAct('${esc(m.id)}','resume','${esc(m._inst||'')}')">Resume</button>`:''}
           ${(m.status==='active'||m.status==='paused')?`<button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','abort','${esc(m._inst||'')}')">Cancel</button>`:''}
+          <button class="btn btn-secondary btn-sm" onclick="missionEdit('${esc(m.id)}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="missionAct('${esc(m.id)}','delete','${esc(m._inst||'')}')">Delete</button>
         </span>
       </div>
       ${cur?`<div class=text-muted style="font-size:12.5px;margin-top:4px">current step ${cur.n}: ${escT(cur.text)} [${cur.status}]${cur.target?` · on <b>${escT(cur.target)}</b>`:''}${cur.task_id?` · task <span class=mono>${escT(cur.task_id)}</span>`:''}</div>`:''}
@@ -250,9 +252,34 @@ async function loadMissions(){
 }
 async function missionAct(id,action,instance){
   if(action==='abort'&&!confirm('Abort mission '+id+'?'))return;
+  if(action==='delete'&&!confirm('Delete mission '+id+' for good? (any status)'))return;
   await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,action,instance:instance||''})}).catch(()=>{});
   loadMissions();
+}
+let _miEdit=null;   // the mission currently open in the edit dialog
+async function missionEdit(id){
+  let d={}; try{d=await (await fetch('/api/missions')).json()}catch(e){return;}
+  const all=Object.entries(d.by_instance||{}).flatMap(([i,l])=>l.map(m=>({...m,_inst:i})));
+  const m=all.find(x=>x.id===id); if(!m)return;
+  _miEdit=m;
+  document.getElementById('midlgid').textContent=m.id+' · '+(m._inst||'');
+  document.getElementById('migoal').value=m.goal||'';
+  document.getElementById('misteps').value=(m.steps||[]).map(s=>s.text).join('\n');
+  document.getElementById('mistatus').value=m.status||'active';
+  document.getElementById('mihint').textContent=(m.steps||[]).map(s=>`${s.n}: ${s.status}`).join(' · ');
+  document.getElementById('midlg').style.display='grid';
+}
+function midlgClose(){document.getElementById('midlg').style.display='none';_miEdit=null;}
+async function missionSave(){
+  if(!_miEdit)return;
+  const body={id:_miEdit.id,action:'edit',instance:_miEdit._inst||'',
+    goal:document.getElementById('migoal').value,
+    steps:document.getElementById('misteps').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    status:document.getElementById('mistatus').value};
+  const r=await (await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json().catch(()=>({msg:'?'}));
+  if(r.msg!=='ok'&&r.msg!=='unchanged'){document.getElementById('mihint').textContent='\u26a0\ufe0f '+r.msg;return;}
+  midlgClose();loadMissions();
 }
 async function loadTasks(){
   let tasks=[],insts=[];

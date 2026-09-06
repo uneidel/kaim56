@@ -1493,6 +1493,56 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_mission_edit_and_delete_any_status(self):
+        """The UI may correct or remove a mission in ANY state: goal/steps/
+        status editable (positions keep their progress, reopening respects the
+        active cap), delete removes done/failed/active alike, owner resolved
+        from the id when the caller does not know it."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-miedit-")
+        import mgr.missions as mmod
+        old_file, old_notify = mmod.MISSIONS_FILE, mmod.notify_add
+        try:
+            mmod.MISSIONS_FILE = os.path.join(tmp, "missions.json")
+            mmod.notify_add = lambda *a, **k: ("x", "ok")
+            mid, _ = m.mission_start("hass", "Goal A", ["s1", "s2", "s3"])
+            m.mission_update("hass", mid, step=1, status="done", result="r1")
+            m.mission_finish("hass", mid, "all good")            # -> done
+            # edit a DONE mission (no instance given -> owner lookup)
+            self.assertEqual(m.mission_edit("", mid, goal="Goal B",
+                                            steps=["s1", "s2x", "s3", "s4"]), "ok")
+            mi = m.mission_list("hass")[0]
+            self.assertEqual(mi["goal"], "Goal B")
+            self.assertEqual([s["text"] for s in mi["steps"]], ["s1", "s2x", "s3", "s4"])
+            self.assertEqual(mi["steps"][0]["status"], "done")   # progress kept by position
+            self.assertEqual(mi["steps"][0]["result"], "r1")
+            self.assertEqual(mi["steps"][3]["status"], "open")   # new step
+            self.assertEqual(mi["status"], "done")
+            # reopen -> active; the agent's mission_update works again
+            self.assertEqual(m.mission_edit("hass", mid, status="active"), "ok")
+            self.assertEqual(m.mission_update("hass", mid, step=4, status="doing"), "ok")
+            self.assertEqual(m.mission_edit("hass", mid, status="active"), "unchanged")
+            self.assertIn("unknown status", m.mission_edit("hass", mid, status="weird"))
+            self.assertEqual(m.mission_edit("hass", mid, goal="  "), "goal missing")
+            self.assertEqual(m.mission_edit("hass", mid, steps=[]), "steps missing")
+            self.assertEqual(m.mission_edit("hass", "m-nope"), "unknown mission")
+            # cap: 5 active others -> reopening a failed one is refused
+            for i in range(m.MISSION_MAX_ACTIVE):
+                m.mission_start("cap", f"g{i}", ["x"])
+            fid, _ = m.mission_start("cap", "late", ["x"])     # None: cap reached
+            self.assertIsNone(fid)
+            m.mission_finish("cap", m.mission_list("cap")[0]["id"], "bad", failed=True)
+            m.mission_start("cap", "fill", ["x"])                 # back at the cap
+            failed_id = m.mission_list("cap")[0]["id"]
+            self.assertIn("max", m.mission_edit("cap", failed_id, status="active"))
+            # delete: failed, then active, then unknown
+            self.assertEqual(m.mission_delete("", failed_id), "ok")
+            self.assertEqual(m.mission_delete("hass", mid), "ok")
+            self.assertEqual(m.mission_list("hass"), [])
+            self.assertEqual(m.mission_delete("hass", mid), "unknown mission")
+        finally:
+            mmod.MISSIONS_FILE, mmod.notify_add = old_file, old_notify
+
     def test_mission_cross_instance(self):
         """Multi-owner missions: ANY agent owns missions, the steps carry the
         instance they were delegated to, and admin actions find the owner from

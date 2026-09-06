@@ -2170,7 +2170,7 @@ from mgr.rules import (load_playbooks, pb_list, pb_add, pb_remove, PB_MAX,  # no
 
 # ---- Missions: moved out to mgr/missions.py (imported early, see above) ----
 from mgr.missions import (load_missions, mission_list, mission_start,  # noqa: E402,F401
-                          mission_update, mission_finish, mission_admin,
+                          mission_update, mission_finish, mission_admin, mission_delete, mission_edit,
                           mission_ttl_sweep, mission_for_task, mission_owner,
                           MISSION_MAX_ACTIVE, MISSION_MAX_STEPS, MISSION_TTL_DAYS)
 
@@ -4004,7 +4004,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body))); self.end_headers()
             self.wfile.write(body); return
         if self.path.startswith("/api/mission-admin"):
-            # UI: pause/resume/abort — admin only (guests blocked).
+            # UI: pause/resume/abort, delete, edit — admin only (guests blocked).
             if instance_by_ip(self.client_address[0]) is not None:
                 self.send_response(403); self.send_header("Content-Type", "application/json")
                 self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
@@ -4013,8 +4013,16 @@ class H(BaseHTTPRequestHandler):
             # Without an instance mission_admin resolves the owner itself —
             # web UI and app only know the mission id, and the owner can be any
             # agent since missions are no longer orchestrator-only.
-            out = {"msg": mission_admin(b.get("instance", ""),
-                                        b.get("id", ""), b.get("action", ""))}
+            action = b.get("action", "")
+            if action == "delete":
+                msg = mission_delete(b.get("instance", ""), b.get("id", ""))
+            elif action == "edit":
+                msg = mission_edit(b.get("instance", ""), b.get("id", ""),
+                                   goal=b.get("goal"), steps=b.get("steps"),
+                                   status=b.get("status"))
+            else:
+                msg = mission_admin(b.get("instance", ""), b.get("id", ""), action)
+            out = {"msg": msg}
             body = json.dumps(out).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers()
