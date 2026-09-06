@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-06 (web UI broken by one escape — fixed, and a JS syntax gate so it cannot ship again)
+
+- "Die Webseite ist kaputt": the missions edit dialog joined/split its steps with `'\n'` written as a Python escape inside `mgr/ui_js.py` (a normal, not raw, string) — Python turned it into a real newline inside a JavaScript string literal, the browser's parser gave up on the whole script and every tab was dead. The route still answered HTTP 200 and all 116 tests were green, because nothing parsed the script. Fixed to `'\\n'` like the neighbouring MCP editor code.
+- "Warum haben die Tests das nicht abgefangen?" — because no test looked at the JavaScript. Now `tests/check_js.py` renders the client script to a file and `run-tests.sh` (step 0d) runs `node --check` on it, using the host's node or the one inside the `kaim56-mcp-hub` container; without either the step reports itself as skipped. Proven: with the broken line restored the gate fails the run with the SyntaxError, with the fix it passes.
+
 ## 2026-09-06 (Plugins tab: file names open in VS Code; the in-manager viewer is gone again)
 
 - The read-only source viewer from earlier today is replaced by what the footer already offers: **VS Code on the host**. Each file name in a plugin card is now a deep link into code-server (`?folder=<CODE_ROOT>&payload=[["openFile","vscode-remote://host:port/<path>"]]` — the workbench reads `openFile` from the payload; verified against code-server 4.133's bundle). New `site.json` key `CODE_ROOT` = where the manager directory is mounted inside the editor (`/home/coder/firecracker` here); without it the names stay plain text. `GET /api/plugins/<name>/file` and `plugin_read()` are removed — one editor, not two.

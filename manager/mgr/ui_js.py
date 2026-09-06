@@ -256,7 +256,7 @@ async function missionEdit(id){
   _miEdit=m;
   document.getElementById('midlgid').textContent=m.id+' · '+(m._inst||'');
   document.getElementById('migoal').value=m.goal||'';
-  document.getElementById('misteps').value=(m.steps||[]).map(s=>s.text).join('\n');
+  document.getElementById('misteps').value=(m.steps||[]).map(s=>s.text).join('\\n');
   document.getElementById('mistatus').value=m.status||'active';
   document.getElementById('mihint').textContent=(m.steps||[]).map(s=>`${s.n}: ${s.status}`).join(' · ');
   document.getElementById('midlg').style.display='grid';
@@ -266,7 +266,7 @@ async function missionSave(){
   if(!_miEdit)return;
   const body={id:_miEdit.id,action:'edit',instance:_miEdit._inst||'',
     goal:document.getElementById('migoal').value,
-    steps:document.getElementById('misteps').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    steps:document.getElementById('misteps').value.split('\\n').map(s=>s.trim()).filter(Boolean),
     status:document.getElementById('mistatus').value};
   const r=await (await fetch('/api/mission-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json().catch(()=>({msg:'?'}));
   if(r.msg!=='ok'&&r.msg!=='unchanged'){document.getElementById('mihint').textContent='\u26a0\ufe0f '+r.msg;return;}
