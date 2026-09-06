@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-06 (Plugins tab: see what you approve)
+
+- "I can approve but not view" — the Approve button re-pins a tool's SHA-256 after an out-of-band edit, but the tab offered no way to read the files behind that hash, so approval was blind. Now every file name in a plugin card opens a read-only source viewer (`GET /api/plugins/<name>/file?path=…`, admin-only, router-registered). The reader resolves paths inside the tool's own folder only (realpath, no `../`, no symlink walk-out, 512 KB cap), so it cannot become a file browser; the test covers nested files, single-file tools, traversal attempts and the pins file. 115 tests green.
+
 ## 2026-09-06 (guest boundary: the S-fixes from the multi-tenancy review)
 
 - The multi-tenancy review (four areas: HTTP/identity, data stores, infrastructure, clients) found that kAIm56 is a one-operator system by construction — no owner field anywhere, one admin credential, one chat store, one orchestrator, one secret store. The verdict and the roadmap (S/M/L) are in the review; this entry ships the S tier, which closes guest→guest paths that matter today, tenants or not.

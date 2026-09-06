@@ -35,7 +35,7 @@ async function loadPlugins(){
     `<div class=card><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">`+
     `<b>${escT(p.name)}</b><button class="btn btn-ghost" style="font-size:12px" onclick="plugDel('${esc(p.name)}')">L&#246;schen</button></div>`+
     `<div class=text-muted style="font-size:12px">${escT(p.kind)} &#183; ${p.files.length} file(s)</div>`+
-    `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(escT).join(', ')}</div>`+
+    `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(f=>`<a href="#" onclick="plugView('${esc(p.name)}','${esc(f)}');return false" title="show source">${escT(f)}</a>`).join(', ')}</div>`+
     `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">`+
       (p.modified
         ? `<span class="tag" style="background:#c0392b;color:#fff;font-size:11px">\u26a0 ge\u00e4ndert seit Approve</span>`
@@ -67,6 +67,15 @@ async function plugApprove(name){
   document.getElementById('plugmsg').textContent=(d.msg==='approved'?'\u2713 '+name+' pinned ('+(d.sha||'')+')':(d.msg||'?'));
   loadPlugins();
 }
+async function plugView(name,rel){
+  /* Approve means "this exact content is what I want in every VM" — so the
+     content must be readable right here, not only in a shell on the host. */
+  const d=await (await fetch('/api/plugins/'+encodeURIComponent(name)+'/file?path='+encodeURIComponent(rel))).json();
+  document.getElementById('plugdlgname').textContent=name+' / '+rel;
+  document.getElementById('plugsrc').textContent=d.error?('\u26a0\ufe0f '+d.error):d.text;
+  document.getElementById('plugdlg').style.display='grid';
+}
+function plugDlgClose(){document.getElementById('plugdlg').style.display='none'}
 async function plugDel(name){ if(!confirm('Plugin '+name+' l\u00f6schen?'))return;
   await fetch('/api/plugins/'+encodeURIComponent(name)+'/delete',{method:'POST'}); loadPlugins(); }
 (function(){

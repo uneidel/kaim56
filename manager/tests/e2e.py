@@ -747,6 +747,36 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
 
+    def test_plugin_source_viewable_but_not_a_file_browser(self):
+        """Approve must never be blind: the tab shows every file of a tool.
+        The reader stays inside the tool's folder — ../ and absolute paths
+        answer 'not found', as does the pins file next to the tools."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-plugsrc-")
+        old_src, old_pins = m.PLUGINS_SRC, m.PLUGIN_PINS_FILE
+        m.PLUGINS_SRC = tmp
+        m.PLUGIN_PINS_FILE = os.path.join(tmp, ".pins.json")
+        try:
+            src = "DESC='x'\ndef run():\n    return 1\n"
+            m.plugin_write_py("foo", src)
+            os.makedirs(os.path.join(tmp, "foo", "lib"))
+            with open(os.path.join(tmp, "foo", "lib", "h.py"), "w") as fh:
+                fh.write("X = 1\n")
+            with open(os.path.join(tmp, "bar.py"), "w") as fh:      # single-file tool
+                fh.write("DESC='bar'\n")
+            self.assertEqual(m.plugin_read("foo", "tool.py"), (src, None))
+            self.assertEqual(m.plugin_read("foo", "lib/h.py")[0], "X = 1\n")
+            self.assertEqual(m.plugin_read("bar", "bar.py")[0], "DESC='bar'\n")
+            for bad in ("../.pins.json", "../bar.py", "/etc/passwd", "lib", "nope.py", ""):
+                self.assertEqual(m.plugin_read("foo", bad)[0], None, bad)
+            self.assertIsNone(m.plugin_read("bar", "../foo/tool.py")[0])
+            self.assertIsNone(m.plugin_read("../etc", "passwd")[0])
+            # the route is admin-only in the inventory
+            by_path = {p: admin for _, _, p, admin in m.ROUTER.inventory()}
+            self.assertTrue(by_path["/api/plugins/"])
+        finally:
+            m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
+
     def test_set_instance_tools_roundtrip(self):
         """Saving policy tools: a subset persists (tools_all=False), ALL tools
         removes the field (tools_all=True), unknown names are filtered out.

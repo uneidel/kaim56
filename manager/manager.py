@@ -707,6 +707,38 @@ def plugin_write_zip(name, raw):
     return None
 
 
+PLUGIN_VIEW_MAX = 512 * 1024
+
+
+def plugin_read(name, rel):
+    """Source of one plugin file for the UI — what you are asked to approve.
+    (text, error): text is None on a missing/oversized/escaping path. The
+    path is resolved inside the tool's own folder only (no ../, no symlink
+    walk-out), so the viewer cannot become a file browser."""
+    name = _safe_tool_name(name)
+    if not name:
+        return None, "invalid name"
+    folder = os.path.join(PLUGINS_SRC, name)
+    single = os.path.join(PLUGINS_SRC, name + ".py")
+    if os.path.isdir(folder):
+        base = os.path.realpath(folder)
+        target = os.path.realpath(os.path.join(folder, rel or ""))
+    elif os.path.isfile(single) and rel in ("", name + ".py"):
+        base = os.path.realpath(PLUGINS_SRC)
+        target = os.path.realpath(single)
+    else:
+        return None, "not found"
+    if not (target == base or target.startswith(base + os.sep)) or not os.path.isfile(target):
+        return None, "not found"
+    try:
+        if os.path.getsize(target) > PLUGIN_VIEW_MAX:
+            return None, "file too large to display"
+        with open(target, "rb") as fh:
+            return fh.read().decode("utf-8", "replace"), None
+    except OSError as e:
+        return None, repr(e)
+
+
 def plugin_delete(name):
     name = _safe_tool_name(name)
     pins = load_plugin_pins()
@@ -2703,6 +2735,21 @@ def _rt_instances(h):
 @ROUTER.get("/api/settings", admin=True)
 def _rt_settings(h):
     return json.dumps(settings_for_ui()).encode(), "application/json"
+
+
+@ROUTER.get("/api/plugins/", prefix=True, admin=True)
+def _rt_plugin_file(h):
+    """GET /api/plugins/<name>/file?path=<rel> -> {name, path, text} — the
+    source behind the Approve button. Admin only; guests get the tool as a
+    whole on their config disk anyway, not this route."""
+    p, _, q = h.path.partition("?")
+    parts = p.strip("/").split("/")
+    rel = urllib.parse.parse_qs(q).get("path", [""])[0]
+    if len(parts) != 4 or parts[3] != "file":
+        return json.dumps({"error": "not found"}).encode(), "application/json"
+    text, err = plugin_read(parts[2], rel)
+    out = {"error": err} if err else {"name": parts[2], "path": rel, "text": text}
+    return json.dumps(out, ensure_ascii=False).encode(), "application/json"
 
 
 @ROUTER.get("/api/tasks", admin=True)
