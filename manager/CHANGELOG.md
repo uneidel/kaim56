@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-06 (architecture tab: "Fedora voice client" renamed to "Desktop client")
+
+- The client is not tied to Fedora — one static Go binary for any Linux desktop — so the SVG box and the component card now say **Desktop client** (card: "Desktop client (voice)"). Text only, no behaviour change.
+
 ## 2026-09-06 (MSFT task failed silently for two mornings: target validation, failure push, dead-target sweep, instance editable)
 
 - "Die Aktie war über 500, kein Alert": the daily MSFT task had been rewritten by the orchestrator on 09-04 with target `@orchestrator` (with an @). No such instance — the worker failed on 09-05 and 09-06 with `instance '@orchestrator' unknown`, the result sat unread in the Tasks tab, and the rewrite had also dropped the "over 500" condition. Yahoo answered fine the whole time (previous close 510.12).

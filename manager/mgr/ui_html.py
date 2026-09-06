@@ -414,7 +414,7 @@ ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:a
       <text class="tt" x="433" y="38" text-anchor="middle">Browser</text>
       <text class="ss" x="433" y="56" text-anchor="middle">admin + chat UI</text>
       <rect class="bx" x="514" y="16" width="176" height="56"/>
-      <text class="tt" x="602" y="38" text-anchor="middle">Fedora voice client</text>
+      <text class="tt" x="602" y="38" text-anchor="middle">Desktop client</text>
       <text class="ss" x="602" y="56" text-anchor="middle">VAD &#183; wake word &#183; TTS out</text>
       <rect class="bx" x="760" y="16" width="160" height="56"/>
       <text class="tt" x="840" y="38" text-anchor="middle">Signal (phone)</text>
@@ -649,7 +649,7 @@ HTML_BOTTOM = """
   same <code>/api/stt</code> the app dictation uses; a voice command triggers the shot. Built and
   proven against a vendor-faithful emulator and a JVM-testable protocol layer before hardware.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Fedora / Linux voice client</span>
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Desktop client (voice)</span>
   <p class=card-body>One static Go binary in the GNOME/KDE topbar (<code>voice-client/</code>). Hands-free:
   an energy VAD segments utterances, an optional wake word gates busy rooms &#8212; as a transcript
   check or a LOCAL own-voice model (MFCC/DTW, enrolled in 30&#8201;s) that keeps audio on the desktop
