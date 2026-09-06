@@ -5,8 +5,11 @@
     "command": "mcp-remote",
     "args": [
       "http://10.0.0.10:8123/mcp_server/sse",
-      "--header", "Authorization: Bearer ${HA_TOKEN}",
-      "--transport", "sse-only", "--allow-http"
+      "--header",
+      "Authorization: Bearer ${HA_TOKEN}",
+      "--transport",
+      "sse-only",
+      "--allow-http"
     ]
   },
   {
@@ -20,6 +23,17 @@
       "PORTAINER_READ_ONLY": "true",
       "PORTAINER_TLS_VERIFY": "false",
       "PORTAINER_PROFILES": "BASE,DOCKER"
+    }
+  },
+  {
+    "name": "caldav",
+    "description": "Calendar (CalDAV: events + tasks)",
+    "command": "caldav-mcp",
+    "args": [],
+    "env": {
+      "CALDAV_BASE_URL": "https://caldav.example/dav/",
+      "CALDAV_USERNAME": "todo-username",
+      "CALDAV_PASSWORD": "${CALDAV_PASSWORD}"
     }
   }
 ]

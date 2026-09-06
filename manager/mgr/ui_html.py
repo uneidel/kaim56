@@ -702,7 +702,8 @@ HTML_BOTTOM = """
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>MCP servers &#8212; hub on the host</span>
   <p class=card-body>Catalog in <code>mcp-catalog.json</code> (homeassistant via <code>mcp-remote</code>/SSE,
-  portainer via <code>mcp-portainer</code>, read-only). The server processes run in the
+  portainer via <code>mcp-portainer</code>, read-only, caldav via <code>caldav-mcp</code> for
+  calendar entries and tasks). The server processes run in the
   <code>mcp-hub</code> container on the host (127.0.0.1:8771), one per (instance, server). Guests speak
   plain JSON-RPC to the manager (<code>/api/mcp</code>); the manager authorizes by source IP against the
   instance&#8217;s <code>MCP_SERVERS</code>, injects the secrets host-side and forwards to the hub &#8212;
