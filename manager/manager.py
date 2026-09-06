@@ -102,6 +102,20 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish", "/api/ha-alias", "/api/ha-control")
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
+# GET paths a guest VM must never reach: the admin UI, the web chat, the katfs
+# browser and the per-instance proxy /i/<name>/… (incl. the WebSocket
+# terminal). Only POST was gated so far — a VM could open the SHELL of every
+# other running VM through GET /i/<other>/term.
+GUEST_GET_DENIED_EXACT = ("/", "/chat", "/katfs")
+GUEST_GET_DENIED_PREFIXES = ("/i/", "/katfs/")
+
+
+def guest_get_blocked(path):
+    """True when a guest VM may not GET this path (query string ignored)."""
+    p = path.split("?", 1)[0]
+    if p != "/" and p.endswith("/") and p[:-1] in GUEST_GET_DENIED_EXACT:
+        p = p[:-1]
+    return p in GUEST_GET_DENIED_EXACT or p.startswith(GUEST_GET_DENIED_PREFIXES)
 # Credential injection gateway (OneCLI pattern): the agent sends its chat
 # requests to /api/llm/<backend>/chat/completions instead of directly to the
 # router; when forwarding, the manager appends the Authorization header from
@@ -842,6 +856,28 @@ def _run_task_now(instance, message):
 # at a time; if new messages arrived during the run, it fires again right away.
 # Fires only if the inbox really has something new (peek).
 ORCH_INSTANCE = "orchestrator"
+
+
+def delegate_targets(inst):
+    """Instances this guest may address besides itself and 'ephemeral': the
+    DELEGATE_TARGETS list of its config (comma-separated, '*' = all). The
+    orchestrator may address everything — routing work is its job."""
+    if inst.get("name") == ORCH_INSTANCE:
+        return {"*"}
+    raw = (inst.get("config") or {}).get("DELEGATE_TARGETS", "") or ""
+    return {x.strip() for x in str(raw).split(",") if x.strip()}
+
+
+def guest_may_target(inst, target):
+    """May this guest create a task for (and see) `target`? Own name and
+    'ephemeral' always, anything else only via DELEGATE_TARGETS. Closes the
+    path where a prompt-injected agent runs its text on ANY other instance —
+    with that instance's secrets and MCPs."""
+    target = (target or "ephemeral").strip()
+    if target in ("ephemeral", inst.get("name")):
+        return True
+    allow = delegate_targets(inst)
+    return "*" in allow or target in allow
 ORCH_HEARTBEAT_MSG = (
     "/fresh "   # stateless: own throwaway context, no bloat, no wiping out a
                 # running app chat (shared _history).
@@ -1441,6 +1477,50 @@ def ensure_net_base():
     if sh("iptables", "-C", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP",
           check=False).returncode != 0:
         sh("iptables", "-A", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP", check=False)
+    ensure_guest_input_rules()
+
+
+# Guest -> host: what a VM legitimately needs from its gateway (.1 of the /30).
+GUEST_INPUT_ACCEPT = (
+    ("-p", "tcp", "--dport", str(LISTEN[1])),          # manager: API, broker, LLM proxy
+    ("-p", "tcp", "--dport", "2049"),                  # NFS workspace
+    ("-p", "icmp"),                                    # ping the gateway
+    ("-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"),  # replies to host->guest (proxy)
+)
+
+
+def ensure_guest_input_rules():
+    """Guest -> host is limited to the manager port and NFS. Without this every
+    host service listening on 0.0.0.0 (sshd, rpcbind, …) is one hop away from
+    each VM. The DROP goes in first so the ACCEPTs inserted afterwards sit
+    above it; idempotent, so a restart adds nothing twice."""
+    if sh("iptables", "-C", "INPUT", "-i", "fc+", "-j", "DROP", check=False).returncode != 0:
+        sh("iptables", "-I", "INPUT", "1", "-i", "fc+", "-j", "DROP", check=False)
+    for spec in GUEST_INPUT_ACCEPT:
+        if sh("iptables", "-C", "INPUT", "-i", "fc+", *spec, "-j", "ACCEPT",
+              check=False).returncode != 0:
+            sh("iptables", "-I", "INPUT", "1", "-i", "fc+", *spec, "-j", "ACCEPT", check=False)
+
+
+def _antispoof_rules(n):
+    return [(chain, ("-i", n["tap"], "!", "-s", n["guest"], "-j", "DROP"))
+            for chain in ("INPUT", "FORWARD")]
+
+
+def ensure_antispoof(inst):
+    """A VM's packets must carry its own /30 address: the source IP is the
+    guest's identity for the manager (instance_by_ip), so a forged source would
+    be a forged identity. Always on top — above the instance's FORWARD chain."""
+    for chain, spec in _antispoof_rules(net_of(inst)):
+        while sh("iptables", "-C", chain, *spec, check=False).returncode == 0:
+            sh("iptables", "-D", chain, *spec, check=False)
+        sh("iptables", "-I", chain, "1", *spec, check=False)
+
+
+def clear_antispoof(inst):
+    for chain, spec in _antispoof_rules(net_of(inst)):
+        while sh("iptables", "-C", chain, *spec, check=False).returncode == 0:
+            sh("iptables", "-D", chain, *spec, check=False)
 
 
 def setup_tap(inst):
@@ -1593,6 +1673,7 @@ def apply_internet(inst, allow):
     sh("iptables", "-I", "FORWARD", "1", "-i", n["tap"], "-j", chain, check=False)
     if not have_back:
         sh("iptables", "-I", "FORWARD", "1", *back, "-j", "ACCEPT", check=False)
+    ensure_antispoof(inst)
 
 
 def teardown_tap(inst):
@@ -1603,6 +1684,7 @@ def teardown_tap(inst):
     sh("iptables", "-D", "FORWARD", "-i", n["tap"], "-j", chain, check=False)
     sh("iptables", "-F", chain, check=False)
     sh("iptables", "-X", chain, check=False)
+    clear_antispoof(inst)
     sh("ip", "link", "del", n["tap"], check=False)
 
 
@@ -2789,8 +2871,17 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             self._fail500()
 
+    def _forbid(self):
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"error":"forbidden"}')
+
     def _auth(self):
-        if not PW:
+        # Guests (VMs) carry no credentials: they are identified by source IP
+        # and gated by the guest allow/deny lists. Without this exemption a set
+        # MANAGER_PASS would lock every agent out of its own manager.
+        if not PW or instance_by_ip(self.client_address[0]) is not None:
             return True
         hdr = self.headers.get("Authorization", "")
         if hdr.startswith("Basic "):
@@ -3090,6 +3181,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if guest_get_blocked(self.path) and instance_by_ip(self.client_address[0]) is not None:
+            return self._forbid()
         if self.path.split("?", 1)[0].rstrip("/") == "/chat":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             want = urllib.parse.parse_qs(q).get("i", [""])[0]
@@ -3179,8 +3272,13 @@ class H(BaseHTTPRequestHandler):
         # capabilities only — no secrets. Ephemeral children hidden.
         if self.path == "/api/agents":
             roster = []
+            guest = instance_by_ip(self.client_address[0])
             for i in load_instances():
                 if i["name"].startswith(("task-", "sub-")):
+                    continue
+                # A guest lists only what it may delegate to (own name,
+                # DELEGATE_TARGETS; the orchestrator: all).
+                if guest is not None and not guest_may_target(guest, i["name"]):
                     continue
                 cfg = i.get("config") or {}
                 mkey = next((k for k in MODEL_KEYS if cfg.get(k)), "")
@@ -3206,6 +3304,11 @@ class H(BaseHTTPRequestHandler):
         # Inbox for the orchestrator: new user messages (Signal/app/web) since
         # the last run. Guest-allowed; ?peek=1 sets no watermark.
         if self.path.startswith("/api/inbox"):
+            # The inbox is EVERY user message of every chat — among guests
+            # only the orchestrator (whose job it is) may read it.
+            guest = instance_by_ip(self.client_address[0])
+            if guest is not None and guest["name"] != ORCH_INSTANCE:
+                return self._forbid()
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             data = {"messages": inbox_since(peek=(q.get("peek", ["0"])[0] == "1"))}
             self.send_response(200)
@@ -3254,7 +3357,12 @@ class H(BaseHTTPRequestHandler):
         # (recall_tasks) AND admin/UI — holds operational knowledge, no secrets.
         if self.path.startswith("/api/history"):
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            data = {"rows": history_search(q.get("q", [""])[0], q.get("limit", ["20"])[0])}
+            # Guest: only runs it created or executed; the orchestrator and the
+            # admin/UI see everything.
+            guest = instance_by_ip(self.client_address[0])
+            scope = guest["name"] if guest is not None and guest["name"] != ORCH_INSTANCE else None
+            data = {"rows": history_search(q.get("q", [""])[0], q.get("limit", ["20"])[0],
+                                           instance=scope)}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -3405,7 +3513,8 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(body); return
         if self.path.startswith("/api/hitl/"):
             hid = self.path[len("/api/hitl/"):].split("?", 1)[0].strip()
-            out = json.dumps({"status": hitl_status(hid)}).encode()
+            guest = instance_by_ip(self.client_address[0])
+            out = json.dumps({"status": hitl_status(hid, guest["name"] if guest else None)}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out))); self.end_headers()
             self.wfile.write(out); return
@@ -3525,6 +3634,8 @@ class H(BaseHTTPRequestHandler):
                                                 "relevant=1" in self.path)).encode()
             ct = "application/json"
         else:
+            if instance_by_ip(self.client_address[0]) is not None:
+                return self._forbid()
             body = render().encode()
             ct = "text/html; charset=utf-8"
         self.send_response(200)
@@ -4018,6 +4129,10 @@ class H(BaseHTTPRequestHandler):
                 wait = bool(body.get("wait"))
                 if not message:
                     out = {"error": "message missing"}
+                elif not guest_may_target(inst, target):
+                    out = {"error": f"target '{target}' not allowed for this instance "
+                                    "(own name, 'ephemeral', or a DELEGATE_TARGETS entry "
+                                    "in its config)"}
                 elif wait and not schedule:
                     ok, res = _run_task_now(target, message)
                     history_add(target, message, res, ok, origin=inst["name"])

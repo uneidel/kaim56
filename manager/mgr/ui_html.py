@@ -449,8 +449,9 @@ ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:a
       <text class="ss" x="330" y="294">&#183; signal send (allowlist + rate limit)</text>
       <text class="ss" x="330" y="314">&#183; usage &#183; audit &#183; memory</text>
       <text class="ss" x="330" y="334">&#183; katfs proxy &#8594; :8790</text>
-      <text class="ss" x="330" y="354">&#183; guest POST allowlist (403 default)</text>
-      <text class="ss" x="330" y="374">&#183; per-instance model / tools / mounts</text>
+      <text class="ss" x="330" y="354">&#183; guest POST allowlist &#183; GET denylist (403)</text>
+      <text class="ss" x="330" y="374">&#183; guest&#8594;host: only :8700 + NFS &#183; anti-spoof</text>
+      <text class="ss" x="330" y="394">&#183; per-instance model / tools / mounts</text>
 
       <rect class="bx" x="660" y="224" width="260" height="56"/>
       <text class="tt" x="790" y="246" text-anchor="middle">voice service (Docker)</text>
@@ -506,8 +507,13 @@ HTML_BOTTOM = """
   per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up
   tap devices and NAT, builds per-instance config disks, proxies requests into the guests
   (<code>/i/&#8249;name&#8250;/&#8230;</code>), and is the only component that guests can talk to.
-  Guest requests are identified by source IP; writes from guests are limited to an explicit
-  allowlist &#8212; everything else returns 403.</p></div>
+  Guest requests are identified by source IP (a per-tap anti-spoof rule pins it); writes from
+  guests are limited to an explicit allowlist, and the admin UI, chat, katfs and the
+  <code>/i/&#8249;name&#8250;/</code> proxy (incl. the terminal) are denied to guests on GET
+  &#8212; everything else returns 403. Guests may task only themselves, an ephemeral VM, or the
+  instances in their <code>DELEGATE_TARGETS</code>; the roster, task history and approval ids
+  they see are scoped the same way, and the inbox is the orchestrator's alone. On the host the
+  INPUT chain lets guest traffic reach only :8700 and NFS.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Firecracker microVMs</span>
   <p class=card-body>One VM per agent instance. Each gets a tap device <code>fc&#8249;N&#8250;</code> with a

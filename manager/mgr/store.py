@@ -127,22 +127,28 @@ def history_add(target, task, result, ok, schedule="", origin=""):
         print("history_add:", repr(e), flush=True)
 
 
-def history_search(q="", limit=20):
+def history_search(q="", limit=20, instance=None):
+    """Task runs, newest first. `instance` narrows to the runs that instance
+    created (origin) or executed (target) — a guest sees only its own share of
+    the history, not every other agent's results."""
     q = (q or "").strip()
     limit = max(1, min(int(limit or 20), 100))
+    where, args = [], []
+    if q:
+        like = f"%{q}%"
+        where.append("(task LIKE ? OR result LIKE ? OR target LIKE ?)")
+        args += [like, like, like]
+    if instance:
+        where.append("(target = ? OR origin = ?)")
+        args += [str(instance), str(instance)]
+    sql = "SELECT ts,target,task,result,ok,schedule FROM task_runs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY ts DESC LIMIT ?"
     try:
         with _hist_conn() as c:
             c.row_factory = sqlite3.Row
-            if q:
-                like = f"%{q}%"
-                rows = c.execute(
-                    "SELECT ts,target,task,result,ok,schedule FROM task_runs "
-                    "WHERE task LIKE ? OR result LIKE ? OR target LIKE ? "
-                    "ORDER BY ts DESC LIMIT ?", (like, like, like, limit)).fetchall()
-            else:
-                rows = c.execute(
-                    "SELECT ts,target,task,result,ok,schedule FROM task_runs "
-                    "ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+            rows = c.execute(sql, (*args, limit)).fetchall()
             return [dict(r) for r in rows]
     except Exception as e:
         print("history_search:", repr(e), flush=True)

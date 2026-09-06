@@ -15,6 +15,7 @@ dependency. Three tiers, depending on the environment:
 Run:  python3 tests/e2e.py            (or ./run-tests.sh)
 One tier only:  python3 tests/e2e.py AgentLogic
 """
+import base64
 import importlib.util
 import io
 import json
@@ -1782,6 +1783,164 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             nmod.NOTIF_FILE = old_file
             nmod._notif_sent[:] = old_sent
+
+    def test_mcp_caldav_secret_stays_on_the_host(self):
+        """The caldav catalog entry takes its password from the host secret
+        store, and only for an instance the policy released it to. Without the
+        release the placeholder survives unsubstituted — the guest never sees a
+        credential, and a missing release is visible instead of silent."""
+        m = self.m
+        import mgr.mcp as mcpmod
+        self.assertIn("caldav", [x["name"] for x in m.load_mcps()])
+        self.assertEqual(m.mcp_required_secrets(["caldav"]), {"CALDAV_PASSWORD"})
+        for name in ("myassistant", "voicecommand"):
+            self.assertIn("CALDAV_PASSWORD",
+                          m.allowed_secret_keys({"name": name, "template": "openrouter"}),
+                          f"{name} has no CALDAV_PASSWORD release")
+        old = mcpmod.secret_store
+        mcpmod.secret_store = lambda: {"CALDAV_PASSWORD": "s3cret"}
+        try:
+            env = json.loads(m.build_mcp_config(
+                ["caldav"], allowed={"CALDAV_PASSWORD"}))["mcpServers"]["caldav"]["env"]
+            self.assertEqual(env["CALDAV_PASSWORD"], "s3cret")
+            env = json.loads(m.build_mcp_config(
+                ["caldav"], allowed=set()))["mcpServers"]["caldav"]["env"]
+            self.assertEqual(env["CALDAV_PASSWORD"], "${CALDAV_PASSWORD}")
+        finally:
+            mcpmod.secret_store = old
+
+    # ---- guest boundary (multi-tenancy S-fixes, 2026-09-06) ------------------
+    def _handler(self, path, ip, method="GET", auth=None):
+        """A handler object without a socket: enough of BaseHTTPRequestHandler's
+        state for _auth/_do_GET to run and write their response into a buffer."""
+        import email.message
+        m = self.m
+        h = object.__new__(m.H)
+        h.path, h.command, h.request_version = path, method, "HTTP/1.1"
+        h.requestline = f"{method} {path} HTTP/1.1"
+        h.client_address = (ip, 40000)
+        h.headers = email.message.Message()
+        if auth:
+            h.headers["Authorization"] = auth
+        h.rfile, h.wfile = io.BytesIO(b""), io.BytesIO()
+        h.close_connection = True
+        return h
+
+    def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
+        """GET /i/<other>/term opened the shell of every other VM — only POST
+        was gated. The denylist names the admin UI, chat, katfs and /i/."""
+        m = self.m
+        for p in ("/", "/chat", "/chat?i=x", "/katfs", "/katfs/", "/katfs/x.txt",
+                  "/i/orchestrator/", "/i/orchestrator/term", "/i/x/term/ws?y=1"):
+            self.assertTrue(m.guest_get_blocked(p), p)
+        for p in ("/api/agents", "/api/memory/self", "/api/skills?meta=1",
+                  "/api/inbox", "/chatx", "/logo.svg"):
+            self.assertFalse(m.guest_get_blocked(p), p)
+
+    def test_guest_gets_403_on_denied_paths_and_skips_basic_auth(self):
+        """Guests carry no credentials (identity = source IP), so they pass
+        _auth even with MANAGER_PASS set; an admin without credentials gets
+        401. Denied GET paths answer 403 before any handler runs."""
+        m = self.m
+        guest = {"name": "hass", "index": 7, "config": {}}
+        old_ibi, old_pw = m.instance_by_ip, m.PW
+        try:
+            m.instance_by_ip = lambda ip: guest if ip == "172.30.7.2" else None
+            m.PW = "secret"
+            for p in ("/i/orchestrator/term", "/", "/chat", "/katfs/", "/api/inbox",
+                      "/no/such/page"):
+                h = self._handler(p, "172.30.7.2")
+                self.assertTrue(h._auth(), p)
+                h._do_GET()
+                self.assertIn(b" 403 ", h.wfile.getvalue().split(b"\r\n", 1)[0], p)
+            h = self._handler("/", "192.168.1.5")
+            self.assertFalse(h._auth())
+            self.assertIn(b" 401 ", h.wfile.getvalue().split(b"\r\n", 1)[0])
+            h = self._handler("/", "192.168.1.5", auth="Basic " + base64.b64encode(
+                f"{m.USER}:secret".encode()).decode())
+            self.assertTrue(h._auth())
+        finally:
+            m.instance_by_ip, m.PW = old_ibi, old_pw
+
+    def test_guest_task_target_policy(self):
+        """A guest may task itself or an ephemeral VM; other instances only via
+        DELEGATE_TARGETS in its config ('*' = all); the orchestrator: all."""
+        m = self.m
+        me = {"name": "jobresearcher", "config": {}}
+        for t in ("ephemeral", "", None, "jobresearcher"):
+            self.assertTrue(m.guest_may_target(me, t), repr(t))
+        for t in ("orchestrator", "hass", "claudy"):
+            self.assertFalse(m.guest_may_target(me, t), t)
+        me["config"]["DELEGATE_TARGETS"] = "hass, claudy"
+        self.assertTrue(m.guest_may_target(me, "hass"))
+        self.assertTrue(m.guest_may_target(me, "claudy"))
+        self.assertFalse(m.guest_may_target(me, "orchestrator"))
+        me["config"]["DELEGATE_TARGETS"] = "*"
+        self.assertTrue(m.guest_may_target(me, "orchestrator"))
+        orch = {"name": m.ORCH_INSTANCE, "config": {}}
+        self.assertTrue(m.guest_may_target(orch, "anything"))
+
+    def test_history_search_scoped_to_instance(self):
+        """recall_tasks from a guest returns only runs it created or executed."""
+        import mgr.store as st
+        tmp = tempfile.mkdtemp(prefix="e2e-hist-")
+        old = st.HISTORY_DB
+        try:
+            st.HISTORY_DB = os.path.join(tmp, "h.db")
+            st.history_add("hass", "light on", "done", True, origin="worker")
+            st.history_add("orchestrator", "ping", "pong", True, origin="jobresearcher")
+            st.history_add("claudy", "review", "ok", True, origin="orchestrator")
+            self.assertEqual(len(st.history_search()), 3)
+            self.assertEqual([r["target"] for r in st.history_search(instance="hass")], ["hass"])
+            self.assertEqual([r["target"] for r in st.history_search(instance="jobresearcher")],
+                             ["orchestrator"])
+            self.assertEqual(st.history_search(instance="remote"), [])
+            self.assertEqual(len(st.history_search("light", instance="hass")), 1)
+            self.assertEqual(st.history_search("light", instance="orchestrator"), [])
+        finally:
+            st.HISTORY_DB = old
+
+    def test_hitl_status_bound_to_requesting_instance(self):
+        """Approval ids are 8 hex chars — a guest may only poll its own."""
+        m = self.m
+        import mgr.signal as sigmod
+        old_send = sigmod.signal_send
+        try:
+            sigmod.signal_send = lambda text, to=None: (True, "sent")
+            hid = m.hitl_create("hass", "bash", "rm x")
+            self.assertEqual(m.hitl_status(hid), "pending")            # admin
+            self.assertEqual(m.hitl_status(hid, "hass"), "pending")    # owner
+            self.assertEqual(m.hitl_status(hid, "uncensored"), "unknown")
+        finally:
+            sigmod.signal_send = old_send
+
+    def test_guest_input_rules_only_manager_and_nfs(self):
+        """Guest -> host is limited to :8700 and NFS; the DROP is inserted first
+        so the ACCEPTs land above it. Per tap, a source other than the guest's
+        own /30 address is dropped (the IP is the guest's identity)."""
+        import types
+        m = self.m
+        calls = []
+        old_sh = m.sh
+        try:
+            # every -C fails -> "rule missing" -> everything gets inserted
+            m.sh = lambda *a, check=True: (calls.append(a), types.SimpleNamespace(returncode=1))[1]
+            m.ensure_guest_input_rules()
+            ins = [c for c in calls if c[1] == "-I"]
+            self.assertEqual(ins[0][2:], ("INPUT", "1", "-i", "fc+", "-j", "DROP"))
+            ports = {c[c.index("--dport") + 1] for c in ins if "--dport" in c}
+            self.assertEqual(ports, {str(m.LISTEN[1]), "2049"})
+            self.assertTrue(any("ESTABLISHED,RELATED" in c for c in ins))
+            self.assertTrue(all(c[2] == "INPUT" and "fc+" in c for c in ins))
+            calls.clear()
+            m.ensure_antispoof({"name": "hass", "index": 7})
+            spec = ("-i", "fc7", "!", "-s", "172.30.7.2", "-j", "DROP")
+            self.assertEqual({c[2] for c in calls if c[1] == "-I"}, {"INPUT", "FORWARD"})
+            for c in calls:
+                if c[1] == "-I":
+                    self.assertEqual(c[4:], spec)
+        finally:
+            m.sh = old_sh
 
 
 # ===========================================================================

@@ -138,10 +138,14 @@ def hitl_create(instance, tool, target):
     return hid
 
 
-def hitl_status(hid):
+def hitl_status(hid, instance=None):
+    """Status of an approval. With `instance` (a guest asking) only its OWN
+    requests answer — a foreign id is 'unknown', ids are short and guessable."""
     with _hitl_lock:
         v = _hitl.get(hid)
-        return v["status"] if v else "unknown"
+        if not v or (instance and v.get("instance") != instance):
+            return "unknown"
+        return v["status"]
 
 
 def hitl_resolve(hid, approve):
