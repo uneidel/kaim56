@@ -747,35 +747,41 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
 
-    def test_plugin_source_viewable_but_not_a_file_browser(self):
-        """Approve must never be blind: the tab shows every file of a tool.
-        The reader stays inside the tool's folder — ../ and absolute paths
-        answer 'not found', as does the pins file next to the tools."""
+    def test_plugin_files_link_into_vscode(self):
+        """Approve must never be blind: each file name links to the file in the
+        host's VS Code (code-server deep link: folder + payload openFile with
+        the remote authority). Without CODE_URL/CODE_ROOT: no link, no crash."""
         m = self.m
-        tmp = tempfile.mkdtemp(prefix="e2e-plugsrc-")
-        old_src, old_pins = m.PLUGINS_SRC, m.PLUGIN_PINS_FILE
-        m.PLUGINS_SRC = tmp
-        m.PLUGIN_PINS_FILE = os.path.join(tmp, ".pins.json")
+        old = m.CODE_URL, m.CODE_ROOT
         try:
-            src = "DESC='x'\ndef run():\n    return 1\n"
-            m.plugin_write_py("foo", src)
-            os.makedirs(os.path.join(tmp, "foo", "lib"))
-            with open(os.path.join(tmp, "foo", "lib", "h.py"), "w") as fh:
-                fh.write("X = 1\n")
-            with open(os.path.join(tmp, "bar.py"), "w") as fh:      # single-file tool
-                fh.write("DESC='bar'\n")
-            self.assertEqual(m.plugin_read("foo", "tool.py"), (src, None))
-            self.assertEqual(m.plugin_read("foo", "lib/h.py")[0], "X = 1\n")
-            self.assertEqual(m.plugin_read("bar", "bar.py")[0], "DESC='bar'\n")
-            for bad in ("../.pins.json", "../bar.py", "/etc/passwd", "lib", "nope.py", ""):
-                self.assertEqual(m.plugin_read("foo", bad)[0], None, bad)
-            self.assertIsNone(m.plugin_read("bar", "../foo/tool.py")[0])
-            self.assertIsNone(m.plugin_read("../etc", "passwd")[0])
-            # the route is admin-only in the inventory
-            by_path = {p: admin for _, _, p, admin in m.ROUTER.inventory()}
-            self.assertTrue(by_path["/api/plugins/"])
+            m.CODE_URL, m.CODE_ROOT = "http://192.168.0.10:8443/", "/home/coder/firecracker"
+            u = m.plugin_code_link("folder", "greeter", "lib/h.py")
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(u).query)
+            self.assertTrue(u.startswith("http://192.168.0.10:8443/?"))
+            self.assertEqual(q["folder"], ["/home/coder/firecracker"])
+            self.assertEqual(json.loads(q["payload"][0]),
+                             [["openFile", "vscode-remote://192.168.0.10:8443/home/coder/firecracker/plugins/greeter/lib/h.py"]])
+            u1 = m.plugin_code_link("file", "dice", "dice.py")
+            self.assertIn("/home/coder/firecracker/plugins/dice.py", json.loads(
+                urllib.parse.parse_qs(urllib.parse.urlsplit(u1).query)["payload"][0])[0][1])
+            m.CODE_ROOT = ""
+            self.assertEqual(m.plugin_code_link("folder", "greeter", "tool.py"), "")
+            # list_plugins carries the links per file
+            tmp = tempfile.mkdtemp(prefix="e2e-pluglink-")
+            old_src, old_pins = m.PLUGINS_SRC, m.PLUGIN_PINS_FILE
+            m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = tmp, os.path.join(tmp, ".pins.json")
+            try:
+                m.plugin_write_py("foo", "DESC='x'\n")
+                self.assertEqual(m.list_plugins()[0]["links"], {"tool.py": ""})
+                m.CODE_ROOT = "/home/coder/firecracker"
+                self.assertIn("plugins/foo/tool.py", urllib.parse.unquote(
+                    m.list_plugins()[0]["links"]["tool.py"]))
+            finally:
+                m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
         finally:
-            m.PLUGINS_SRC, m.PLUGIN_PINS_FILE = old_src, old_pins
+            m.CODE_URL, m.CODE_ROOT = old
+        # the old in-manager viewer route is gone: guests never had it, admins use VS Code
+        self.assertNotIn("/api/plugins/", {p for _, _, p, _ in m.ROUTER.inventory()})
 
     def test_set_instance_tools_roundtrip(self):
         """Saving policy tools: a subset persists (tools_all=False), ALL tools

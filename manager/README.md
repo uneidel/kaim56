@@ -90,6 +90,25 @@ the manager at request time, so it applies **without** a restart. Without it a
 prompt-injected agent could run its text on any instance — with that instance's
 secrets and MCPs.
 
+## Editor link (VS Code in the footer, plugin files)
+`CODE_URL` in `site.json` puts a **VS Code** link into the footer (code-server or
+openvscode on the host; a link, not an iframe — the manager is HTTPS, the editor
+usually plain HTTP in the LAN). With `CODE_ROOT` — the path under which the
+manager directory is mounted **inside** the editor — every file name in the
+Plugins tab opens that file directly in VS Code (`?folder=…&payload=[["openFile",
+"vscode-remote://host:port/…"]]`), so a plugin is read where it is edited. The
+reference setup runs code-server in Docker with both trees mounted:
+
+```bash
+docker run -d --name kaim56-code --restart unless-stopped -u 1000 \
+  -p 192.168.0.10:8443:8080 -e PASSWORD=… \
+  -v /home/ulrich/kaim56:/home/coder/kaim56 \
+  -v /home/ulrich/firecracker:/home/coder/firecracker \
+  -v ~/.config/code-server-data:/home/coder/.config \
+  -v ~/.local/share/code-server-data:/home/coder/.local/share/code-server \
+  codercom/code-server:latest --bind-addr 0.0.0.0:8080 --auth password /home/coder/kaim56
+```
+
 ## Guest boundary (what a VM may reach)
 A guest is recognized by its **source IP** (`instance_by_ip`); a per-tap
 iptables rule drops packets with any other source, so the IP is a usable

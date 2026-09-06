@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-06 (Plugins tab: file names open in VS Code; the in-manager viewer is gone again)
+
+- The read-only source viewer from earlier today is replaced by what the footer already offers: **VS Code on the host**. Each file name in a plugin card is now a deep link into code-server (`?folder=<CODE_ROOT>&payload=[["openFile","vscode-remote://host:port/<path>"]]` — the workbench reads `openFile` from the payload; verified against code-server 4.133's bundle). New `site.json` key `CODE_ROOT` = where the manager directory is mounted inside the editor (`/home/coder/firecracker` here); without it the names stay plain text. `GET /api/plugins/<name>/file` and `plugin_read()` are removed — one editor, not two.
+- The code-server container only had the git repo mounted, not the live tree where the plugins actually live; it has to be recreated with the same image, port, password and data volumes plus `/home/ulrich/firecracker:/home/coder/firecracker` (command in `manager/README.md`, Editor link). Test replaced: link shape for folder and single-file tools, no link without config, links carried by `/api/plugins`, viewer route gone. 116 tests green.
+
 ## 2026-09-06 (Missions tab: edit and delete, whatever the status)
 
 - Missions could only be paused, resumed or aborted while open; a done or failed one stayed forever (and only the last three were shown). Now every mission row has **Edit** and **Delete**. Edit opens a dialog for goal, steps (one per line) and status — steps are matched by position so existing ones keep status/result/task id, new lines start open, removed lines are dropped; setting status back to *active* reopens the mission for its owner (the active cap of 5 still applies). Delete removes the record for good, any status, after a confirm. Both go through `POST /api/mission-admin` (admin-only) as actions `edit` / `delete`; the owner is resolved from the id when the caller does not know it. The tab lists all completed/failed missions now, not three. One new test covers edit-by-position, reopen, the cap, validation and delete. 116 tests green.

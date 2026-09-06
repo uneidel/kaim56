@@ -153,6 +153,10 @@ SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"
 # embedding: the manager runs behind HTTPS, the editor usually on plain HTTP in
 # the LAN — an iframe would be blocked as mixed content. Empty = no link.
 CODE_URL = SITE.get("CODE_URL") or ""
+# Where THIS directory (BASE) is mounted inside the editor container — with it
+# the Plugins tab links straight to a tool's file in VS Code instead of
+# showing the source itself. Empty = names only.
+CODE_ROOT = SITE.get("CODE_ROOT") or ""
 
 POOL = "172.30.0.0/16"
 def _uplink_iface():
@@ -634,6 +638,22 @@ def plugin_pin(name):
     return h
 
 
+def plugin_code_link(kind, name, rel):
+    """URL that opens one plugin file in the host's VS Code (code-server):
+    `?folder=<CODE_ROOT>&payload=[["openFile","vscode-remote://<authority>/<path>"]]`
+    — the workbench reads `openFile` from the payload, and code-server's remote
+    authority is its own host:port. Needs CODE_URL and CODE_ROOT; else ''."""
+    if not (CODE_URL and CODE_ROOT):
+        return ""
+    u = urllib.parse.urlsplit(CODE_URL)
+    base = CODE_ROOT.rstrip("/") + "/plugins/"
+    path = base + (name + "/" + rel if kind == "folder" else rel)
+    payload = json.dumps([["openFile", f"vscode-remote://{u.netloc}{path}"]],
+                         separators=(",", ":"))
+    q = urllib.parse.urlencode({"folder": CODE_ROOT.rstrip("/"), "payload": payload})
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, "/", q, ""))
+
+
 def list_plugins():
     out = []
     if not os.path.isdir(PLUGINS_SRC):
@@ -657,6 +677,7 @@ def list_plugins():
         e["sha"] = (cur or "")[:12]
         e["pinned"] = bool(pin)
         e["modified"] = bool(pin) and cur is not None and cur != pin
+        e["links"] = {f: plugin_code_link(e["kind"], e["name"], f) for f in e["files"]}
     return out
 
 
@@ -705,38 +726,6 @@ def plugin_write_zip(name, raw):
         return "no entry (tool.py/__init__.py) found in the zip"
     plugin_pin(name)
     return None
-
-
-PLUGIN_VIEW_MAX = 512 * 1024
-
-
-def plugin_read(name, rel):
-    """Source of one plugin file for the UI — what you are asked to approve.
-    (text, error): text is None on a missing/oversized/escaping path. The
-    path is resolved inside the tool's own folder only (no ../, no symlink
-    walk-out), so the viewer cannot become a file browser."""
-    name = _safe_tool_name(name)
-    if not name:
-        return None, "invalid name"
-    folder = os.path.join(PLUGINS_SRC, name)
-    single = os.path.join(PLUGINS_SRC, name + ".py")
-    if os.path.isdir(folder):
-        base = os.path.realpath(folder)
-        target = os.path.realpath(os.path.join(folder, rel or ""))
-    elif os.path.isfile(single) and rel in ("", name + ".py"):
-        base = os.path.realpath(PLUGINS_SRC)
-        target = os.path.realpath(single)
-    else:
-        return None, "not found"
-    if not (target == base or target.startswith(base + os.sep)) or not os.path.isfile(target):
-        return None, "not found"
-    try:
-        if os.path.getsize(target) > PLUGIN_VIEW_MAX:
-            return None, "file too large to display"
-        with open(target, "rb") as fh:
-            return fh.read().decode("utf-8", "replace"), None
-    except OSError as e:
-        return None, repr(e)
 
 
 def plugin_delete(name):
@@ -2735,21 +2724,6 @@ def _rt_instances(h):
 @ROUTER.get("/api/settings", admin=True)
 def _rt_settings(h):
     return json.dumps(settings_for_ui()).encode(), "application/json"
-
-
-@ROUTER.get("/api/plugins/", prefix=True, admin=True)
-def _rt_plugin_file(h):
-    """GET /api/plugins/<name>/file?path=<rel> -> {name, path, text} — the
-    source behind the Approve button. Admin only; guests get the tool as a
-    whole on their config disk anyway, not this route."""
-    p, _, q = h.path.partition("?")
-    parts = p.strip("/").split("/")
-    rel = urllib.parse.parse_qs(q).get("path", [""])[0]
-    if len(parts) != 4 or parts[3] != "file":
-        return json.dumps({"error": "not found"}).encode(), "application/json"
-    text, err = plugin_read(parts[2], rel)
-    out = {"error": err} if err else {"name": parts[2], "path": rel, "text": text}
-    return json.dumps(out, ensure_ascii=False).encode(), "application/json"
 
 
 @ROUTER.get("/api/tasks", admin=True)
