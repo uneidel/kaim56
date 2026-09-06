@@ -82,6 +82,35 @@ and therefore not the LLM. Toggleable live in the table (🌐/🚫). The tool se
 lands as `AGENT_TOOLS` in the config; the agent filters schema and execution.
 `bash` is the master key — to truly lock things down, deselect `bash` as well.
 
+**Delegation** (`DELEGATE_TARGETS` in the instance config): a guest may create
+tasks (`create_task`) only for **itself** or an **ephemeral** VM. Other instances
+must be listed — comma-separated, `*` = all; the `orchestrator` may address
+everything. The same list scopes what `list_agents` shows the guest. Evaluated by
+the manager at request time, so it applies **without** a restart. Without it a
+prompt-injected agent could run its text on any instance — with that instance's
+secrets and MCPs.
+
+## Guest boundary (what a VM may reach)
+A guest is recognized by its **source IP** (`instance_by_ip`); a per-tap
+iptables rule drops packets with any other source, so the IP is a usable
+identity. Guests carry no credentials: `_auth` exempts them, admins need Basic
+auth when `MANAGER_PASS` is set. On the HTTP side:
+
+- **POST** only for the paths in `GUEST_POST_PATHS` / `GUEST_POST_PREFIXES`
+  (403 otherwise).
+- **GET** denied for `/`, `/chat`, `/katfs`, `/katfs/…` and `/i/<name>/…`
+  (`GUEST_GET_DENIED_*`) — the admin UI, the web chat, the katfs browser and the
+  per-instance proxy including the WebSocket terminal.
+- **Scoped reads:** `/api/agents` lists what the guest may delegate to,
+  `/api/history` returns only runs it created or executed, `/api/hitl/<id>`
+  answers only the requesting instance, `/api/inbox` is the orchestrator's alone.
+  Memory, playbooks, missions, usage and audit are pinned to the caller's own
+  instance already.
+
+On the host, `ensure_guest_input_rules()` limits guest→host traffic on the
+`fc+` taps to the manager port (8700) and NFS (2049) plus ICMP and established
+replies — every other host service (sshd, rpcbind, …) is unreachable from a VM.
+
 ## Model selection (tab "Models")
 The tab pulls the **full OpenRouter catalog live** (~400 models, cached for
 10 min, *Refresh catalog* bypasses the cache) and lets you tick the **shortlist**

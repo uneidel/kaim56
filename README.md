@@ -80,6 +80,8 @@ The built-in **Architecture** view (rendered from the running manager):
 - Task-frequency cap and orphaned-run recovery
 - Per-instance egress allowlist and a secret leak-filter on outgoing messages
 - Per-instance tool allowlists and a per-instance audit trail
+- Guest boundary — VMs are identified by source IP (anti-spoof rule per tap), may POST only an allowlist and may not GET the admin UI, chat, katfs or another instance's proxy/terminal; the roster, task history, approval ids and inbox they see are scoped to them
+- Delegation policy — an agent may task only itself, an ephemeral VM, or the instances in its `DELEGATE_TARGETS`; host firewall lets guest traffic reach only the manager port and NFS
 - HTTP surface moving from an if-chain to a routing table where exact paths beat prefixes and every route carries whether a guest VM may call it — enumerable for audits, with a test that guards the remaining chain against shadowed routes
 
 ## Layout
