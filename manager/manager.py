@@ -541,10 +541,16 @@ def inbox_since(peek=False):
 def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
     """Append a turn (question + answer) to the shared chat history so it shows
     up in the app and web. `kind`='signal' -> one conversation per
-    (instance, sender); 'task' -> one task conversation per instance."""
+    (instance, sender); 'task' -> one task conversation per instance;
+    'voice' -> `sender` IS the conversation id (a voice session, see
+    voice_session), titled with its start time so archived sessions are
+    telling apart in the list."""
     if kind == "task":
         cid = f"task-{inst_name}"
         title = f"Tasks · {inst_name}"
+    elif kind == "voice":
+        cid = str(sender)
+        title = f"Voice · {inst_name} · " + time.strftime("%d.%m. %H:%M")
     else:
         sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "signal"))[:20] or "signal"
         cid = f"sig-{inst_name}-{sid}"
@@ -564,6 +570,39 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
         conv["messages"] = conv["messages"][-500:]
         conv["updatedAt"] = now
         return save_chats(chats)
+
+
+# ---- Voice sessions: what a voice client says shows up in the web chat ------
+# /api/chat/<inst> is what the desktop client and self-built devices (ESP32)
+# call. Until now those turns lived only in the VM's own history — invisible
+# on agents.kat56.de. Now every turn is appended to the shared store under a
+# session conversation; "/reset" rotates the session, the old conversation
+# stays as the archive. Web chat turns (numeric ids) are NOT mirrored: the
+# web page stores them itself.
+_voice_sessions = {}          # (instance, source ip) -> session id
+_voice_lock = threading.Lock()
+
+
+def voice_session(inst_name, src, client_id="", reset=False):
+    """Conversation id for a caller of /api/chat/<inst>, or '' when the turn
+    is not a voice turn. A client that sends a 'voice-…' chat id (desktop
+    client) owns the rotation; one without a chat id (ESP) gets a manager-kept
+    session that '/reset' rotates. Any other id belongs to the web chat."""
+    cid = str(client_id or "")
+    if cid:
+        if not cid.startswith("voice-"):
+            return ""
+        return f"voice-{inst_name}-" + re.sub(r"[^a-zA-Z0-9_-]", "", cid[len("voice-"):])[:40]
+    key = (inst_name, src)
+    with _voice_lock:
+        if reset:
+            _voice_sessions.pop(key, None)
+            return ""
+        sid = _voice_sessions.get(key)
+        if not sid:
+            sid = f"voice-{inst_name}-{time.strftime('%Y%m%d-%H%M%S')}"
+            _voice_sessions[key] = sid
+        return sid
 
 
 # ---- Manage tool plugins (drag & drop in the web manager) ------------------
@@ -2879,10 +2918,24 @@ _stt_recent = collections.deque(maxlen=STT_RECENT_MAX)
 _stt_lock = threading.Lock()
 
 
-def stt_remember(text, seconds, src):
+STT_AUDIO_MAX = 5
+_stt_audio = collections.deque(maxlen=STT_AUDIO_MAX)   # (ts, src, content-type, bytes)
+
+
+def stt_remember(text, seconds, src, audio=None, ctype=""):
     with _stt_lock:
         _stt_recent.append({"ts": int(time.time()), "text": str(text or "")[:500],
                             "seconds": seconds, "src": src})
+        if audio:
+            _stt_audio.append((int(time.time()), src, ctype, bytes(audio[:4 * 1024 * 1024])))
+
+
+def stt_audio(i=0):
+    """The i-th most recent STT upload as (ts, src, content-type, bytes) — to
+    LOOK at what a client sends (rate, level, header) when STT hears nothing."""
+    with _stt_lock:
+        items = list(_stt_audio)[::-1]
+        return items[i] if 0 <= i < len(items) else None
 
 
 def stt_recent():
@@ -2893,6 +2946,19 @@ def stt_recent():
 @ROUTER.get("/api/stt-recent", admin=True)
 def _rt_stt_recent(h):
     return json.dumps({"recent": stt_recent()}, ensure_ascii=False).encode(), "application/json"
+
+
+@ROUTER.get("/api/stt-recent/audio", admin=True)
+def _rt_stt_audio(h):
+    q = urllib.parse.parse_qs(h.path.partition("?")[2])
+    try:
+        i = int(q.get("i", ["0"])[0])
+    except ValueError:
+        i = 0
+    item = stt_audio(i)
+    if not item:
+        return json.dumps({"error": "no audio kept"}).encode(), "application/json"
+    return item[3], item[2] or "application/octet-stream"
 
 
 @ROUTER.get("/api/tasks", admin=True)
@@ -3103,7 +3169,10 @@ class H(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
 
+        parts = []      # what the caller actually received (post-gateway)
+
         def emit(tok):
+            parts.append(tok)
             try:
                 self.wfile.write(tok.encode("utf-8"))
                 self.wfile.flush()
@@ -3133,6 +3202,18 @@ class H(BaseHTTPRequestHandler):
         finally:
             if guard:
                 raw_emit(guard.flush())
+        # Mirror voice turns into the shared chat store (see voice_session).
+        try:
+            text = str(msg or "").strip()
+            src = self.client_address[0]
+            if text == "/reset":
+                voice_session(name, src, chat_id or "", reset=True)
+            elif text and not text.startswith("/"):
+                sid = voice_session(name, src, chat_id or "")
+                if sid:
+                    chat_log_append(name, sid, text, "".join(parts).strip(), kind="voice")
+        except Exception as e:
+            print(f"[quiet] voice chat mirror failed: {e!r}", flush=True)
 
     def _term_route(self, name, tail):
         """Route /i/<name>/term[/...] to the guest webterm (:7682). WS-aware."""
@@ -4014,7 +4095,9 @@ class H(BaseHTTPRequestHandler):
                         j = json.loads(data)
                         g = instance_by_ip(self.client_address[0])
                         stt_remember(j.get("text", ""), j.get("seconds"),
-                                     g["name"] if g else self.client_address[0])
+                                     g["name"] if g else self.client_address[0],
+                                     audio=payload,
+                                     ctype=self.headers.get("Content-Type", ""))
                     except (ValueError, TypeError):
                         pass
             except urllib.error.HTTPError as e:

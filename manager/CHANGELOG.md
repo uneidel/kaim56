@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-07 (voice turns live in the web chat, archived on /reset; STT audio kept; [Now] next to the question)
+
+- "Können wir bei agents.kat56.de immer den aktuellen Chat sehen, nur bei Reset archiviert?" — yes, now. Turns through `/api/chat/<inst>` (desktop voice client, the ESP32 client) were only ever in the VM's own history. The manager now mirrors each turn into the shared chat store as a conversation `Voice · <inst> · <start time>` (`voice_session()`): a client that sends a `voice-…` chat id owns the session, a client without one (ESP) gets a manager-kept session per source IP; `/reset` rotates the session, so the old conversation stays as the archive and the next turn opens a new one. Web-chat turns (numeric ids) are not mirrored — the page stores them itself. Slash commands are not mirrored. Proven: two ESP-style turns, `/reset`, one more turn → two conversations in the store, live via the long-poll.
+- `/api/stt-recent/audio?i=N` (admin) returns the N-th most recent STT upload as sent (last 5, memory only) — that is how the ESP32's "Oh"/"Ha" transcripts were diagnosed: a valid 16 kHz/16-bit WAV of 2.1 s whose every sample was −8, i.e. a flat line from the microphone path, not a server problem.
+- The agent's `[Now]` line moved from the top of the context to right before the current message, with an explicit "earlier times in this conversation are outdated": at the top, gemini-flash answered 18:15 questions with "16:37" from an earlier turn although the guest clock was exact. Now it tracks the host clock; when the Home-Assistant `GetDateTime` tool is available the model still prefers it (fine, it is correct), the line is the fallback. 128 tests green.
+
 ## 2026-09-07 (what did STT hear? — /api/stt-recent)
 
 - "Was kommt von STT an?" for a self-built ESP32 voice client could not be answered: the voice service logs no requests and the manager only passes audio through. The manager now keeps the last 50 transcripts from `/api/stt` in memory (time, text, audio seconds, caller = instance name or source IP) and serves them newest-first at `GET /api/stt-recent` (admin-only). Memory only, on purpose — spoken words are not something to persist by accident. Test for the ring and the route. 127 tests green.

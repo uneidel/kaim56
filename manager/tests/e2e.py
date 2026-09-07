@@ -279,11 +279,14 @@ class AgentLogic(unittest.TestCase):
             self.assertTrue(line.startswith("[Now] "))
             self.assertIn("(Europe/Berlin)", line)
             self.assertIn(time.strftime("%Y-%m-%d"), line)   # host and guest tz agree today
-            a._history[:] = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+            a._history[:] = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"},
+                             {"role": "assistant", "content": "Es ist 16:36 Uhr."}]
             a._inject_now(); a._inject_now()
             nows = [m for m in a._history if m["role"] == "system" and m["content"].startswith("[Now]")]
             self.assertEqual(len(nows), 1)
             self.assertEqual(a._history[0]["content"], "sys")
+            self.assertTrue(a._history[-1]["content"].startswith("[Now]"))   # last = next to the question
+            self.assertIn("outdated", a._history[-1]["content"])
             os.environ["TZ"] = "Not/AZone"
             self.assertTrue(a._now_line().startswith("[Now] "))   # falls back, never raises
         finally:
@@ -1580,6 +1583,37 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_voice_turns_show_up_in_the_shared_chat(self):
+        """A voice client's turns land in the shared store as a 'Voice · inst'
+        conversation (live on the web); /reset archives it and the next turn
+        opens a new one. Web-chat ids are left alone."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-voice-")
+        oc, ot = m.CHATS_FILE, m.TOMBSTONES_FILE
+        m.CHATS_FILE, m.TOMBSTONES_FILE = os.path.join(tmp, "chats.json"), os.path.join(tmp, "tombs.json")
+        m._voice_sessions.clear()
+        try:
+            self.assertEqual(m.voice_session("vc", "10.0.0.9", "1757000000000"), "")   # web chat
+            self.assertEqual(m.voice_session("vc", "10.0.0.9", "voice-1757"), "voice-vc-1757")
+            s1 = m.voice_session("vc", "10.0.0.9")            # ESP: manager-kept
+            self.assertTrue(s1.startswith("voice-vc-"))
+            self.assertEqual(m.voice_session("vc", "10.0.0.9"), s1)   # stable
+            m.chat_log_append("vc", s1, "Radio aus", "Radio ist aus.", kind="voice")
+            m.chat_log_append("vc", s1, "Wie spät?", "16:36 Uhr.", kind="voice")
+            m.voice_session("vc", "10.0.0.9", reset=True)
+            time.sleep(1.1)                                     # session ids carry seconds
+            s2 = m.voice_session("vc", "10.0.0.9")
+            self.assertNotEqual(s1, s2)
+            m.chat_log_append("vc", s2, "Hallo", "Hallo!", kind="voice")
+            chats = {c["id"]: c for c in m.load_chats()}
+            self.assertEqual(len(chats[s1]["messages"]), 4)     # archived, intact
+            self.assertEqual(len(chats[s2]["messages"]), 2)
+            self.assertEqual(chats[s1]["instance"], "vc")
+            self.assertTrue(chats[s1]["title"].startswith("Voice · vc · "))
+        finally:
+            m.CHATS_FILE, m.TOMBSTONES_FILE = oc, ot
+            m._voice_sessions.clear()
+
     def test_stt_recent_ring(self):
         """What did STT hear? Newest first, bounded, in memory only."""
         m = self.m
@@ -1593,7 +1627,14 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(len(m.stt_recent()), m.STT_RECENT_MAX)
         by_path = {p: admin for _, _, p, admin in m.ROUTER.inventory()}
         self.assertTrue(by_path["/api/stt-recent"])
-        m._stt_recent.clear()
+        self.assertTrue(by_path["/api/stt-recent/audio"])
+        m._stt_audio.clear()
+        m.stt_remember("a", 1, "x", audio=b"RIFFaaa", ctype="audio/wav")
+        m.stt_remember("b", 1, "x", audio=b"RIFFbbb", ctype="audio/wav")
+        self.assertEqual(m.stt_audio(0)[3], b"RIFFbbb")
+        self.assertEqual(m.stt_audio(1)[3], b"RIFFaaa")
+        self.assertIsNone(m.stt_audio(2))
+        m._stt_recent.clear(); m._stt_audio.clear()
 
     def test_hub_processes_get_the_host_timezone(self):
         """caldav-mcp formats event times in its process TZ — the manager hands

@@ -1969,17 +1969,21 @@ def _now_line():
         now = datetime.datetime.now().astimezone()
         tz = str(now.tzinfo)
     return (f"{NOW_TAG} {now.strftime('%A, %Y-%m-%d %H:%M')} {now.tzname()} ({tz}). "
-            "Use this for 'today', 'this week', dates and times — no tool call needed. "
-            "Tool results may carry UTC timestamps (ISO …Z): convert them to this zone "
-            "before you state a time.")
+            "This is the current time for the message below — earlier times stated "
+            "in this conversation are outdated. Use it for 'today', 'this week', "
+            "dates and times; no tool call needed. Tool results may carry UTC "
+            "timestamps (ISO …Z): convert them to this zone before you state a time.")
 
 
 def _inject_now():
-    """Exactly ONE [Now] system line per turn, refreshed every turn."""
+    """Exactly ONE [Now] system line per turn, refreshed every turn — placed
+    LAST, right before the new user message. At the top of the context
+    gemini-flash kept answering with a time from earlier turns (18:15 asked,
+    '16:37' said); next to the question it is read."""
     _history[:] = [m for m in _history
                    if not (m.get("role") == "system"
                            and str(m.get("content", "")).startswith(NOW_TAG))]
-    _history.insert(1, {"role": "system", "content": _now_line()})
+    _history.append({"role": "system", "content": _now_line()})
 
 
 def _inject_missions():
