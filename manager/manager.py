@@ -10,6 +10,7 @@ library, no extra packages. Instances are stored as JSON under
 instances/<name>.json; the network is derived per instance from 'index':
   host  172.30.<index>.1/30   guest 172.30.<index>.2/30   tap fc<index>
 """
+import collections
 import base64
 import codecs
 import html
@@ -2870,6 +2871,30 @@ def _rt_settings(h):
     return json.dumps(settings_for_ui()).encode(), "application/json"
 
 
+# Last transcripts from /api/stt, in memory only (no file: spoken words are
+# not something to persist by accident). Answers "what did STT hear?" from
+# the web UI/API instead of guessing from the model's reply.
+STT_RECENT_MAX = 50
+_stt_recent = collections.deque(maxlen=STT_RECENT_MAX)
+_stt_lock = threading.Lock()
+
+
+def stt_remember(text, seconds, src):
+    with _stt_lock:
+        _stt_recent.append({"ts": int(time.time()), "text": str(text or "")[:500],
+                            "seconds": seconds, "src": src})
+
+
+def stt_recent():
+    with _stt_lock:
+        return list(_stt_recent)[::-1]        # newest first
+
+
+@ROUTER.get("/api/stt-recent", admin=True)
+def _rt_stt_recent(h):
+    return json.dumps({"recent": stt_recent()}, ensure_ascii=False).encode(), "application/json"
+
+
 @ROUTER.get("/api/tasks", admin=True)
 def _rt_tasks(h):
     return json.dumps(load_tasks()).encode(), "application/json"
@@ -3984,6 +4009,14 @@ class H(BaseHTTPRequestHandler):
                     data = r.read()
                     ct = r.headers.get("Content-Type", "application/json")
                 code = 200
+                if _pp == "/api/stt":
+                    try:
+                        j = json.loads(data)
+                        g = instance_by_ip(self.client_address[0])
+                        stt_remember(j.get("text", ""), j.get("seconds"),
+                                     g["name"] if g else self.client_address[0])
+                    except (ValueError, TypeError):
+                        pass
             except urllib.error.HTTPError as e:
                 data, ct, code = e.read(), "application/json", e.code
             except Exception as e:

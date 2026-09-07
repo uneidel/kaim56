@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-07 (what did STT hear? — /api/stt-recent)
+
+- "Was kommt von STT an?" for a self-built ESP32 voice client could not be answered: the voice service logs no requests and the manager only passes audio through. The manager now keeps the last 50 transcripts from `/api/stt` in memory (time, text, audio seconds, caller = instance name or source IP) and serves them newest-first at `GET /api/stt-recent` (admin-only). Memory only, on purpose — spoken words are not something to persist by accident. Test for the ring and the route. 127 tests green.
+
 ## 2026-09-07 (CalDAV times: the hub process gets the host zone; events come back in local time)
 
 - "Incorrectes Format der Uhrzeit" in the voicecommand chat — and the numbers were wrong, not just the format. Root cause sits in the hub: caldav-mcp's library (ts-caldav) parses `DTSTART;TZID=Europe/Berlin:...T193000` with the PROCESS timezone, and the hub container runs in UTC, so 19:30 Berlin became 19:30Z and was serialized as `17:30:00.000Z`-style ISO; the model then read UTC out loud as local. Checked against the server's own DTSTART lines: Frühstück 09:30, Miltenyi 19:30, Schornsteinfeger 08:00 (all Europe/Berlin), Hannes Kirche whole-day 11.09.

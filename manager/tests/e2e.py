@@ -1580,6 +1580,21 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_stt_recent_ring(self):
+        """What did STT hear? Newest first, bounded, in memory only."""
+        m = self.m
+        m._stt_recent.clear()
+        m.stt_remember("Radio aus", 1.2, "192.168.1.5")
+        m.stt_remember("Wie spät ist es?", 1.8, "192.168.1.5")
+        r = m.stt_recent()
+        self.assertEqual([x["text"] for x in r], ["Wie spät ist es?", "Radio aus"])
+        for i in range(m.STT_RECENT_MAX + 5):
+            m.stt_remember(f"t{i}", 1, "x")
+        self.assertEqual(len(m.stt_recent()), m.STT_RECENT_MAX)
+        by_path = {p: admin for _, _, p, admin in m.ROUTER.inventory()}
+        self.assertTrue(by_path["/api/stt-recent"])
+        m._stt_recent.clear()
+
     def test_hub_processes_get_the_host_timezone(self):
         """caldav-mcp formats event times in its process TZ — the manager hands
         every hub process the host zone; a catalog entry may still override."""
