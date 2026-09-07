@@ -908,11 +908,12 @@ def task_target_sweep():
     return hit
 
 
-def _run_task_now(instance, message):
+def _run_task_now(instance, message, model=None):
     """Run a task — on a named instance (routing to the capability) or in an
-    ephemeral VM (target == 'ephemeral')."""
+    ephemeral VM (target == 'ephemeral'). `model` applies to the ephemeral VM
+    only — a named instance keeps its own configuration."""
     if instance == "ephemeral":
-        return _run_ephemeral(message)
+        return _run_ephemeral(message, (model or "").strip()[:120] or None)
     return _run_named(instance, message)
 
 
@@ -1191,7 +1192,7 @@ def _task_worker():
                 # (bug Aug 20: exception in the follow-up -> outer except ->
                 # the task never fired again and the chat entry was missing).
                 try:
-                    ok, res = _run_task_now(t["instance"], t["message"])
+                    ok, res = _run_task_now(t["instance"], t["message"], t.get("model"))
                 except Exception as e:
                     ok, res = False, f"worker-exception (run): {e!r}"
                     _wlog(f"{t['id']}: {res}")
@@ -4216,6 +4217,7 @@ class H(BaseHTTPRequestHandler):
                 message = str(body.get("message", "")).strip()
                 schedule = str(body.get("schedule", "")).strip()
                 wait = bool(body.get("wait"))
+                model = str(body.get("model") or "").strip()[:120]   # ephemeral only
                 if not message:
                     out = {"error": "message missing"}
                 elif terr:
@@ -4225,11 +4227,11 @@ class H(BaseHTTPRequestHandler):
                                     "(own name, 'ephemeral', or a DELEGATE_TARGETS entry "
                                     "in its config)"}
                 elif wait and not schedule:
-                    ok, res = _run_task_now(target, message)
+                    ok, res = _run_task_now(target, message, model)
                     history_add(target, message, res, ok, origin=inst["name"])
                     out = {"ok": ok, "result": res}
                 else:
-                    t = add_task(target, message, schedule)
+                    t = add_task(target, message, schedule, model=model)
                     out = {"id": t["id"], "status": t["status"], "target": target}
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.end_headers(); self.wfile.write(json.dumps(out, ensure_ascii=False).encode())

@@ -550,46 +550,35 @@ def _llm_headers():
 
 
 def t_spawn_subagent(task, model=None):
-    """Creates a new ephemeral agent instance, delegates the task,
-    returns the result and deletes the instance again afterwards."""
-    base = _manager_base()
-    name = "sub-" + uuid.uuid4().hex[:6]
-    cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
-    if model:
-        cfg["OPENROUTER_MODEL"] = model
+    """Delegate a self-contained subtask to a FRESH ephemeral VM and return its
+    answer. Runs over the manager's task path (create_task target=ephemeral,
+    wait=true) — the manager creates, drives and deletes the VM; the guest
+    never touches the admin routes (which it may not call anyway). `model`
+    picks the subagent's OpenRouter model, default: the template's."""
+    payload = {"message": str(task or "").strip(), "target": "ephemeral",
+               "wait": True, "model": (model or "").strip()}
+    if not payload["message"]:
+        return "⚠️ task missing"
     try:
-        _mgr(base, "/api/create", {"name": name, "template": "openrouter", "config": cfg})
-        _mgr(base, f"/api/instances/{name}/start")
+        body = _mgr(_manager_base(), "/api/task", payload, timeout=630)
+        d = json.loads(body)
     except Exception as e:
-        return f"Subagent start failed: {e!r}"
-    reply = None
-    try:
-        for _ in range(120):  # ~2 min, 1s granularity
-            time.sleep(1)
-            try:
-                body = _mgr(base, f"/i/{name}/api/chat", {"message": task}, timeout=180)
-                try:
-                    reply = json.loads(body).get("reply", body)
-                except ValueError:
-                    reply = body
-                break
-            except Exception:
-                continue
-    finally:
-        try:
-            _mgr(base, f"/api/instances/{name}/stop")
-            _mgr(base, f"/api/instances/{name}/delete")
-        except Exception:
-            pass
-    return reply or "(subagent returned no result)"
+        return f"Subagent failed: {e!r}"
+    if d.get("error"):
+        return f"⚠️ {d['error']}"
+    if "result" in d:
+        return str(d["result"]) or "(subagent returned no result)"
+    return "(subagent returned no result)"
 
 
-def t_create_task(task, target="ephemeral", schedule="", wait=False):
+def t_create_task(task, target="ephemeral", schedule="", wait=False, model=""):
     """Queue a task for execution — on a CAPABLE instance or
     isolated in an ephemeral VM. The manager runs it; the result
-    appears in the shared chat history (app/web)."""
+    appears in the shared chat history (app/web). `model` applies to
+    ephemeral targets only (the VM is created with it)."""
     payload = {"message": task, "target": (target or "ephemeral").strip(),
-               "schedule": (schedule or "").strip(), "wait": bool(wait)}
+               "schedule": (schedule or "").strip(), "wait": bool(wait),
+               "model": (model or "").strip()}
     try:
         body = _mgr(_manager_base(), "/api/task", payload,
                     timeout=630 if wait else 30)
@@ -1057,9 +1046,11 @@ BUILTIN = {
                     "count": {"type": "integer", "description": "results (1-10, default 5)"}},
                    ["query"]),
     "spawn_subagent": (t_spawn_subagent,
-                       "Start an ephemeral subagent (new instance), delegate a subtask, fetch the result; the instance is deleted automatically afterwards. For parallel/self-contained subtasks.",
-                       {"task": {"type": "string", "description": "task for the subagent"},
-                        "model": {"type": "string", "description": "optional OpenRouter model"}}, ["task"]),
+                       "Delegate a self-contained subtask to a fresh ephemeral VM and wait for its answer "
+                       "(the manager creates and deletes the VM). Optionally pick the subagent's model — "
+                       "e.g. a cheap/fast one for grunt work or a strong one for hard reasoning.",
+                       {"task": {"type": "string", "description": "task for the subagent (self-contained: it has no memory of this chat)"},
+                        "model": {"type": "string", "description": "optional OpenRouter model id for the subagent, e.g. google/gemini-2.5-flash"}}, ["task"]),
     "create_task": (t_create_task,
                     "Queue a task — IMPORTANT: choose target by capability. "
                     "If the task needs a specific MCP/token (e.g. Home Assistant), "
@@ -1070,7 +1061,8 @@ BUILTIN = {
                     {"task": {"type": "string", "description": "what should be done"},
                      "target": {"type": "string", "description": "instance name (capable) or 'ephemeral'"},
                      "schedule": {"type": "string", "description": "optional: every Nm|Nh|Nd, daily HH:MM, hourly"},
-                     "wait": {"type": "boolean", "description": "wait for the result (default false)"}}, ["task"]),
+                     "wait": {"type": "boolean", "description": "wait for the result (default false)"},
+                     "model": {"type": "string", "description": "optional OpenRouter model for an ephemeral target"}}, ["task"]),
     "mission_start": (t_mission_start,
                       "Create a multi-stage assignment as a mission (goal + steps). For anything "
                       "that needs several tasks/days — the progress survives restarts.",

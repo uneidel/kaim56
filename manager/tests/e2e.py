@@ -237,6 +237,32 @@ class AgentLogic(unittest.TestCase):
         exec(block, g)
         return g
 
+    def test_spawn_subagent_rides_the_task_path(self):
+        """spawn_subagent no longer calls admin routes (403 for guests since
+        08-14): it posts create_task target=ephemeral, wait=true, with the
+        chosen model, and returns the result text."""
+        a = self.a
+        calls = []
+        old = a._mgr
+        try:
+            a._mgr = lambda base, path, payload, timeout=30: (calls.append((path, payload, timeout)),
+                                                              json.dumps({"ok": True, "result": "42"}))[1]
+            self.assertEqual(a.t_spawn_subagent("count things", model="google/gemini-2.5-flash"), "42")
+            path, payload, timeout = calls[0]
+            self.assertEqual(path, "/api/task")
+            self.assertEqual(payload, {"message": "count things", "target": "ephemeral",
+                                       "wait": True, "model": "google/gemini-2.5-flash"})
+            self.assertGreaterEqual(timeout, 600)
+            a._mgr = lambda *x, **k: json.dumps({"error": "target 'ephemeral' not allowed"})
+            self.assertIn("not allowed", a.t_spawn_subagent("x"))
+            self.assertIn("missing", a.t_spawn_subagent("  "))
+            # create_task forwards the model too
+            calls.clear(); a._mgr = lambda base, path, payload, timeout=30: (calls.append(payload), json.dumps({"id": "1", "status": "pending", "target": "ephemeral"}))[1]
+            a.t_create_task("later", model="m/x")
+            self.assertEqual(calls[0]["model"], "m/x")
+        finally:
+            a._mgr = old
+
     def test_backend_openrouter_default(self):
         g = self._select({})
         self.assertEqual(g["LLM_BACKEND"], "openrouter")
@@ -1498,6 +1524,30 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
+
+    def test_task_model_reaches_the_ephemeral_vm(self):
+        """spawn_subagent/create_task may name a model: it travels through
+        /api/task (wait) and through the queue (worker) into _run_ephemeral;
+        a named instance keeps its own model."""
+        m = self.m
+        import mgr.store as st
+        seen = []
+        old_eph, old_named, old_file = m._run_ephemeral, m._run_named, st.TASKS_FILE
+        try:
+            m._run_ephemeral = lambda msg, model=None: (seen.append(("eph", msg, model)), (True, "r"))[1]
+            m._run_named = lambda inst, msg: (seen.append(("named", inst, msg)), (True, "r"))[1]
+            m._run_task_now("ephemeral", "do", "google/gemini-2.5-flash")
+            m._run_task_now("ephemeral", "do")
+            m._run_task_now("hass", "do", "google/gemini-2.5-flash")
+            self.assertEqual(seen, [("eph", "do", "google/gemini-2.5-flash"), ("eph", "do", None),
+                                    ("named", "hass", "do")])
+            st.TASKS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-taskmodel-"), "tasks.json")
+            t = st.add_task("ephemeral", "queued", "", model=" x/y ")
+            self.assertEqual(st.load_tasks()[0]["model"], "x/y")
+            t2 = st.add_task("ephemeral", "plain", "")
+            self.assertNotIn("model", next(x for x in st.load_tasks() if x["id"] == t2["id"]))
+        finally:
+            m._run_ephemeral, m._run_named, st.TASKS_FILE = old_eph, old_named, old_file
 
     def test_task_target_resolved_and_validated(self):
         """'@orchestrator' (an agent's typo) failed daily with 'instance unknown'

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-07 (spawn_subagent rebuilt on create_task — with model choice)
+
+- "Haben wir eigentlich schon Subagenten?" — yes and no. `create_task` with target `ephemeral` has been the real mechanism all along (120 runs, the manager boots a `task-…` VM, drives it, deletes it). The `spawn_subagent` tool, however, tried to create/start an instance and talk to it through `/i/<name>/` — admin routes that guests cannot call since the 08-14 review, so every call since then came back as a 403 wrapped in a polite string (the audit shows "ok" because the tool never raised).
+- Rebuilt: `spawn_subagent(task, model=)` now posts `create_task` with `target=ephemeral`, `wait=true` and the chosen model, and returns the answer. The manager carries `model` through `/api/task` into `_run_ephemeral` (the VM is created with `OPENROUTER_MODEL` set) — for waited runs directly, for queued ones via a `model` field on the task that the worker hands over; a named instance keeps its own model. `create_task` accepts `model` too. Tests: the agent's payload and error paths, the manager's pass-through for wait/queue/named. Rootfs rebuilt; running instances pick the new tool up at their next restart. 119 tests green.
+
 ## 2026-09-06 (architecture tab: "Fedora voice client" renamed to "Desktop client")
 
 - The client is not tied to Fedora — one static Go binary for any Linux desktop — so the SVG box and the component card now say **Desktop client** (card: "Desktop client (voice)"). Text only, no behaviour change.

@@ -192,12 +192,14 @@ def with_tasks(mutator):
         return result
 
 
-def add_task(instance, message, schedule=""):
+def add_task(instance, message, schedule="", model=""):
     schedule = (schedule or "").strip()
     t = {"id": uuid.uuid4().hex[:12], "instance": instance, "message": message,
          "schedule": schedule, "status": "scheduled" if schedule else "pending",
          "result": "", "created": int(time.time()), "updated": int(time.time()),
          "next_run": _next_run(schedule, int(time.time())) if schedule else int(time.time())}
+    if (model or "").strip():
+        t["model"] = str(model).strip()[:120]      # ephemeral target: VM created with it
 
     def mut(tasks):
         tasks.append(t)
