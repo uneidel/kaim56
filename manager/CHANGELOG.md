@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-07 (voicecommand: "unknown tool: mrmusic_power" — tolerant MCP names, /tools, rebuild smoke test)
+
+- "Radio einschalten" failed twice at 08:23: gemini-2.5-flash called `mrmusic_power` instead of the registered `mrmusic__mrmusic_power` and the agent answered `unknown tool`. Nothing in memory, chats, skills or playbooks carried the short name — the model simply dropped the server prefix. Unrelated to the morning's rebuild (the only agent change was spawn_subagent), but the class is real: a model may shorten a tool name at any time.
+- Agent: `_resolve_tool_name()` accepts a bare name when it matches exactly ONE registered MCP tool (logged as "resolved to"); two candidates stay unknown, built-ins are untouched. New `/tools` command answers with the registry as the model sees it — built-ins enabled here plus every MCP tool with its full name — without a model call.
+- "Wie können wir solche Regressionsprobleme vermeiden?" — with a smoke test that needs no model: `LiveAgent.test_tools_registry_after_rebuild` sends `/tools` to every openrouter instance that was started AFTER the current rootfs image was built (pid file newer than the image) and asserts built-ins plus each assigned MCP with its `server__` prefix; instances still on an older image are skipped, because a stale agent would route `/tools` through the model (cost, no signal). Rootfs rebuilt, voicecommand restarted: the live test ran against it and passed, `/tools` lists 108 tools, and "Radio einschalten" switched the radio on through `mrmusic__mrmusic_power`. 121 tests green.
+
 ## 2026-09-07 (spawn_subagent rebuilt on create_task — with model choice)
 
 - "Haben wir eigentlich schon Subagenten?" — yes and no. `create_task` with target `ephemeral` has been the real mechanism all along (120 runs, the manager boots a `task-…` VM, drives it, deletes it). The `spawn_subagent` tool, however, tried to create/start an instance and talk to it through `/i/<name>/` — admin routes that guests cannot call since the 08-14 review, so every call since then came back as a 403 wrapped in a polite string (the audit shows "ok" because the tool never raised).

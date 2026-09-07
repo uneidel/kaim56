@@ -1444,7 +1444,37 @@ def _looks_failed(out):
     return t.startswith(_ERR_PREFIXES) or "web search unavailable" in t[:120]
 
 
+def _resolve_tool_name(name):
+    """Models drop the MCP prefix now and then — 'mrmusic_power' for
+    'mrmusic__mrmusic_power' (gemini-2.5-flash, 2026-09-07, 'unknown tool'
+    twice while the user waited for the radio). A bare name that matches
+    exactly ONE registered MCP tool is accepted; ambiguity stays unknown."""
+    if name in BUILTIN or name in _mcp_tools:
+        return name
+    hits = [fq for fq, (_srv, tool) in _mcp_tools.items()
+            if tool == name or fq.endswith("__" + name)]
+    if len(hits) == 1:
+        log(f"tool name '{name}' resolved to '{hits[0]}'")
+        return hits[0]
+    return name
+
+
+def _tools_report():
+    """'/tools' — the registry as the model sees it, without a model call.
+    Built-in tools that are enabled here, then every MCP tool with its full
+    name. A smoke test after a rootfs rebuild reads exactly this."""
+    builtin = sorted(n for n in BUILTIN if tool_enabled(n))
+    mcp = sorted(_mcp_tools)
+    out = [f"built-in ({len(builtin)}): " + ", ".join(builtin)]
+    if mcp:
+        out.append(f"mcp ({len(mcp)}): " + ", ".join(mcp))
+    else:
+        out.append("mcp (0): none registered")
+    return "\n".join(out)
+
+
 def exec_tool(name, args):
+    name = _resolve_tool_name(name)
     # Hook/intervention: denylist + optional HITL approval BEFORE execution.
     allow, reason = _hook_before_tool(name, args)
     if not allow:
@@ -1893,7 +1923,7 @@ def _inject_playbooks():
 # Expansion happens HERE in the agent — so it works in web, app and
 # Signal alike. "/daily please keep it short" -> template text + " please keep it short".
 _BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps",
-                  "/aside", "/branch", "/back")
+                  "/aside", "/branch", "/back", "/tools")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
 
@@ -2133,6 +2163,8 @@ def run(user_message):
         return _set_reasoning(user_message)
     if user_message.startswith("/goal"):
         return _set_goal(user_message)
+    if user_message.strip() == "/tools":
+        return _tools_report()
     if user_message.startswith("/model"):
         return _set_model(user_message)
     if user_message.startswith("/steps"):
@@ -2317,6 +2349,9 @@ def run_stream(user_message, on_token, image=None):
         return
     if user_message.startswith("/goal"):
         on_token(_set_goal(user_message))
+        return
+    if user_message.strip() == "/tools":
+        on_token(_tools_report())
         return
     if user_message.startswith("/model"):
         on_token(_set_model(user_message))

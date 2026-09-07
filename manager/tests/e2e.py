@@ -237,6 +237,37 @@ class AgentLogic(unittest.TestCase):
         exec(block, g)
         return g
 
+    def test_bare_mcp_tool_name_resolves_when_unique(self):
+        """gemini dropped the 'mrmusic__' prefix and got 'unknown tool'. A bare
+        name resolves when exactly one MCP tool matches; two candidates stay
+        unknown; built-ins are untouched. /tools lists the registry."""
+        a = self.a
+        class Srv:
+            def __init__(self): self.calls = []
+            def call(self, tool, args): self.calls.append((tool, args)); return "ON"
+        old_tools, old_mcp, old_audit = dict(a._mcp_tools), dict(a._mcp), a.audit
+        try:
+            a.audit = lambda *x, **k: None
+            srv = Srv()
+            a._mcp_tools.clear(); a._mcp.clear()
+            a._mcp_tools["mrmusic__mrmusic_power"] = ("mrmusic", "mrmusic_power")
+            a._mcp["mrmusic"] = srv
+            self.assertEqual(a._resolve_tool_name("mrmusic_power"), "mrmusic__mrmusic_power")
+            self.assertEqual(a._resolve_tool_name("mrmusic__mrmusic_power"), "mrmusic__mrmusic_power")
+            self.assertEqual(a._resolve_tool_name("bash"), "bash")
+            self.assertEqual(a.exec_tool("mrmusic_power", {"on": True}), "ON")
+            self.assertEqual(srv.calls, [("mrmusic_power", {"on": True})])
+            a._mcp_tools["other__mrmusic_power"] = ("other", "mrmusic_power")
+            self.assertEqual(a._resolve_tool_name("mrmusic_power"), "mrmusic_power")   # ambiguous
+            self.assertIn("unknown tool", a.exec_tool("mrmusic_power", {}))
+            rep = a._tools_report()
+            self.assertIn("mcp (2): mrmusic__mrmusic_power, other__mrmusic_power", rep)
+            self.assertIn("built-in (", rep)
+        finally:
+            a._mcp_tools.clear(); a._mcp_tools.update(old_tools)
+            a._mcp.clear(); a._mcp.update(old_mcp)
+            a.audit = old_audit
+
     def test_spawn_subagent_rides_the_task_path(self):
         """spawn_subagent no longer calls admin routes (403 for guests since
         08-14): it posts create_task target=ephemeral, wait=true, with the
@@ -2277,6 +2308,33 @@ class LiveAgent(unittest.TestCase):
                         {"message": "/goal show"}, timeout=30)
         self.assertEqual(st, 200)
         self.assertIn("goal", self._reply(txt))
+
+    def test_tools_registry_after_rebuild(self):
+        """Smoke test for a rootfs rebuild, no model call: '/tools' on an
+        instance that was STARTED AFTER the current image was built must list
+        its built-ins and every assigned MCP with the full 'server__tool'
+        name. Instances still on an older image are skipped — a stale one
+        would answer through the model (cost, no signal)."""
+        img = os.path.join(FC_DIR, "instances", "openrouter-rootfs.ext4")
+        if not os.path.exists(img):
+            self.skipTest("no openrouter rootfs here")
+        built = os.path.getmtime(img)
+        st, txt = _http("/api/agents")
+        fresh = []
+        for a in json.loads(txt).get("agents", []):
+            pf = os.path.join(FC_DIR, "run", a["name"] + ".pid")
+            if a.get("running") and a.get("template") == "openrouter" \
+                    and os.path.exists(pf) and os.path.getmtime(pf) > built:
+                fresh.append(a)
+        if not fresh:
+            self.skipTest("no openrouter instance started on the current image")
+        for a in fresh[:2]:
+            st, txt = _http(f"/i/{a['name']}/api/chat", "POST", {"message": "/tools"}, timeout=30)
+            self.assertEqual(st, 200)
+            rep = self._reply(txt)
+            self.assertIn("built-in (", rep, a["name"])
+            for mcp in a.get("mcps", []):
+                self.assertIn(mcp + "__", rep, f"{a['name']}: MCP '{mcp}' not registered")
 
     def test_reasoning_command_roundtrip(self):
         st, txt = _http("/i/orchestrator/api/chat", "POST",
