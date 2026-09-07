@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-07 (stale instances visible + restartable; rebuild push; build --smoke)
+
+- Recommendation from the voicecommand incident, implemented: the manager now knows when a running VM sits on an OLD base image. `image_state()` compares the VM's start (pid file) with the image's build time; `/api/instances` carries `stale`, the Instances tab shows **"● running · old image"** (tooltip: started/rebuilt times) with a **"Restart on new image"** button, and a new `restart` action (stop + start) backs it. The idle worker runs `image_sweep()` every cycle (one stat per image): when an image was rebuilt it pushes ONCE "Rootfs rebuilt: N instance(s) on the old image" naming them, link to Instances — quiet at manager start and when nobody is affected.
+- `build-openrouter-rootfs.sh --smoke <instance>` restarts that instance after the build and runs the model-free `/tools` registry test against it, so a broken image fails right there. Not automatic for all instances on purpose: a restart cuts a running mission, that decision stays with the operator.
+- Applied live: after the manager restart the API flagged jobresearcher, myassistant, orchestrator and uncensored as stale (claudy runs the claude image, voicecommand was fresh); all four restarted one by one through the new action, no flags left, the live smoke test passed against the fresh instances. Test covers stale detection (running/off/private image), the once-per-rebuild push and its silence otherwise. 122 tests green.
+
 ## 2026-09-07 (voicecommand: "unknown tool: mrmusic_power" — tolerant MCP names, /tools, rebuild smoke test)
 
 - "Radio einschalten" failed twice at 08:23: gemini-2.5-flash called `mrmusic_power` instead of the registered `mrmusic__mrmusic_power` and the agent answered `unknown tool`. Nothing in memory, chats, skills or playbooks carried the short name — the model simply dropped the server prefix. Unrelated to the morning's rebuild (the only agent change was spawn_subagent), but the class is real: a model may shorten a tool name at any time.

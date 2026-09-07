@@ -1270,6 +1270,10 @@ def _task_worker():
                     task_target_sweep()
                 except Exception as e:
                     _wlog(f"task-target-sweep failed: {e!r}")
+            try:
+                image_sweep()          # one stat per base image, every idle cycle
+            except Exception as e:
+                _wlog(f"image-sweep failed: {e!r}")
 
 
 def load_templates():
@@ -1961,6 +1965,53 @@ def make_config_disk(inst):
 # inst["persist_disk"]=true the write layer (installations!) survives a
 # stop/start. Other images run unchanged via private_rootfs().
 OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/claude-rootfs.ext4"}
+
+
+def image_state(inst):
+    """(stale, built, started): stale when a RUNNING VM on a shared base image
+    was started before that image was last rebuilt — it still runs the old
+    agent and will until stop/start. spawn_subagent was dead for three weeks
+    and a tool fix missed the voice instance this way; nobody could see it."""
+    if inst.get("rootfs") not in OVERLAY_ROOTFS or not is_running(inst):
+        return False, 0, 0
+    try:
+        built = os.path.getmtime(os.path.join(BASE, inst["rootfs"]))
+        started = os.path.getmtime(pidfile(inst))
+    except OSError:
+        return False, 0, 0
+    return started < built, built, started
+
+
+def stale_instances():
+    return [i["name"] for i in load_instances() if image_state(i)[0]]
+
+
+_img_seen = {}      # rootfs path -> mtime last seen (filled at startup: no push for old news)
+
+
+def image_sweep():
+    """Idle worker: when a base image was rebuilt, push ONCE which running
+    instances still sit on the old one. Stays quiet if nobody is affected."""
+    hit = []
+    for rel in sorted(OVERLAY_ROOTFS):
+        try:
+            mt = os.path.getmtime(os.path.join(BASE, rel))
+        except OSError:
+            continue
+        if rel in _img_seen and mt > _img_seen[rel]:
+            hit.append(rel)
+        _img_seen[rel] = mt
+    if not hit:
+        return []
+    old = stale_instances()
+    if old:
+        try:
+            notify_add("rebuild", f"Rootfs rebuilt: {len(old)} instance(s) on the old image",
+                       ", ".join(old) + " — restart them to pick up the new agent.",
+                       link="instances")
+        except Exception as e:
+            _wlog(f"image-sweep notify: {e!r}")
+    return old
 UPPER_SIZE_MB = 1024          # throwaway layer per start
 UPPER_PERSIST_SIZE_MB = 4096  # persistent layer (apt/pip need room); sparse
 
@@ -2525,8 +2576,15 @@ def render():
                 f" · {_fmt_cost(ud.get('cost'))}"
                 f" &nbsp;·&nbsp; total {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
                 f" · {_fmt_cost(ut['cost'])}</span>")
-        st = ("<span class='tag tag-accent'>● running</span>" if run
-              else "<span class='tag tag-neutral'>○ off</span>")
+        stale, built, started = image_state(inst)
+        if run and stale:
+            st = ("<span class='tag' style='background:#c0392b;color:#fff' title='started "
+                  + time.strftime("%d.%m. %H:%M", time.localtime(started))
+                  + ", image rebuilt " + time.strftime("%d.%m. %H:%M", time.localtime(built))
+                  + " — still runs the OLD agent until restarted'>● running · old image</span>")
+        else:
+            st = ("<span class='tag tag-accent'>● running</span>" if run
+                  else "<span class='tag tag-neutral'>○ off</span>")
         net = inst.get("internet", True)
         tools_cfg = (inst.get("config") or {}).get("AGENT_TOOLS", "")
         ntag = (f"<button class='tag {'tag-accent' if net else 'tag-neutral'}' "
@@ -2555,6 +2613,9 @@ def render():
         btn += (f"<button class=\"btn {'btn-secondary' if run else 'btn-primary'} btn-sm\""
                 f" style=\"min-width:64px\" onclick=\"act('{name}','{'stop' if run else 'start'}')\">"
                 f"{'Stop' if run else 'Start'}</button>")
+        if run and stale:
+            btn += (f"<button class=\"btn btn-primary btn-sm\" title=\"Stop + start on the current image\""
+                    f" onclick=\"act('{name}','restart')\">Restart on new image</button>")
         btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px\""
                 f" title=\"Audit / activity (tools & URLs called)\""
                 f" onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>")
@@ -2778,7 +2839,8 @@ ROUTER = Router()
 
 @ROUTER.get("/api/instances", admin=True)
 def _rt_instances(h):
-    return (json.dumps([{**i, "running": is_running(i)} for i in load_instances()]).encode(),
+    return (json.dumps([{**i, "running": is_running(i), "stale": image_state(i)[0]}
+                        for i in load_instances()]).encode(),
             "application/json")
 
 
@@ -4474,7 +4536,11 @@ class H(BaseHTTPRequestHandler):
                 else:
                     inst = next((i for i in load_instances() if i["name"] == name), None)
                     if inst:
-                        msg = start(inst) if action == "start" else stop(inst) if action == "stop" else "??"
+                        if action == "restart":       # stop/start: picks up a rebuilt image
+                            stop(inst)
+                            msg = start(inst)
+                        else:
+                            msg = start(inst) if action == "start" else stop(inst) if action == "stop" else "??"
         except Exception as e:
             msg = f"error: {e!r}"
         self.send_response(200)

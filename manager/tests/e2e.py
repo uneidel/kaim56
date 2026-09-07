@@ -1556,6 +1556,42 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_stale_image_detection_and_rebuild_push(self):
+        """A running VM started before its base image was rebuilt is 'stale':
+        the API says so, and the idle sweep pushes once per rebuild, naming
+        the affected instances — silent when nothing is affected."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-stale-")
+        os.makedirs(os.path.join(tmp, "instances")); os.makedirs(os.path.join(tmp, "run"))
+        img = os.path.join(tmp, "instances", "openrouter-rootfs.ext4")
+        old = m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add, dict(m._img_seen)
+        pushes = []
+        try:
+            m.BASE, m.RUN_DIR = tmp, os.path.join(tmp, "run")
+            m.is_running = lambda i: i["name"] != "off"
+            insts = [{"name": "old", "rootfs": "instances/openrouter-rootfs.ext4"},
+                     {"name": "fresh", "rootfs": "instances/openrouter-rootfs.ext4"},
+                     {"name": "off", "rootfs": "instances/openrouter-rootfs.ext4"},
+                     {"name": "priv", "rootfs": "instances/priv.ext4"}]
+            m.load_instances = lambda: insts
+            m.notify_add = lambda *a, **k: pushes.append(a)
+            for n, ts in (("old", 1000), ("fresh", 3000), ("off", 1000), ("priv", 1000)):
+                pf = os.path.join(tmp, "run", n + ".pid"); open(pf, "w").write("1"); os.utime(pf, (ts, ts))
+            open(img, "w").write("x"); os.utime(img, (2000, 2000))
+            self.assertEqual([m.image_state(i)[0] for i in insts], [True, False, False, False])
+            self.assertEqual(m.stale_instances(), ["old"])
+            m._img_seen.clear()
+            self.assertEqual(m.image_sweep(), [])           # first sight: baseline, no push
+            self.assertEqual(m.image_sweep(), [])           # unchanged: quiet
+            os.utime(img, (4000, 4000))                      # rebuilt -> both VMs older now
+            self.assertEqual(m.image_sweep(), ["old", "fresh"])
+            self.assertEqual(len(pushes), 1)
+            self.assertIn("old, fresh", pushes[0][2])
+            self.assertEqual(m.image_sweep(), [])           # once per rebuild
+        finally:
+            m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add = old[:5]
+            m._img_seen.clear(); m._img_seen.update(old[5])
+
     def test_task_model_reaches_the_ephemeral_vm(self):
         """spawn_subagent/create_task may name a model: it travels through
         /api/task (wait) and through the queue (worker) into _run_ephemeral;
