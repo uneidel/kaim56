@@ -268,6 +268,30 @@ class AgentLogic(unittest.TestCase):
             a._mcp.clear(); a._mcp.update(old_mcp)
             a.audit = old_audit
 
+    def test_now_line_gives_the_model_a_clock(self):
+        """Every turn carries exactly one [Now] system line in the instance's
+        timezone; a second injection replaces, never duplicates."""
+        a = self.a
+        old_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "Europe/Berlin"
+            line = a._now_line()
+            self.assertTrue(line.startswith("[Now] "))
+            self.assertIn("(Europe/Berlin)", line)
+            self.assertIn(time.strftime("%Y-%m-%d"), line)   # host and guest tz agree today
+            a._history[:] = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+            a._inject_now(); a._inject_now()
+            nows = [m for m in a._history if m["role"] == "system" and m["content"].startswith("[Now]")]
+            self.assertEqual(len(nows), 1)
+            self.assertEqual(a._history[0]["content"], "sys")
+            os.environ["TZ"] = "Not/AZone"
+            self.assertTrue(a._now_line().startswith("[Now] "))   # falls back, never raises
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+
     def test_spawn_subagent_rides_the_task_path(self):
         """spawn_subagent no longer calls admin routes (403 for guests since
         08-14): it posts create_task target=ephemeral, wait=true, with the
@@ -1605,6 +1629,12 @@ class ManagerFunctions(unittest.TestCase):
             m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add = old[:5]
             m._img_seen.clear(); m._img_seen.update(old[5])
 
+    def test_guest_config_carries_host_timezone(self):
+        """Guests boot in UTC; the manager hands them the host's zone name."""
+        m = self.m
+        self.assertTrue(m.HOST_TZ)
+        self.assertEqual(m.HOST_TZ, os.environ.get("GUEST_TZ") or m._host_tz())
+
     def test_task_model_reaches_the_ephemeral_vm(self):
         """spawn_subagent/create_task may name a model: it travels through
         /api/task (wait) and through the queue (worker) into _run_ephemeral;
@@ -2378,8 +2408,14 @@ class LiveAgent(unittest.TestCase):
         if not fresh:
             self.skipTest("no openrouter instance started on the current image")
         for a in fresh[:2]:
-            st, txt = _http(f"/i/{a['name']}/api/chat", "POST", {"message": "/tools"}, timeout=30)
-            self.assertEqual(st, 200)
+            # A freshly (re)started VM answers 502/503 through the proxy until
+            # the agent bridge is up (MCP init takes ~20 s) — wait, don't fail.
+            for _ in range(40):
+                st, txt = _http(f"/i/{a['name']}/api/chat", "POST", {"message": "/tools"}, timeout=30)
+                if st == 200:
+                    break
+                time.sleep(3)
+            self.assertEqual(st, 200, f"{a['name']}: bridge not up after 120 s ({txt[:80]})")
             rep = self._reply(txt)
             self.assertIn("built-in (", rep, a["name"])
             for mcp in a.get("mcps", []):

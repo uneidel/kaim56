@@ -16,6 +16,7 @@ import socket
 import subprocess
 import threading
 import time
+import datetime
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -1952,6 +1953,33 @@ def _expand_prompt(message):
 MISSION_TAG = "[Missions]"
 
 
+NOW_TAG = "[Now]"
+
+
+def _now_line():
+    """Current date and time in the instance's timezone (TZ from config.env,
+    set by the manager from the host). The model had no clock at all: asked
+    about 'this week' it fetched the date through a Home-Assistant tool and
+    gave up when that call failed (2026-09-07)."""
+    tz = os.environ.get("TZ") or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.datetime.now(ZoneInfo(tz))
+    except Exception:
+        now = datetime.datetime.now().astimezone()
+        tz = str(now.tzinfo)
+    return (f"{NOW_TAG} {now.strftime('%A, %Y-%m-%d %H:%M')} {now.tzname()} ({tz}). "
+            "Use this for 'today', 'this week', dates and times — no tool call needed.")
+
+
+def _inject_now():
+    """Exactly ONE [Now] system line per turn, refreshed every turn."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(NOW_TAG))]
+    _history.insert(1, {"role": "system", "content": _now_line()})
+
+
 def _inject_missions():
     """Surface active missions compactly each turn — this way the work state
     survives /reset and restart. For every agent: the manager returns only the
@@ -2179,11 +2207,14 @@ def run(user_message):
     # orchestrator heartbeat: look, delegate, discard.
     if user_message.startswith("/fresh"):
         m = user_message[len("/fresh"):].strip()
-        hist = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": m}]
+        hist = [{"role": "system", "content": SYSTEM},
+                {"role": "system", "content": _now_line()},
+                {"role": "user", "content": m}]
         return _tool_loop(hist)
     _trim_history()
     _inject_playbooks()
     _inject_missions()
+    _inject_now()
     _recall(user_message)
     _history.append({"role": "user", "content": user_message})
     _busy[0] = True
@@ -2375,6 +2406,7 @@ def run_stream(user_message, on_token, image=None):
     _trim_history()
     _inject_playbooks()
     _inject_missions()
+    _inject_now()
     _recall(user_message)
     if image:
         content = [

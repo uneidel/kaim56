@@ -187,6 +187,25 @@ def _pick_hostif():
 
 HOSTIF = _pick_hostif()
 LISTEN = ("0.0.0.0", int(os.environ.get("PORT", "8700")))
+def _host_tz():
+    """The host's timezone name for the guests (they boot in UTC otherwise):
+    /etc/timezone, else the /etc/localtime symlink, else UTC."""
+    try:
+        t = open("/etc/timezone").read().strip()
+        if t:
+            return t
+    except OSError:
+        pass
+    try:
+        p = os.path.realpath("/etc/localtime")
+        if "/zoneinfo/" in p:
+            return p.split("/zoneinfo/", 1)[1]
+    except OSError:
+        pass
+    return "UTC"
+
+
+HOST_TZ = os.environ.get("GUEST_TZ") or _host_tz()
 USER = os.environ.get("MANAGER_USER", "admin")
 PW = os.environ.get("MANAGER_PASS", "")   # empty => no auth (only behind Traefik!)
 
@@ -1923,6 +1942,7 @@ def make_config_disk(inst):
     # claude/fabric are found (guest-init sources the config disk).
     cfg.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
     cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
+    cfg.setdefault("TZ", HOST_TZ)        # the agent's clock: [Now] line per turn
     if inst["name"] == ORCH_INSTANCE:   # only the orchestrator may manage tasks
         cfg["TASK_ADMIN"] = "1"
     # Key injection proxy active? Then the agent sends chat requests to the
