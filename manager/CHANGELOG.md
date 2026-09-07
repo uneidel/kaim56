@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-07 (Policy tab: assign MCP servers to an existing instance)
+
+- "There is no way to add an MCP to an existing instance" — true: the Policy tab only DISPLAYED the assigned servers, the only path was the raw config route (and my own instructions the day before pointed at a checkbox that did not exist). Now the MCP row of every instance card lists the catalog as checkboxes; **Save MCP** writes `MCP_SERVERS` through `/api/instances/<name>/config`, and because the config applies at the next start, the reply offers **Restart now** (the new restart action) right there. Each server shows the `${SECRET}` placeholders it needs — 🔑 when released for this instance, ⚠️ when not (release in the Secrets tab; otherwise the placeholder survives into the config and the agent reports it as unresolved).
+- Server side the route now refuses names that are not in the catalog (`mcp_servers_error()`), instead of letting a typo surface as 'MCP start failed' in the guest log at the next boot. Test for the validation; the page passes the JS gate. 123 tests green.
+
 ## 2026-09-07 (stale instances visible + restartable; rebuild push; build --smoke)
 
 - Recommendation from the voicecommand incident, implemented: the manager now knows when a running VM sits on an OLD base image. `image_state()` compares the VM's start (pid file) with the image's build time; `/api/instances` carries `stale`, the Instances tab shows **"● running · old image"** (tooltip: started/rebuilt times) with a **"Restart on new image"** button, and a new `restart` action (stop + start) backs it. The idle worker runs `image_sweep()` every cycle (one stat per image): when an image was rebuilt it pushes ONCE "Rootfs rebuilt: N instance(s) on the old image" naming them, link to Instances — quiet at manager start and when nobody is affected.

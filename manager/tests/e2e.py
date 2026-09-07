@@ -1556,6 +1556,19 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_mcp_servers_validated_against_catalog(self):
+        """The Policy tab assigns MCPs through the config route: names must
+        exist in the catalog, spaces are tolerated, empty means none."""
+        m = self.m
+        old = m.load_mcps
+        try:
+            m.load_mcps = lambda: [{"name": "homeassistant"}, {"name": "caldav"}]
+            self.assertEqual(m.mcp_servers_error("homeassistant, caldav"), "")
+            self.assertEqual(m.mcp_servers_error(""), "")
+            self.assertIn("calendar", m.mcp_servers_error("caldav,calendar"))
+        finally:
+            m.load_mcps = old
+
     def test_stale_image_detection_and_rebuild_push(self):
         """A running VM started before its base image was rebuilt is 'stale':
         the API says so, and the idle sweep pushes once per rebuild, naming

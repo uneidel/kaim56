@@ -81,7 +81,7 @@ let POL_TOOLS=[];
 let POL_DIRTY=new Set();   // instances with not-yet-saved tool changes
 document.addEventListener('DOMContentLoaded',()=>{
   const pc=document.getElementById('policycards');
-  if(pc)pc.addEventListener('change',e=>{const pt=e.target&&e.target.dataset&&e.target.dataset.pt;if(pt)POL_DIRTY.add(pt);});
+  if(pc)pc.addEventListener('change',e=>{const ds=e.target&&e.target.dataset;const pt=ds&&(ds.pt||ds.pm);if(pt)POL_DIRTY.add(pt);});
 });
 async function loadPolicy(auto){
   if(auto&&POL_DIRTY.size)return;   // do not overwrite unsaved checkboxes
@@ -89,6 +89,7 @@ async function loadPolicy(auto){
   try{
     pol=await (await fetch('/api/policy')).json();
     if(!POL_TOOLS.length)POL_TOOLS=(await (await fetch('/api/agent-tools')).json()).tools||[];
+    if(!MCPS.length){try{MCPS=await (await fetch('/api/mcps')).json();}catch(e){}}
   }catch(e){document.getElementById('policycards').innerHTML='<span class=text-muted>not reachable</span>';return;}
   const tag=(on,y,n)=>`<span class="tag ${on?'tag-accent':'tag-neutral'}">${on?y:n}</span>`;
   document.getElementById('policycards').innerHTML=(pol.instances||[]).map(p=>{
@@ -97,7 +98,17 @@ async function loadPolicy(auto){
       `<label class=radio style="font-size:12.5px"><input type=checkbox data-pt="${esc(p.name)}" value="${esc(t.name)}" ${p.tools_all||toolset.has(t.name)?'checked':''}>`+
       `<span class=dot></span><span class=mono style="font-size:11.5px" title="${esc(t.desc)}">${escT(t.name)}</span></label>`).join('');
     const secrets=(p.secrets||[]).map(s=>`<span class="tag tag-neutral" style="font-size:11px">${escT(s)}</span>`).join(' ')||'<span class=text-muted style="font-size:12px">none</span>';
-    const mcps=(p.mcps||[]).map(s=>`<span class="tag tag-accent" style="font-size:11px">${escT(s)}</span>`).join(' ')||'<span class=text-muted style="font-size:12px">none</span>';
+    /* MCP: assign from the catalog right here. A server that needs ${SECRET}
+       placeholders shows them — released ones as a key, missing ones as a
+       warning (release them in the Secrets tab, or the config stays a
+       placeholder and the agent reports it as unresolved). */
+    const assigned=new Set(p.mcps||[]), rel=new Set(p.secrets||[]);
+    const mcps=(MCPS||[]).map(m=>{
+      const need=[...new Set(JSON.stringify(m).split('${').slice(1).map(s=>s.split('}')[0]))];
+      const hint=need.length?` <span class=text-muted style="font-size:11px" title="secrets this server needs — released in the Secrets tab?">${need.map(k=>(rel.has(k)?'🔑 ':'⚠️ ')+escT(k)).join(' ')}</span>`:'';
+      return `<label class=radio style="font-size:12.5px"><input type=checkbox data-pm="${esc(p.name)}" value="${esc(m.name)}" ${assigned.has(m.name)?'checked':''}>`+
+        `<span class=dot></span><span class=mono style="font-size:11.5px" title="${esc(m.description||'')}">${escT(m.name)}</span>${hint}</label>`;
+    }).join('')||'<span class=text-muted style="font-size:12px">catalog empty — add servers in the MCP tab</span>';
     return `<div class="card blueprint" style="padding:16px">${CORNERS}`+
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">`+
         `<span class=card-title style="font-size:17px">${escT(p.name)}</span>`+
@@ -109,7 +120,8 @@ async function loadPolicy(auto){
         `</span></div>`+
       (p.model?`<div class=kv><b>Model</b><span class=mono style="font-size:12px">${escT(p.model)}</span></div>`:'')+
       `<div class=kv><b>Secrets</b><span>${secrets}</span></div>`+
-      `<div class=kv><b>MCP</b><span>${mcps}</span></div>`+
+      `<div class=kv><b>MCP</b><span style="display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center">${mcps}`+
+        `<button class="btn btn-primary btn-sm" onclick="savePolMcps('${esc(p.name)}')">Save MCP</button><span class=msg data-mmsg="${esc(p.name)}"></span></span></div>`+
       (p.katfs_share?`<div class=kv><b>katfs</b><span class=mono style="font-size:12px">${escT(p.katfs_share)}</span></div>`:'')+
       `<div style="margin-top:8px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">`+
         `<b style="font-family:var(--font-heading);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Tools</b>`+
@@ -132,6 +144,17 @@ function savePolTools(name){
       if(ok){POL_DIRTY.delete(name); if(el)el.textContent=(d.msg||'saved')+' ✓';}
       else if(el)el.textContent='⚠️ '+(d.msg||('HTTP '+r.status));
     }).catch(e=>{const el=document.querySelector(`[data-tmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
+}
+function savePolMcps(name){
+  const list=[...document.querySelectorAll(`input[data-pm="${CSS.escape(name)}"]:checked`)].map(c=>c.value);
+  fetch(`/api/instances/${name}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:'MCP_SERVERS',value:list.join(',')})}).then(async r=>{
+      let d={}; try{d=await r.json()}catch(e){}
+      const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`); if(!el)return;
+      const m=d.msg||('HTTP '+r.status), bad=!r.ok||/error/.test(m);
+      if(!bad)POL_DIRTY.delete(name);
+      el.innerHTML=(bad?'⚠️ ':'✓ ')+escT(m)+(/applies after/.test(m)?` <button class="btn btn-secondary btn-sm" onclick="act('${esc(name)}','restart')">Restart now</button>`:'');
+    }).catch(e=>{const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
 }
 function _bar(pct,max,color){
   const w=Math.max(0,Math.min(100,max?100*pct/max:0));

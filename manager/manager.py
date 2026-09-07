@@ -4512,6 +4512,8 @@ class H(BaseHTTPRequestHandler):
                         msg = "unknown"
                     elif not re.fullmatch(r"[A-Z][A-Z0-9_]{1,40}", key) or key in NEVER_PERSIST:
                         msg = f"error: key '{key}' not allowed"
+                    elif key == "MCP_SERVERS" and mcp_servers_error(val):
+                        msg = "error: " + mcp_servers_error(val)
                     else:
                         cfg2 = inst2.setdefault("config", {})
                         if val in ("", None):
@@ -4547,6 +4549,16 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps({"msg": msg}).encode())
+
+
+def mcp_servers_error(value):
+    """'' when every name in a comma list is in the MCP catalog, else the
+    complaint. Assigning a server that does not exist would only surface as
+    'MCP start failed' in the guest log at the next start."""
+    names = [x.strip() for x in str(value or "").split(",") if x.strip()]
+    known = {m.get("name") for m in load_mcps()}
+    bad = [n for n in names if n not in known]
+    return f"unknown MCP server(s): {', '.join(bad)}" if bad else ""
 
 
 def migrate_mcp_config_out_of_instances():
