@@ -1969,7 +1969,9 @@ def _now_line():
         now = datetime.datetime.now().astimezone()
         tz = str(now.tzinfo)
     return (f"{NOW_TAG} {now.strftime('%A, %Y-%m-%d %H:%M')} {now.tzname()} ({tz}). "
-            "Use this for 'today', 'this week', dates and times — no tool call needed.")
+            "Use this for 'today', 'this week', dates and times — no tool call needed. "
+            "Tool results may carry UTC timestamps (ISO …Z): convert them to this zone "
+            "before you state a time.")
 
 
 def _inject_now():

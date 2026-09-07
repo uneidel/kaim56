@@ -206,6 +206,7 @@ def _host_tz():
 
 
 HOST_TZ = os.environ.get("GUEST_TZ") or _host_tz()
+_mcp.HUB_TZ = HOST_TZ          # hub processes (caldav-mcp …) format dates in this zone
 USER = os.environ.get("MANAGER_USER", "admin")
 PW = os.environ.get("MANAGER_PASS", "")   # empty => no auth (only behind Traefik!)
 

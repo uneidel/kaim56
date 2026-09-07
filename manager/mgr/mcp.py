@@ -102,6 +102,15 @@ def mcp_required_secrets(names):
 
 
 
+HUB_TZ = "UTC"      # set by manager.py from the host zone (see HOST_TZ)
+
+
+def hub_env(spec_env):
+    """Environment of a hub process: the host zone as TZ so servers that
+    format dates (caldav-mcp) speak local time; a catalog entry may override."""
+    return {"TZ": HUB_TZ, **(spec_env or {})}
+
+
 def mcp_hub_call(inst, server, payload):
     """Pass a guest's JSON-RPC through to 'its' MCP server in the hub.
 
@@ -118,7 +127,7 @@ def mcp_hub_call(inst, server, payload):
     body = json.dumps({
         "key": f"{inst['name']}:{server}",
         "argv": [spec["command"], *spec.get("args", [])],
-        "env": spec.get("env") or {},
+        "env": hub_env(spec.get("env")),
         "payload": payload,
     }).encode()
     req = urllib.request.Request(MCP_HUB + "/rpc", data=body,

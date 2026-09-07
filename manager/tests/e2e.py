@@ -1580,6 +1580,20 @@ class ManagerFunctions(unittest.TestCase):
             mmod.MISSIONS_FILE = old_file
             mmod.notify_add = old_notify
 
+    def test_hub_processes_get_the_host_timezone(self):
+        """caldav-mcp formats event times in its process TZ — the manager hands
+        every hub process the host zone; a catalog entry may still override."""
+        import mgr.mcp as mcpmod
+        old = mcpmod.HUB_TZ
+        try:
+            mcpmod.HUB_TZ = "Europe/Berlin"
+            self.assertEqual(mcpmod.hub_env(None), {"TZ": "Europe/Berlin"})
+            self.assertEqual(mcpmod.hub_env({"A": "1"}), {"TZ": "Europe/Berlin", "A": "1"})
+            self.assertEqual(mcpmod.hub_env({"TZ": "UTC"})["TZ"], "UTC")
+        finally:
+            mcpmod.HUB_TZ = old
+        self.assertEqual(self.m._mcp.HUB_TZ, self.m.HOST_TZ)
+
     def test_mcp_servers_validated_against_catalog(self):
         """The Policy tab assigns MCPs through the config route: names must
         exist in the catalog, spaces are tolerated, empty means none."""
