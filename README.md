@@ -92,6 +92,7 @@ The built-in **Architecture** view (rendered from the running manager):
 | `app/` | **KatAgent** (Android, Kotlin/Compose): chat with server agents + a local Gemma model. Builds without a local Android SDK via `Dockerfile.build` |
 | `katfs/` | Browser-to-agent folder sharing over iroh (P2P): `node/` + `client/` (Rust), `web/` (WASM bridge), `PROTOCOL.md` |
 | `agents/` | Build scripts and guest bridges for the microVM images: `claude/`, `openrouter/`, … |
+| `espclient/` | **MrVoice** — push-to-talk voice client on a Seeed XIAO ESP32-S3 (ESP-IDF 5.4 via PlatformIO, stock IDF only): INMP441 mic, MAX98357A amp, button; talks to the manager over HTTPS with the same four endpoints as the desktop client; 50 host-side unit tests |
 | `examples/` | Templates for the files intentionally kept out of the repo |
 
 ## Running the manager

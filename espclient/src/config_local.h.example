@@ -1,0 +1,11 @@
+// Kopiere diese Datei nach src/config_local.h und trage deine Werte ein.
+// src/config_local.h steht in .gitignore und wird nie eingecheckt.
+#pragma once
+
+#define DEFAULT_WIFI_SSID  "mein-wlan"
+#define DEFAULT_WIFI_PASS  "mein-passwort"
+
+#define DEFAULT_BASE_URL   "https://agents.example.de"
+#define DEFAULT_INSTANCE   "voicecommand"
+#define DEFAULT_MGR_USER   "admin"
+#define DEFAULT_MGR_PASS   "geheim"

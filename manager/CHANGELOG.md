@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-07 (espclient/ joins the monorepo)
+
+- **MrVoice**, the push-to-talk client on a Seeed XIAO ESP32-S3 (ESP-IDF 5.4 via PlatformIO, stock IDF only; INMP441 mic, MAX98357A amp, one button), is now `espclient/` in the repo: 53 files, 432 kB, sources plus wiring README, design spec, plan and the host-side unit tests (`pio test -e native`). It follows the porting brief and speaks the same four manager endpoints as the desktop client over HTTPS with Basic auth; WiFi and manager credentials come from NVS / `src/config_local.h` (gitignored, example provided) — the committed defaults are empty. Scanned: no credentials, only placeholders.
+- Kept out on purpose (ignored, still on disk): the leftovers of the earlier LiveKit-based prototype — a 20 MB Go room recorder binary, recordings, the LiveKit agent and its onboarding notes, the SuperMini wiring guide for a board that is not in use — and local editor state. Architecture tab gets an "ESP32 client (MrVoice)" card, README a layout row.
+
 ## 2026-09-07 (voice turns live in the web chat, archived on /reset; STT audio kept; [Now] next to the question)
 
 - "Können wir bei agents.kat56.de immer den aktuellen Chat sehen, nur bei Reset archiviert?" — yes, now. Turns through `/api/chat/<inst>` (desktop voice client, the ESP32 client) were only ever in the VM's own history. The manager now mirrors each turn into the shared chat store as a conversation `Voice · <inst> · <start time>` (`voice_session()`): a client that sends a `voice-…` chat id owns the session, a client without one (ESP) gets a manager-kept session per source IP; `/reset` rotates the session, so the old conversation stays as the archive and the next turn opens a new one. Web-chat turns (numeric ids) are not mirrored — the page stores them itself. Slash commands are not mirrored. Proven: two ESP-style turns, `/reset`, one more turn → two conversations in the store, live via the long-poll.

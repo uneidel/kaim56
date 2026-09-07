@@ -1,0 +1,33 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "audio.c"
+        "wav.c"
+        "stream.c"
+        "speakable.c"
+        "form.c"
+        "manager.c"
+        "capture.c"
+        "player.c"
+        "nvs_config.c"
+        "wifi_manager.c"
+        "config_server.c"
+        "ui.c"
+        "gesture.c"
+        "app.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_http_server
+        esp_http_client
+        esp_netif
+        esp_timer
+        driver
+        json
+        mbedtls
+        esp-tls
+        lwip
+        esp_timer
+        console
+)

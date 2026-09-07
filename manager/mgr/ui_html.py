@@ -649,6 +649,14 @@ HTML_BOTTOM = """
   same <code>/api/stt</code> the app dictation uses; a voice command triggers the shot. Built and
   proven against a vendor-faithful emulator and a JVM-testable protocol layer before hardware.</p></div>
 
+  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>ESP32 client (MrVoice)</span>
+  <p class=card-body>Push-to-talk on a Seeed XIAO ESP32-S3 (<code>espclient/</code>, ESP-IDF 5.4, stock
+  components only): button held = recording into PSRAM, release &#8594; WAV &#8594; <code>/api/stt</code>
+  &#8594; <code>/api/chat/&#8249;inst&#8250;</code> (sentence-streamed) &#8594; <code>/api/tts</code> &#8594; I2S amplifier.
+  Same server contract as the desktop client, over HTTPS with Basic auth; WiFi and manager
+  credentials live in NVS (captive-portal setup), <code>probe</code> on the serial console runs the
+  chain without the microphone. Its turns show up live in the web chat (voice session, archived on <code>/reset</code>).</p></div>
+
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Desktop client (voice)</span>
   <p class=card-body>One static Go binary in the GNOME/KDE topbar (<code>voice-client/</code>). Hands-free:
   an energy VAD segments utterances, an optional wake word gates busy rooms &#8212; as a transcript

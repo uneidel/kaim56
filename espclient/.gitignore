@@ -1,0 +1,26 @@
+.pio
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+build/
+managed_components/
+dependencies.lock
+sdkconfig.esp32s3
+sdkconfig.esp32s3.old
+agent/**/venv/
+src/config_local.h
+
+# Not part of the kAIm56 client: leftovers of the earlier LiveKit-based MrVoice
+# prototype (a 20 MB Go binary, room recordings, the LiveKit agent) and local
+# editor state. Kept on disk, kept out of the monorepo.
+assets/room-recorder/
+assets/*.jpg
+tools/*.ogg
+agent/
+Onboardagent.md
+Readme-supermini-alt.md
+docs/plans/2026-01-26-mrvoice.md
+.claude/settings.local.json
+tools/createurl.sh
+tools/sendtoroom.sh
