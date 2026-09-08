@@ -404,18 +404,18 @@ ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:a
       <defs><marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
         <path d="M0 0 L8 4 L0 8 z" fill="var(--color-neutral-500)"/></marker></defs>
 
-      <rect class="bx" x="40" y="16" width="120" height="56"/>
-      <text class="tt" x="100" y="38" text-anchor="middle">Halo glasses</text>
-      <text class="ss" x="100" y="56" text-anchor="middle">BLE &#183; photo &#183; voice</text>
-      <rect class="bx" x="176" y="16" width="176" height="56"/>
-      <text class="tt" x="264" y="38" text-anchor="middle">KatAgent (Android)</text>
-      <text class="ss" x="264" y="56" text-anchor="middle">chat &#183; voice &#183; assistant key</text>
-      <rect class="bx" x="368" y="16" width="130" height="56"/>
-      <text class="tt" x="433" y="38" text-anchor="middle">Browser</text>
-      <text class="ss" x="433" y="56" text-anchor="middle">admin + chat UI</text>
-      <rect class="bx" x="514" y="16" width="176" height="56"/>
-      <text class="tt" x="602" y="38" text-anchor="middle">Desktop client</text>
-      <text class="ss" x="602" y="56" text-anchor="middle">VAD &#183; wake word &#183; TTS out</text>
+      <rect class="bx" x="40" y="16" width="176" height="56"/>
+      <text class="tt" x="128" y="38" text-anchor="middle">Desktop client</text>
+      <text class="ss" x="128" y="56" text-anchor="middle">VAD &#183; wake word &#183; TTS out</text>
+      <rect class="bx" x="244" y="16" width="120" height="56"/>
+      <text class="tt" x="304" y="38" text-anchor="middle">Halo glasses</text>
+      <text class="ss" x="304" y="56" text-anchor="middle">BLE &#183; photo &#183; voice</text>
+      <rect class="bx" x="380" y="16" width="176" height="56"/>
+      <text class="tt" x="468" y="38" text-anchor="middle">KatAgent (Android)</text>
+      <text class="ss" x="468" y="56" text-anchor="middle">chat &#183; voice &#183; assistant key</text>
+      <rect class="bx" x="584" y="16" width="130" height="56"/>
+      <text class="tt" x="649" y="38" text-anchor="middle">Browser</text>
+      <text class="ss" x="649" y="56" text-anchor="middle">admin + chat UI</text>
       <rect class="bx" x="760" y="16" width="160" height="56"/>
       <text class="tt" x="840" y="38" text-anchor="middle">Signal (phone)</text>
       <text class="ss" x="840" y="56" text-anchor="middle">chat with katbot</text>
@@ -430,10 +430,10 @@ ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:a
       <text class="tt" x="790" y="145" text-anchor="middle">signal-cli REST</text>
       <text class="ss" x="790" y="162" text-anchor="middle">__SIGNAL_HOST__</text>
 
-      <path class="ln" d="M160 44 L176 44" marker-end="url(#arw)"/><text class="lb" x="150" y="34">BLE</text>
-      <path class="ln" d="M264 72 L210 124"/><text class="lb" x="205" y="102">iroh</text>
-      <path class="ln" d="M433 72 L448 124"/>
-      <path class="ln" d="M602 72 L290 124"/><text class="lb" x="470" y="104">iroh tunnel</text>
+      <path class="ln" d="M364 44 L380 44" marker-end="url(#arw)"/><text class="lb" x="354" y="34">BLE</text>
+      <path class="ln" d="M468 72 L250 124"/><text class="lb" x="300" y="96">iroh</text>
+      <path class="ln" d="M649 72 L470 124"/>
+      <path class="ln" d="M128 72 L150 124"/><text class="lb" x="156" y="104">iroh tunnel</text>
       <path class="ln" d="M840 72 L790 124"/>
       <path class="ln" d="M190 176 L210 224"/>
       <path class="ln" d="M458 176 L430 224"/>

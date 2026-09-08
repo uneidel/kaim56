@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-08 (architecture tab: desktop client moved to the left of the client row)
+
+- Client row reordered to Desktop client · Halo glasses → KatAgent · Browser · Signal; the iroh-tunnel arrow now runs straight down into iroh-gw, the app's iroh arrow and the browser's Traefik arrow re-routed without crossings. README screenshot of the tab regenerated the same way as this morning (headless Chrome over DevTools, names/costs/hosts masked).
+
 ## 2026-09-08 (GitHub with full history — after a history rewrite)
 
 - Validation before the switch: no password, API key or token in any tracked file or anywhere in the 148-commit history (secrets live only in `~/.config/kat56/secrets.env` and the gitignored `manager/settings.json`). The history DID carry personal data from early development: two real Signal phone numbers as template defaults in five commits, Home Assistant/Portainer LAN addresses in three old versions of `mcp-catalog.json`, one private cloud hostname, and the maintainer's private e-mail as author on 106 commits.
