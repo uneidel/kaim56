@@ -21,7 +21,9 @@ import mimetypes
 import os
 import re
 import shlex
+import glob
 import hashlib
+import hmac
 import shutil
 import signal
 import socket
@@ -106,6 +108,42 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish", "/api/ha-alias", "/api/ha-control")
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
+# Request bodies are read whole into the root process: cap them. A guest (or
+# anyone on the LAN) must not be able to hand the manager a gigabyte.
+BODY_MAX = 4 * 1024 * 1024            # JSON routes
+BODY_MAX_LLM = 8 * 1024 * 1024        # chat completions (long contexts, images)
+BODY_MAX_AUDIO = 32 * 1024 * 1024     # STT uploads
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+def js_json(obj, **kw):
+    """json.dumps for a value embedded in a <script> block: '</script>' inside
+    a persona or an imported skill description must not end the block."""
+    return (json.dumps(obj, **kw).replace("<", "\\u003c")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+
+
+def download_name(name, default="file"):
+    """A filename safe inside Content-Disposition (no quotes, no CR/LF)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or ""))[:120].strip("._") or default
+
+
+_rate_hits, _rate_lock = {}, threading.Lock()
+
+
+def rate_ok(key, limit, window):
+    """Sliding window per key: True while fewer than `limit` hits in `window` s."""
+    now = time.time()
+    with _rate_lock:
+        lst = _rate_hits.setdefault(key, [])
+        lst[:] = [t for t in lst if now - t < window]
+        if len(lst) >= limit:
+            return False
+        lst.append(now)
+        return True
 # GET paths a guest VM must never reach: the admin UI, the web chat, the katfs
 # browser and the per-instance proxy /i/<name>/… (incl. the WebSocket
 # terminal). Only POST was gated so far — a VM could open the SHELL of every
@@ -163,6 +201,40 @@ CODE_URL = SITE.get("CODE_URL") or ""
 CODE_ROOT = SITE.get("CODE_ROOT") or ""
 
 POOL = "172.30.0.0/16"
+
+_trusted_cache = {"ts": 0.0, "hosts": set()}
+
+
+def trusted_hosts():
+    """Hosts a browser may present as Origin: the site's public name(s),
+    localhost and the host's own addresses (refreshed every minute), plus
+    site.json TRUSTED_HOSTS for a reverse proxy under another name."""
+    now = time.time()
+    if now - _trusted_cache["ts"] > 60:
+        hosts = {PUBLIC_HOST, "localhost", "127.0.0.1", "::1"}
+        hosts.update(str(x) for x in (SITE.get("TRUSTED_HOSTS") or []) if x)
+        try:
+            r = subprocess.run(["ip", "-4", "-o", "addr", "show"], capture_output=True, text=True, timeout=5)
+            hosts.update(re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", r.stdout))
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _trusted_cache.update(ts=now, hosts={h.lower() for h in hosts})
+    return _trusted_cache["hosts"]
+
+
+def origin_allowed(origin):
+    """CSRF guard for state-changing requests. Browsers send Origin on every
+    POST; the app, the desktop client and curl do not (empty = fine). A page
+    on another site — or a DNS-rebound name — carries a foreign Origin and is
+    refused, so it cannot export a folder into a VM or create an instance."""
+    o = (origin or "").strip()
+    if not o:
+        return True
+    try:
+        host = (urllib.parse.urlsplit(o).hostname or "").lower()
+    except ValueError:
+        return False
+    return bool(host) and host in trusted_hosts()
 def _uplink_iface():
     """Interface of the default route ("… dev eth0 …")."""
     try:
@@ -529,8 +601,14 @@ def inbox_since(peek=False):
         last_user = next((m.get("text", "") for m in reversed(c.get("messages", []) or [])
                           if m.get("user")), "")
         if last_user:
-            items.append({"instance": c.get("instance", ""), "title": c.get("title", ""),
-                          "id": c.get("id", ""), "text": last_user})
+            item = {"instance": c.get("instance", ""), "title": c.get("title", ""),
+                    "id": c.get("id", ""), "text": last_user}
+            if str(c.get("id", "")).startswith("sig-"):
+                # Filed by the instance's own agent (/api/chat-log), not typed
+                # into the app: the orchestrator sees WHO relayed it.
+                item["via"] = f"signal:{c.get('instance', '')}"
+                item["text"] = f"[Signal message relayed by agent '{c.get('instance', '')}'] {last_user}"
+            items.append(item)
     if not peek and maxts > wm:
         try:
             with open(INBOX_WM_FILE, "w") as fh:
@@ -904,10 +982,23 @@ def _run_named(instance, message):
         return (False, f"error: {e!r}")
 
 
+EPHEMERAL_MAX = int(os.environ.get("EPHEMERAL_MAX", "2"))
+_ephemeral_slots = threading.BoundedSemaphore(EPHEMERAL_MAX)
+
+
 def _run_ephemeral(message, model=None):
-    """Run a task in a FRESH, isolated VM that is deleted afterwards. For
-    isolated/independent work — not for tasks that need a specific MCP/token
-    (those belong on their instance)."""
+    """Run a task in a FRESH, isolated VM that is deleted afterwards — at most
+    EPHEMERAL_MAX at a time: every one is a full VM (RAM, tap, disk), and any
+    guest may ask for one, so the rest queue instead of exhausting the host."""
+    if not _ephemeral_slots.acquire(timeout=600):
+        return (False, f"ephemeral VM slots busy ({EPHEMERAL_MAX} at a time) — try again later")
+    try:
+        return _run_ephemeral_vm(message, model)
+    finally:
+        _ephemeral_slots.release()
+
+
+def _run_ephemeral_vm(message, model=None):
     name = "task-" + uuid.uuid4().hex[:6]
     cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
     if model:
@@ -1658,6 +1749,11 @@ def ensure_guest_input_rules():
         if sh("iptables", "-C", "INPUT", "-i", "fc+", *spec, "-j", "ACCEPT",
               check=False).returncode != 0:
             sh("iptables", "-I", "INPUT", "1", "-i", "fc+", *spec, "-j", "ACCEPT", check=False)
+    # A pool address arriving on the LAN interface is forged (a LAN box posing
+    # as a stopped VM would pass every by-IP check): drop it first.
+    if HOSTIF and sh("iptables", "-C", "INPUT", "-i", HOSTIF, "-s", POOL, "-j", "DROP",
+                     check=False).returncode != 0:
+        sh("iptables", "-I", "INPUT", "1", "-i", HOSTIF, "-s", POOL, "-j", "DROP", check=False)
 
 
 def _antispoof_rules(n):
@@ -1709,7 +1805,8 @@ def setup_tap(inst):
 # DNS for the guests (ends up in resolv.conf via guest-init). Site-specific —
 # set it via env on other installations; 1.1.1.1 works everywhere.
 GUEST_DNS = os.environ.get("GUEST_DNS") or SITE.get("GUEST_DNS") or "1.1.1.1"
-_PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+_PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                 "100.64.0.0/10", "169.254.0.0/16")     # CGNAT/Tailscale, link-local too
 
 
 def _mcp_endpoints(inst):
@@ -1896,9 +1993,16 @@ def mount_specs(inst):
     return specs
 
 
+def desired_lines(inst):
+    """The guest's mount list: one `sub|guest|ro|rw` line per host folder."""
+    return "".join(f"{s['sub']}|{s['guest']}|{'ro' if s['ro'] else 'rw'}\n" for s in mount_specs(inst))
+
+
 def write_desired(inst):
-    """Write desired.list under .fcmnt/<inst>/ — the reconciler in the guest
-    reads it (via the workspace mount) and keeps the mounts up to date live."""
+    """Write desired.list under .fcmnt/<inst>/ for the admin's eye. The guest
+    does NOT read it any more: the workspace is shared by every VM, so any of
+    them could have written another one's list — it asks /api/mounts (by
+    source IP) instead."""
     d = os.path.join(FCMNT_ROOT, inst["name"])
     try:
         os.makedirs(d, exist_ok=True)
@@ -1963,16 +2067,59 @@ def teardown_mounts(inst):
             pass
 
 
+_GUEST_MOUNT_DENY = ("/bin", "/sbin", "/usr", "/lib", "/lib32", "/lib64", "/etc", "/proc", "/sys",
+                     "/dev", "/boot", "/run", "/var", "/app", "/harness", "/config", "/memory",
+                     "/init", "/root", "/tmp")
+
+
+def _protected_host_paths():
+    out = [BASE, "/etc", "/root", "/var", "/usr", "/boot"]
+    if AGENT_SRC:
+        out.append(AGENT_SRC)                       # a VM writing agent.py = code in every VM
+    for home in glob.glob("/home/*"):
+        out += [os.path.join(home, d) for d in (".config", ".ssh", ".gnupg", ".claude")]
+    return [os.path.realpath(p) for p in out]
+
+
+def mount_error(host, guest):
+    """'' when this host folder may be shared at this guest path, else why not.
+    Host side: an existing directory under BROWSE_ROOTS that neither contains
+    nor lies in the manager tree, the agent sources, ~/.config, ~/.ssh — in
+    the VM the folder is uid 1000, on the host that is the owner of all of it.
+    Guest side: an absolute path outside the system directories — a folder
+    mounted over /bin runs the sharer's files as root at the next shell."""
+    hp = os.path.realpath(str(host or ""))
+    if not host or not os.path.isdir(hp):
+        return f"host folder {host!r} is not a directory"
+    if not any(hp == r or hp.startswith(r.rstrip("/") + "/") for r in BROWSE_ROOTS):
+        return f"host folder must be under {', '.join(BROWSE_ROOTS)}"
+    for prot in _protected_host_paths():
+        if hp == prot or hp.startswith(prot + "/") or prot.startswith(hp + "/"):
+            return f"host folder {host} would expose {prot}"
+    g = str(guest or "")
+    if not g.startswith("/") or g.rstrip("/") == "" or "/../" in g + "/" or "\n" in g:
+        return f"guest path {g!r} must be an absolute path"
+    gn = os.path.normpath(g)
+    if any(gn == d or gn.startswith(d + "/") for d in _GUEST_MOUNT_DENY):
+        return f"guest path {g} is a system directory"
+    return ""
+
+
 def set_mounts(name, mounts):
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
     old_specs = mount_specs(inst)
-    inst["mounts"] = [{"host": str(m.get("host", "")).strip(),
-                       "guest": str(m.get("guest", "")).strip(),
-                       "readonly": bool(m.get("readonly"))}
-                      for m in (mounts or [])
-                      if isinstance(m, dict) and m.get("host") and m.get("guest")]
+    wanted = [{"host": str(m.get("host", "")).strip(),
+               "guest": str(m.get("guest", "")).strip(),
+               "readonly": bool(m.get("readonly"))}
+              for m in (mounts or [])
+              if isinstance(m, dict) and m.get("host") and m.get("guest")]
+    for m in wanted:
+        why = mount_error(m["host"], m["guest"])
+        if why:
+            return f"error: {why}"
+    inst["mounts"] = wanted
     with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
         json.dump(inst, fh, indent=2)
     note = ""
@@ -2509,6 +2656,8 @@ def load_secret_policy():
                 seed = sorted({k for grp in ("by_template", "by_instance")
                                for v in (p.get(grp) or {}).values() if isinstance(v, list)
                                for k in v if isinstance(k, str)})
+                if (load_settings().get("LLM_KEY_PROXY") or "") == "1":
+                    seed = [k for k in seed if k not in {kn for _, kn in LLM_PROXY_UPSTREAMS.values()}]
                 p["guest_readable"] = seed
                 save_secret_policy(p)
                 print(f"[secrets] guest_readable seeded from existing releases: {', '.join(seed) or '-'}", flush=True)
@@ -2860,14 +3009,14 @@ def render():
     return (PAGE.replace("__LOGO__", LOGO_INLINE)
                 .replace("__ROWS__", rows or empty)
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
-                .replace("__TPLJSON__", json.dumps(load_templates()))
-                .replace("__SETTINGS__", json.dumps(settings_for_ui()))
-                .replace("__SETTINGS_SCHEMA__", json.dumps(SETTINGS_SCHEMA))
-                .replace("__PERSONAS__", json.dumps(load_personas(), ensure_ascii=False))
+                .replace("__TPLJSON__", js_json(load_templates()))
+                .replace("__SETTINGS__", js_json(settings_for_ui()))
+                .replace("__SETTINGS_SCHEMA__", js_json(SETTINGS_SCHEMA))
+                .replace("__PERSONAS__", js_json(load_personas(), ensure_ascii=False))
                 # Only name + description into the page: with an imported
                 # catalog the contents are ~1 MB, and the UI needs them only
                 # when editing (then it fetches GET /api/skills/<name>).
-                .replace("__SKILLS__", json.dumps(
+                .replace("__SKILLS__", js_json(
                     [{"name": x.get("name", ""), "description": x.get("description", "")}
                      for x in load_skills()], ensure_ascii=False))
                 .replace("__HOSTIF__", HOSTIF).replace("__POOL__", POOL)
@@ -3204,8 +3353,12 @@ def _rt_saddler(h):
 @ROUTER.get("/api/websearch")
 def _rt_websearch(h):
     # Web search for the agents: the Brave key stays on the host, the VM only
-    # ever sees results. Same principle as the LLM key proxy.
+    # ever sees results. Same principle as the LLM key proxy. Metered per
+    # guest: the key's quota is shared by every instance.
     from mgr import websearch
+    g = h._guest()
+    if g is not None and not rate_ok(("websearch", g["name"]), 30, 300):
+        return h._json({"error": "rate limit: 30 searches per 5 minutes"}, 429)
     q = urllib.parse.parse_qs(h.path.partition("?")[2])
     query = q.get("q", [""])[0].strip()
     if not query:
@@ -3244,7 +3397,7 @@ def _rt_prompts(h):
             "application/json")
 
 
-@ROUTER.get("/api/resources")
+@ROUTER.get("/api/resources", admin=True)
 def _rt_resources(h):
     return json.dumps({"resources": resource_stats()}).encode(), "application/json"
 
@@ -3271,12 +3424,17 @@ def _rt_logo(h):
 
 
 class H(BaseHTTPRequestHandler):
+    # Reading a request (headers, body) may not hang a thread for ever; the
+    # tunnel and the long-polls lift this per socket / wait server-side.
+    timeout = 120
     # Protection layer: an unhandled exception in a route must NOT tear the
     # connection down hard (the agent would otherwise see "RemoteDisconnected").
     # If no header has been sent yet, we respond cleanly with HTTP 500; otherwise
     # the response is just ended. The error lands in the journal.
     def end_headers(self):
         self._sent = True
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
         return super().end_headers()
 
     def _fail500(self):
@@ -3304,6 +3462,10 @@ class H(BaseHTTPRequestHandler):
         self._sent = False
         try:
             self._do_POST()
+        except BodyTooLarge as e:
+            self.close_connection = True          # the body was never read
+            if not getattr(self, "_sent", False):
+                self._json({"error": f"body too large ({e} bytes)"}, 413)
         except Exception:
             self._fail500()
 
@@ -3323,7 +3485,8 @@ class H(BaseHTTPRequestHandler):
         if hdr.startswith("Basic "):
             try:
                 u, p = base64.b64decode(hdr[6:]).decode().split(":", 1)
-                if u == USER and p == PW:
+                if hmac.compare_digest(u.encode(), str(USER).encode()) and \
+                        hmac.compare_digest(p.encode(), str(PW).encode()):
                     return True
             except Exception:
                 pass
@@ -3431,9 +3594,11 @@ class H(BaseHTTPRequestHandler):
                 sk.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except OSError:
             pass
-        # Replay the client's upgrade request verbatim to the guest webterm.
+        # Replay the client's upgrade request to the guest webterm — only the
+        # headers the upgrade needs: the browser's Authorization (Traefik's
+        # BasicAuth passes it on) and cookies must never land in a VM.
         req = f"GET {path} HTTP/1.1\r\n"
-        for k, v in self.headers.items():
+        for k, v in ws_forward_headers(self.headers.items()):
             req += f"{k}: {v}\r\n"
         req += "\r\n"
         up.sendall(req.encode())
@@ -3668,8 +3833,8 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
             self.end_headers(); self.wfile.write(out); return
-        ln = int(self.headers.get("Content-Length", 0) or 0)
-        payload = self.rfile.read(ln) if ln else b""
+        payload = self._raw(BODY_MAX_LLM)
+        ginst = instance_by_ip(self.client_address[0])
         try:
             want_stream = bool(json.loads(payload or b"{}").get("stream"))
         except (ValueError, AttributeError):
@@ -3713,6 +3878,8 @@ class H(BaseHTTPRequestHandler):
                             break
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        if b'"usage"' in chunk:
+                            _proxy_usage(ginst, backend, chunk)
                 except (BrokenPipeError, ConnectionResetError):
                     pass               # client gone -> upstream closes via with
             else:
@@ -3720,12 +3887,16 @@ class H(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+                _proxy_usage(ginst, backend, data)
 
     def _do_POST(self):
         if not self._auth():
             return
         p = self.path.split("?", 1)[0]
-        if instance_by_ip(self.client_address[0]) is not None and not (
+        guest = instance_by_ip(self.client_address[0])
+        if guest is None and not origin_allowed(self.headers.get("Origin", "")):
+            return self._json({"error": "cross-site request refused"}, 403)
+        if guest is not None and not (
                 p in GUEST_POST_PATHS or p.startswith(GUEST_POST_PREFIXES)):
             return self._forbid()
         if self._dispatch("POST"):
@@ -3758,9 +3929,17 @@ class H(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(json.dumps(obj, ensure_ascii=False).encode(), "application/json", code)
 
-    def _raw(self):
-        ln = int(self.headers.get("Content-Length", 0) or 0)
-        return self.rfile.read(ln) if ln else b""
+    def _raw(self, limit=None):
+        """Request body, capped (BODY_MAX unless the route says otherwise);
+        a missing or bad length is an empty body. Over the cap: BodyTooLarge,
+        answered 413 by do_POST without reading a byte of it."""
+        try:
+            ln = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            ln = 0
+        if ln > (limit or BODY_MAX):
+            raise BodyTooLarge(ln)
+        return self.rfile.read(ln) if ln > 0 else b""
 
     def _body(self, default=None):
         """JSON body; {} (or `default`) when empty or malformed."""
@@ -3786,6 +3965,33 @@ class H(BaseHTTPRequestHandler):
 # Grouped by domain; new routes go HERE, never into an if-chain.
 # =============================================================================
 
+_WS_KEEP = ("host", "upgrade", "connection", "origin", "user-agent", "pragma", "cache-control")
+
+
+def ws_forward_headers(items):
+    """The subset of a browser's upgrade headers the guest terminal gets."""
+    return [(k, v) for k, v in items
+            if k.lower() in _WS_KEEP or k.lower().startswith("sec-websocket-")]
+
+
+def _proxy_usage(inst, backend, raw):
+    """Book the tokens the UPSTREAM reports for this guest: the budget guard
+    must not rest on what the agent chooses to tell us via /api/usage."""
+    if inst is None:
+        return
+    raw = raw.strip()
+    if raw.startswith(b"data:"):
+        raw = raw[5:]
+    try:
+        j = json.loads(raw)
+        u = j.get("usage") or {}
+        if isinstance(u, dict) and (u.get("prompt_tokens") or u.get("completion_tokens")):
+            usage_add(inst["name"], j.get("model") or backend, u.get("prompt_tokens"),
+                      u.get("completion_tokens"), u.get("cost"))
+    except (ValueError, AttributeError, TypeError):
+        pass
+
+
 def _msg_route(method, path, prefix=False, admin=True):
     """Decorator for the {"msg": …} family (UI actions): the function returns
     a status string; exceptions become "error: …" instead of a dropped
@@ -3794,6 +4000,8 @@ def _msg_route(method, path, prefix=False, admin=True):
         def wrapped(h):
             try:
                 msg = fn(h)
+            except BodyTooLarge:
+                raise
             except Exception as e:
                 msg = f"error: {e!r}"
             return json.dumps({"msg": msg}).encode(), "application/json"
@@ -4176,9 +4384,11 @@ def _rt_mission_admin(h):
 @ROUTER.post("/api/usage")
 def _rt_usage_report(h):
     # Only real guests: the instance comes from the source IP, not the body.
+    # With the key proxy on, the proxy books what the upstream reports and
+    # the agent's own figures are ignored (else a quiet agent has no budget).
     inst = h._guest()
     body = h._body()
-    if inst is not None:
+    if inst is not None and (load_settings().get("LLM_KEY_PROXY") or "") != "1":
         usage_add(inst["name"], body.get("model", ""), body.get("prompt_tokens"),
                   body.get("completion_tokens"), body.get("cost"))
     h.send_response(204); h.end_headers()
@@ -4245,9 +4455,16 @@ def _rt_signal_send(h):
 
 @ROUTER.post("/api/chat-log")
 def _rt_chat_log(h):
-    # Signal turn into the shared chat history. Guests only, instance by IP.
+    # A Signal turn into the shared chat history — and, through the inbox, a
+    # request to the orchestrator. Only a Signal-transport guest may file one
+    # (a web or voice VM has nobody typing on Signal), rate-limited; the
+    # inbox marks it as relayed, so an agent cannot pose as the user.
     inst = h._guest()
     body = h._body()
+    if inst is None or (inst.get("config") or {}).get("TRANSPORT", "signal") != "signal":
+        return h._forbid()
+    if not rate_ok(("chat-log", inst["name"]), 60, 300):
+        return h._json({"error": "rate limit"}, 429)
     if inst is not None:
         try:
             chat_log_append(inst["name"], body.get("sender", ""), body.get("user", ""), body.get("reply", ""))
@@ -4267,7 +4484,7 @@ def _rt_voice(h):
     # The voice service listens on loopback; the manager is the only door and
     # passes raw audio / WAV through unchanged.
     p = h.path.split("?", 1)[0]
-    payload = h._raw()
+    payload = h._raw(BODY_MAX_AUDIO)
     if p == "/api/tts":
         # Read-aloud filter + voice/speed from the settings (explicit client values win).
         try:
@@ -4362,7 +4579,7 @@ def _rt_katfs_zip(h):
     leaf = os.path.basename(root.rstrip("/")) if root not in (".", "") else "katfs"
     h.send_response(200)
     h.send_header("Content-Type", "application/zip")
-    h.send_header("Content-Disposition", f'attachment; filename="{(leaf or "katfs")}.zip"')
+    h.send_header("Content-Disposition", f'attachment; filename="{download_name(leaf, "katfs")}.zip"')
     h.send_header("X-Katfs-Files", str(stats.get("files", 0)))
     h.send_header("Content-Length", str(len(data)))
     h.end_headers(); h.wfile.write(data)
@@ -4381,7 +4598,7 @@ def _rt_katfs_browse(h):
         disp = "attachment" if q.get("dl", [""])[0] == "1" else "inline"
         h.send_response(200)
         h.send_header("Content-Type", ct)
-        h.send_header("Content-Disposition", f'{disp}; filename="{os.path.basename(path) or "file"}"')
+        h.send_header("Content-Disposition", f'{disp}; filename="{download_name(os.path.basename(path))}"')
         h.send_header("Content-Length", str(len(data)))
         h.end_headers(); h.wfile.write(data)
         return
@@ -4711,6 +4928,21 @@ def _set_config_key(name, key, val):
         json.dump(inst, fh, indent=2)
     return (f"{key} " + ("removed" if val in ("", None) else f"= {val}")
             + (" (applies after stop/start)" if is_running(inst) else ""))
+
+
+@ROUTER.get("/api/mounts")
+def _rt_mounts(h):
+    # The guest's reconciler fetches ITS list here, identified by source IP,
+    # instead of reading .fcmnt/<name>/desired.list off the shared workspace
+    # where any other VM could write it (and have this one mount a folder
+    # over /bin). Admins may ask for an instance's list with ?instance=.
+    inst = h._guest()
+    if inst is None:
+        name = _qs(h).get("instance", [""])[0]
+        inst = next((i for i in load_instances() if i["name"] == name), None)
+        if inst is None:
+            return h._json({"error": "instance?"}, 404)
+    return desired_lines(inst).encode(), "text/plain; charset=utf-8"
 
 
 @_msg_route("POST", "/api/instances/", prefix=True)

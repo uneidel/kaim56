@@ -1872,18 +1872,24 @@ class ManagerFunctions(unittest.TestCase):
         it is seeded from the releases once (nothing breaks on upgrade) and
         the file is rewritten with the list; a file that has the key is left alone."""
         m = self.m
-        tmp = tempfile.mkdtemp(prefix="e2e-secpol2-"); oldf = m.SECRET_POLICY_FILE
+        tmp = tempfile.mkdtemp(prefix="e2e-secpol2-"); oldf, olds = m.SECRET_POLICY_FILE, m.load_settings
         try:
             m.SECRET_POLICY_FILE = os.path.join(tmp, "p.json")
+            legacy = {"by_template": {"openrouter": ["OPENROUTER_API_KEY"]},
+                      "by_instance": {"hass": ["HA_TOKEN", "OPENROUTER_API_KEY"]}}
             with open(m.SECRET_POLICY_FILE, "w") as fh:
-                json.dump({"by_template": {"openrouter": ["OPENROUTER_API_KEY"]},
-                           "by_instance": {"hass": ["HA_TOKEN", "OPENROUTER_API_KEY"]}}, fh)
+                json.dump(legacy, fh)
+            m.load_settings = lambda: {}
             self.assertEqual(m.load_secret_policy()["guest_readable"], ["HA_TOKEN", "OPENROUTER_API_KEY"])
             self.assertEqual(json.load(open(m.SECRET_POLICY_FILE))["guest_readable"], ["HA_TOKEN", "OPENROUTER_API_KEY"])
+            with open(m.SECRET_POLICY_FILE, "w") as fh:
+                json.dump(legacy, fh)
+            m.load_settings = lambda: {"LLM_KEY_PROXY": "1"}       # proxy on: the LLM key stays on the host
+            self.assertEqual(m.load_secret_policy()["guest_readable"], ["HA_TOKEN"])
             m.save_secret_policy({"by_template": {"openrouter": ["OPENROUTER_API_KEY"]}, "by_instance": {}, "guest_readable": []})
             self.assertEqual(m.load_secret_policy()["guest_readable"], [])          # an explicit empty list stays
         finally:
-            m.SECRET_POLICY_FILE = oldf
+            m.SECRET_POLICY_FILE, m.load_settings = oldf, olds
 
     def test_stale_image_detection_and_rebuild_push(self):
         """A running VM started before its base image was rebuilt is 'stale':
@@ -2408,6 +2414,188 @@ class ManagerFunctions(unittest.TestCase):
         h.close_connection = True
         return h
 
+    def _post_handler(self, path, ip, body=b"", origin=None, ctype="application/json"):
+        h = self._handler(path, ip, method="POST")
+        h.rfile = io.BytesIO(body)
+        h.headers["Content-Length"] = str(len(body))
+        h.headers["Content-Type"] = ctype
+        if origin is not None:
+            h.headers["Origin"] = origin
+        return h
+
+    @staticmethod
+    def _status(h):
+        return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
+
+    def test_request_body_is_capped(self):
+        """A body over the cap is answered 413 without being read; a bad or
+        negative Content-Length is an empty body, not a hang."""
+        m = self.m
+        old = m.instance_by_ip, m.PW
+        try:
+            m.instance_by_ip = lambda ip: None
+            m.PW = ""
+            h = self._post_handler("/api/settings", "10.0.0.5", b"{}")
+            h.headers.replace_header("Content-Length", str(m.BODY_MAX + 1))
+            h.do_POST()
+            self.assertEqual(self._status(h), 413)
+            self.assertTrue(h.close_connection)
+            h = self._post_handler("/api/tasks", "10.0.0.5", b"")
+            h.headers.replace_header("Content-Length", "-5")
+            self.assertEqual(h._raw(), b"")
+            h.headers.replace_header("Content-Length", "abc")
+            self.assertEqual(h._raw(), b"")
+            with self.assertRaises(m.BodyTooLarge):
+                h.headers.replace_header("Content-Length", str(m.BODY_MAX_AUDIO + 1)); h._raw(m.BODY_MAX_AUDIO)
+        finally:
+            m.instance_by_ip, m.PW = old
+
+    def test_cross_site_post_is_refused(self):
+        """CSRF: a browser on another site (or a DNS-rebound name) sends its
+        Origin and is refused; our own origins pass; clients without an Origin
+        (app, desktop, curl) are untouched. Guests never carry one."""
+        m = self.m
+        old = m.instance_by_ip, m.PW, dict(m._trusted_cache)
+        try:
+            m.instance_by_ip = lambda ip: None
+            m.PW = ""
+            m._trusted_cache.update(ts=time.time() + 3600, hosts={"agents.example.com", "localhost", "192.168.1.10"})
+            self.assertTrue(m.origin_allowed(""))
+            self.assertTrue(m.origin_allowed("https://agents.example.com"))
+            self.assertTrue(m.origin_allowed("http://192.168.1.10:8700"))
+            self.assertFalse(m.origin_allowed("https://evil.example.org"))
+            self.assertFalse(m.origin_allowed("null"))
+            h = self._post_handler("/api/settings", "10.0.0.5", b"{}", origin="https://evil.example.org")
+            h.do_POST()
+            self.assertEqual(self._status(h), 403)
+            self.assertIn(b"cross-site", h.wfile.getvalue())
+            h = self._post_handler("/api/nonexistent", "10.0.0.5", b"{}", origin="https://agents.example.com")
+            h.do_POST()
+            self.assertEqual(self._status(h), 404)          # passed the guard, no such route
+        finally:
+            m.instance_by_ip, m.PW = old[:2]
+            m._trusted_cache.update(old[2])
+
+    def test_responses_carry_hardening_headers(self):
+        m = self.m
+        old = m.instance_by_ip
+        try:
+            m.instance_by_ip = lambda ip: None
+            h = self._handler("/api/agents", "10.0.0.5")
+            h._json({"ok": 1})
+            head = h.wfile.getvalue().split(b"\r\n\r\n", 1)[0].lower()
+            self.assertIn(b"x-content-type-options: nosniff", head)
+            self.assertIn(b"x-frame-options: sameorigin", head)
+        finally:
+            m.instance_by_ip = old
+
+    def test_terminal_tunnel_forwards_only_upgrade_headers(self):
+        """The browser's Authorization (Traefik's BasicAuth passes it on) and
+        cookies must never reach a VM's webterm."""
+        m = self.m
+        items = [("Host", "agents.example.com"), ("Authorization", "Basic abc"), ("Cookie", "s=1"),
+                 ("Upgrade", "websocket"), ("Connection", "Upgrade"), ("Sec-WebSocket-Key", "k"),
+                 ("Sec-WebSocket-Version", "13"), ("X-Forwarded-For", "1.2.3.4")]
+        kept = dict(m.ws_forward_headers(items))
+        self.assertEqual(set(kept), {"Host", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version"})
+
+    def test_chat_log_only_from_signal_guests_and_marked_in_inbox(self):
+        """Only a Signal-transport VM may file user turns; the inbox marks them
+        as relayed by that agent so the orchestrator knows who spoke."""
+        m = self.m
+        web = {"name": "web1", "template": "openrouter", "index": 3, "config": {"TRANSPORT": "web"}}
+        old = m.instance_by_ip, m.load_chats, m._inbox_wm, m.INBOX_WM_FILE
+        try:
+            m.instance_by_ip = lambda ip: web if ip == "172.30.3.2" else None
+            h = self._post_handler("/api/chat-log", "172.30.3.2", b'{"sender":"x","user":"hi"}')
+            h.do_POST()
+            self.assertEqual(self._status(h), 403)
+            m.load_chats = lambda: [
+                {"id": "sig-hass-4915", "instance": "hass", "title": "Signal", "updatedAt": 5000,
+                 "messages": [{"user": True, "text": "Licht aus"}]},
+                {"id": "web-1", "instance": "orchestrator", "title": "Web", "updatedAt": 5000,
+                 "messages": [{"user": True, "text": "Plan"}]}]
+            m._inbox_wm = lambda: 0
+            items = {i["id"]: i for i in m.inbox_since(peek=True)}
+            self.assertEqual(items["sig-hass-4915"]["via"], "signal:hass")
+            self.assertTrue(items["sig-hass-4915"]["text"].startswith("[Signal message relayed by agent 'hass'] Licht aus"))
+            self.assertNotIn("via", items["web-1"])
+            self.assertEqual(items["web-1"]["text"], "Plan")
+        finally:
+            m.instance_by_ip, m.load_chats, m._inbox_wm, m.INBOX_WM_FILE = old
+
+    def test_mount_validation_and_guest_mount_list(self):
+        """A host folder never exposes the manager tree, the agent sources or
+        ~/.ssh; a guest path is never a system directory. The guest fetches
+        its own list by IP from /api/mounts instead of the shared workspace."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-mounts-")
+        share = os.path.join(tmp, "share"); os.makedirs(share)
+        old = m.BROWSE_ROOTS, m.instance_by_ip, m.mount_specs, m.load_instances
+        try:
+            m.BROWSE_ROOTS = (tmp,)
+            self.assertEqual(m.mount_error(share, "/home/node/data"), "")
+            self.assertIn("not a directory", m.mount_error(os.path.join(tmp, "nope"), "/x"))
+            self.assertIn("must be under", m.mount_error("/srv", "/x"))
+            m.BROWSE_ROOTS = ("/",)
+            self.assertIn("would expose", m.mount_error(m.BASE, "/x"))
+            self.assertIn("would expose", m.mount_error(os.path.dirname(m.BASE), "/x"))   # contains it
+            for bad in ("/bin", "/usr/local", "/etc/x", "/app", "/harness", "/config", "/memory", "/", "rel", "/a/../etc"):
+                self.assertTrue(m.mount_error(share, bad), bad)
+            m.BROWSE_ROOTS = (tmp,)
+            self.assertIn("error:", m.set_mounts.__doc__ or "error:")     # documented below via the route
+            inst = {"name": "vm1", "index": 4, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4", "mounts": []}
+            m.load_instances = lambda: [inst]
+            m.mount_specs = lambda i: [{"sub": "/.fcmnt/vm1/0", "guest": "/home/node/data", "ro": True}]
+            m.instance_by_ip = lambda ip: inst if ip == "172.30.4.2" else None
+            h = self._handler("/api/mounts", "172.30.4.2"); h._do_GET()
+            self.assertIn(b"/.fcmnt/vm1/0|/home/node/data|ro\n", h.wfile.getvalue())
+            h = self._handler("/api/mounts?instance=nope", "10.0.0.5"); h._do_GET()
+            self.assertEqual(self._status(h), 404)
+        finally:
+            m.BROWSE_ROOTS, m.instance_by_ip, m.mount_specs, m.load_instances = old
+
+    def test_set_mounts_refuses_bad_folders(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-setm-")
+        old = m.load_instances, m.BROWSE_ROOTS, m.INST_DIR
+        try:
+            m.INST_DIR = tmp
+            m.BROWSE_ROOTS = (tmp,)
+            inst = {"name": "vm1", "index": 4, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4", "mounts": []}
+            m.load_instances = lambda: [inst]
+            m.mount_specs = m.mount_specs
+            r = m.set_mounts("vm1", [{"host": tmp, "guest": "/bin"}])
+            self.assertTrue(r.startswith("error:"), r)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "vm1.json")))     # nothing saved
+        finally:
+            m.load_instances, m.BROWSE_ROOTS, m.INST_DIR = old
+
+    def test_js_json_and_download_name_and_rate(self):
+        m = self.m
+        self.assertNotIn("</script>", m.js_json({"d": "</script><img src=x>"}))
+        self.assertEqual(json.loads(m.js_json({"d": "</script>"}))["d"], "</script>")
+        self.assertEqual(m.download_name('a"b\r\nc.txt'), "a_b_c.txt")
+        self.assertEqual(m.download_name(""), "file")
+        key = ("t", "x")
+        self.assertTrue(all(m.rate_ok(key, 3, 60) for _ in range(3)))
+        self.assertFalse(m.rate_ok(key, 3, 60))
+
+    def test_proxy_books_upstream_usage(self):
+        m = self.m
+        seen = []
+        old = m.usage_add
+        try:
+            m.usage_add = lambda *a: seen.append(a)
+            inst = {"name": "vm1"}
+            m._proxy_usage(inst, "openrouter", b'{"model":"x/y","usage":{"prompt_tokens":10,"completion_tokens":5,"cost":0.001}}')
+            m._proxy_usage(inst, "openrouter", b'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}\n')
+            m._proxy_usage(inst, "openrouter", b'data: [DONE]\n')
+            m._proxy_usage(None, "openrouter", b'{"usage":{"prompt_tokens":10}}')
+            self.assertEqual(seen, [("vm1", "x/y", 10, 5, 0.001), ("vm1", "openrouter", 1, 2, None)])
+        finally:
+            m.usage_add = old
+
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST
         was gated. The denylist names the admin UI, chat, katfs and /i/."""
@@ -2513,7 +2701,9 @@ class ManagerFunctions(unittest.TestCase):
             ports = {c[c.index("--dport") + 1] for c in ins if "--dport" in c}
             self.assertEqual(ports, {str(m.LISTEN[1]), "2049"})
             self.assertTrue(any("ESTABLISHED,RELATED" in c for c in ins))
-            self.assertTrue(all(c[2] == "INPUT" and "fc+" in c for c in ins))
+            self.assertTrue(all(c[2] == "INPUT" and ("fc+" in c or m.POOL in c) for c in ins))
+            # a pool source on the LAN interface is forged: dropped before any by-IP check
+            self.assertIn(("iptables", "-I", "INPUT", "1", "-i", m.HOSTIF, "-s", m.POOL, "-j", "DROP"), ins)
             calls.clear()
             m.ensure_antispoof({"name": "hass", "index": 7})
             spec = ("-i", "fc7", "!", "-s", "172.30.7.2", "-j", "DROP")

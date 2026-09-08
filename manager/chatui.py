@@ -417,7 +417,7 @@ async function chatSyncLoop(){
 }
 
 /* ---------- Markdown (small, no third-party code) ---------- */
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function md(src){
   const lines=esc(src).split('\n'), out=[];
   const H=/^(#{1,6}) +(.*)$/, UL=/^\s*[-*+] +/, OL=/^\s*\d+[.)] +/, FENCE=/^\s*```/;
@@ -425,7 +425,7 @@ function md(src){
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/(^|[^*\w])\*([^\s*][^*\n]*?)\*(?![\w*])/g,'$1<i>$2</i>')
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"'<>&]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>');
   let i=0;
   while(i<lines.length){
     const l=lines[i];

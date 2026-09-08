@@ -136,8 +136,10 @@ HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
 PASS_LINE=""
 if [ ! -f /etc/systemd/system/firecracker-manager.service ]; then
   PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
-  PASS_LINE="Environment=MANAGER_PASS=$PW"
-  echo "  web login: admin / $PW   (changeable in the unit)"
+  # The password lives in a root-only file, not in the world-readable unit.
+  printf 'MANAGER_PASS=%s\n' "$PW" | sudo install -m 600 -o root -g root /dev/stdin /etc/firecracker-manager.env
+  PASS_LINE="EnvironmentFile=-/etc/firecracker-manager.env"
+  echo "  web login: admin / $PW   (changeable in /etc/firecracker-manager.env)"
 fi
 sudo tee /etc/systemd/system/firecracker-manager.service >/dev/null <<UNIT
 [Unit]

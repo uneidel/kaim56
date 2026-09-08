@@ -6,6 +6,11 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-08
+- Security review (skills, fresh-context subagent): request bodies capped (413), CSRF Origin check on admin POSTs, constant-time Basic auth, `nosniff`/`SAMEORIGIN` headers, socket timeout
+- Guest boundary: the reconciler fetches its mount list from `/api/mounts` (by IP) instead of the shared workspace; host/guest mount paths validated (no manager tree, `~/.ssh`, `/bin`…); forged pool addresses on the LAN interface dropped
+- Terminal tunnel forwards only upgrade headers (no Authorization/Cookie into a VM); web-chat Markdown escapes quotes in links; UI JSON blobs script-safe
+- `/api/chat-log` only from Signal-transport guests, rate-limited, inbox marks relayed messages; LLM proxy books upstream usage (budget no longer self-reported); at most 2 ephemeral VMs at once
+- `/api/resources` admin-only, web search metered per guest; installer keeps the manager password in a 0600 env file
 - Memory as files: `mgr/memfs.py` keeps one Markdown folder per instance (notes, daily timeline coarsened to weekly, git-committed), mounted read-write at `/memory`; the agent gets its index every turn
 - Harness disk: the agent code (`AGENT_SRC`) rides a read-only 8 MB ext4 drive rebuilt on content change, so an agent fix is one instance restart instead of a rootfs build; stale badge counts it
 - Secrets: a release lets the hub substitute on the host, only keys in `guest_readable` reach a VM raw (Secrets tab column); existing installs are seeded from their releases once

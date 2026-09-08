@@ -78,11 +78,21 @@ fi
 # The manager maintains .fcmnt/<inst>/desired.list (visible in the workspace) and
 # exports each folder per guest IP. fc_reconcile reconciles the mounts with the
 # desired guest paths: immediately + then every 5s in the background -> live.
+# The list comes from the manager (/api/mounts, this VM identified by its IP),
+# NOT from the shared workspace: there any other VM could write our list and
+# have us mount its files over /bin. Belt and braces: only our own export
+# subtree, never a system directory as the mount point.
 fc_reconcile() {
-  LIST="$WORKDIR/.fcmnt/$FC_INSTANCE/desired.list"; want=" "
+  LIST=/tmp/fc-desired.list; want=" "
+  if curl -sf -m 5 "http://${GW}:8700/api/mounts" -o "$LIST.tmp" 2>/dev/null; then mv "$LIST.tmp" "$LIST"; else rm -f "$LIST.tmp"; fi
   if [ -f "$LIST" ]; then
     while IFS='|' read -r sub gp mode; do
       [ -n "$sub" ] && [ -n "$gp" ] || continue
+      case "$sub" in "/.fcmnt/$FC_INSTANCE/"*) : ;; *) echo "[init] refuse foreign export $sub"; continue ;; esac
+      case "$gp" in
+        /|/bin|/bin/*|/sbin|/sbin/*|/usr|/usr/*|/lib*|/etc|/etc/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/boot|/boot/*|/run|/run/*|/var|/var/*|/tmp|/tmp/*|/app|/app/*|/harness|/harness/*|/config|/config/*|/init|/root|/root/*|*/../*|*[!/a-zA-Z0-9._-]*)
+          echo "[init] refuse mount at $gp"; continue ;;
+      esac
       want="$want$gp "
       if ! awk -v p="$gp" '$2==p{f=1} END{exit !f}' /proc/mounts; then
         mkdir -p "$gp"; ro=""; [ "$mode" = "ro" ] && ro=",ro"
