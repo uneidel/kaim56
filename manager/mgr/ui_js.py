@@ -1055,21 +1055,24 @@ async function renderSecrets(){
     SECPOL=await (await fetch('/api/secret-policy')).json();
   }catch(e){el.innerHTML='<span class=text-muted style="font-size:13px">not available</span>';return;}
   if(!keys.length){el.innerHTML='<span class=text-muted style="font-size:13px">No secret keys found in the store.</span>';return;}
-  const tpls=(TEMPLATES||[]).map(t=>t.template), bt=SECPOL.by_template||{};
-  const head=`<tr><th>Secret key</th>`+tpls.map(t=>`<th style="text-align:center">${escT(t)}</th>`).join('')+`</tr>`;
+  const tpls=(TEMPLATES||[]).map(t=>t.template), bt=SECPOL.by_template||{}, gr=SECPOL.guest_readable||[];
+  const head=`<tr><th>Secret key</th>`+tpls.map(t=>`<th style="text-align:center">${escT(t)}</th>`).join('')+`<th style="text-align:center" title="Only a key ticked here ever leaves the host as a raw value (get_secret). A release per template/instance alone lets the MCP hub substitute it on the host.">raw to guest</th></tr>`;
   const body=keys.map(k=>`<tr><td data-label="Secret key" class=mono style="font-size:12.5px">${escT(k)}</td>`+
-    tpls.map(t=>`<td data-label="${esc(t)}" style="text-align:center"><input type=checkbox data-tpl="${esc(t)}" value="${esc(k)}" ${(bt[t]||[]).indexOf(k)>=0?'checked':''}></td>`).join('')+`</tr>`).join('');
+    tpls.map(t=>`<td data-label="${esc(t)}" style="text-align:center"><input type=checkbox data-tpl="${esc(t)}" value="${esc(k)}" ${(bt[t]||[]).indexOf(k)>=0?'checked':''}></td>`).join('')+
+    `<td data-label="raw to guest" style="text-align:center"><input type=checkbox data-gr="1" value="${esc(k)}" ${gr.indexOf(k)>=0?'checked':''}></td></tr>`).join('');
   el.innerHTML=`<table class=table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 function saveSecrets(){
   const bt={};
   (TEMPLATES||[]).forEach(t=>{bt[t.template]=[];});
+  const gr=[];
   document.querySelectorAll('#secrets input[type=checkbox]').forEach(c=>{
+    if(c.dataset.gr){ if(c.checked)gr.push(c.value); return; }
     if(!bt[c.dataset.tpl])bt[c.dataset.tpl]=[];
     if(c.checked)bt[c.dataset.tpl].push(c.value);
   });
   fetch('/api/secret-policy',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({by_template:bt,by_instance:(SECPOL.by_instance||{})})})
+    body:JSON.stringify({by_template:bt,by_instance:(SECPOL.by_instance||{}),guest_readable:gr})})
     .then(r=>r.json()).then(d=>{document.getElementById('secmsg').textContent=(d.msg||'saved')+' ✓';});
 }
 window.onload=()=>{

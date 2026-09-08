@@ -43,7 +43,6 @@ mount -t devtmpfs devtmpfs /dev   2>/dev/null
 mkdir -p /dev/pts
 mount -t devpts   devpts   /dev/pts 2>/dev/null   # PTYs (webterm/Browser-Terminal)
 mount -t tmpfs    tmpfs    /tmp   2>/dev/null
-echo "nameserver 1.1.1.1" > /etc/resolv.conf
 export HOME=/home/node
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -52,6 +51,20 @@ mount -o ro /dev/vdb /config 2>/dev/null
 set -a
 [ -f /app/config.env ] && . /app/config.env
 [ -f /config/config.env ] && . /config/config.env
+echo "nameserver ${GUEST_DNS:-1.1.1.1}" > /etc/resolv.conf   # site.json via the config disk, not the image
+
+# Agent code: the read-only harness drive (manager: AGENT_SRC) wins over the
+# copy baked into the rootfs; without the drive the VM boots as before.
+APP=/app
+HD=$(sed -n 's/.*fc_harness=\([^ ]*\).*/\1/p' /proc/cmdline)
+if [ -n "$HD" ]; then
+  mkdir -p /harness
+  if mount -o ro "$HD" /harness 2>/dev/null && [ -f /harness/run_agent.py ]; then
+    APP=/harness; echo "[init] harness from $HD"
+  else
+    echo "[init] WARN: harness $HD not mountable — agent from /app"
+  fi
+fi
 set +a
 
 GW=$(ip route 2>/dev/null | awk '/default/{print $3; exit}')
@@ -91,11 +104,11 @@ export CLAUDE_WORKDIR="$WORKDIR"
 # Browser-Terminal (webterm) im Hintergrund, als Agent-User (uid 1000).
 setpriv --reuid=1000 --regid=1000 --init-groups \
   env HOME=/home/node CLAUDE_WORKDIR="$WORKDIR" TERM_PORT=7682 \
-  python3 -u /app/webterm.py >/var/log/webterm.log 2>&1 &
+  python3 -u "$APP/webterm.py" >/var/log/webterm.log 2>&1 &
 echo "[init] webterm auf :7682 gestartet"
 echo "[init] openrouter-agent transport=${TRANSPORT:-signal} model=${OPENROUTER_MODEL} workdir=$WORKDIR"
-cd /app
-setpriv --reuid=1000 --regid=1000 --init-groups python3 -u /app/run_agent.py
+cd "$APP"
+setpriv --reuid=1000 --regid=1000 --init-groups python3 -u "$APP/run_agent.py"
 
 echo "[init] agent beendet -> poweroff"
 poweroff -f 2>/dev/null

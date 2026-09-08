@@ -11,6 +11,7 @@ instances/<name>.json; the network is derived per instance from 'index':
   host  172.30.<index>.1/30   guest 172.30.<index>.2/30   tap fc<index>
 """
 import collections
+import tempfile
 import base64
 import codecs
 import html
@@ -47,6 +48,8 @@ from mgr import missions as _missions  # noqa: E402
 _missions.configure(BASE)
 from mgr import mcp as _mcp  # noqa: E402
 _mcp.configure(BASE)
+from mgr import memfs as _memfs  # noqa: E402
+_memfs.configure(BASE)
 from mgr import signal as _signal_mod  # noqa: E402
 _signal_mod.configure(BASE)
 BIN = os.path.join(BASE, "bin", "firecracker")
@@ -569,7 +572,12 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
             conv["messages"].append({"user": False, "text": str(reply_text)})
         conv["messages"] = conv["messages"][-500:]
         conv["updatedAt"] = now
-        return save_chats(chats)
+        n = save_chats(chats)
+    try:
+        _memfs.timeline_add(inst_name, kind, user_text, reply_text)   # the agent's own timeline
+    except Exception as e:
+        print(f"[quiet] memfs timeline failed: {e!r}", flush=True)
+    return n
 
 
 # ---- Voice sessions: what a voice client says shows up in the web chat ------
@@ -1330,6 +1338,10 @@ def _task_worker():
                     task_target_sweep()
                 except Exception as e:
                     _wlog(f"task-target-sweep failed: {e!r}")
+                try:
+                    _memfs.sweep([i["name"] for i in load_instances() if uses_harness(i)])
+                except Exception as e:
+                    _wlog(f"memfs-sweep failed: {e!r}")
             try:
                 image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
@@ -1872,6 +1884,15 @@ def mount_specs(inst):
             "sub": f"/.fcmnt/{inst['name']}/{j}",
             "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + (j % 16),
         })
+    # The instance's memory folder (mgr/memfs.py) rides the same mechanism:
+    # exported to this guest only, mounted read-write at /memory. Slot 15 of
+    # the fsid block is reserved for it (user mounts use 0..14).
+    mem = _memfs.folder(inst["name"]) if uses_harness(inst) else None
+    if mem:
+        specs.append({"idx": "memory", "host": mem, "guest": "/memory", "ro": False,
+                      "target": os.path.join(FCMNT_ROOT, inst["name"], "memory"),
+                      "sub": f"/.fcmnt/{inst['name']}/memory",
+                      "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + 15})
     return specs
 
 
@@ -1984,6 +2005,9 @@ def make_config_disk(inst):
     cfg.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
     cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
     cfg.setdefault("TZ", HOST_TZ)        # the agent's clock: [Now] line per turn
+    cfg["GUEST_DNS"] = GUEST_DNS         # guest-init writes resolv.conf from it (site.json, not the image)
+    if uses_harness(inst):
+        cfg["MEMORY_DIR"] = "/memory"    # Markdown memory folder (mgr/memfs.py)
     if inst["name"] == ORCH_INSTANCE:   # only the orchestrator may manage tasks
         cfg["TASK_ADMIN"] = "1"
     # Key injection proxy active? Then the agent sends chat requests to the
@@ -2012,10 +2036,27 @@ def make_config_disk(inst):
             # quote values (EXTRA_MOUNTS and others contain shell metacharacters like | and ;)
             f.write(f"{k}={shlex.quote(str(v))}\n")
     img = os.path.join(RUN_DIR, f"{inst['name']}.config.ext4")
-    with open(img, "wb") as f:
-        f.truncate(16 * 1024 * 1024)
-    sh("mkfs.ext4", "-F", "-q", "-d", d, img, check=False)
+    mkfs_image(img, 16, "fcconfig", srcdir=d)
     return img
+
+
+def mkfs_image(path, size_mb, label=None, srcdir=None):
+    """Build an ext4 image atomically: a sparse file of size_mb, mkfs
+    (populated from srcdir when given), renamed into place so a running VM
+    keeps its old inode. False when mkfs fails — the old image, if any, stays."""
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".new",
+                               dir=os.path.dirname(path) or ".")
+    with os.fdopen(fd, "wb") as fh:
+        fh.truncate(size_mb * 1024 * 1024)
+    mkfs = shutil.which("mkfs.ext4", path="/usr/sbin:/sbin:" + os.environ.get("PATH", "")) or "mkfs.ext4"
+    args = ["-F", "-q"] + (["-L", label] if label else []) + (["-d", srcdir] if srcdir else [])
+    r = sh(mkfs, *args, tmp, check=False)
+    if r.returncode != 0:
+        print(f"[mkfs] {os.path.basename(path)}: {r.stderr.strip()[:200]}", flush=True)
+        os.unlink(tmp)
+        return False
+    os.replace(tmp, path)
+    return True
 
 
 # ---- Overlay rootfs ---------------------------------------------------------
@@ -2027,6 +2068,80 @@ def make_config_disk(inst):
 # stop/start. Other images run unchanged via private_rootfs().
 OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/claude-rootfs.ext4"}
 
+# ---- Harness disk: the agent code as a read-only drive, not baked in ---------
+# Pattern from Claude Code's sandbox (harness and skills are read-only shared
+# layers next to the rootfs): the openrouter agent (agent.py, run_agent.py,
+# webterm.py) lives on a small ext4 image the manager rebuilds from AGENT_SRC
+# whenever the sources' CONTENT changes (a digest next to the image; mtimes
+# lie after rsync, checkouts and clock skew), attached read-only to every VM
+# on a rootfs that carries this agent. An agent change is then one instance
+# restart — no docker build, no 2 GB image. The guest mounts it at /harness
+# (boot arg fc_harness=/dev/vdX) and prefers it over /app; without the drive
+# it boots from the rootfs as before.
+AGENT_SRC = os.environ.get("AGENT_SRC") or SITE.get("AGENT_SRC") or ""
+HARNESS_FILES = ("agent.py", "run_agent.py", "webterm.py")
+HARNESS_IMG = os.path.join(RUN_DIR, "harness.ext4")
+HARNESS_ROOTFS = {"instances/openrouter-rootfs.ext4"}     # images built from AGENT_SRC
+_harness_lock = threading.Lock()
+
+
+def harness_sources():
+    """All HARNESS_FILES under AGENT_SRC — or nothing: a half-present set
+    (agent.py mid-rename, a partial rsync) must not become the drive a VM
+    boots from; run_agent.py imports agent with no fallback."""
+    if not AGENT_SRC:
+        return []
+    ps = [os.path.join(AGENT_SRC, f) for f in HARNESS_FILES]
+    return ps if all(os.path.isfile(p) for p in ps) else []
+
+
+def _harness_digest(srcs):
+    h = hashlib.sha256()
+    for p in srcs:
+        h.update(os.path.basename(p).encode() + b"\0")
+        with open(p, "rb") as fh:
+            h.update(fh.read())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def harness_image():
+    """Path of the harness drive, (re)built when the sources' digest differs
+    from the one recorded at the last build; None when AGENT_SRC is not
+    configured or incomplete. Serialized: two starts (or the sweep and a
+    start) must not build into the same file."""
+    srcs = harness_sources()
+    if not srcs:
+        return None
+    with _harness_lock:
+        stamp = HARNESS_IMG + ".src"
+        try:
+            want = _harness_digest(srcs)
+            with open(stamp) as fh:
+                have = fh.read().strip()
+        except OSError:
+            have = ""
+        if have == want and os.path.exists(HARNESS_IMG):
+            return HARNESS_IMG
+        d = tempfile.mkdtemp(prefix="harness-", dir=RUN_DIR)
+        try:
+            for p in srcs:
+                shutil.copy2(p, os.path.join(d, os.path.basename(p)))
+            if not mkfs_image(HARNESS_IMG, 8, "kaim56-harness", srcdir=d):
+                return HARNESS_IMG if os.path.exists(HARNESS_IMG) else None
+            with open(stamp, "w") as fh:
+                fh.write(want)
+            print(f"[harness] rebuilt from {AGENT_SRC} ({len(srcs)} files)", flush=True)
+            return HARNESS_IMG
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def uses_harness(inst):
+    """By image, not template name: llama/orcarouter share the openrouter
+    rootfs and its agent, so they take (and go stale with) the same drive."""
+    return inst.get("rootfs") in HARNESS_ROOTFS
+
 
 def image_state(inst):
     """(stale, built, started): stale when a RUNNING VM on a shared base image
@@ -2037,6 +2152,8 @@ def image_state(inst):
         return False, 0, 0
     try:
         built = os.path.getmtime(os.path.join(BASE, inst["rootfs"]))
+        if uses_harness(inst) and os.path.exists(HARNESS_IMG):
+            built = max(built, os.path.getmtime(HARNESS_IMG))   # agent code counts too
         started = os.path.getmtime(pidfile(inst))
     except OSError:
         return False, 0, 0
@@ -2054,9 +2171,13 @@ def image_sweep():
     """Idle worker: when a base image was rebuilt, push ONCE which running
     instances still sit on the old one. Stays quiet if nobody is affected."""
     hit = []
-    for rel in sorted(OVERLAY_ROOTFS):
+    try:
+        harness_image()        # an edited agent.py shows up here, not at the next start
+    except Exception as e:
+        _wlog(f"image-sweep harness: {e!r}")
+    for rel in sorted(OVERLAY_ROOTFS) + [HARNESS_IMG]:
         try:
-            mt = os.path.getmtime(os.path.join(BASE, rel))
+            mt = os.path.getmtime(rel if os.path.isabs(rel) else os.path.join(BASE, rel))
         except OSError:
             continue
         if rel in _img_seen and mt > _img_seen[rel]:
@@ -2089,12 +2210,8 @@ def make_upper(inst):
     if inst.get("persist_disk") and os.path.exists(p):
         return p
     size = UPPER_PERSIST_SIZE_MB if inst.get("persist_disk") else UPPER_SIZE_MB
-    tmp = p + ".new"
-    with open(tmp, "wb") as fh:          # sparse, without external truncate
-        fh.truncate(size * 1024 * 1024)
-    mkfs = shutil.which("mkfs.ext4") or "/sbin/mkfs.ext4"
-    sh(mkfs, "-F", "-q", "-L", "fcupper", tmp)
-    os.replace(tmp, p)
+    if not mkfs_image(p, size, "fcupper"):
+        raise RuntimeError(f"mkfs of the upper layer for {inst['name']} failed")
     return p
 
 
@@ -2150,6 +2267,11 @@ def private_rootfs(inst):
     return dst
 
 
+def _vdev(drives):
+    """Guest device of the LAST drive in the list (virtio-blk: vda, vdb, …)."""
+    return f"/dev/vd{chr(ord('a') + len(drives) - 1)}"
+
+
 def gen_config(inst):
     n = net_of(inst)
     boot = (f"console=ttyS0 reboot=k panic=1 pci=off "
@@ -2168,12 +2290,18 @@ def gen_config(inst):
     for j, d in enumerate(inst.get("extra_drives", [])):
         drives.append({"drive_id": f"data{j}", "path_on_host": d["path"],
                        "is_root_device": False, "is_read_only": d.get("readonly", False)})
+    if uses_harness(inst):
+        himg = harness_image()
+        if himg:
+            drives.append({"drive_id": "harness", "path_on_host": himg,
+                           "is_root_device": False, "is_read_only": True})
+            boot += f" fc_harness={_vdev(drives)}"
     if overlay:
         # Last drive = upper; the device name follows from the position
         # (virtio-blk: vda, vdb, ...). The guest reads it from /proc/cmdline.
         drives.append({"drive_id": "upper", "path_on_host": make_upper(inst),
                        "is_root_device": False, "is_read_only": False})
-        boot += f" fc_upper=/dev/vd{chr(ord('a') + len(drives) - 1)}"
+        boot += f" fc_upper={_vdev(drives)}"
     return {
         "boot-source": {"kernel_image_path": KERNEL, "boot_args": boot},
         "drives": drives,
@@ -2374,10 +2502,31 @@ def load_secret_policy():
         with open(SECRET_POLICY_FILE) as fh:
             p = json.load(fh)
         if isinstance(p, dict):
+            if "guest_readable" not in p:
+                # Upgrade path: before the two-rights model every release was
+                # readable raw. Seed the list from the releases ONCE so an
+                # existing install keeps working; prune it in the Secrets tab.
+                seed = sorted({k for grp in ("by_template", "by_instance")
+                               for v in (p.get(grp) or {}).values() if isinstance(v, list)
+                               for k in v if isinstance(k, str)})
+                p["guest_readable"] = seed
+                save_secret_policy(p)
+                print(f"[secrets] guest_readable seeded from existing releases: {', '.join(seed) or '-'}", flush=True)
             return p
     except (FileNotFoundError, ValueError):
         pass
-    return {"by_template": {}, "by_instance": {}}
+    return {"by_template": {}, "by_instance": {}, "guest_readable": []}
+
+
+def guest_readable_keys(inst):
+    """Keys a guest may fetch as RAW values through the broker. Two rights,
+    two lists: a release in by_template/by_instance lets the HUB substitute
+    the secret into an MCP config on the host; only a key that is ALSO in
+    `guest_readable` ever leaves the host (get_secret). Since the hub and the
+    LLM key proxy exist, that list is empty by default — a VM that needs a
+    raw token is the exception, not the rule."""
+    pol = load_secret_policy()
+    return allowed_secret_keys(inst) & set(pol.get("guest_readable") or [])
 
 
 def instance_by_ip(ip):
@@ -2404,13 +2553,16 @@ def save_secret_policy(pol):
     """Save the policy (only {by_template,by_instance} with string lists)."""
     if not isinstance(pol, dict):
         return "invalid"
-    clean = {"by_template": {}, "by_instance": {}}
+    clean = {"by_template": {}, "by_instance": {}, "guest_readable": []}
     for grp in ("by_template", "by_instance"):
         src = pol.get(grp, {})
         if isinstance(src, dict):
             for k, v in src.items():
                 if isinstance(v, list):
                     clean[grp][str(k)] = [str(x) for x in v if isinstance(x, str)]
+    gr = pol.get("guest_readable", [])
+    if isinstance(gr, list):
+        clean["guest_readable"] = sorted({str(x) for x in gr if isinstance(x, str)})
     try:
         with open(SECRET_POLICY_FILE, "w") as fh:
             json.dump(clean, fh, indent=2)
@@ -3714,8 +3866,9 @@ def _rt_llm_proxy(h):
 # ---- secrets, credentials, MCP config (guests, by source IP) ----------------
 @ROUTER.get("/api/secrets")
 def _rt_secrets(h):
+    # What get_secret may fetch: released AND guest-readable.
     inst = h._guest()
-    keys = sorted(allowed_secret_keys(inst)) if inst else []
+    keys = sorted(guest_readable_keys(inst)) if inst else []
     return h._json({"allowed": keys, "instance": inst.get("name") if inst else None})
 
 
@@ -3740,9 +3893,8 @@ def _rt_claude_credentials(h):
 def _rt_secret(h):
     name = h.path.split("/api/secret/", 1)[1]
     inst = h._guest()
-    allowed = allowed_secret_keys(inst) if inst else set()
-    if name not in allowed:
-        return h._json({"error": "not allowed"}, 403)
+    if inst is None or name not in guest_readable_keys(inst):
+        return h._json({"error": "not allowed (released for the hub only, or not released)"}, 403)
     return h._json({"value": secret_store().get(name, "")})
 
 
@@ -3892,6 +4044,11 @@ def _rt_memory_post(h):
     target = guest["name"] if guest else _tail(h, "/api/memory/")[0]
     key, value = b.get("key", ""), b.get("value")   # null = delete
     msg = mem_store(target, key, value)
+    try:
+        _memfs.note_write(target, key, value)         # the readable mirror in /memory
+        _memfs.commit(target, f"memory_store: {str(key)[:60]}")
+    except Exception as e:
+        print(f"[quiet] memfs note failed: {e!r}", flush=True)
     # Also store semantically; if the embedder fails the flat memory stays.
     sem = sem_store(target, value, key) if value is not None else False
     msg += " (+semantic)" if sem else ("" if value is None else " (semantic off)")

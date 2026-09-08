@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -309,6 +310,27 @@ class AgentLogic(unittest.TestCase):
                 os.environ.pop("TZ", None)
             else:
                 os.environ["TZ"] = old_tz
+
+    def test_memory_index_injected_from_folder(self):
+        """With MEMORY_DIR the head of MEMORY.md sits in every turn's context
+        (one block, refreshed); without a folder nothing is injected."""
+        a = self.a
+        tmp = tempfile.mkdtemp(prefix="e2e-memidx-")
+        open(os.path.join(tmp, "MEMORY.md"), "w").write("# Memory of vc\n\n- [[radio]] Radio — Swiss Classic\n")
+        old = a.MEMORY_DIR
+        try:
+            a.MEMORY_DIR = tmp
+            a._history[:] = [{"role": "system", "content": "sys"}]
+            a._inject_memory_index(); a._inject_memory_index()
+            blocks = [m for m in a._history if m["content"].startswith(a.MEMINDEX_TAG)]
+            self.assertEqual(len(blocks), 1)
+            self.assertIn("[[radio]]", blocks[0]["content"])
+            self.assertIn(tmp, blocks[0]["content"])
+            a.MEMORY_DIR = ""
+            a._inject_memory_index()
+            self.assertEqual([m for m in a._history if m["content"].startswith(a.MEMINDEX_TAG)], [])
+        finally:
+            a.MEMORY_DIR = old
 
     def test_spawn_subagent_rides_the_task_path(self):
         """spawn_subagent no longer calls admin routes (403 for guests since
@@ -1715,6 +1737,154 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.load_mcps = old
 
+    def test_memory_folder_notes_timeline_coarsening(self):
+        """Memory as files: a note per key with a regenerated index, one raw
+        timeline entry per turn, coarsened deterministically (trimmed after
+        RAW_DAYS, folded into a weekly file after DAILY_DAYS), git-committed."""
+        import mgr.memfs as mf
+        from datetime import date
+        tmp = tempfile.mkdtemp(prefix="e2e-memfs-")
+        old = mf.MEMORY_ROOT
+        try:
+            mf.MEMORY_ROOT = os.path.join(tmp, "memory")
+            d = mf.folder("vc")
+            self.assertTrue(os.path.isdir(os.path.join(d, ".git")))
+            p = mf.note_write("vc", "Lieblingssender", "Swiss Classic, morgens leise.")
+            self.assertTrue(p.endswith("notes/lieblingssender.md"))
+            idx = mf.index_text("vc")
+            self.assertIn("[[lieblingssender]] Lieblingssender — Swiss Classic", idx)
+            mf.note_write("vc", "Lieblingssender", None)
+            self.assertNotIn("lieblingssender", mf.index_text("vc"))
+            self.assertIsNone(mf.folder("../x"))          # no traversal via the name
+            # timeline: raw today, trimmed at 3 days, weekly at 15 days
+            import time as _t
+            now = _t.time()
+            mf.timeline_add("vc", "voice", "Radio an " * 40, "OK.", when=now)
+            mf.timeline_add("vc", "voice", "Wie spät?", "12:32.", when=now - 3 * 86400)
+            mf.timeline_add("vc", "task", "MSFT-Kurs holen", "499.7", when=now - 20 * 86400)
+            files = sorted(os.listdir(os.path.join(d, "timeline")))
+            self.assertEqual(len(files), 3)
+            raw_today = open(os.path.join(d, "timeline", files[-1])).read()
+            self.assertIn("[voice] Radio an", raw_today)
+            st = mf.coarsen("vc", today=date.today())
+            self.assertEqual(st, {"trimmed": 1, "folded": 1})
+            files = sorted(os.listdir(os.path.join(d, "timeline")))
+            self.assertTrue(any("-W" in f for f in files), files)           # weekly file exists
+            self.assertEqual(sum(1 for f in files if "-W" not in f), 2)    # today + the trimmed day
+            self.assertTrue(mf.commit("vc", "test"))
+            self.assertEqual(mf.coarsen("vc", today=date.today()), {"trimmed": 0, "folded": 0})
+        finally:
+            mf.MEMORY_ROOT = old
+
+    def test_memory_folder_is_mounted_into_the_guest(self):
+        """The folder rides the host-folder mechanism: exported to the guest
+        only, mounted read-write at /memory; the config disk names it."""
+        m = self.m
+        import mgr.memfs as mf
+        tmp = tempfile.mkdtemp(prefix="e2e-memmount-")
+        old = mf.MEMORY_ROOT
+        try:
+            mf.MEMORY_ROOT = os.path.join(tmp, "memory")
+            inst = {"name": "vc", "index": 8, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
+                    "mounts": [{"host": tmp, "guest": "/mnt/x"}]}
+            specs = m.mount_specs(inst)
+            mem = [s for s in specs if s["guest"] == "/memory"]
+            self.assertEqual(len(mem), 1)
+            self.assertFalse(mem[0]["ro"])
+            self.assertTrue(mem[0]["host"].endswith("/memory/vc"))
+            self.assertEqual(mem[0]["fsid"], 4000 + 8 * 16 + 15)
+            self.assertEqual(m.mount_specs({**inst, "template": "claude", "rootfs": "instances/claude-rootfs.ext4"})[0]["guest"], "/mnt/x")
+        finally:
+            mf.MEMORY_ROOT = old
+
+    def test_secret_broker_requires_guest_readable(self):
+        """A release lets the HUB substitute a key on the host; the raw value
+        reaches a VM only when the key is also in guest_readable."""
+        m = self.m
+        guest = {"name": "hass", "template": "openrouter", "index": 7, "config": {}}
+        old = m.instance_by_ip, m.load_secret_policy, m.secret_store
+        try:
+            m.instance_by_ip = lambda ip: guest if ip == "172.30.7.2" else None
+            m.secret_store = lambda: {"HA_TOKEN": "t0k", "OPENROUTER_API_KEY": "k3y"}
+            m.load_secret_policy = lambda: {"by_template": {"openrouter": ["OPENROUTER_API_KEY"]},
+                                            "by_instance": {"hass": ["HA_TOKEN"]},
+                                            "guest_readable": ["HA_TOKEN"]}
+            self.assertEqual(m.allowed_secret_keys(guest), {"OPENROUTER_API_KEY", "HA_TOKEN"})
+            self.assertEqual(m.guest_readable_keys(guest), {"HA_TOKEN"})
+            h = self._handler("/api/secret/HA_TOKEN", "172.30.7.2"); h._do_GET()
+            self.assertIn(b'"value": "t0k"', h.wfile.getvalue())
+            h = self._handler("/api/secret/OPENROUTER_API_KEY", "172.30.7.2"); h._do_GET()
+            self.assertIn(b" 403 ", h.wfile.getvalue().split(b"\r\n", 1)[0])   # released, not readable
+            h = self._handler("/api/secrets", "172.30.7.2"); h._do_GET()
+            self.assertIn(b'"allowed": ["HA_TOKEN"]', h.wfile.getvalue())
+            # the saver keeps the third list, deduplicated and sorted
+            tmp = tempfile.mkdtemp(prefix="e2e-secpol-"); oldf = m.SECRET_POLICY_FILE
+            try:
+                m.SECRET_POLICY_FILE = os.path.join(tmp, "p.json")
+                m.save_secret_policy({"by_template": {}, "by_instance": {}, "guest_readable": ["B", "A", "B", 3]})
+                self.assertEqual(json.load(open(m.SECRET_POLICY_FILE))["guest_readable"], ["A", "B"])
+            finally:
+                m.SECRET_POLICY_FILE = oldf
+        finally:
+            m.instance_by_ip, m.load_secret_policy, m.secret_store = old
+
+    def test_harness_disk_rebuilds_when_agent_source_changes(self):
+        """The agent code rides a read-only drive built from AGENT_SRC: built
+        once, reused while the sources' content is unchanged (mtimes are not
+        trusted), rebuilt when a file changes; an incomplete source set or no
+        AGENT_SRC gives no drive. Every rootfs carrying this agent uses it."""
+        m = self.m
+        if not shutil.which("mkfs.ext4", path="/usr/sbin:/sbin:" + os.environ.get("PATH", "")):
+            self.skipTest("mkfs.ext4 not available")
+        tmp = tempfile.mkdtemp(prefix="e2e-harness-")
+        src = os.path.join(tmp, "src"); os.makedirs(src); run = os.path.join(tmp, "run"); os.makedirs(run)
+        for n in ("agent.py", "run_agent.py", "webterm.py"):
+            with open(os.path.join(src, n), "w") as fh:
+                fh.write(f"# {n}\n")
+        old = m.AGENT_SRC, m.HARNESS_IMG, m.RUN_DIR
+        try:
+            m.AGENT_SRC, m.HARNESS_IMG, m.RUN_DIR = src, os.path.join(run, "harness.ext4"), run
+            img = m.harness_image()
+            self.assertEqual(img, m.HARNESS_IMG)
+            self.assertTrue(os.path.exists(img) and os.path.exists(img + ".src"))
+            ino1 = os.stat(img).st_ino
+            os.utime(os.path.join(src, "agent.py"), (time.time() + 60,) * 2)   # a newer mtime alone
+            self.assertEqual(m.harness_image(), img)
+            self.assertEqual(os.stat(img).st_ino, ino1)                         # is no rebuild
+            with open(os.path.join(src, "agent.py"), "a") as fh:
+                fh.write("VERSION = 2\n")
+            m.harness_image()
+            self.assertNotEqual(os.stat(img).st_ino, ino1)                      # content change is
+            self.assertEqual(len(os.listdir(run)), 2, os.listdir(run))          # no temp files left
+            os.unlink(os.path.join(src, "agent.py"))
+            self.assertEqual(m.harness_sources(), [])                           # incomplete: no drive
+            inst = {"name": "x", "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4", "index": 9}
+            self.assertTrue(m.uses_harness(inst))
+            self.assertTrue(m.uses_harness({**inst, "template": "llama"}))      # same image, same agent
+            self.assertFalse(m.uses_harness({**inst, "template": "claude", "rootfs": "instances/claude-rootfs.ext4"}))
+            m.AGENT_SRC = ""
+            self.assertIsNone(m.harness_image())
+        finally:
+            m.AGENT_SRC, m.HARNESS_IMG, m.RUN_DIR = old
+
+    def test_secret_policy_seeds_guest_readable_on_upgrade(self):
+        """A policy file from before the two-rights model has no guest_readable:
+        it is seeded from the releases once (nothing breaks on upgrade) and
+        the file is rewritten with the list; a file that has the key is left alone."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-secpol2-"); oldf = m.SECRET_POLICY_FILE
+        try:
+            m.SECRET_POLICY_FILE = os.path.join(tmp, "p.json")
+            with open(m.SECRET_POLICY_FILE, "w") as fh:
+                json.dump({"by_template": {"openrouter": ["OPENROUTER_API_KEY"]},
+                           "by_instance": {"hass": ["HA_TOKEN", "OPENROUTER_API_KEY"]}}, fh)
+            self.assertEqual(m.load_secret_policy()["guest_readable"], ["HA_TOKEN", "OPENROUTER_API_KEY"])
+            self.assertEqual(json.load(open(m.SECRET_POLICY_FILE))["guest_readable"], ["HA_TOKEN", "OPENROUTER_API_KEY"])
+            m.save_secret_policy({"by_template": {"openrouter": ["OPENROUTER_API_KEY"]}, "by_instance": {}, "guest_readable": []})
+            self.assertEqual(m.load_secret_policy()["guest_readable"], [])          # an explicit empty list stays
+        finally:
+            m.SECRET_POLICY_FILE = oldf
+
     def test_stale_image_detection_and_rebuild_push(self):
         """A running VM started before its base image was rebuilt is 'stale':
         the API says so, and the idle sweep pushes once per rebuild, naming
@@ -1723,10 +1893,11 @@ class ManagerFunctions(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="e2e-stale-")
         os.makedirs(os.path.join(tmp, "instances")); os.makedirs(os.path.join(tmp, "run"))
         img = os.path.join(tmp, "instances", "openrouter-rootfs.ext4")
-        old = m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add, dict(m._img_seen)
+        old = m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add, dict(m._img_seen), m.HARNESS_IMG
         pushes = []
         try:
             m.BASE, m.RUN_DIR = tmp, os.path.join(tmp, "run")
+            m.HARNESS_IMG = os.path.join(tmp, "run", "harness.ext4")    # none built here: rootfs only
             m.is_running = lambda i: i["name"] != "off"
             insts = [{"name": "old", "rootfs": "instances/openrouter-rootfs.ext4"},
                      {"name": "fresh", "rootfs": "instances/openrouter-rootfs.ext4"},
@@ -1749,7 +1920,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m.image_sweep(), [])           # once per rebuild
         finally:
             m.BASE, m.RUN_DIR, m.is_running, m.load_instances, m.notify_add = old[:5]
-            m._img_seen.clear(); m._img_seen.update(old[5])
+            m._img_seen.clear(); m._img_seen.update(old[5]); m.HARNESS_IMG = old[6]
 
     def test_guest_config_carries_host_timezone(self):
         """Guests boot in UTC; the manager hands them the host's zone name."""

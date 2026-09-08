@@ -356,7 +356,7 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-secrets>
   <div class=sec-head>
     <div><h6>Runtime access</h6><h3>Secrets access</h3></div>
-    <span class="note text-muted">Which keys each template's agents may fetch via <code>get_secret(name)</code> · default is deny · values never written to disk</span>
+    <span class="note text-muted">Per template/instance: which keys the host may substitute into that agent's MCP servers · <b>raw to guest</b>: which of those an agent may fetch via <code>get_secret(name)</code> — default none, since the hub and the LLM key proxy exist · values never written to disk</span>
   </div>
   <div class="banner blueprint" style="background:var(--color-neutral-100);margin:16px 0 20px;padding:9px 14px">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
@@ -558,16 +558,19 @@ HTML_BOTTOM = """
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Templates &amp; rootfs images</span>
   <p class=card-body><b>Install anywhere:</b> <code>install.sh</code> in the repo deploys the whole stack on a fresh KVM machine (preflight, layout, Firecracker download, builds, systemd) — verified end-to-end in a nested-KVM QEMU rig. Four templates (claude, openrouter, pi, prime), each with a Docker-built
-  ext4 image under <code>instances/*.ext4</code>. Rebuilding an image and restarting an instance is
-  the update path &#8212; the per-start copy guarantees every boot runs the current image. The
-  openrouter image carries node (npx MCP servers), python, mcp-remote, mcp-portainer and
-  poppler; the agent code itself is ~68&#8201;KB.</p></div>
+  ext4 image under <code>instances/*.ext4</code>. The openrouter image carries node (npx MCP
+  servers), python, mcp-remote, mcp-portainer and poppler; the agent code itself does not live
+  in it any more: a <b>harness drive</b> (8&#8201;MB ext4, read-only, rebuilt from
+  <code>AGENT_SRC</code> whenever the sources change) is attached to every VM on that image and
+  mounted at <code>/harness</code>. An agent fix is one instance restart; a rootfs rebuild is
+  for packages. The Instances tab flags VMs started before the last rebuild of either.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Secret broker &amp; policy</span>
   <p class=card-body><b>LLM keys go one step further:</b> with <code>LLM_KEY_PROXY</code> they never enter a VM — the manager injects them on egress (<code>/api/llm/&#8249;backend&#8250;</code>). API keys and tokens never land in instance configs or on the config disk.
-  Guests fetch secrets at runtime from <code>/api/secret/&#8249;name&#8250;</code>; the manager identifies the
-  instance by source IP and checks a per-instance/template allowlist
-  (<code>secret-policy.json</code>). Sources: the 0600 secret store and the manager settings. MCP
+  Two rights per key (<code>secret-policy.json</code>): a <b>release</b> to a template or instance
+  lets the MCP hub substitute the value into a server config <i>on the host</i>; only a key that is
+  also <b>guest-readable</b> leaves the host raw via <code>/api/secret/&#8249;name&#8250;</code>, the
+  instance identified by source IP. Sources: the 0600 secret store and the manager settings. MCP
   configs are assembled server-side the same way (<code>/api/mcp-config</code>).</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Security gateway</span>

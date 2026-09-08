@@ -6,5 +6,6 @@
   "GUEST_DNS": "1.1.1.1",
   "HOSTIF": "eth0",
   "CODE_URL": "http://192.168.0.10:8443/",
-  "CODE_ROOT": "/home/coder/firecracker"
+  "CODE_ROOT": "/home/coder/firecracker",
+  "AGENT_SRC": "/opt/kaim56/agents/openrouter"
 }

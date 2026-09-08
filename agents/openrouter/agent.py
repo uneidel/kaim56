@@ -1957,6 +1957,29 @@ MISSION_TAG = "[Missions]"
 
 
 NOW_TAG = "[Now]"
+MEMINDEX_TAG = "[MemoryIndex]"
+MEMORY_DIR = os.environ.get("MEMORY_DIR", "")
+
+
+def _inject_memory_index():
+    """The head of /memory/MEMORY.md every turn: what notes exist, where the
+    timeline is — so the agent greps the folder instead of guessing. One
+    block, refreshed each turn; absent when there is no memory folder."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(MEMINDEX_TAG))]
+    if not MEMORY_DIR:
+        return
+    try:
+        with open(os.path.join(MEMORY_DIR, "MEMORY.md"), encoding="utf-8") as fh:
+            head = "\n".join(fh.read().split("\n")[:60]).strip()
+    except OSError:
+        return
+    if head:
+        _history.append({"role": "system", "content":
+                         MEMINDEX_TAG + f" Your long-term memory is the folder {MEMORY_DIR} "
+                         "(notes/*.md, timeline/*.md; grep it, read the note you need, "
+                         "write or edit notes as Markdown with [[slug]] links). Index:\n" + head})
 
 
 def _now_line():
@@ -2227,6 +2250,7 @@ def run(user_message):
     _trim_history()
     _inject_playbooks()
     _inject_missions()
+    _inject_memory_index()
     _inject_now()
     _recall(user_message)
     _history.append({"role": "user", "content": user_message})
@@ -2419,6 +2443,7 @@ def run_stream(user_message, on_token, image=None):
     _trim_history()
     _inject_playbooks()
     _inject_missions()
+    _inject_memory_index()
     _inject_now()
     _recall(user_message)
     if image:

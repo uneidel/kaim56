@@ -6,6 +6,10 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-08
+- Memory as files: `mgr/memfs.py` keeps one Markdown folder per instance (notes, daily timeline coarsened to weekly, git-committed), mounted read-write at `/memory`; the agent gets its index every turn
+- Harness disk: the agent code (`AGENT_SRC`) rides a read-only 8 MB ext4 drive rebuilt on content change, so an agent fix is one instance restart instead of a rootfs build; stale badge counts it
+- Secrets: a release lets the hub substitute on the host, only keys in `guest_readable` reach a VM raw (Secrets tab column); existing installs are seeded from their releases once
+- Guest DNS comes from `site.json` via the config disk (`GUEST_DNS`), no address in the image; one `mkfs_image` helper for config, upper and harness drives
 - if-chain gone: every HTTP path is a registered route, `_do_GET`/`_do_POST` dispatch only; 104 routes, test guards the chain stays empty
 - Route handlers share `_body`/`_json`/`_guest` helpers and one error decorator; unknown API paths answer 404 instead of the admin page
 - Architecture tab: client row reordered (Desktop client first), iroh/Traefik arrows re-routed; README screenshot regenerated
