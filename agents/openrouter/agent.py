@@ -1968,11 +1968,15 @@ def _now_line():
     except Exception:
         now = datetime.datetime.now().astimezone()
         tz = str(now.tzinfo)
-    return (f"{NOW_TAG} {now.strftime('%A, %Y-%m-%d %H:%M')} {now.tzname()} ({tz}). "
+    off = now.strftime("%z")
+    off = off[:3] + ":" + off[3:] if len(off) == 5 else off
+    return (f"{NOW_TAG} {now.strftime('%A, %Y-%m-%d %H:%M')} {now.tzname()} ({tz}, UTC{off}). "
             "This is the current time for the message below — earlier times stated "
             "in this conversation are outdated. Use it for 'today', 'this week', "
             "dates and times; no tool call needed. Tool results may carry UTC "
-            "timestamps (ISO …Z): convert them to this zone before you state a time.")
+            "timestamps (ISO …Z): convert them to this zone before you state a time. "
+            f"Datetimes you pass TO tools: ISO 8601 with this offset, e.g. "
+            f"{now.strftime('%Y-%m-%d')}T18:30:00{off}.")
 
 
 def _inject_now():

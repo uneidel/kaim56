@@ -43,3 +43,40 @@ patch("list-events.js",
             ...(e.wholeDay && { wholeDay: true }),
             timezone: tz,`,
   "event times in local time, whole-day as date");
+
+// 3) create/update-event and the todo tools validate start/end/due/until
+//    with zod `datetime({ offset: true })` and REJECT anything else with
+//    "Invalid ISO datetime". The model writes what it sees — after (2) that is
+//    "2026-09-08 18:30 Europe/Berlin", or a bare "2026-09-08T18:30:00" — and
+//    every event creation failed. Normalize such inputs to ISO with the
+//    zone's offset before validation; real ISO strings pass through untouched.
+const helper = `
+const __normDt = (v) => {
+  if (typeof v !== "string") return v;
+  const m = v.trim().match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?)?(?:\\s+([A-Za-z_]+\\/[A-Za-z_]+))?$/);
+  if (!m) return v;
+  const tz = m[7] || process.env.TZ || "UTC";
+  const Y = +m[1], Mo = +m[2], D = +m[3], h = +(m[4] || 0), mi = +(m[5] || 0), s = +(m[6] || 0);
+  const wallUtc = Date.UTC(Y, Mo - 1, D, h, mi, s);
+  const f = new Intl.DateTimeFormat("sv-SE", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const wallOf = (t) => { const p = f.format(new Date(t)).match(/\\d+/g).map(Number); return Date.UTC(p[0], p[1] - 1, p[2], p[3] % 24, p[4], p[5]); };
+  let inst = wallUtc;
+  for (let i = 0; i < 2; i++) inst += wallUtc - wallOf(inst);
+  const off = Math.round((wallUtc - inst) / 60000), sign = off >= 0 ? "+" : "-", a = Math.abs(off);
+  const pad = (n) => String(n).padStart(2, "0");
+  return pad(Y).padStart(4, "0") + "-" + pad(Mo) + "-" + pad(D) + "T" + pad(h) + ":" + pad(mi) + ":" + pad(s) + sign + pad(Math.floor(a / 60)) + ":" + pad(a % 60);
+};
+`;
+for (const file of ["create-event.js", "update-event.js", "create-todo.js", "update-todo.js", "list-todos.js"]) {
+  const p = root + file;
+  let s = fs.readFileSync(p, "utf8");
+  const re = /z\s*\.string\(\)\s*\.datetime\(\{ offset: true \}\)/g;
+  const n = (s.match(re) || []).length;
+  if (!n) throw new Error(`caldav-mcp patch anchor not found in ${file} (datetime normalization) — check the version`);
+  s = s.replace(re, 'z.preprocess(__normDt, z.string().datetime({ offset: true }))');
+  const imp = 'import { z } from "zod";';
+  if (!s.includes(imp)) throw new Error(`caldav-mcp: zod import not found in ${file}`);
+  s = s.replace(imp, imp + helper);
+  fs.writeFileSync(p, s);
+  console.log(`caldav-mcp: ${file}: ${n} datetime field(s) accept local/zone forms`);
+}

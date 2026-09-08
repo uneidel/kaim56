@@ -277,7 +277,8 @@ class AgentLogic(unittest.TestCase):
             os.environ["TZ"] = "Europe/Berlin"
             line = a._now_line()
             self.assertTrue(line.startswith("[Now] "))
-            self.assertIn("(Europe/Berlin)", line)
+            self.assertIn("(Europe/Berlin, UTC+0", line)             # +01:00 or +02:00
+            self.assertRegex(line, r"T18:30:00\+0[12]:00")             # tool-input example
             self.assertIn(time.strftime("%Y-%m-%d"), line)   # host and guest tz agree today
             a._history[:] = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"},
                              {"role": "assistant", "content": "Es ist 16:36 Uhr."}]
