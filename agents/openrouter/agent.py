@@ -1897,7 +1897,7 @@ def _recall(user_message):
         block = (RECALL_TAG + " Relevant notes from earlier sessions "
                  "(use them when they fit the question):\n"
                  + "\n".join(f"- {h['text']}" for h in hits))
-        _history.insert(1, {"role": "system", "content": block})
+        _history.append({"role": "system", "content": block})
 
 
 PLAYBOOK_TAG = "[Playbooks]"
@@ -1916,7 +1916,10 @@ def _inject_playbooks():
     if pbs:
         block = (PLAYBOOK_TAG + " Your fixed rules — ALWAYS follow:\n"
                  + "\n".join(f"- {p.get('text','')}" for p in pbs))
-        _history.insert(1, {"role": "system", "content": block})
+        # Appended, not inserted at the top: next to the question the rules
+        # are followed; at the top gemini-flash kept saying "12:31 Uhr"
+        # against a rule that forbids the "Uhr" (2026-09-08).
+        _history.append({"role": "system", "content": block})
 
 
 # --- prompt templates: /name -> prompt maintained in the manager ------------
@@ -2013,7 +2016,7 @@ def _inject_missions():
                         + (f" @{cur['target']}" if cur.get("target") else "")
                         if cur else "all steps done -> mission_finish!"))
     if lines:
-        _history.insert(1, {"role": "system", "content":
+        _history.append({"role": "system", "content":
                             MISSION_TAG + " Your ongoing missions (progress lives in the "
                             "manager, use mission_update/mission_finish):\n" + "\n".join(lines)})
 

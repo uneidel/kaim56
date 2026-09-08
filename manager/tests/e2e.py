@@ -288,6 +288,20 @@ class AgentLogic(unittest.TestCase):
             self.assertEqual(a._history[0]["content"], "sys")
             self.assertTrue(a._history[-1]["content"].startswith("[Now]"))   # last = next to the question
             self.assertIn("outdated", a._history[-1]["content"])
+            # playbooks and missions sit next to the question as well (rules at
+            # the top were ignored: "12:31 Uhr" against a no-"Uhr" rule)
+            old_get = a._mgr_get
+            try:
+                a._mgr_get = lambda base, path, timeout=30: (
+                    json.dumps({"playbooks": [{"text": "keine Uhr"}]}) if "playbooks" in path
+                    else json.dumps({"missions": []}))
+                a._inject_playbooks(); a._inject_playbooks()
+                pbs = [m for m in a._history if m["role"] == "system" and m["content"].startswith(a.PLAYBOOK_TAG)]
+                self.assertEqual(len(pbs), 1)
+                self.assertTrue(a._history[-1]["content"].startswith(a.PLAYBOOK_TAG))
+                self.assertEqual(a._history[0]["content"], "sys")
+            finally:
+                a._mgr_get = old_get
             os.environ["TZ"] = "Not/AZone"
             self.assertTrue(a._now_line().startswith("[Now] "))   # falls back, never raises
         finally:
