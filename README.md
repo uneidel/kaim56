@@ -24,8 +24,6 @@ Signal ─────────────────┘         │       
   agent is a compromised VM, not a compromised host.
 - **A manager, not a stack.** `manager/manager.py` plus a small `mgr/` package —
   standard library only, no framework, no database server, no message broker.
-  Every HTTP path is a registered route; the routing table is enumerable and says
-  which routes a guest VM may call.
 - **Secrets stay on the host.** Agents fetch nothing but what a per-instance policy
   releases; LLM calls are proxied so the API key is injected on egress; MCP servers
   (Home Assistant, calendar, …) run in a hub container on the host and the VM only
@@ -100,9 +98,9 @@ Per-client details live next to the code: `app/README.md`, `voice-client/README.
 
 ## Development
 
-- `manager/run-tests.sh` — 129 stdlib-only tests in three tiers (unit, HTTP against
-  the running manager, live against a VM) plus gates for undefined names and the
-  web UI's JavaScript syntax. Green is the bar for every change.
+- `manager/run-tests.sh` — the stdlib-only test suite in three tiers (unit, HTTP
+  against the running manager, live against a VM) plus gates for undefined names
+  and the web UI's JavaScript syntax. Green is the bar for every change.
 - `CLAUDE.md` — working conventions for humans and agents: the two-tree setup (live
   system vs. repo), the update cycle, what never goes into the tree.
 - `manager/CHANGELOG.md` — one line per change, newest first.
