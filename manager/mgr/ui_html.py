@@ -67,7 +67,7 @@ HTML_TOP = """</head><body>
           <div id=mounts></div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
             <button type=button class="btn btn-secondary btn-sm" onclick="addMount()">+ Folder</button>
-            <span class=text-muted style="font-size:12px">Host path → guest path · pick with 📁 · "ro" = read-only · no host folder? <a href="#sharing">share one from your browser via katfs</a></span>
+            <span class=text-muted style="font-size:12px">Host path → guest path · pick with 📁 · "ro" = read-only · the agent writes as host user <code>kaim56-guest</code>, so a "rw" folder must let that user in · no host folder? <a href="#sharing">share one from your browser via katfs</a></span>
           </div>
         </div>
         <div class="field span2"><label>Capabilities</label>
@@ -513,7 +513,9 @@ HTML_BOTTOM = """
   &#8212; everything else returns 403. Guests may task only themselves, an ephemeral VM, or the
   instances in their <code>DELEGATE_TARGETS</code>; the roster, task history and approval ids
   they see are scoped the same way, and the inbox is the orchestrator's alone. On the host the
-  INPUT chain lets guest traffic reach only :8700 and NFS.</p></div>
+  INPUT chain lets guest traffic reach only :8700 and NFS. NFS is per instance: the workspace
+  <code>agent/&#8249;name&#8250;</code> and each host folder are exported to that VM's address only, every
+  write squashed to the system user <code>kaim56-guest</code>, which owns nothing else.</p></div>
 
   <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Firecracker microVMs</span>
   <p class=card-body>One VM per agent instance. Each gets a tap device <code>fc&#8249;N&#8250;</code> with a

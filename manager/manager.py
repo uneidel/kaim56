@@ -24,6 +24,7 @@ import shlex
 import glob
 import hashlib
 import hmac
+import pwd
 import shutil
 import signal
 import socket
@@ -286,14 +287,98 @@ _mcp.HUB_TZ = HOST_TZ          # hub processes (caldav-mcp …) format dates in 
 USER = os.environ.get("MANAGER_USER", "admin")
 PW = os.environ.get("MANAGER_PASS", "")   # empty => no auth (only behind Traefik!)
 
+# Failed logins per client: after AUTH_FAILS_MAX within AUTH_FAIL_WINDOW the
+# client is refused for AUTH_LOCK seconds, right password or not.
+AUTH_FAILS_MAX, AUTH_FAIL_WINDOW, AUTH_LOCK = 10, 900, 900
+_auth_fails, _auth_lock = {}, threading.Lock()
+_PROXY_PEERS = ("127.0.0.1", "::1", "172.17.")
+
+
+def auth_client_key(peer, xff=""):
+    """Who is knocking: the socket peer — or, when that is a proxy on this
+    host (Traefik on loopback/docker), the first X-Forwarded-For hop."""
+    if xff and (peer in _PROXY_PEERS or peer.startswith(_PROXY_PEERS[2])):
+        return xff.split(",")[0].strip() or peer
+    return peer
+
+
+def auth_locked(key, now=None):
+    now = now or time.time()
+    with _auth_lock:
+        fails = [t for t in _auth_fails.get(key, []) if now - t < AUTH_FAIL_WINDOW]
+        _auth_fails[key] = fails
+        return len(fails) >= AUTH_FAILS_MAX and now - fails[-1] < AUTH_LOCK
+
+
+def auth_failed(key, now=None):
+    """Record a failure; True when this one closed the door."""
+    now = now or time.time()
+    with _auth_lock:
+        fails = [t for t in _auth_fails.get(key, []) if now - t < AUTH_FAIL_WINDOW]
+        fails.append(now)
+        _auth_fails[key] = fails
+        return len(fails) == AUTH_FAILS_MAX
+
+
+def auth_succeeded(key):
+    with _auth_lock:
+        _auth_fails.pop(key, None)
+
 # ---- NFS / host folders ----------------------------------------------------
-# The workspace folder is the NFSv4 root (fsid=0). Additional host folders are
-# bind-mounted UNDER this root (.fcmnt/<instance>/<idx>), exported with
-# 'crossmnt' per guest IP and mounted explicitly inside the guest.
+# Every export is per instance and per guest IP: the workspace
+# AGENT_ROOT/<instance> and the host folders bind-mounted under
+# AGENT_ROOT/.fcmnt/<instance>/<idx>. There is NO pool-wide root export any
+# more (it let every VM read and write every other VM's files, and crossmnt
+# handed a client its neighbours' submounts); NFSv4 serves the exports from
+# its pseudo-root, the guest mounts them by absolute path. Inside the VM the
+# agent is uid 1000; on the host every access is squashed to GUEST_USER, a
+# system user that owns nothing but these folders.
 AGENT_ROOT = os.environ.get("AGENT_ROOT", "/home/ulrich/agent")
-AGENT_EXPORTS = "/etc/exports.d/agent.exports"
+AGENT_EXPORTS = "/etc/exports.d/agent.exports"       # the retired root export
 EXPORTS_D = "/etc/exports.d"
 FCMNT_ROOT = os.path.join(AGENT_ROOT, ".fcmnt")
+GUEST_USER = os.environ.get("GUEST_USER", "kaim56-guest")
+GUEST_UID = GUEST_GID = 1000          # until ensure_guest_user() resolved the user
+ADMIN_GID = os.stat(BASE).st_gid      # the operator's group: may read what the guests write
+
+
+def ensure_guest_user():
+    """Resolve (root: create) the squash user. False when it does not exist
+    and cannot be created — exports then fall back to uid 1000, as before."""
+    global GUEST_UID, GUEST_GID
+    try:
+        pw_ = pwd.getpwnam(GUEST_USER)
+    except KeyError:
+        if os.geteuid() != 0:
+            return False
+        sh("useradd", "-r", "-M", "-d", "/nonexistent", "-s", "/usr/sbin/nologin", GUEST_USER, check=False)
+        try:
+            pw_ = pwd.getpwnam(GUEST_USER)
+        except KeyError:
+            return False
+    GUEST_UID, GUEST_GID = pw_.pw_uid, pw_.pw_gid
+    return True
+
+
+def own_guest_dir(path, mode=0o2750):
+    """A folder the guests write: owned by the squash user, group = operator
+    (setgid, so the operator can read what the agent produces), nobody else."""
+    try:
+        os.makedirs(path, exist_ok=True)
+        if os.geteuid() == 0:
+            os.chown(path, GUEST_UID, ADMIN_GID)
+        os.chmod(path, mode)
+    except OSError as e:
+        print(f"[quiet] own_guest_dir {path}: {e!r}", flush=True)
+
+
+def workspace_dir(inst):
+    return os.path.join(AGENT_ROOT, inst["name"])
+
+
+def export_opts(ro, fsid):
+    return (f"{'ro' if ro else 'rw'},sync,no_subtree_check,all_squash,"
+            f"anonuid={GUEST_UID},anongid={GUEST_GID},fsid={fsid}")
 
 os.makedirs(RUN_DIR, exist_ok=True)
 
@@ -1944,26 +2029,22 @@ def teardown_tap(inst):
 
 
 # ---- host folders (NFS bind-mounts) ----------------------------------------
-def ensure_agent_crossmnt():
-    """The workspace export needs 'crossmnt' so the host-folder submounts are
-    visible over NFSv4. Idempotent, with a one-time backup."""
+def retire_root_export():
+    """Remove the old pool-wide workspace export (kept as .bak once). With it
+    gone, a VM reaches exactly the folders exported to its own address."""
+    if not os.path.exists(AGENT_EXPORTS):
+        return False
     try:
-        cur = open(AGENT_EXPORTS).read() if os.path.exists(AGENT_EXPORTS) else ""
-    except OSError:
-        return
-    if AGENT_ROOT in cur and "crossmnt" in cur:
-        return
-    line = (f"{AGENT_ROOT} {POOL}(rw,sync,no_subtree_check,all_squash,"
-            f"anonuid=1000,anongid=1000,fsid=0,crossmnt)\n")
-    try:
-        if cur and not os.path.exists(AGENT_EXPORTS + ".bak"):
-            open(AGENT_EXPORTS + ".bak", "w").write(cur)
-        os.makedirs(EXPORTS_D, exist_ok=True)
-        open(AGENT_EXPORTS, "w").write(line)
+        if not os.path.exists(AGENT_EXPORTS + ".bak"):
+            os.replace(AGENT_EXPORTS, AGENT_EXPORTS + ".bak")
+        else:
+            os.remove(AGENT_EXPORTS)
         sh("exportfs", "-ra", check=False)
+        print(f"[nfs] retired the pool-wide export {AGENT_EXPORTS}", flush=True)
+        return True
     except OSError as e:
-        # without the export the guest boots with an empty workspace
-        print(f"[quiet] NFS export update failed: {e!r}", flush=True)
+        print(f"[quiet] retiring {AGENT_EXPORTS} failed: {e!r}", flush=True)
+        return False
 
 
 def mount_specs(inst):
@@ -1974,23 +2055,27 @@ def mount_specs(inst):
         guest = str(m.get("guest", "")).strip()
         if not host or not guest:
             continue
+        target = os.path.join(FCMNT_ROOT, inst["name"], str(j))
         specs.append({
             "idx": j, "host": host, "guest": guest,
             "ro": bool(m.get("readonly", False)),
-            "target": os.path.join(FCMNT_ROOT, inst["name"], str(j)),
-            "sub": f"/.fcmnt/{inst['name']}/{j}",
-            "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + (j % 16),
+            "target": target, "sub": target,        # NFSv4 pseudo-root: absolute path
+            "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + (j % 14),
         })
     # The instance's memory folder (mgr/memfs.py) rides the same mechanism:
     # exported to this guest only, mounted read-write at /memory. Slot 15 of
-    # the fsid block is reserved for it (user mounts use 0..14).
+    # the fsid block is reserved for it, 14 for the workspace (user mounts 0..13).
     mem = _memfs.folder(inst["name"]) if uses_harness(inst) else None
     if mem:
+        target = os.path.join(FCMNT_ROOT, inst["name"], "memory")
         specs.append({"idx": "memory", "host": mem, "guest": "/memory", "ro": False,
-                      "target": os.path.join(FCMNT_ROOT, inst["name"], "memory"),
-                      "sub": f"/.fcmnt/{inst['name']}/memory",
+                      "target": target, "sub": target,
                       "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + 15})
     return specs
+
+
+def workspace_fsid(inst):
+    return 4000 + (inst.get("index", 0) % 200) * 16 + 14
 
 
 def desired_lines(inst):
@@ -2014,13 +2099,14 @@ def write_desired(inst):
 
 
 def setup_mounts(inst):
-    specs = mount_specs(inst)
-    if not specs:
-        return
-    ensure_agent_crossmnt()
+    """Export this instance's workspace and host folders to ITS address only."""
+    ensure_guest_user()
+    retire_root_export()
     n = net_of(inst)
-    lines = []
-    for s in specs:
+    ws = workspace_dir(inst)
+    own_guest_dir(ws)
+    lines = [f"{ws} {n['guest']}({export_opts(False, workspace_fsid(inst))})\n"]
+    for s in mount_specs(inst):
         if not os.path.isdir(s["host"]):
             continue  # missing host folder -> skip (do not create)
         os.makedirs(s["target"], exist_ok=True)
@@ -2029,14 +2115,27 @@ def setup_mounts(inst):
             continue
         if s["ro"]:
             sh("mount", "-o", "remount,ro,bind", s["target"], check=False)
-        perm = "ro" if s["ro"] else "rw"
-        lines.append(f"{s['target']} {n['guest']}({perm},sync,no_subtree_check,"
-                     f"all_squash,anonuid=1000,anongid=1000,fsid={s['fsid']})\n")
-    if lines:
-        os.makedirs(EXPORTS_D, exist_ok=True)
-        open(os.path.join(EXPORTS_D, f"fc-{inst['name']}.exports"), "w").writelines(lines)
-        sh("exportfs", "-ra", check=False)
+        lines.append(f"{s['target']} {n['guest']}({export_opts(s['ro'], s['fsid'])})\n")
+    os.makedirs(EXPORTS_D, exist_ok=True)
+    with open(os.path.join(EXPORTS_D, f"fc-{inst['name']}.exports"), "w") as fh:
+        fh.writelines(lines)
+    sh("exportfs", "-ra", check=False)
     write_desired(inst)   # the reconciler in the guest picks up the mounts
+
+
+def guest_can_write(host):
+    """Can the squash user write into this host folder? A read-write share of
+    the operator's own folder is read-only for the agent unless the folder
+    lets GUEST_USER in (chown / chmod g+w with the guest's group / o+w)."""
+    try:
+        st = os.stat(host)
+    except OSError:
+        return False
+    if st.st_uid == GUEST_UID:
+        return bool(st.st_mode & 0o200)
+    if st.st_gid == GUEST_GID:
+        return bool(st.st_mode & 0o020)
+    return bool(st.st_mode & 0o002)
 
 
 def teardown_mounts(inst):
@@ -2120,6 +2219,8 @@ def set_mounts(name, mounts):
         if why:
             return f"error: {why}"
     inst["mounts"] = wanted
+    ensure_guest_user()
+    warn = [m["host"] for m in wanted if not m["readonly"] and not guest_can_write(m["host"])]
     with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
         json.dump(inst, fh, indent=2)
     note = ""
@@ -2136,12 +2237,16 @@ def set_mounts(name, mounts):
         setup_mounts(inst)            # bind+export of the current folders (idempotent)
         write_desired(inst)           # the running guest mounts them itself (reconciler)
         note = " (applied live)"
+    if warn:
+        note += (f" — read-only for the agent until {GUEST_USER} may write there: "
+                 + ", ".join(warn))
     return f"{len(inst['mounts'])} host folders saved{note}"
 
 
 # ---- firecracker lifecycle -------------------------------------------------
-def make_config_disk(inst):
-    """Create a small ext4 drive with the instance config (key=value) -> vdb."""
+def guest_env(inst):
+    """What the guest reads from config.env: the instance's config plus what
+    the manager adds for this boot (paths, zone, DNS, exports)."""
     cfg = dict(inst.get("config", {}))
     # Second guard: older instance JSONs may still contain a key/MCP_CONFIG;
     # they still must not reach the disk.
@@ -2153,6 +2258,7 @@ def make_config_disk(inst):
     cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
     cfg.setdefault("TZ", HOST_TZ)        # the agent's clock: [Now] line per turn
     cfg["GUEST_DNS"] = GUEST_DNS         # guest-init writes resolv.conf from it (site.json, not the image)
+    cfg["AGENT_EXPORT"] = workspace_dir(inst)   # its own workspace export, by absolute path
     if uses_harness(inst):
         cfg["MEMORY_DIR"] = "/memory"    # Markdown memory folder (mgr/memfs.py)
     if inst["name"] == ORCH_INSTANCE:   # only the orchestrator may manage tasks
@@ -2163,6 +2269,12 @@ def make_config_disk(inst):
     # so that ALL instances are switched over consistently.
     if load_settings().get("LLM_KEY_PROXY") == "1":
         cfg["KEY_PROXY"] = "1"
+    return cfg
+
+
+def make_config_disk(inst):
+    """Create a small ext4 drive with the instance config (key=value) -> vdb."""
+    cfg = guest_env(inst)
     d = os.path.join(RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
     # Put tool plugins (firecracker/plugins/*.py) on the disk too — the agent
@@ -2182,6 +2294,12 @@ def make_config_disk(inst):
         for k, v in cfg.items():
             # quote values (EXTRA_MOUNTS and others contain shell metacharacters like | and ;)
             f.write(f"{k}={shlex.quote(str(v))}\n")
+    # The agent reads this disk as uid 1000: world-readable, whatever the
+    # manager's umask (nothing on it is secret — NEVER_PERSIST above).
+    for root, dirs, files in os.walk(d):
+        os.chmod(root, 0o755)
+        for f0 in files:
+            os.chmod(os.path.join(root, f0), 0o644)
     img = os.path.join(RUN_DIR, f"{inst['name']}.config.ext4")
     mkfs_image(img, 16, "fcconfig", srcdir=d)
     return img
@@ -2470,6 +2588,10 @@ def start(inst):
     json.dump(gen_config(inst), open(cfg, "w"))
     sock = os.path.join(RUN_DIR, f"{inst['name']}.sock")
     log = open(os.path.join(RUN_DIR, f"{inst['name']}.log"), "ab")
+    try:                                  # the operator may tail the console (root:operator, 0640)
+        os.chmod(log.name, 0o640); os.chown(log.name, 0, ADMIN_GID)
+    except OSError:
+        pass
     if os.path.exists(sock):
         os.remove(sock)
     p = subprocess.Popen([BIN, "--api-sock", sock, "--config-file", cfg],
@@ -3481,15 +3603,22 @@ class H(BaseHTTPRequestHandler):
         # MANAGER_PASS would lock every agent out of its own manager.
         if not PW or instance_by_ip(self.client_address[0]) is not None:
             return True
+        key = auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        if auth_locked(key):
+            self._send(b'{"error":"too many failed logins, try again later"}', "application/json", 429)
+            return False
         hdr = self.headers.get("Authorization", "")
         if hdr.startswith("Basic "):
             try:
                 u, p = base64.b64decode(hdr[6:]).decode().split(":", 1)
                 if hmac.compare_digest(u.encode(), str(USER).encode()) and \
                         hmac.compare_digest(p.encode(), str(PW).encode()):
+                    auth_succeeded(key)
                     return True
             except Exception:
                 pass
+            if auth_failed(key):
+                print(f"[auth] {key}: {AUTH_FAILS_MAX} failed logins, locked for {AUTH_LOCK // 60} min", flush=True)
         self.send_response(401)
         self.send_header("WWW-Authenticate", 'Basic realm="kAIm56"')
         self.end_headers()
@@ -4252,11 +4381,12 @@ def _rt_memory_post(h):
     target = guest["name"] if guest else _tail(h, "/api/memory/")[0]
     key, value = b.get("key", ""), b.get("value")   # null = delete
     msg = mem_store(target, key, value)
-    try:
-        _memfs.note_write(target, key, value)         # the readable mirror in /memory
-        _memfs.commit(target, f"memory_store: {str(key)[:60]}")
-    except Exception as e:
-        print(f"[quiet] memfs note failed: {e!r}", flush=True)
+    if guest or any(i.get("name") == target for i in load_instances()):
+        try:                                            # the readable mirror in /memory —
+            _memfs.note_write(target, key, value)       # for real instances only, no folder per typo
+            _memfs.commit(target, f"memory_store: {str(key)[:60]}")
+        except Exception as e:
+            print(f"[quiet] memfs note failed: {e!r}", flush=True)
     # Also store semantically; if the embedder fails the flat memory stays.
     sem = sem_store(target, value, key) if value is not None else False
     msg += " (+semantic)" if sem else ("" if value is None else " (semantic off)")
@@ -5053,9 +5183,37 @@ def migrate_secrets_out_of_instances():
             print(f"[migrate] {inst['name']}: {e}", flush=True)
 
 
+def harden_files(base=None):
+    """Chats, audit, missions, tasks, history: written by root, readable by
+    root. Nothing else on the host needs them (the operator reads through
+    the UI); the guests' folders keep their own owner and mode."""
+    base = base or BASE
+    n = 0
+    try:
+        for f in os.listdir(base):
+            p = os.path.join(base, f)
+            if os.path.isfile(p) and f.endswith((".json", ".jsonl", ".db", ".db-wal", ".db-shm", ".txt")):
+                os.chmod(p, 0o600); n += 1
+        ad = os.path.join(base, "audit")
+        if os.path.isdir(ad):
+            os.chmod(ad, 0o700)
+            for f in os.listdir(ad):
+                os.chmod(os.path.join(ad, f), 0o600); n += 1
+    except OSError as e:
+        print(f"[quiet] harden_files: {e!r}", flush=True)
+    return n
+
+
 if __name__ == "__main__":
     print(f"kAIm56 on http://{LISTEN[0]}:{LISTEN[1]}  (auth={'on' if PW else 'OFF'})",
           flush=True)
+    os.umask(0o077)                  # new files are root's; the few others read get a mode below
+    harden_files()
+    if ensure_guest_user():
+        _memfs.OWNER = (GUEST_UID, ADMIN_GID)
+        own_guest_dir(AGENT_ROOT, 0o755)
+        own_guest_dir(FCMNT_ROOT, 0o755)
+    retire_root_export()
     migrate_secrets_out_of_instances()
     migrate_mcp_config_out_of_instances()
     threading.Thread(target=_task_worker, daemon=True).start()

@@ -28,6 +28,8 @@ import time
 from datetime import date
 
 MEMORY_ROOT = None                 # via configure(BASE)
+OWNER = None                       # (uid, gid) the folders belong to: the NFS squash user,
+                                   # group = operator; None = leave as created (tests, non-root)
 RAW_DAYS = 2                       # raw entries stay this many days
 DAILY_DAYS = 14                    # trimmed daily files stay this many days, then weekly
 LINE_MAX = 120                     # a trimmed timeline line
@@ -39,6 +41,28 @@ _lock = threading.Lock()
 def configure(base: str) -> None:
     global MEMORY_ROOT
     MEMORY_ROOT = os.path.join(base, "memory")
+
+
+def _own(path, is_dir=False):
+    """Give a file/folder the manager wrote to the guest user: the VM must be
+    able to write next to it, the operator's group may read it."""
+    if not OWNER:
+        return
+    try:
+        os.chown(path, OWNER[0], OWNER[1])
+        os.chmod(path, 0o2750 if is_dir else 0o640)
+    except OSError:
+        pass
+
+
+def _own_tree(d):
+    for sub in ("", "notes", "timeline"):
+        p = os.path.join(d, sub)
+        _own(p, True)
+        for f in os.listdir(p):
+            fp = os.path.join(p, f)
+            if os.path.isfile(fp):
+                _own(fp)
 
 
 def _safe(name):
@@ -68,13 +92,15 @@ def folder(instance):
         _git(d, "config", "user.email", "kaim56@localhost")
     if not os.path.exists(os.path.join(d, "MEMORY.md")):
         _write_index(d, inst)
+    _own_tree(d)
     return d
 
 
 def _git(d, *args):
     try:
-        return subprocess.run(["git", "-C", d, *args], capture_output=True, text=True,
-                              timeout=30, check=False)
+        # the folder belongs to the guest user, git runs as root: not "dubious"
+        return subprocess.run(["git", "-C", d, "-c", "safe.directory=*", *args],
+                              capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -107,6 +133,7 @@ def note_write(instance, key, value):
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(f"# {key}\n\n{body.rstrip()}\n\n"
                      f"<!-- key: {key} · updated: {time.strftime('%Y-%m-%d %H:%M')} -->\n")
+        _own(p)
     rebuild_index(instance)
     return p
 
@@ -150,6 +177,7 @@ def _write_index(d, instance):
     text = "\n".join(out) + "\n"
     with open(os.path.join(d, "MEMORY.md"), "w", encoding="utf-8") as fh:
         fh.write(text)
+    _own(os.path.join(d, "MEMORY.md"))
     return text
 
 
@@ -186,6 +214,7 @@ def timeline_add(instance, kind, user_text="", reply_text="", when=None):
         fh.write(f"- {time.strftime('%H:%M', time.localtime(when))} [{_safe(kind) or 'turn'}] "
                  f"{_one_line(user_text, RAW_MAX)}"
                  + (f" → {_one_line(reply_text, RAW_MAX)}" if reply_text else "") + "\n")
+    _own(p)
     if new:
         rebuild_index(instance)
     return p
@@ -240,6 +269,7 @@ def coarsen(instance, today=None):
                 fh.write(f"# {day} (trimmed)\n\n" + "\n".join(trimmed) + "\n")
             stats["trimmed"] += 1
     rebuild_index(instance)
+    _own_tree(d)
     return stats
 
 

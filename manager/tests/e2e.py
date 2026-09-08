@@ -2259,7 +2259,14 @@ class ManagerFunctions(unittest.TestCase):
         load_tasks crashes (bug from 2026-08-20, /api/tasks returned nothing)."""
         import mgr.store as st
         self.assertTrue(st.TASKS_FILE and st.TASKS_FILE.endswith("tasks.json"))
-        self.assertIsInstance(st.load_tasks(), list)
+        old = st.TASKS_FILE                      # the live file is root-only now: read a copy
+        try:
+            st.TASKS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-tasks-"), "tasks.json")
+            with open(st.TASKS_FILE, "w") as fh:
+                fh.write("[]")
+            self.assertIsInstance(st.load_tasks(), list)
+        finally:
+            st.TASKS_FILE = old
 
     def test_irohgw_allowlist_roundtrip(self):
         """iroh app-transport pairing: add/remove phone node-ids; only 64-hex
@@ -2546,10 +2553,10 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn("error:", m.set_mounts.__doc__ or "error:")     # documented below via the route
             inst = {"name": "vm1", "index": 4, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4", "mounts": []}
             m.load_instances = lambda: [inst]
-            m.mount_specs = lambda i: [{"sub": "/.fcmnt/vm1/0", "guest": "/home/node/data", "ro": True}]
+            m.mount_specs = lambda i: [{"sub": m.FCMNT_ROOT + "/vm1/0", "guest": "/home/node/data", "ro": True}]
             m.instance_by_ip = lambda ip: inst if ip == "172.30.4.2" else None
             h = self._handler("/api/mounts", "172.30.4.2"); h._do_GET()
-            self.assertIn(b"/.fcmnt/vm1/0|/home/node/data|ro\n", h.wfile.getvalue())
+            self.assertIn(m.FCMNT_ROOT.encode() + b"/vm1/0|/home/node/data|ro\n", h.wfile.getvalue())
             h = self._handler("/api/mounts?instance=nope", "10.0.0.5"); h._do_GET()
             self.assertEqual(self._status(h), 404)
         finally:
@@ -2595,6 +2602,144 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(seen, [("vm1", "x/y", 10, 5, 0.001), ("vm1", "openrouter", 1, 2, None)])
         finally:
             m.usage_add = old
+
+    def test_nfs_exports_are_per_instance_and_squashed_to_the_guest_user(self):
+        """No pool-wide root export: the workspace agent/<name> and each host
+        folder are exported to that VM's address only, by absolute path, with
+        every write squashed to the guest user; the config disk tells the guest
+        where its workspace is; the old root export is retired once."""
+        import types
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-nfs-")
+        calls = []
+        old = (m.AGENT_ROOT, m.FCMNT_ROOT, m.EXPORTS_D, m.AGENT_EXPORTS, m.sh, m.mount_specs,
+               m.GUEST_UID, m.GUEST_GID, m.ensure_guest_user)
+        try:
+            m.AGENT_ROOT = os.path.join(tmp, "agent"); m.FCMNT_ROOT = os.path.join(m.AGENT_ROOT, ".fcmnt")
+            m.EXPORTS_D = os.path.join(tmp, "exports.d"); m.AGENT_EXPORTS = os.path.join(m.EXPORTS_D, "agent.exports")
+            os.makedirs(m.EXPORTS_D)
+            with open(m.AGENT_EXPORTS, "w") as fh:
+                fh.write(f"{m.AGENT_ROOT} {m.POOL}(rw,fsid=0,crossmnt)\n")
+            m.sh = lambda *a, check=True: (calls.append(a), types.SimpleNamespace(returncode=0, stdout="", stderr=""))[1]
+            m.GUEST_UID, m.GUEST_GID = 4242, 4243
+            m.ensure_guest_user = lambda: True
+            share = os.path.join(tmp, "share"); os.makedirs(share)
+            inst = {"name": "vm1", "index": 7, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
+                    "config": {}, "mounts": [{"host": share, "guest": "/home/node/data", "readonly": True}]}
+            m.mount_specs = lambda i: [{"idx": 0, "host": share, "guest": "/home/node/data", "ro": True,
+                                        "target": os.path.join(m.FCMNT_ROOT, "vm1", "0"),
+                                        "sub": os.path.join(m.FCMNT_ROOT, "vm1", "0"), "fsid": 4000 + 7 * 16}]
+            m.setup_mounts(inst)
+            ex = open(os.path.join(m.EXPORTS_D, "fc-vm1.exports")).read()
+            ws = os.path.join(m.AGENT_ROOT, "vm1")
+            self.assertIn(f"{ws} 172.30.7.2(rw,sync,no_subtree_check,all_squash,anonuid=4242,anongid=4243,fsid={4000 + 7 * 16 + 14})", ex)
+            self.assertIn(f"{m.FCMNT_ROOT}/vm1/0 172.30.7.2(ro,", ex)
+            self.assertNotIn(m.POOL, ex)                                   # nothing for the whole pool
+            self.assertTrue(os.path.isdir(ws))
+            self.assertFalse(os.path.exists(m.AGENT_EXPORTS))              # root export retired …
+            self.assertTrue(os.path.exists(m.AGENT_EXPORTS + ".bak"))      # … with a backup
+            self.assertFalse(m.retire_root_export())                       # idempotent
+            self.assertEqual(m.guest_env(inst)["AGENT_EXPORT"], ws)
+            self.assertEqual(m.guest_env(inst)["MEMORY_DIR"], "/memory")
+            self.assertEqual(m.guest_env(inst)["GUEST_DNS"], m.GUEST_DNS)
+            # real mount_specs: absolute host paths as NFS subpaths, fsid slots 0..13 for folders
+            m.mount_specs = old[5]
+            sp = m.mount_specs({**inst, "index": 3, "template": "claude", "rootfs": "instances/claude-rootfs.ext4"})
+            self.assertEqual(sp[0]["sub"], os.path.join(m.FCMNT_ROOT, "vm1", "0"))
+            self.assertEqual(sp[0]["fsid"], 4000 + 3 * 16)
+            self.assertEqual(m.workspace_fsid({"index": 3}), 4000 + 3 * 16 + 14)
+            self.assertTrue(any(c[:2] == ("exportfs", "-ra") for c in calls))
+        finally:
+            (m.AGENT_ROOT, m.FCMNT_ROOT, m.EXPORTS_D, m.AGENT_EXPORTS, m.sh, m.mount_specs,
+             m.GUEST_UID, m.GUEST_GID, m.ensure_guest_user) = old
+
+    def test_guest_user_and_writability_hint(self):
+        """Without root the squash user is not created (exports fall back to
+        uid 1000); a rw share the guest user cannot write is flagged."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-gw-")
+        old = m.GUEST_UID, m.GUEST_GID, m.GUEST_USER
+        try:
+            if os.geteuid() != 0:
+                m.GUEST_USER = "kaim56-e2e-nonexistent"
+                self.assertFalse(m.ensure_guest_user())
+            m.GUEST_UID, m.GUEST_GID = 4242, 4243
+            os.chmod(tmp, 0o755)
+            self.assertFalse(m.guest_can_write(tmp))          # owned by us, not the guest user
+            os.chmod(tmp, 0o777)
+            self.assertTrue(m.guest_can_write(tmp))
+            m.GUEST_UID = os.getuid(); os.chmod(tmp, 0o700)
+            self.assertTrue(m.guest_can_write(tmp))           # owner = guest user
+        finally:
+            m.GUEST_UID, m.GUEST_GID, m.GUEST_USER = old
+
+    def test_login_lockout(self):
+        """Ten wrong passwords in a row lock the client for a while — the right
+        password included; a success clears the counter. Behind the local proxy
+        the client is the first X-Forwarded-For hop, not the proxy."""
+        m = self.m
+        old = m.instance_by_ip, m.PW, m.USER
+        try:
+            m.instance_by_ip = lambda ip: None
+            m.PW, m.USER = "s3cret", "admin"
+            m._auth_fails.clear()
+            good = "Basic " + base64.b64encode(b"admin:s3cret").decode()
+            bad = "Basic " + base64.b64encode(b"admin:nope").decode()
+            for i in range(m.AUTH_FAILS_MAX):
+                h = self._handler("/api/agents", "10.0.0.9", auth=bad)
+                self.assertFalse(h._auth()); self.assertEqual(self._status(h), 401)
+            h = self._handler("/api/agents", "10.0.0.9", auth=good)
+            self.assertFalse(h._auth()); self.assertEqual(self._status(h), 429)     # locked
+            h = self._handler("/api/agents", "10.0.0.10", auth=good)
+            self.assertTrue(h._auth())                                                # another client
+            m._auth_fails.clear()
+            h = self._handler("/api/agents", "10.0.0.9", auth=good)
+            self.assertTrue(h._auth())
+            self.assertEqual(m.auth_client_key("127.0.0.1", "203.0.113.5, 10.0.0.1"), "203.0.113.5")
+            self.assertEqual(m.auth_client_key("172.17.0.3", "203.0.113.5"), "203.0.113.5")
+            self.assertEqual(m.auth_client_key("192.168.1.20", "203.0.113.5"), "192.168.1.20")   # LAN client: XFF ignored
+        finally:
+            m.instance_by_ip, m.PW, m.USER = old
+            m._auth_fails.clear()
+
+    def test_harden_files_makes_state_private(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-harden-")
+        os.makedirs(os.path.join(tmp, "audit")); os.makedirs(os.path.join(tmp, "templates"))
+        for f in ("chats.json", "missions.json", "history.db", "audit/hass.jsonl", "templates/x.json", "run.log"):
+            with open(os.path.join(tmp, f), "w") as fh:
+                fh.write("{}")
+            os.chmod(os.path.join(tmp, f), 0o644)
+        n = m.harden_files(tmp)
+        self.assertEqual(n, 4)
+        for f in ("chats.json", "missions.json", "history.db", "audit/hass.jsonl"):
+            self.assertEqual(os.stat(os.path.join(tmp, f)).st_mode & 0o777, 0o600, f)
+        self.assertEqual(os.stat(os.path.join(tmp, "audit")).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(os.path.join(tmp, "templates", "x.json")).st_mode & 0o777, 0o644)   # untouched
+        self.assertEqual(os.stat(os.path.join(tmp, "run.log")).st_mode & 0o777, 0o644)
+
+    def test_config_disk_content_is_readable_by_the_agent(self):
+        """The manager runs with umask 077; the config disk is read by uid
+        1000 in the VM, so its tree must be made world-readable explicitly
+        (a 0700 plugins folder killed the agent at start once)."""
+        m = self.m
+        if not shutil.which("mkfs.ext4", path="/usr/sbin:/sbin:" + os.environ.get("PATH", "")):
+            self.skipTest("mkfs.ext4 not available")
+        tmp = tempfile.mkdtemp(prefix="e2e-cfgdisk-")
+        old = m.RUN_DIR, None, os.umask(0o077)
+        try:
+            m.RUN_DIR = tmp
+            inst = {"name": "vm1", "index": 5, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4", "config": {}}
+            m.make_config_disk(inst)
+            d = os.path.join(tmp, "vm1.cfgdir")
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o755)
+            self.assertEqual(os.stat(os.path.join(d, "config.env")).st_mode & 0o777, 0o644)
+            for root, dirs, files in os.walk(d):
+                for x in dirs:
+                    self.assertEqual(os.stat(os.path.join(root, x)).st_mode & 0o777, 0o755, x)
+        finally:
+            m.RUN_DIR = old[0]
+            os.umask(old[2])
 
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST

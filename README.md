@@ -30,7 +30,8 @@ Signal ─────────────────┘         │       
   sends JSON-RPC.
 - **Everything goes through the manager.** Speech recognition, synthesis,
   embeddings and MCP are host containers on loopback; the guest firewall allows only
-  the manager port and NFS.
+  the manager port and NFS. Each VM gets its own NFS workspace and host folders,
+  exported to its address alone, with every write mapped to a dedicated system user.
 - **No public port for the phone or the desktop.** They reach the manager over iroh
   (P2P, end-to-end encrypted, NodeId allowlist). The browser and the ESP32 use
   HTTPS behind a reverse proxy.

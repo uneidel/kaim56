@@ -61,17 +61,25 @@ mkdir -p "$WORKDIR"; chown node:node "$WORKDIR" 2>/dev/null
 # NFS agent folder (default gateway = tap host); writes are mapped to uid 1000
 if [ "${AGENT_NFS:-1}" = "1" ] && [ -n "$GW" ]; then
   mount -t nfs4 -o nolock,soft,timeo=30,retrans=3 \
-    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS mount failed"
+    "${GW}:${AGENT_EXPORT:-/}" "$WORKDIR" || echo "[init] WARN: NFS mount failed (AGENT_EXPORT=${AGENT_EXPORT:-/})"
 fi
 # --- dynamic host folders (reconciler) ----------------------------------------
-# The manager maintains .fcmnt/<inst>/desired.list (visible in the workspace) and
-# exports each folder per guest IP. fc_reconcile reconciles the mounts with the
-# desired guest paths: immediately + then every 5s in the background -> live.
+# The list comes from the manager (/api/mounts, this VM identified by its IP),
+# NOT from the shared workspace: there any other VM could write our list and
+# have us mount its files over /bin. Belt and braces: only our own export
+# subtree, never a system directory as the mount point. Exports are absolute
+# host paths (NFSv4 pseudo-root, no pool-wide root export).
 fc_reconcile() {
-  LIST="$WORKDIR/.fcmnt/$FC_INSTANCE/desired.list"; want=" "
+  LIST=/tmp/fc-desired.list; want=" "
+  if curl -sf -m 5 "http://${GW}:8700/api/mounts" -o "$LIST.tmp" 2>/dev/null; then mv "$LIST.tmp" "$LIST"; else rm -f "$LIST.tmp"; fi
   if [ -f "$LIST" ]; then
     while IFS='|' read -r sub gp mode; do
       [ -n "$sub" ] && [ -n "$gp" ] || continue
+      case "$sub" in */.fcmnt/"$FC_INSTANCE"/*) : ;; *) echo "[init] refuse foreign export $sub"; continue ;; esac
+      case "$gp" in
+        /|/bin|/bin/*|/sbin|/sbin/*|/usr|/usr/*|/lib*|/etc|/etc/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/boot|/boot/*|/run|/run/*|/var|/var/*|/tmp|/tmp/*|/app|/app/*|/harness|/harness/*|/config|/config/*|/init|/root|/root/*|*/../*|*[!/a-zA-Z0-9._-]*)
+          echo "[init] refuse mount at $gp"; continue ;;
+      esac
       want="$want$gp "
       if ! awk -v p="$gp" '$2==p{f=1} END{exit !f}' /proc/mounts; then
         mkdir -p "$gp"; ro=""; [ "$mode" = "ro" ] && ro=",ro"
@@ -80,7 +88,7 @@ fc_reconcile() {
       fi
     done < "$LIST"
   fi
-  awk -v s=":/.fcmnt/$FC_INSTANCE/" 'index($1,s){print $2}' /proc/mounts | while read -r mp; do
+  awk -v s="/.fcmnt/$FC_INSTANCE/" 'index($1,s){print $2}' /proc/mounts | while read -r mp; do
     case "$want" in *" $mp "*) : ;; *) umount -l "$mp" 2>/dev/null && echo "[init] - host folder $mp" ;; esac
   done
 }
