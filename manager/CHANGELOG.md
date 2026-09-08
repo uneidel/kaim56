@@ -1,1508 +1,354 @@
 # Changelog
 
-## 2026-09-08 (the if-chain is gone: 104 routes in the table, the handler is a dispatcher)
-
-- `_do_GET` (490 lines) and `_do_POST` (759 lines) were the platform's growth rings: every feature landed as another `elif`. Both are now a dispatcher of a dozen lines each — auth, guest allow/deny, `ROUTER.resolve`, fallback — and every path is a named function registered in `mgr/routes.py`'s table, grouped by domain (pages/proxies, secrets, agents/tasks/missions/memory, guest reports, voice, katfs, admin reads, admin writes). Three handler helpers (`_body`, `_json`, `_guest`) replaced the copy-pasted Content-Length/JSON/send_response blocks; the `{"msg": …}` UI actions share one decorator that turns exceptions into `error: …` as before. Every path the old chain answered resolves in the table (cross-checked mechanically); unknown API paths now answer 404 instead of the admin page. A test asserts the chain stays empty. Verified live: suite green after restart, every route family smoke-tested, a guest turn through the table.
-
-## 2026-09-08 (architecture tab: desktop client moved to the left of the client row)
-
-- Client row reordered to Desktop client · Halo glasses → KatAgent · Browser · Signal; the iroh-tunnel arrow now runs straight down into iroh-gw, the app's iroh arrow and the browser's Traefik arrow re-routed without crossings. README screenshot of the tab regenerated the same way as this morning (headless Chrome over DevTools, names/costs/hosts masked).
-
-## 2026-09-08 (GitHub with full history — after a history rewrite)
-
-- Validation before the switch: no password, API key or token in any tracked file or anywhere in the 148-commit history (secrets live only in `~/.config/kat56/secrets.env` and the gitignored `manager/settings.json`). The history DID carry personal data from early development: two real Signal phone numbers as template defaults in five commits, Home Assistant/Portainer LAN addresses in three old versions of `mcp-catalog.json`, one private cloud hostname, and the maintainer's private e-mail as author on 106 commits.
-- Rewritten with git-filter-repo (mirror backup taken first): phone numbers → `+490000000000`, the LAN prefix → `10.0.0.x`, the private host → `cloud.example`, `manager/mcp-catalog.json` removed from every commit, all authors mapped to `uneidel <uneidel@users.noreply.github.com>`. Rescans of the whole history come back empty; 148 commits, same tree. GitHub is now `origin` with plain pushes and full history; `push-github.sh` (the squash publisher) is gone; Gitea stays as a private archive under the remote name `gitea` and is not pushed to any more.
-
-## 2026-09-08 (the "Uhr" rule: rules next to the question, and a rule the model can follow)
-
-- "Hat voicecommand das Playbook mit 'Uhr' vergessen?" — no, the rule arrived every turn; the model ignored it ("Es ist 12:31 Uhr." twice). Two changes, one of which mattered. The agent now appends playbooks, recall notes and missions right before the current message instead of inserting them at the top of the context (same move as the `[Now]` line yesterday) — on its own that changed nothing here, but rules next to the question are the better default and the tests pin it. What fixed it: the wording. The negative rule "hänge kein 'Uhr' an das Ende der Zeitangabe" was passed over; an inline instruction in the message was followed at once, and the rule rewritten as a positive format with examples ("Uhrzeiten IMMER nur als Zahl ansagen, z. B. 'Es ist 12:32'; das Wort 'Uhr' kommt NIE vor") holds: "Es ist 12:33." twice. Lesson for playbooks: say what TO do, with an example, not what to avoid. Rootfs rebuilt with `--smoke voicecommand`. 129 tests green.
-
-## 2026-09-08 (creating calendar events by voice: date formats accepted, no more questions)
-
-- "Erstelle einen Termin Marius heute 18:30" ended in "Es scheint ein Problem mit dem Datumsformat zu geben" — after three rounds of questions about calendar and duration. Two things. (1) caldav-mcp validates `start`/`end` (and the todo tools' `due`/`until`) with zod `datetime({ offset: true })` and rejects everything else with "Invalid ISO datetime"; the model writes what it reads, and since yesterday it reads `2026-09-08 18:30 Europe/Berlin` from `list-events`. Third build-time patch in `patch-caldav.js`: every such field is wrapped in a normalizer that turns `YYYY-MM-DD[ T]HH:MM[:SS][ zone]` and bare dates into ISO with the zone's offset (+02:00 in summer, +01:00 in winter — checked), real ISO strings pass through. (2) The agent's `[Now]` line now names the UTC offset and shows the exact tool-input form (`2026-09-08T18:30:00+02:00`), and voicecommand got a playbook rule: use the calendar "Persönlich" without asking, assume 1 hour when no duration is given, whole-day without a time, never ask for calendar or duration.
-- Proven: hub replay creates/lists/deletes an event given `2026-09-08 18:30 Europe/Berlin`; through voicecommand with the user's own prompt, "Erstelle einen Termin kAIm56 Testtermin heute 18 Uhr 30" answered "OK." with no question, the server shows 18:30–19:30 Europe/Berlin, deleted again afterwards. Hub image rebuilt, rootfs rebuilt with `--smoke voicecommand`. 129 tests green.
-
-## 2026-09-08 (Gartenhauslicht switched the relay; read-aloud skips tool lines)
-
-- "Gartenhauslicht an" over voicecommand answered "Es gab ein Problem". Two defects in `ha_control`: the fuzzy match scored 0.76 against the relay `switch.gartenhaus_switch_l1` and, because a fuzzy hit ≥ 0.72 beat the area rule, switched the SOCKET instead of the two ceiling lights; then `learn_alias` crashed on a `None` alias in HA's registry (`'NoneType' object has no attribute 'lower'` — the same crash the 09-04 Ofensteckdose call showed). Now an area name plus a group cue ("licht", "lampe", "alle") wins over a merely good fuzzy hit; only a near-exact one (≥ 0.9, "Gartenhaus Tecke rechts") still picks the single lamp. Aliases are read None-safe. Proven live through the manager route: on → "2 lights in area 'Gartenhaus'", off → same.
-- "Read aloud" spoke the tool status lines ("🔧 ha_control …"). The manager now filters every `/api/tts` text with `speakable_text()` — the desktop client's rules (tool lines, think blocks, code fences → "Codeblock übersprungen", links keep their text, URLs and markdown decor dropped) — so the web chat's Read aloud, the app and the ESP client get it without changes. Tests for the matching order and the filter. 129 tests green.
-
-## 2026-09-07 (espclient/ joins the monorepo)
-
-- **MrVoice**, the push-to-talk client on a Seeed XIAO ESP32-S3 (ESP-IDF 5.4 via PlatformIO, stock IDF only; INMP441 mic, MAX98357A amp, one button), is now `espclient/` in the repo: 53 files, 432 kB, sources plus wiring README, design spec, plan and the host-side unit tests (`pio test -e native`). It follows the porting brief and speaks the same four manager endpoints as the desktop client over HTTPS with Basic auth; WiFi and manager credentials come from NVS / `src/config_local.h` (gitignored, example provided) — the committed defaults are empty. Scanned: no credentials, only placeholders.
-- Kept out on purpose (ignored, still on disk): the leftovers of the earlier LiveKit-based prototype — a 20 MB Go room recorder binary, recordings, the LiveKit agent and its onboarding notes, the SuperMini wiring guide for a board that is not in use — and local editor state. Architecture tab gets an "ESP32 client (MrVoice)" card, README a layout row.
-
-## 2026-09-07 (voice turns live in the web chat, archived on /reset; STT audio kept; [Now] next to the question)
-
-- "Können wir bei agents.kat56.de immer den aktuellen Chat sehen, nur bei Reset archiviert?" — yes, now. Turns through `/api/chat/<inst>` (desktop voice client, the ESP32 client) were only ever in the VM's own history. The manager now mirrors each turn into the shared chat store as a conversation `Voice · <inst> · <start time>` (`voice_session()`): a client that sends a `voice-…` chat id owns the session, a client without one (ESP) gets a manager-kept session per source IP; `/reset` rotates the session, so the old conversation stays as the archive and the next turn opens a new one. Web-chat turns (numeric ids) are not mirrored — the page stores them itself. Slash commands are not mirrored. Proven: two ESP-style turns, `/reset`, one more turn → two conversations in the store, live via the long-poll.
-- `/api/stt-recent/audio?i=N` (admin) returns the N-th most recent STT upload as sent (last 5, memory only) — that is how the ESP32's "Oh"/"Ha" transcripts were diagnosed: a valid 16 kHz/16-bit WAV of 2.1 s whose every sample was −8, i.e. a flat line from the microphone path, not a server problem.
-- The agent's `[Now]` line moved from the top of the context to right before the current message, with an explicit "earlier times in this conversation are outdated": at the top, gemini-flash answered 18:15 questions with "16:37" from an earlier turn although the guest clock was exact. Now it tracks the host clock; when the Home-Assistant `GetDateTime` tool is available the model still prefers it (fine, it is correct), the line is the fallback. 128 tests green.
-
-## 2026-09-07 (what did STT hear? — /api/stt-recent)
-
-- "Was kommt von STT an?" for a self-built ESP32 voice client could not be answered: the voice service logs no requests and the manager only passes audio through. The manager now keeps the last 50 transcripts from `/api/stt` in memory (time, text, audio seconds, caller = instance name or source IP) and serves them newest-first at `GET /api/stt-recent` (admin-only). Memory only, on purpose — spoken words are not something to persist by accident. Test for the ring and the route. 127 tests green.
-
-## 2026-09-07 (CalDAV times: the hub process gets the host zone; events come back in local time)
-
-- "Incorrectes Format der Uhrzeit" in the voicecommand chat — and the numbers were wrong, not just the format. Root cause sits in the hub: caldav-mcp's library (ts-caldav) parses `DTSTART;TZID=Europe/Berlin:...T193000` with the PROCESS timezone, and the hub container runs in UTC, so 19:30 Berlin became 19:30Z and was serialized as `17:30:00.000Z`-style ISO; the model then read UTC out loud as local. Checked against the server's own DTSTART lines: Frühstück 09:30, Miltenyi 19:30, Schornsteinfeger 08:00 (all Europe/Berlin), Hannes Kirche whole-day 11.09.
-- Fix in two layers. The manager now passes `TZ` (host zone, see `HOST_TZ`) into the environment of EVERY hub process (`mgr/mcp.py: hub_env()`, catalog entries may override), so the library parses zoned and floating times correctly. And the caldav patches moved from an inline Dockerfile RUN into `mcp-hub/patch-caldav.js` (absolute calendar URLs as before, plus `list-events` formatting `start`/`end` as `YYYY-MM-DD HH:MM <zone>` and whole-day events as a plain date read in that zone — `toISOString()` would have shifted them a day). Belt and braces: the agent's `[Now]` line tells the model to convert any `…Z` timestamp before stating a time. Hub image rebuilt and recreated, rootfs rebuilt with `--smoke voicecommand` (green), manager restarted.
-- Verified: hub replay of this week matches the server's DTSTART values exactly; voicecommand answers "Freitag: 9:30–11:30 Frühstück Maike, 18:30 Uli, 19:30 Miltenyi, ganztägig Hannes Kirche". Test for `hub_env` (TZ added, catalog wins). 126 tests green. Known limit: a recurring event reports its master DTSTART (a 2023 "Fußball" shows up with its first date), that is the library's behaviour.
-
-## 2026-09-07 (CalDAV on voicecommand: relative calendar URLs fixed in the hub image; the agent gets a clock)
-
-- "CalDAV mit voicecommand hat nicht funktioniert" — two causes, both proven. (1) caldav-mcp 0.10.0's `list-calendars` returns the calendar URL RELATIVE (`/cloud/remote.php/caldav/...`, sabre/Nextcloud hrefs) while `list-events` and the other tools only accept absolute URLs: the same call answered `Failed to retrieve vevents from the CalDAV server.` with the relative URL and 10 events with `https://cloud.example` in front (replayed through the hub). The `mcp-hub` image now patches `list-calendars` at build time to resolve URLs against `CALDAV_BASE_URL` (fails loudly if the anchor moves with a newer version); hub rebuilt and recreated with the installer's own command. (2) The model had no clock: asked about "this week" it fetched the date through Home Assistant's `GetDateTime` and gave up when that call failed after the hub restart. The agent now injects one `[Now]` system line per turn (weekday, date, time, zone), and the manager writes `TZ` (host zone, `Europe/Berlin` here, override `GUEST_TZ`) into every config disk — guests booted in UTC before; the guest log shows local time since.
-- The rebuild ran with the new `--smoke voicecommand`, which found its own first gap: it asked `/tools` before the agent bridge was up (502) — the live test and the script now wait up to 120 s for a 200. Verified: "Was steht diese Woche in meinem Kalender?" → `list-calendars` (absolute URL) → `list-events` → the week read out correctly. Tests for the `[Now]` line (one per turn, zone, fallback) and the host zone. 125 tests green.
-
-## 2026-09-07 (Policy tab: assign MCP servers to an existing instance)
-
-- "There is no way to add an MCP to an existing instance" — true: the Policy tab only DISPLAYED the assigned servers, the only path was the raw config route (and my own instructions the day before pointed at a checkbox that did not exist). Now the MCP row of every instance card lists the catalog as checkboxes; **Save MCP** writes `MCP_SERVERS` through `/api/instances/<name>/config`, and because the config applies at the next start, the reply offers **Restart now** (the new restart action) right there. Each server shows the `${SECRET}` placeholders it needs — 🔑 when released for this instance, ⚠️ when not (release in the Secrets tab; otherwise the placeholder survives into the config and the agent reports it as unresolved).
-- Server side the route now refuses names that are not in the catalog (`mcp_servers_error()`), instead of letting a typo surface as 'MCP start failed' in the guest log at the next boot. Test for the validation; the page passes the JS gate. 123 tests green.
-
-## 2026-09-07 (stale instances visible + restartable; rebuild push; build --smoke)
-
-- Recommendation from the voicecommand incident, implemented: the manager now knows when a running VM sits on an OLD base image. `image_state()` compares the VM's start (pid file) with the image's build time; `/api/instances` carries `stale`, the Instances tab shows **"● running · old image"** (tooltip: started/rebuilt times) with a **"Restart on new image"** button, and a new `restart` action (stop + start) backs it. The idle worker runs `image_sweep()` every cycle (one stat per image): when an image was rebuilt it pushes ONCE "Rootfs rebuilt: N instance(s) on the old image" naming them, link to Instances — quiet at manager start and when nobody is affected.
-- `build-openrouter-rootfs.sh --smoke <instance>` restarts that instance after the build and runs the model-free `/tools` registry test against it, so a broken image fails right there. Not automatic for all instances on purpose: a restart cuts a running mission, that decision stays with the operator.
-- Applied live: after the manager restart the API flagged jobresearcher, myassistant, orchestrator and uncensored as stale (claudy runs the claude image, voicecommand was fresh); all four restarted one by one through the new action, no flags left, the live smoke test passed against the fresh instances. Test covers stale detection (running/off/private image), the once-per-rebuild push and its silence otherwise. 122 tests green.
-
-## 2026-09-07 (voicecommand: "unknown tool: mrmusic_power" — tolerant MCP names, /tools, rebuild smoke test)
-
-- "Radio einschalten" failed twice at 08:23: gemini-2.5-flash called `mrmusic_power` instead of the registered `mrmusic__mrmusic_power` and the agent answered `unknown tool`. Nothing in memory, chats, skills or playbooks carried the short name — the model simply dropped the server prefix. Unrelated to the morning's rebuild (the only agent change was spawn_subagent), but the class is real: a model may shorten a tool name at any time.
-- Agent: `_resolve_tool_name()` accepts a bare name when it matches exactly ONE registered MCP tool (logged as "resolved to"); two candidates stay unknown, built-ins are untouched. New `/tools` command answers with the registry as the model sees it — built-ins enabled here plus every MCP tool with its full name — without a model call.
-- "Wie können wir solche Regressionsprobleme vermeiden?" — with a smoke test that needs no model: `LiveAgent.test_tools_registry_after_rebuild` sends `/tools` to every openrouter instance that was started AFTER the current rootfs image was built (pid file newer than the image) and asserts built-ins plus each assigned MCP with its `server__` prefix; instances still on an older image are skipped, because a stale agent would route `/tools` through the model (cost, no signal). Rootfs rebuilt, voicecommand restarted: the live test ran against it and passed, `/tools` lists 108 tools, and "Radio einschalten" switched the radio on through `mrmusic__mrmusic_power`. 121 tests green.
-
-## 2026-09-07 (spawn_subagent rebuilt on create_task — with model choice)
-
-- "Haben wir eigentlich schon Subagenten?" — yes and no. `create_task` with target `ephemeral` has been the real mechanism all along (120 runs, the manager boots a `task-…` VM, drives it, deletes it). The `spawn_subagent` tool, however, tried to create/start an instance and talk to it through `/i/<name>/` — admin routes that guests cannot call since the 08-14 review, so every call since then came back as a 403 wrapped in a polite string (the audit shows "ok" because the tool never raised).
-- Rebuilt: `spawn_subagent(task, model=)` now posts `create_task` with `target=ephemeral`, `wait=true` and the chosen model, and returns the answer. The manager carries `model` through `/api/task` into `_run_ephemeral` (the VM is created with `OPENROUTER_MODEL` set) — for waited runs directly, for queued ones via a `model` field on the task that the worker hands over; a named instance keeps its own model. `create_task` accepts `model` too. Tests: the agent's payload and error paths, the manager's pass-through for wait/queue/named. Rootfs rebuilt; running instances pick the new tool up at their next restart. Proven live: voicecommand restarted on the new image, asked to `spawn_subagent(model=google/gemini-2.5-flash, task="Antworte nur mit PONG")` — the ephemeral VM answered `PONG` in 24 s, its usage row carries `google/gemini-2.5-flash`, the history shows the run as ephemeral from voicecommand. 119 tests green.
-
-## 2026-09-06 (architecture tab: "Fedora voice client" renamed to "Desktop client")
-
-- The client is not tied to Fedora — one static Go binary for any Linux desktop — so the SVG box and the component card now say **Desktop client** (card: "Desktop client (voice)"). Text only, no behaviour change.
-
-## 2026-09-06 (MSFT task failed silently for two mornings: target validation, failure push, dead-target sweep, instance editable)
-
-- "Die Aktie war über 500, kein Alert": the daily MSFT task had been rewritten by the orchestrator on 09-04 with target `@orchestrator` (with an @). No such instance — the worker failed on 09-05 and 09-06 with `instance '@orchestrator' unknown`, the result sat unread in the Tasks tab, and the rewrite had also dropped the "over 500" condition. Yahoo answered fine the whole time (previous close 510.12).
-- "Wie stellen wir sicher, dass sowas nicht mehr vorkommt?" — four gates, each closing one way it could have stayed silent: (1) `resolve_task_target()` strips a leading `@` and refuses unknown names **when the task is created or edited** (guest `/api/task`, admin `/api/tasks`, `/api/tasks/<id>/update`), so a typo fails in the agent's face, not at 08:00 next day; (2) the worker pushes "Scheduled task failed: <id>" (link to Tasks) when a scheduled run fails — once per distinct failure text, not once per day; (3) an hourly `task_target_sweep()` in the idle worker pushes "Task target unknown: <id>" for existing tasks whose instance is gone (renamed/deleted after creation) — once, the mark is cleared when the task is edited; (4) the Tasks editor can move a task to another instance (`update_task(..., instance=)`). The MSFT task itself: target `orchestrator`, and the text rewritten — the old one began with "Rufe täglich um 08:00 … ab", which the agent read as an order to *schedule* a task rather than to fetch the price (that is what it did every morning since 08-30: create/edit tasks, never fetch). It now says "this run IS the daily fetch, execute now, create no task", with the alert rule (notify only above 500 USD). Verified with a one-off run on the orchestrator: `MSFT 499.7 USD (kein Alert)` in 15 s. Tests for resolution, edit, the sweep's once-only push. 117 tests green.
-
-## 2026-09-06 (web UI broken by one escape — fixed, and a JS syntax gate so it cannot ship again)
-
-- "Die Webseite ist kaputt": the missions edit dialog joined/split its steps with `'\n'` written as a Python escape inside `mgr/ui_js.py` (a normal, not raw, string) — Python turned it into a real newline inside a JavaScript string literal, the browser's parser gave up on the whole script and every tab was dead. The route still answered HTTP 200 and all 116 tests were green, because nothing parsed the script. Fixed to `'\\n'` like the neighbouring MCP editor code.
-- "Warum haben die Tests das nicht abgefangen?" — because no test looked at the JavaScript. Now `tests/check_js.py` renders the client script to a file and `run-tests.sh` (step 0d) runs `node --check` on it, using the host's node or the one inside the `kaim56-mcp-hub` container; without either the step reports itself as skipped. Proven: with the broken line restored the gate fails the run with the SyntaxError, with the fix it passes.
-
-## 2026-09-06 (Plugins tab: file names open in VS Code; the in-manager viewer is gone again)
-
-- The read-only source viewer from earlier today is replaced by what the footer already offers: **VS Code on the host**. Each file name in a plugin card is now a deep link into code-server (`?folder=<CODE_ROOT>&payload=[["openFile","vscode-remote://host:port/<path>"]]` — the workbench reads `openFile` from the payload; verified against code-server 4.133's bundle). New `site.json` key `CODE_ROOT` = where the manager directory is mounted inside the editor (`/home/coder/firecracker` here); without it the names stay plain text. `GET /api/plugins/<name>/file` and `plugin_read()` are removed — one editor, not two.
-- The code-server container only had the git repo mounted, not the live tree where the plugins actually live; it has to be recreated with the same image, port, password and data volumes plus `/home/ulrich/firecracker:/home/coder/firecracker` (command in `manager/README.md`, Editor link). Test replaced: link shape for folder and single-file tools, no link without config, links carried by `/api/plugins`, viewer route gone. 116 tests green.
-
-## 2026-09-06 (Missions tab: edit and delete, whatever the status)
-
-- Missions could only be paused, resumed or aborted while open; a done or failed one stayed forever (and only the last three were shown). Now every mission row has **Edit** and **Delete**. Edit opens a dialog for goal, steps (one per line) and status — steps are matched by position so existing ones keep status/result/task id, new lines start open, removed lines are dropped; setting status back to *active* reopens the mission for its owner (the active cap of 5 still applies). Delete removes the record for good, any status, after a confirm. Both go through `POST /api/mission-admin` (admin-only) as actions `edit` / `delete`; the owner is resolved from the id when the caller does not know it. The tab lists all completed/failed missions now, not three. One new test covers edit-by-position, reopen, the cap, validation and delete. 116 tests green.
-
-## 2026-09-06 (Plugins tab: see what you approve)
-
-- "I can approve but not view" — the Approve button re-pins a tool's SHA-256 after an out-of-band edit, but the tab offered no way to read the files behind that hash, so approval was blind. Now every file name in a plugin card opens a read-only source viewer (`GET /api/plugins/<name>/file?path=…`, admin-only, router-registered). The reader resolves paths inside the tool's own folder only (realpath, no `../`, no symlink walk-out, 512 KB cap), so it cannot become a file browser; the test covers nested files, single-file tools, traversal attempts and the pins file. 115 tests green.
-
-## 2026-09-06 (guest boundary: the S-fixes from the multi-tenancy review)
-
-- The multi-tenancy review (four areas: HTTP/identity, data stores, infrastructure, clients) found that kAIm56 is a one-operator system by construction — no owner field anywhere, one admin credential, one chat store, one orchestrator, one secret store. The verdict and the roadmap (S/M/L) are in the review; this entry ships the S tier, which closes guest→guest paths that matter today, tenants or not.
-- **GET denylist for guests** (`guest_get_blocked`): `/`, `/chat`, `/katfs`, `/katfs/…` and `/i/<name>/…` — a VM could open the WebSocket **terminal of every other running VM** through `GET /i/<other>/term`, because only POST was gated by the allowlist. The UI fallback (unknown paths rendered the admin page) is denied to guests as well.
-- **`/api/task` target policy** (`guest_may_target`): a guest may task itself or `ephemeral`; other instances only when listed in `DELEGATE_TARGETS` of its config (comma list, `*` = all); the orchestrator keeps everything. Before, a prompt-injected agent could run its text on ANY instance — with that instance's secrets and MCPs. `/api/agents` is scoped the same way (a guest lists what it may delegate to), `/api/history` returns a guest only the runs it created or executed, `/api/hitl/<id>` answers only the requesting instance (ids are 8 hex chars), and `/api/inbox` — every user message of every chat — is the orchestrator's alone among guests. Live impact: `jobresearcher` and `uncensored` had each once tasked the orchestrator directly; that now needs `DELEGATE_TARGETS=orchestrator` on the instance. `uncensored` also called `read_inbox` — that stays denied on purpose.
-- **Host firewall**: `ensure_guest_input_rules()` limits guest→host to :8700 (manager) and :2049 (NFS) plus ICMP and established replies, DROP for the rest — sshd and rpcbind on `0.0.0.0` were one hop away from every VM. Per tap, `ensure_antispoof()` drops packets whose source is not the guest's own /30 address (the source IP IS the guest's identity for `instance_by_ip`); applied with the instance's FORWARD chain, removed on teardown.
-- **`_auth` exempts guests**: VMs carry no credentials, so a set `MANAGER_PASS` would have locked every agent out of its own manager (401 on every call). Guests pass on source IP and are gated by the allow/deny lists; admins still need Basic auth.
-- Six new tests: denylist coverage, a socket-less handler proving 403/401/pass for guest, anonymous admin and authenticated admin, the target policy incl. `DELEGATE_TARGETS`, scoped history, scoped HITL status, and the iptables specs via a recorded `sh` (DROP first, ACCEPTs above, ports exactly {8700, 2049}, anti-spoof in INPUT and FORWARD). 114 tests green. Requires a manager restart (`sudo systemctl restart firecracker-manager`) to apply the firewall rules and the new handler code.
-
-## 2026-09-06 (CalDAV as an MCP server — calendar and tasks, password stays on the host)
-
-- Ulrich wanted a calendar in the platform. Of the candidates (`dav-mcp`, 27 tools incl. CardDAV; `chronos-mcp`, Python/keyring; `mcp-nextcloud-calendar`, one version, dead since May 2025) the pick is **`caldav-mcp`** (MIT, TypeScript, 0.10.0): 11 tools — events plus VTODO — which is the leanest tool surface of the three, and every registered tool costs prompt space in every instance that carries it.
-- It installs the way `mcp-remote` already does: `npm install -g mcp-remote caldav-mcp` in the `mcp-hub` image, so the process runs in the hub container on the host, not in a VM. Catalog entry `caldav` (`command: caldav-mcp`, no args) configures purely by env — `CALDAV_BASE_URL`, `CALDAV_USERNAME`, and `CALDAV_PASSWORD` as `${CALDAV_PASSWORD}`, substituted host-side from the secret store. Released for `myassistant` and `voicecommand`.
-- **URL, username and password are deliberately still placeholders** (`https://caldav.example/dav/`, `todo-username`, no value in `secrets.env`) — the credentials come later. Nothing is armed: a catalog entry does nothing until an instance lists it in `MCP_SERVERS`, so the half-configured state is inert rather than broken.
-- The new test pins the property that matters: with the release the password is substituted, without it the placeholder survives verbatim into the config instead of resolving to an empty string — a missing release stays visible, and the credential never reaches the guest. 108 tests green.
-
-## 2026-09-04 (architecture diagram: Halo and the Linux desktop as clients)
-- The architecture tab's SVG had three clients (app, browser, Signal) and hid the iroh transport entirely. Redrawn: the client row now shows **Halo glasses** (a BLE peripheral of the KatAgent app, not a direct client — drawn hanging off the app) and the **Fedora/Linux voice client** (VAD · wake word), and the transport row gains **iroh-gw** (P2P relay, NodeId allowlist) beside Traefik — app and desktop reach the manager over iroh, no public port. Two new component cards (Halo glasses, Fedora/Linux voice client) and the KatAgent card now notes it bridges the glasses; the intro line lists the new external devices. Verified: 0 box overlaps, 107 tests green.
-
-## 2026-09-04 (voice HA control that learns: ha_control + auto-aliases + area grouping)
-- "Er findet Gartenhaus denke rechts nicht" and "kann er die Aliase automatisch lernen?" — both solved. Root causes were three: the new `voicecommand` instance (flash — good pick for fast voice) had no secret releases, so Home Assistant loaded 0 tools (fixed: HA/mrmusic/portainer tokens released, per-instance, host-side); STT mishears "Decke" as "denke"/"Tecke"/"Ecke"; and the two Gartenhaus ceiling lights belonged to no HA area, so "Licht im Gartenhaus" couldn't group.
-- **`ha_control(spoken, action)`** — a new agent tool whose matching runs deterministically in the MANAGER, not the model (flash kept passing the misheard name as a filter and failing). Order: exact name/alias → a strong fuzzy single entity (beats the area even when it contains the area word) → area name + a group cue ("Licht im Gartenhaus" → all lights of that area) → weaker fuzzy. On any fuzzy hit it **auto-learns** the spoken phrase as an HA alias, so the same mishearing matches natively next time. The HA token never leaves the host — the guest sends only words + action. Proven end to end through the flash agent: "Mach Gartenhaus Ecke links an" → `light.gartenhaus_decke_links` (fuzzy 0.98), switched and learned.
-- Supporting pieces: `mgr/haalias.py` (HA WebSocket for the entity registry, REST for states/services, stdlib only), the `/api/ha-alias` + `/api/ha-control` guest routes, a "Gartenhaus" HA area created and both lamps assigned (native grouping), and the drift-guard catalog entry. 107 tests green, incl. a fake-HA-WebSocket alias test and a stubbed control-matching test (exact/area/fuzzy/nonsense).
-
-## 2026-09-04 (voice client: custom prompt per spoken message; mrmusic MCP wired)
-- **`"prompt"` in the voice-client config** (or `--prompt`, `--prompt -` disables): prepended to every spoken message as a marked `[Voice-Client] …` frame, so the agent sees instruction and user sentence separately. Template default: answer short and read-aloud-friendly, no lists/links/code. Proven live: the radio question came back as exactly one speakable sentence.
-- **"Audio processing is very slow" — measured: it isn't.** STT 0.44 s, TTS 0.45 s, the myassistant chat turn 9.3 s (gemini-2.5-pro thinking). Two fixes: the client now speaks **sentence-streamed** — a sentence splitter rides the token stream (think blocks and code fences held until closed) and hands each finished sentence to Piper while the model keeps writing, so the wait ends at the FIRST sentence, not the full reply. And `--headless` prints stage timings (stt / first sentence), so slowness is diagnosable instead of felt. The remaining lever is the model itself — a flash-class model for voice cuts the 9 s to ~1-2 s. 43 client tests green.
-- **mrmusic MCP registered** (catalog: `mcp-remote` → `https://mrmusic.kat56.de/mcp`, TLS, token as `${MRMUSIC_TOKEN}` in the host secret store — never enters a VM; policy released for myassistant, `MCP_SERVERS` set via the existing config route): after restart the agent registers 7 tools (radio status/stations/power/play/volume/URL/release). First attempt against the raw IP:port found the port closed — the TLS hostname is the way in.
-
-## 2026-09-03 (heartbeat skip: the reschedule was never saved)
-- The "ist noch was offen?" sweep checked the pending live proof for the idle-heartbeat skip and found 9,961 log lines instead: the claim pass advanced the task's `next_run` on a skip but reported dirty=False to `with_tasks` (the return only counted throttles), so the mutation was thrown away and the same heartbeat was re-skipped every 5-second worker cycle. Functionally harmless — real inbox traffic would still have run it — but the rescheduling was dead and the log unreadable.
-- The claim pass is now a module-level `worker_claim()` with an explicit dirty contract (skips and throttles mutate, so they save), and the old admittedly-weak heartbeat test is replaced by a real contract test: skip → dirty=True + next_run advanced; five seconds later → no re-skip; not idle → task claimed. Verified live after restart: exactly one skip entry, `next_run` +30 min, log silent. 103 tests green.
-
-## 2026-09-03 (local wake-word model — audio leaves the desktop only AFTER the word)
-- The voice client can now gate on the desktop itself (`"wake_mode": "local"`): no pretrained network (openWakeWord doesn't know "Kaim", Porcupine is commercial) but query-by-example keyword spotting on the user's own voice — `--enroll` records the word three times, stored as MFCC templates; every VAD utterance start is held against them with subsequence DTW (free start/end), threshold derived from the enrollment's own cross-distances. Speaker-dependent by design: in a conference call, other voices match poorly — that's the point. Pure Go (own FFT/mel/DCT), no ONNX, no cgo.
-- The neat part: on a hit the word is cut in the AUDIO (DTW knows the alignment end) and only the remainder goes to STT — so the wake word can be anything, including "Kaim", and STT can never mangle or swallow it again. `--wake-test` shows live scores without sending anything; `"wake_threshold"` overrides the enrollment threshold.
-- Three bugs found by test before shipping: per-sequence CMN shifted template (word only) and utterance (word + sentence) against each other → channel mean now lives in the model, applied to both sides; enrollment takes carried Piper/VAD silence that DTW had to align against running speech → takes are trimmed to the voiced core; c0 (energy) dominated isolated-word vs in-sentence differences → distance uses c1..c12. Validated on REAL speech without a microphone (Piper enrollment at three speeds): both "Kaim …" utterances wake (12.6/15.3 vs threshold 16.3) and cut cleanly (STT of the remainder: "Wie spät ist es?" verbatim), all three negatives rejected — the closest being "Kein Problem …" at 16.33, which stays the method's honest limit. 40 client tests green.
-
-## 2026-09-03 (wake word, measured against reality — variants + fuzzy + visible drops)
-- "Hears me, but nothing happens after the hotword": diagnosed server-side with a Piper→Parakeet round trip — STT mangles short wake words. "Kat" came back as "Tat"/"Card" or was dropped entirely; "Kaim" normalizes to the everyday word "Kein" (which can never be a variant — it would fire on every "Kein Problem" in a call). "Kati", "Katharina" and "Computer" survived every test verbatim.
-- The gate now takes a comma-list of variants (`"wake_word": "Kati, Katharina"`, new template default), tolerates one edit (Levenshtein 1) per variant of 4+ letters — three-letter words stay exact, otherwise "hat" wakes "Kat" — and keeps the word-boundary rule. And drops are visible now: the tray status shows discarded utterances as ✕ with transcript (headless already printed them), so calibrating the word is observation, not guesswork. 31 client tests green.
-
-## 2026-09-03 (voice client and tunnel are ONE binary now)
-- "Can we combine tunnel and voice?" Yes, without giving up either build's strengths: the release build (`voice-client/build.sh`, `-tags embedtunnel`) embeds the Rust tunnel via `go:embed`; at startup it is materialized to `~/.cache/kaim56-voice/kaim56-tunnel-<hash>` (temp-file + rename, hash-named so releases replace themselves) and run as the child process. One 31 MB file to copy — truly linking them would mean cgo and the end of the static Go build. The dev/gate build stays embed-free (`embed_off.go`), so `go test` works in a fresh checkout; external `kaim56-tunnel` next to the binary or in PATH remains the fallback.
-- Proven live: no external tunnel present, config only `{"iroh": <node-id>}`, embedded tunnel unpacked, full probe chain through iroh. 26 client tests green (incl. materialize cache-hit/new-version cases).
-
-## 2026-09-03 (voice client: iroh is the normal way now — the client starts the tunnel itself)
-- `"iroh": "<manager-node-id>"` in the config is all it takes: the voice client finds `kaim56-tunnel` (next to its own binary, then PATH), starts it as a child process, waits for the local port and points itself at it. The child dies with the client (Pdeathsig), the tunnel identity is shown at startup for one-time allowlist pairing. With `iroh` set, `base_url`/`user`/`pass` are unnecessary — no Traefik in the path.
-- Fail loud, part two: a config still carrying the template placeholder (`manager.example`) is now refused at startup with a fill-this-in message — it used to run and surface as a DNS error on the first spoken sentence. Existing real configs are untouched; the HTTP(S) path stays available when `iroh` is empty.
-- Proven live: config containing ONLY the node id, client spawned the tunnel, full probe chain (TTS → STT → chat → reply) through iroh, test identity removed from the allowlist afterwards. 25 client tests green.
-
-## 2026-09-03 (voice client: wake word for conference-call days)
-- New `"wake_word"` in the voice client config (template default `"Kat"`, empty = old always-on behavior; existing configs keep theirs). In a call the mic hears speech nonstop — now only transcripts STARTING with the word reach the agent ("Kat, fass mir das zusammen"), the word alone gets a spoken "Ja?", everything else is dropped after transcription and forwarded nowhere. No model on the desktop: STT already runs locally on this server per utterance, the gate is a text comparison afterwards — case-insensitive, tolerant of STT punctuation, but word-boundary strict ("Katalog" does not wake "Kat"). 24 client tests green (9-case wake table incl. the boundary and the config-compat cases).
-
-## 2026-09-03 (the desktop rides iroh too — kaim56-tunnel)
-- "Das APK ist doch iroh — warum hier über HTTPS?" Fair. The gap was purely client-side: the app embeds the Rust iroh stack via uniffi, the Go voice client can't without cgo. New **`kaim56-tunnel`** (third binary in the `iroh-gw` crate, ~150 lines) closes it: a local listener on 127.0.0.1:8701 splices every TCP connection onto an iroh bi stream to the gateway — the exact per-request pattern the phone uses, one shared iroh connection re-dialed on demand. Any plain-HTTP client rides it; the voice client just sets `base_url` to the local port and stays byte-for-byte unchanged.
-- Pairing works like the phone: `kaim56-tunnel --id` prints the NodeId (stable key in `~/.config/kaim56-tunnel.key`, 0600), added via the iroh tab / `/api/iroh`. Proven live end to end: instances API and the full voice probe chain (TTS → STT → chat stream → reply) through the tunnel, then the test identity removed from the allowlist again. No Traefik, no exposed HTTPS, allowlist decides who's in.
-
-## 2026-09-02 (voice client rewritten in Go — one static binary)
-- The few-hours-old Python voice client is now Go: **one 8.7 MB static binary** (`CGO_ENABLED=0`), no Python environment, no PyGObject/GTK packages — the topbar icon speaks StatusNotifier over DBus in pure Go (`fyne.io/systray`), so KDE works natively and GNOME needs only the usual appindicator extension. The state icon (green hears / amber thinks / blue speaks / grey off) is drawn at runtime with `image/png`, zero assets.
-- Same design, same config file (`~/.config/kaim56-voice.json` stays valid), same VAD semantics — all 14 unit tests ported to `go test`, including the noise-floor-must-not-learn-from-speech regression. New `--probe "text"` flag proves the whole chain without a microphone (TTS → STT → chat → spoken reply); its live run transcribed the generated German verbatim and myassistant answered from the same VM history the Python probe had started. Step 0c of `run-tests.sh` now runs `go vet` + `go test` (skipped where no Go toolchain exists — the client is not a server part).
-
-## 2026-09-02 (a voice client for the Fedora desktop — hands-free, in the topbar)
-- **`voice-client/` in the repo**: a single-file Python client that sits in the GNOME/KDE topbar (PyGObject/AppIndicator; headless without it) and holds spoken conversations with a platform instance — default `myassistant`, switchable live from the tray menu (list fetched from `/api/instances`). No push-to-talk: an energy VAD over 30 ms frames segments utterances by itself, with pre-roll so sentence starts survive, a minimum length so door slams don't, and a forced cut that chunks nonstop dictation.
-- The client is deliberately dumb — record → `/api/stt` → `/api/chat/‹instance›` → `/api/tts` → play, everything heavy stays on the server, and the conversation lives in the agent ("Neues Gespräch" simply sends `/reset`). The mic is muted while the agent thinks or speaks, so the client never hears itself. Replies are cleaned before Piper gets them: think blocks, tool-status lines (`🔧 …`), code fences and markdown decor are stripped.
-- One VAD lesson caught by test: the noise floor must learn ONLY from unvoiced frames — the first draft let loud speech drag the threshold up past its own RMS within seconds, after which speech read as silence. Proven live end to end without a microphone: TTS-generated German fed back through STT transcribed verbatim, myassistant answered, the reply synthesized. Audio I/O via PipeWire subprocesses (parec/pw-record/arecord, paplay/pw-play/aplay — first one found; stdlib otherwise, since 3.13 dropped `audioop`). 14 client unit tests (synthetic-PCM VAD, WAV header, speakable filter, config) run as step 0c of `run-tests.sh`, behind both gates.
-
-## 2026-09-02 (the feature-review verdicts, implemented — seven of them)
-- **Documents with lasting value persist themselves**: the agent prompt now instructs storing the essence of an attached CV/contract/brief in the same turn, unasked — a `/reset` had cost the user a derived profile twice. Plus a compact "where knowledge goes" rule (facts → memory, how-to rules → playbook, expertise → load_skill, past work → recall_tasks): five stores, one decision path.
-- **The test suite cleans up after itself**: memory writes support deletion now (`value: null`), the e2e memory test removes its keys and asserts an empty store, the saddler ignores `e2e-*` instances, and the leftover `e2e-memtest` residue is gone from the production store.
-- **The saddler reports usage and cost per instance** (both windows, from `llm_usage`) — the half of a feature review that was hand work, and the half a wrong hunch cannot survive: its first render shows the orchestrator's $14.22 → $0.0037 model-switch story in one line.
-- **Idle heartbeats no longer wake the model**: when the inbox holds nothing and no mission is active, the worker reschedules the SCHEDULED heartbeat itself ("skipped: inbox empty, no active mission"). ~1,560 of the orchestrator's 1,774 fortnight audit entries were this idle ritual; cost was already near zero (hy3), but the noise drowned the saddler and the free tier is a cluster risk. One-off heartbeat-shaped tasks still run (a skipped pending task would re-skip every 5 s — caught before shipping).
-- **The remaining read-modify-write races are closed**: the gateway toggle goes through new `with_gateway()` (it cycled around the lock while `gateway_count` bumped stats under it), and chats.json gets one RMW lock across BOTH cycles — task-worker appends vs. the app sync's merge could silently drop each other's messages. A dead second lock in gateway.py went too.
-- **Four more GET routes moved into the routing table** (prompts, resources, iroh status, voice-health): 17 routes enumerable now.
-- **`mgr/ui.py` split**: css / html (with `ARCH_SVG` as its own constant — the update cycle edits exactly that) / js, assembled to a byte-identical `PAGE` (proven old-parsed vs new-parsed before deploy). 103 tests green.
-
-## 2026-09-02 (katfs web client published as a standalone site)
-- The browser file provider is now hosted externally at **https://uneidel.github.io/katfs-web/** (own public repo `uneidel/katfs-web`, GitHub Pages). It could go anywhere static: the P2P transport runs over iroh's public n0 relays, so the page needs zero own infrastructure — only a secure context for the File System Access API, which Pages provides. Sharing flow: open with `?key=<host-node-id>` (or paste it), pick a folder, done; file contents only ever travel between the two iroh endpoints.
-- For static hosting the `%%NODE_ID%%` server substitution has a client-side sibling: the page reads `?key=`/`#` itself, filtered exactly like the manager's proxy filters it. The source copy in `katfs/web/` carries the same snippet, so node-served and statically-served pages behave alike. AGPL notice and source pointer ship with the site.
-
-## 2026-09-02 (skill-guided review of the Python tree — all four findings fixed)
-- Reviewed against the new dev skills (`python-code-quality`, `python-security-audit`). The heavy checklist items pass clean: all SQL parameterized, no pickle/eval, no duplicate module-level definitions, no mutable defaults, no hardcoded secrets, user-controlled paths guarded. `shell=True` in the agent's bash tool and SHA-1 in the websocket handshake are by-design/RFC, not findings.
-- **Silent excepts got voices where silence hid damage:** of 56 truly silent `except: pass` sites, 14 now log — lost playbook saves (a rule the user just taught vanishing), leaked ephemeral VMs, failed NFS export updates, tombstone/watermark/plugin-pin saves, chat-log holes, gateway toggle saves, unreadable iroh allowlists, dead TTL sweeps. Cleanup paths and parse-fallthroughs stay silent on purpose.
-- **The folder picker is bounded:** `/api/browse` used to enumerate the whole filesystem as root (names only, admin-auth'd). It now serves only `BROWSE_ROOTS` (default /home, /srv, /mnt, /media — overridable in site.json); outside paths get the root list. Verified live: `/etc` is not browsable, `/home/ulrich` is.
-- **The injected `configure()` contracts are typed** across all mgr modules, placeholders included — the exact seam where two of this week's bugs sat now states its shape in the signature.
-- **ruff (pyflakes rules) is step 0b of `run-tests.sh`** — optional, dev-tool only, skipped where not installed. Its first run found 10 issues (5 dead imports, 2 shadowed re-imports, 2 empty f-strings, 1 in gateway); all fixed. 102 tests green.
-
-## 2026-09-02 (wdm0006/python-skills: dev skills for the repo, not agent catalog)
-- **github.com/wdm0006/python-skills** (MIT, © Will McGinnis) — first imported into the platform agents' skill catalog, then reverted on clarification: these are meant for the humans-and-Claude working ON kaim56, not for the agents running IN it. 31 of the 36 (python/*, rust/*, common/* — swift/scala/go/js have no code here) now live in **`.claude/skills/`** next to the existing security/architecture skills, prefixed `python-`/`rust-` to keep names unambiguous, with the MIT text as `LICENSE-python-skills`. The agents' catalog is back to 67. Side benefit kept: the import script walks nested layouts now.
-
-## 2026-09-02 (task store: the read-modify-write race is closed)
-- Found while stress-testing the "port it to Rust?" question: `_tasks_lock` guarded only the WRITE. Worker thread and HTTP routes both did load→modify→save, so an interleaving lost updates — a task created between the worker's load and its save silently vanished. The one thing Rust's ownership model would have forced on us, retrofitted in Python instead.
-- **`with_tasks(mutator)`** in `mgr/store.py` is now the only way to change the store: load → mutate → save as ONE critical section, saving only when the mutator reports dirty. All ten call sites converted — `add_task`, `update_task`, the worker's CLAIM (candidates are found on a snapshot but claimed on a fresh load under the lock, so a task edited or deleted in between is re-checked), the post-run status update, the frequency-cap throttle, both orphan resets and both delete routes.
-- New test hammers the store from five threads (4×25 creates plus a worker-style toucher) and demands the exact final set — the lost-update class fails loudly now. 102 tests green; create/delete verified live after restart.
-
-## 2026-09-02 (regression protection: the undefined-name gate)
-- Answer to "how do we make sure our work stops breaking existing functionality": the week's regressions were one CLASS — a name used without its import, which Python happily compiles and only crashes when the line runs. If no test runs that line, nobody notices (task creation was dead for 13 days).
-- **`tests/check_names.py`**: pyflakes-light in ~150 lines of stdlib AST, tuned to this codebase (declared injection placeholders make the configure() contract visible). Proven against both historical bugs — and on first run it flagged **four dormant production defects**: `save_gateway` missing from manager's import list (the per-chat gateway toggle 500'd), `base64` missing in `mgr/gateway.py` (data:-URL image stripping), and BOTH secret functions in `mgr/mcp.py` never injected (every MCP call from a VM would have NameError'd — unnoticed because the only MCP instance is off). All four fixed; the mcp contract is now explicit via configure().
-- The gate is **step 0 of `run-tests.sh`** and a **pre-commit hook** in the repo runs the suite before every commit (`--no-verify` for emergencies). CLAUDE.md's update cycle documents it. Gateway toggle verified live after the fix. 101 tests green.
-
-## 2026-09-02 (task creation: 13 days broken, now regression-tested)
-- Archaeology on yesterday's `uuid` find: the mgr/ split (Aug 20) shipped `store.py` without the import from its FIRST version, and `tasks.json` shows the blast radius — the last successfully created task before the fix dates to Aug 19. For ~13 days no new task could be created on any path (web UI, app `/task`, agent `create_task` without wait), unnoticed because the pre-split scheduled tasks kept running (the worker does not call `add_task`) and `wait=true` bypasses it too.
-- The suite never called `add_task` — `test_tasks_file_wired` only proves `load_tasks` is wired. New `test_add_task_roundtrip` exercises the real function (pending + scheduled, id shape, next_run, store contents). All three creation paths verified live. 101 tests green.
-
-## 2026-09-02 (the saddler's first finding, closed the same day)
-- **The 38 notify "failures" were our own e2e suite**: `test_notify_route_rejects_empty` deliberately posts an empty notification against the live manager on every run, and the suite ran dozens of times this week. Not a defect — but the trail was unreadable: the notify route audited `ok:false` without a reason, and the saddler's first run mis-diagnosed the pattern as an external service outage. The route now records the WHY (`empty` / `rate limit: …`); re-run with the reason present, the saddler pinpoints the cause correctly ("called with an empty payload"). A working demonstration of why the rich fields exist.
-- **The Activity panel shows the new fields**: failed calls display their error text under the target, healthy ones a short result peek — and the badge says `failed` instead of `denied`, which wrongly implied a policy decision.
-
-## 2026-09-02 (the saddler: weekly trace review, and an audit that can carry it)
-- **Rich tool-call traces.** The audit used to log a call BEFORE execution — `ok: true` even when the tool came back with "⚠️ blocked", no error text, no result, no linkage ("the Google-blocks-me week was invisible in the trail"). `exec_tool` now audits AFTER running: `ok` reflects whether the output looks like a failure, and the record carries the error text, a short result excerpt and a per-turn id that groups a turn's calls. Fields are additive; old readers are unaffected.
-- **`mgr/saddler.py` + `GET /api/saddler`** (idea from Microsoft's AutoSaddler, reduced to this platform's size and rules — stdlib, no framework, no auto-apply): the manager renders a failure digest over all instances' audits, grouped by error SHAPE (digits/URLs normalised), this week next to last week — the week-over-week movement is the reflection step. Guests may not read it, except the orchestrator.
-- **A weekly scheduled task** hands the digest to the orchestrator: diagnose each group (code defect → human, behavioural → propose playbook lines, external outage → note), reflect on the counts, send ONE notify. **Applying patches stays a human decision** — the saddler proposes, never patches. First live run diagnosed correctly: 97% of the week's failures were the notify path (external), failure rate 6.1%→3.5% week-over-week.
-- Found on the way: `mgr/store.py` lost its `uuid` import in the package split — admin task creation (`/api/tasks`, the UI's "New task") threw a NameError. Fixed. 100 tests green.
-
-## 2026-09-01 (Claude instances: platform APIs as real MCP tools)
-- The curl recipes from this morning were the stopgap; Claude Code has a native tool mechanism. New `kaim56_mcp.py` in the Claude guest — a stdlib-only MCP stdio server exposing the manager APIs as typed tools: `memory_store`, `memory_recall`, `web_search`, `list_skills`, `load_skill`, `notify`. Wired via `--mcp-config` on every claude call; the CLAUDE.md platform section now points at the tools first, curl stays documented as a fallback. Protocol-tested standalone (initialize/list/call incl. the error path) and live: claudy lists all six tools, stores a memory on request (arrives in the manager store), and searches Brave through the tool.
-
-## 2026-09-01 (tree-chat is called /aside now; Claude instances gained the platform memory)
-- **`/branch` → `/aside`** across agent, web chat, app (v5.32) and the Claude bridge — the old name collided with Claude Code's own git-worktree `/branch` in people's heads and once literally in a chat. An aside is what the feature IS: a side question in inherited context that folds back into a one-line note. `/branch` stays as a silent alias, so muscle memory and old playbooks keep working.
-- **Why claudy could not use memory: nobody had told it.** The manager's memory/search/skills/notify APIs are open to every guest VM — Claude Code just did not know they exist. The claude guest-init now writes a **"kAIm56 platform" section into the workspace `CLAUDE.md`** (which Claude Code reads automatically): curl recipes for `store`/`recall` (guests always address their own memory, whatever the path says), Brave-backed `/api/websearch`, the skills catalog and user notification — plus the instruction to use the memory API instead of claiming to have none. An existing user CLAUDE.md is appended to, never overwritten. Verified live: claudy stores on request, and after a `/reset` recalls the value from the manager.
-- Test fixture caught up: the `known` backend set in `test_agents_have_backend_and_model` now includes `claude` (the first claude-template chat instance made it appear in `/api/agents`). 98 tests green.
-
-## 2026-09-01 (claude bridge: platform slashes stop leaking into Claude Code)
-- On a Claude instance, `/branch` fell through to Claude Code's OWN /branch (git worktrees) and answered "isn't available in this environment" — a confusing collision between the platform's tree-chat command and Claude Code's namesake, spotted in a live chat. The web bridge now intercepts the platform built-ins: `/fresh <task>` runs a one-off without touching the session, `/model sonnet|opus|haiku|<id>` switches the model per session (`/model default` clears), and `/branch`, `/back`, `/goal`, `/steps`, `/reasoning` get an honest "OpenRouter agents only — here you have /reset, /fresh, /model". Everything else still goes to Claude untouched, so Claude Code's own slash commands keep working. Verified live on the running instance.
-
-## 2026-09-01 (branch icon drawn in-house; app picker completes the built-ins)
-- The web chat's branch button shows a proper branching diagram now (one node forking into two) instead of the `⑂` glyph — drawn as an inline SVG in `currentColor`, NOT copied from the commercial icon set that inspired it (proprietary license, and this repo is public AGPL).
-- App v5.31: the slash picker gains the three built-ins it was missing (`/fresh`, `/branch`, `/back`); the web picker already had the full set.
-
-## 2026-09-01 (the agent stopped blaming Google for its own tools)
-- Fourth find from the job-search session, this one a confabulation rather than a bug: the model told the user its requests "run on Google's servers" and get blocked by career portals — while the exact same page fetched fine through the exact same tool (the Stadtwerke job board returned actual listings, HTTP 200, even with the old bot-ish user agent). The model had generalised the session's EARLIER failures — all fixed today — into "the web blocks me" and rationalised it with its provider self-image instead of retrying.
-- Two changes: the runtime block of the system prompt now states WHERE tools execute (in the agent's own microVM on the user's host, egress via the host connection — never on the model provider's servers), tells the model to quote real errors and to retry instead of concluding it is blocked. And `http_fetch` sends a browser user agent plus Accept-Language — big portals do 403 obvious bot agents, so the story should not become true by accident.
-- Verified live: the "blocked" page returns three job titles through the VM. 98 tests green.
-
-## 2026-09-01 (memory: a key with a space could be stored but never recalled)
-- Live bug, third of the day from the same job-search session: the agent stored 60 companies under the key `"jobsuche Firmen"` — and could not read them back, apologising about an "invalid key format". Cause: **store takes the key via the JSON body (any string fine), recall glues it raw into the URL path**, where a space kills the request. `memory_recall` URL-quotes the key now, the manager URL-decodes path segments, and a slash inside a key stays one key (everything after the instance). `load_skill` quotes its name too. HTTP-level test covers space and slash keys round-trip; verified live — the exact failing recall now returns the company list. 98 tests green.
-
-## 2026-09-01 (http_fetch: readable text instead of truncated tag soup)
-- **Why the agent called a results page "too complex to extract": `http_fetch` returned raw HTML, hard-truncated** — on a modern page the first kilobytes are head, scripts and cookie banners, so the actual content often never made it past the cut. The tool now converts HTML to readable text (scripts/styles dropped, block tags as line breaks, entities resolved, `\r` stripped) and **keeps link targets in brackets** so the model can follow them with another fetch; `raw=true` still returns the unconverted body. Read cap raised to 5 MB — oversized results go through the offload previews anyway.
-- Tool schemas caught up with reality: `web_search` now says it is Brave-backed (a user instruction "use Brave Search" had the model apologising that it only has a generic tool), and `http_fetch` documents the text conversion and `raw`.
-- Verified from a real VM (a marketing-heavy page: zero `<div` in the tool output, link markers present). 97 tests green.
-
-## 2026-09-01 (web search moved into the manager; Brave Search as the first-choice backend)
-- **`GET /api/websearch` + `mgr/websearch.py`:** the agents' web search is served by the manager now, for the same reason the LLM keys are — **the Brave API key never enters a VM**. Backend order: Brave Search API when `BRAVE_API_KEY` is set (new settings field; free tier at brave.com/search/api), then DuckDuckGo HTML (the bot challenge is intermittent — detected when it strikes, used when it does not; **ad results filtered**, DDG routes them through y.js click counters), then Bing. The agent tool calls the route first and keeps its direct backends only for older managers.
-- DDG's inner `vqd`-token flow was probed too: also behind the challenge (JS proof-of-work) — no way through without a real browser, so an API-backed first choice it is.
-- Verified end-to-end from a VM: "Softwareunternehmen Koeln Bonn" returns real regional companies with snippets. 96 tests green (backend order, key gating, ad filter, redirect decoding).
-
-## 2026-09-01 (web_search: DDG went behind a bot wall — multi-backend with honest errors)
-- **Why the agent found "no companies": DuckDuckGo's HTML endpoint now serves a bot challenge to datacenter IPs** (HTTP 202 + an "anomaly" page, zero results in the markup). The old tool had two compounding flaws: `urlopen` does not raise on 202, and an empty regex match returned the string "no results" — so the model concluded the companies do not exist and told the user it would "try again later".
-- `web_search` is multi-backend now: DDG first (challenge detected and named), then Bing HTML (per-block parsing, snippet included, `/ck/a` redirect URLs base64-decoded back to their targets). **A dead backend produces a spoken error** — "web search unavailable (duckduckgo: blocked …)" with an explicit "this is NOT an empty result" so the model reports infrastructure instead of inventing absence. An empty result list stays "no results".
-- Known limitation, stated rather than hidden: Bing softens rare terms for datacenter callers (a query for a specific product may come back generic). Verified end-to-end from a real VM. 94 tests green.
-
-## 2026-09-01 (PDF extraction: poppler in a container as the fallback)
-- A user hit the honest error on a real PDF (subset/CID fonts — the built-in extractor cannot decode those, and the host has no poppler-utils). Rather than leaving that class of PDF broken until poppler is installed: `_pdf_text` now tries **pdftotext on the host → pdftotext from the `kaim56-pdftotext` container (alpine + poppler, built once; no network, read-only mount, memory cap) → the built-in extractor**. The host already runs Docker services, so this adds no new kind of dependency; the availability probe is cached. The error message, when everything fails, now names both fixes. Test forces the container path (host binary hidden, builtin disabled) against a well-formed PDF. 92 tests green.
-
-## 2026-09-01 (web chat: document attachments too)
-- The web chat's paperclip now also takes PDF/DOCX/ODT/text, through the same `/api/extract` route as the app: the extracted TEXT travels into the turn (marked, capped), the model never sees the binary. The chip under the input shows name and size and expands on click to a scrollable preview of exactly what the model will get; the bubble carries a compact 📄 marker. Images keep going the vision path unchanged — one file input, branched by type. Verified live against the running manager.
-
-## 2026-09-01 (app v5.30: tap the document chip to preview the extracted text)
-- The attachment chip now expands on tap: the first 4k characters of the extracted text, scrollable, exactly what the model will see (plus the rest). Point: PDF extraction without poppler is not perfect — better to check the result before sending than to let the model guess. Collapses again on tap; a newly attached document starts collapsed.
-
-## 2026-09-01 (app v5.29: PDF/DOCX attachments — and a poisoned-history fix)
-- **The chat can now attach documents, not just images.** New "File" tile in the app's attach sheet (PDF, DOCX, ODT, TXT/MD/CSV/HTML). The file goes to the new admin-only `POST /api/extract`; the manager extracts the TEXT and only that travels into the chat turn, clearly marked (`[Attached document: …]`), capped at 80k characters. The bubble shows a compact 📄 chip, not the payload. Extraction is stdlib-only (`mgr/extract.py`): DOCX/ODT via zipfile+XML; PDF prefers `pdftotext` when the host has poppler-utils and otherwise uses a built-in extractor (Flate streams, Tj/TJ operators) with an honesty check — a CID-font PDF yields a readable error instead of gibberish that would quietly poison the model's context. Five tests build their fixtures in-test (a real DOCX zip, a real Flate PDF).
-- The POST dispatcher now consults the routing table first, same as GET — `/api/extract` is its first table-registered POST route.
-- **Found while testing: `myassistant` had stored NOTHING — ever.** Both memory stores were empty while every other instance had entries. Root cause: an image in its conversation history that the provider rejects ("Provided image is not valid"), which killed EVERY normal turn before the model ran; no turn ever reached the tools. The agent now strips the images from the history and retries the turn when that error appears (both chat paths), telling the user in the stream. Verified live: the previously fatal turn answers, and the instance stores a memory on its own. Test covers the strip helper.
-- 91 tests green (was 85). App APK: `katagent-5.29.apk`.
-
-## 2026-08-31 (three token-diet changes: collect, slim skills list, smart previews)
-- **Collect mode for the mission advance push** (idea from OpenClaw's queue modes): every push is a full `/fresh` turn costing ~5k fixed input tokens before any work happens. Completions are now collected per mission OWNER for a short window (`MISSION_COLLECT_SECS`, default 8 s) and flushed as ONE message listing all finished tasks — three steps finishing together cost one turn instead of three. Test proves a burst of three becomes a single push.
-- **`list_skills` went from ~2.5k tokens to ~250.** Without arguments it now returns names only; `list_skills(query=…)` searches names AND descriptions and returns the matching ones. Backing it, `GET /api/skills?meta=1` serves name+description without the bodies — 12 KB instead of 867 KB per call.
-- **Type-aware offload previews** (the one idea worth taking from Caveman, rebuilt in ~60 stdlib lines instead of adopting the BSL-licensed engine): the preview of an offloaded tool output now carries structure instead of the first N characters. JSON becomes an outline (keys, types, counts, first items — a head-slice of a big JSON is just an unclosed brace); logs get consecutive duplicates folded (`×800`) with head, tail and every error/warn line kept. Plain text stays a head slice. Nothing is lost either way — the full output remains in the offload file, `offload_read` unchanged. Found while testing: `re` was never imported in the agent.
-- Rootfs rebuilt, instances cycled, verified live (names-only skills list from a real VM; `?meta=1` measured). 85 tests green (was 80).
-
-## 2026-08-31 (routing: a table instead of an if-chain)
-- **`mgr/routes.py`: a router.** Exact paths in a dict, prefixes in a list tried longest-first, and exact ALWAYS beating prefix — so the order in which routes happen to be written no longer decides who answers. That is the class of bug that hit twice (`/api/skills/` swallowing `/api/skills`, and the mission routes). First group migrated (instances, settings, tasks, usage, gateway, personas, skills, skills/&lt;name&gt;, logo/favicon); everything else still falls through the existing chain, Strangler-style, exactly as the `mgr/` split was done.
-- **Access is now a property of the route.** `@ROUTER.get(..., admin=True)` replaces a list of admin-only paths kept elsewhere in the handler, and `Router.inventory()` reads the whole surface back — which turns "which endpoint may a guest VM call?" into a loop instead of a reading exercise. That is the missing piece for the `security audit` command sketched in the OpenClaw comparison.
-- **Guarded before, not after:** a test extracts every route literal from the *source* of both dispatchers and fails when a prefix branch stands before an exact branch it would swallow — so the not-yet-migrated chain is covered too. Plus router unit tests (exact over prefix, longest prefix, duplicate refused, method separation) and an inventory test pinning `/api/settings` and `/api/instances` as admin-only while `/api/skills` and `/api/personas` stay open to the agents.
-- Verified against the running manager: twelve routes probed before and after the change, **byte-identical responses**. 80 tests green (was 76).
-
-## 2026-08-31 (a landing page, and the last German left in the UI)
-- **`docs/index.html`: a static landing page for the project** — what it is, the isolation model as an SVG (clients → manager → microVMs → egress, with the point where the key is attached), features by group, the security section, and an FAQ that says plainly there is no company behind this. Single file, no build step, no external requests; it uses the manager's own palette, heading face and blueprint corner marks so it speaks the product's language.
-- **Fresh screenshots, taken from the running manager** (Instances, Skills, MCP servers, Policy, Missions, Architecture) — the ones in the repo predated the English pass and still showed the German UI. They are captured through the DevTools protocol, because the UI holds a long-poll open and the simple screenshot mode waits for a page load that never finishes. **Instance names and spend figures are blurred from the rectangles the browser itself reports** for those elements, so the masking cannot drift when the layout changes; the tooling is reusable.
-- **Found while looking at the new screenshots: the last German strings in the UI.** The per-instance usage line still read "Tokens heute … · gesamt …", and the missions tab had "Weiter", "Zuletzt abgeschlossen" and an "abbrechen?" confirmation; the mission log wrote "Pausiert/Fortgesetzt/Abgebrochen". All translated. 76 tests green.
-
-## 2026-08-30 (Halo: the device side now runs on the vendor's emulator)
-- **`tools/halo/emu_test.py`: our unmodified `katagent.lua` runs on Brilliant Labs' Halo emulator** (a real Lua 5.4 runtime via lupa, the complete `frame.*` API, a virtual 256x256 display whose framebuffer can be read back, injection of BLE data / microphone data, capture of what the device sends). Fed with exactly the packets `Halo.kt` produces. Nine checks: the app starts, text really appears on the display, reassembly across many packets, clearing, microphone chunks `0x05`, the final chunk `0x06` — and, crucially, that **the glasses acknowledge every packet with `01 00 00`**, which was the one assumption the whole Bluetooth write path rests on. Run with `tools/halo/run-emu-tests.sh` (containerised).
-- **First finding: the device Lua has to be pure ASCII.** The runtime reads the source as latin-1 — a single em dash in a comment aborted loading with a `UnicodeEncodeError`. `katagent.lua` is ASCII now and says so in its header.
-- **Second finding: the display is far bigger than assumed.** Measured instead of guessed: **59 'M' fit across the 256 px width** and **13 lines** at 20 px spacing — against the 32 columns and 8 lines the controller was wrapping to, which wasted more than half the display. Defaults are now 56 columns and 12 rows, with the measurement referenced in the comment.
-- App v5.28. The Android Bluetooth path remains the only untested piece; the emulator cannot stand in for it.
-
-## 2026-08-30 (app v5.27: voice commands, and the glasses camera on the agent)
-- **`VoiceCommand.kt`: recognised speech is checked locally first.** "Photo", "screenshot", "stop" are carried out by the phone instead of being answered by the model. Fillers and leading verbs are cleared away ("please take a photo"), and a question spoken along survives: "Photo, what is that?" → action + `what is that`. Deliberately only at the START of an utterance — mid-sentence it would almost always be wrong. The tests put their weight on the NON-matches ("Send me the photo from the hike", "Explain how a screenshot works" go to the agent), because the expensive failure is a question stuck in the phone.
-- **Photo by voice, end to end:** "Photo" → the glasses' camera → JPEG into the chat with the spoken question (or "What do you see in this image?") → the reply on the glasses' display. It travels the app's existing image path (base64 JPEG into the chat stream). New `Halo.PhotoCollector` assembles the image from its chunks (`0x07`/`0x08`), `HaloBle.awaitPhoto()` hands it to the waiting caller. The frugal raw camera mode is deliberately unused: it saves 623 bytes but demands a cached JPEG header per quality and resolution.
-- The dry run covers it: `HaloDryLink` returns a canned image on the photo command, so the whole chain is testable and a **"Photo" button** in the settings walks it. **38 JVM tests**, all green.
-- **Screenshot of the phone is recognised but not wired up** — the controller says so on the display instead of quietly doing nothing. It needs MediaProjection (a consent dialog per session) or an accessibility service; that decision is still open.
-
-## 2026-08-30 (app v5.26: the glasses wired up, with a dry run)
-- **`HaloController.kt`: the flow** — connect, upload the Lua modules in dependency order, click → recording → `/api/stt` → instance → reply on the display. Line wrapping included, because the glasses do not wrap: without it a reply simply runs off the right edge. Long words (URLs, paths) are broken hard, the display is cut to eight lines.
-- **`HaloDryLink`: the glasses as a fake.** It takes the same packets as the real device, reassembles them and keeps a virtual display. The whole chain therefore works before the hardware arrives — including the real call to the instance; only the Bluetooth path is stubbed. It powers both the unit tests and a **"Dry run" button in the settings**, where the virtual display is shown.
-- **Settings gained a "Glasses (Halo)" section**: Connect (real BLE, asks for the Bluetooth permissions), Dry run, Disconnect, plus Listen/Ask to walk the flow. Status line shows progress and any text the glasses' Lua interpreter prints.
-- The controller takes Bluetooth, speech recognition and the agent as **functions from the caller** — that is what makes the flow testable without Android at all. **27 JVM tests** (17 protocol + 10 flow), all green; plus the 11 Lua checks of the device side. APK: `katagent-5.26.apk`.
-
-## 2026-08-30 (Halo: the Bluetooth layer)
-- **`HaloBle.kt`: the BLE substrate** — scans for the glasses service (a filtered scan, so it does not catch half the living room), connects, requests MTU 517, enables notifications, and writes packets **at the pace of the acknowledgements**: every write waits for the GATT confirmation and then for the app-level ack from the glasses. `write()`/`writeString()` block deliberately and belong on a background thread. Incoming notifications are split: `[0x01, …]` is data (ack / audio / photo), anything else is text from the Lua interpreter. Manifest gained `BLUETOOTH_SCAN` (neverForLocation) + `BLUETOOTH_CONNECT`, with the pre-Android-12 legacy entries capped by `maxSdkVersion`.
-- **Bug caught while reading the SDK receive path:** the acknowledgement check was written against the wire form (`01 00 00`), but the receive side strips the leading `0x01` before dispatching — so no ack would ever have been recognised and every single write would have run into its timeout. Framing and checks now consistently work on the stripped frame, with `isDataFrame()`/`frameOf()` making the split explicit. 17 JVM tests, all green; the APK builds.
-- **Still open:** wiring into the app (connect from the settings, upload the Lua modules, click → recording → `/api/stt` → instance → reply on the display). And `HaloBle.kt` remains **unverified** until the hardware is here — it is the one piece no test on this machine can prove.
-
-## 2026-08-30 (Halo: device side, and the protocol aligned with the SDK format)
-- **`assets/halo/katagent.lua`: the glasses-side app** — takes the phone's messages, draws the agent's reply line by line, clears the display, switches microphone and camera. Built on the unmodified SDK modules (`data.min`, `plain_text.min`, `audio.min`, `camera.min`, `code.min`, bundled with the upstream BSD-3-Clause license). The loop body sits in `step()` so it can be driven one pass at a time.
-- **Device side tested without hardware:** `tools/halo/test_frame_app.lua` puts a fake `frame` API in place of the glasses and feeds exactly what `Halo.kt` puts on the wire (minus the leading `0x01`, which the glasses' Bluetooth stack strips). 11 checks — reassembly across many packets, dispatch, display lines, microphone parameters, audio flags, unknown codes. Run with `tools/halo/run-tests.sh` (Lua runs in a container; the host has none).
-- **The first bug this caught:** clearing `streaming` inside the stop handler swallowed the final audio chunk (`0x06`) — the phone would have waited forever for the end of the recording. Now the stop only halts the microphone and the loop drains it, which is what emits the final chunk.
-- **`Halo.kt` aligned with the device format:** `showText` now sends the SDK's `plain_text` layout (x, y, colour, line spacing, text), and the message codes for text/clear match the SDK template — that way the upstream Lua modules can be used unchanged. Added: packet-acknowledgement constants and helpers (the glasses acknowledge every packet, `01 00 00` / `01 00 01`; the sender has to wait for it) and the photo chunk flags. 16 JVM tests, all green.
-
-## 2026-08-29 (app: protocol layer for the Brilliant Halo glasses)
-- **`Halo.kt`: the BLE message protocol of the Brilliant Labs glasses, ported to Kotlin** — GATT addresses (service `7a230001-…`, TX `…0002`, RX `…0003`, the Halo-only audio channel `…0005` that doubles as device detection), the packet framing (`[0x01, code, length_hi, length_lo, payload]` on the first packet, `[0x01, code, payload]` afterwards, chunked to `mtu-4` and another 2 bytes off on Halo), audio chunk collection (flags `0x05`/`0x06`), the WAV header for handing a recording to the manager's existing `/api/stt`, and the signed→unsigned shift for 8-bit recordings. Ported rather than embedded because the official mobile SDK is Flutter — a second runtime just for a BLE client has no place in the Compose app (source: brilliantlabsAR/brilliant_sdk, BSD-3-Clause, © 2025 CitizenOneX).
-- The file has **no Android dependencies**; Bluetooth sits behind the `HaloLink` interface. That makes the whole layer testable on the JVM: **15 unit tests** (`gradle testDebugUnitTest`, JUnit added as a test-only dependency) cover framing, packet-boundary edge cases, reassembly, oversized payloads, session messages, Lua upload chunking, audio flags and the WAV header. All green.
-- **Not yet built:** the Bluetooth implementation of `HaloLink` (scan/connect/MTU/notifications), the device-side Lua app, permissions and UI wiring. Those need hardware to verify — the protocol layer was deliberately done first because it is the part that can be proven without glasses.
-
-## 2026-08-27 (skill catalog imported, editor link in the footer)
-- **55 skills from github.com/daedalus/skills imported** into the Skills tab (now 67 total). Claude-Code format (`SKILL.md` with frontmatter) converted to the flat kAIm56 form: descriptions shortened to one line (`list_skills` returns all of them at once), attached files inlined up to 8 KB, per skill capped at 40 KB. Two folders skipped (no `SKILL.md`). **The upstream repo carries no license** — `manager/skills.json` is therefore untracked and gitignored; the twelve original skills live on as `examples/skills.example.json`.
-- **Skill bodies no longer travel with the page.** `render()` inlined the complete `skills.json` — with the catalog that would be ~870 KB on every page load. The page now carries name + description, the editor fetches the body from `GET /api/skills/<name>` on demand (page stays ~195 KB). Test added.
-- **VS Code link in the footer** — next to Changelog/Architecture, from `CODE_URL` in the (gitignored) `site.json`, `target=_blank` + `rel=noopener`. Deliberately a link, not an embed: the manager runs behind HTTPS, the editor on plain HTTP in the LAN, so an iframe would be blocked as mixed content. Unset = no link; documented in `examples/site.example.json`. Test added.
-
-## 2026-08-27 (cross-instance missions: every agent may own one)
-- **Missions are no longer orchestrator-only.** Any persistent agent can plan a mission and delegate its steps to whichever instance has the needed tools/MCP. `/api/missions` (GET) and `/api/mission-start|update|finish` are keyed by the CALLING instance — each agent sees and writes only its own; ephemeral `task-`/`sub-` VMs are excluded (their mission would dangle when the VM is deleted). The mission tools left `_TASK_ADMIN_TOOLS` in the agent, and the `[Missions]` block is injected for every agent, not just the orchestrator. `list_tasks`/`delete_task`/`edit_task` stay orchestrator-only.
-- **Steps carry their executor.** `mission_update` gained `target` — the instance a step was delegated to (`create_task` target) — stored on the step, in the log (`Step 2 -> doing @hass`) and shown in the Missions tab, the app and the agent's own mission block. Plan and execution can therefore live on different agents and stay auditable.
-- **The advance trigger follows the owner.** After a task finishes, `_mission_advance_fire` pushes to the mission's owner instead of hard-wired `ORCH_INSTANCE` — a mission owned by any other agent used to never advance. If the owner instance no longer exists, no push is made (the 7-day TTL sweep pauses the mission).
-- **Admin actions resolve the owner.** `mission_admin` (and `/api/mission-admin`) accept an empty instance and look the mission up by id; web UI and app pass the owner along. New `mission_owner(mid)` helper. The orchestrator's system prompt now instructs routing explicitly (`list_agents` → `create_task(target=…)` → record target).
-- **Android app v5.25:** the Missions screen loads all owners (`by_instance`), shows the owner per mission and the executing agent per step; pause/resume/abort send the owner. Two tests added (cross-instance ownership incl. owner lookup, and the advance push targeting the owner).
-
-## 2026-08-26 (app: error pages no longer land in the chat as raw HTML)
-- **Android app v5.24 — FIX raw `<p>…</p>` in the reply bubble.** On a non-2xx answer `chatStream` streamed the error BODY chunk by chunk into the assistant message; for a stopped instance the manager's HTML page (`<p>Instance 'x' is not running…</p>`) therefore appeared verbatim in the chat. The error body is now read out instead of streamed, stripped of tags/entities and shown as one clean line (`⚠️ HTTP 503: Instance 'x' is not running (web UI unavailable).`). `ServerAgent.chat()` sanitizes the same way, and exceptions without a `message` no longer produce a bare "⚠️ Fehler:" (class name as a fallback).
-- **Manager: `/i/<inst>/api/…` answers plain text when an instance is not running** (503) — the app puts an API body straight into the bubble, so markup has no business there. The browser path `/i/<inst>/` keeps its HTML. Two tests added (API = `text/plain`, no `<`; page stays HTML).
-
-## 2026-08-24 (iroh transport: app <-> manager over P2P)
-- The Android app now reaches the manager over **iroh** (P2P) instead of HTTPS: no VPN and no exposed HTTPS port, NAT-traversed and end-to-end encrypted. New Rust gateway `iroh-gw` accepts iroh connections (ALPN `kaim56-mgr/0`) and transparently relays each bi stream to the local manager (127.0.0.1:8700), so token streaming and long-poll work unchanged and the manager itself is untouched. Auth = a phone node-id allowlist, re-read per connection; only paired devices get through. Verified end-to-end (dial → tunnel → real HTTP 200; rejection when not allow-listed).
-- Manager: `mgr/irohgw.py` + `/api/iroh` (GET status, POST add/remove a phone node-id) and a Sharing-tab card that shows the gateway node-id and manages the allowlist. systemd unit `iroh-gw.service`; `install.sh` builds/installs the gateway. Test added.
-- App: native module `app/iroh-android` (`kaim_iroh`, Rust + UniFFI) exposes a tiny dial/stream API; Kotlin `IrohNet` registers an `iroh://` URL scheme and `IrohUrlConnection` speaks HTTP/1.1 over one iroh stream, so every existing HttpURLConnection call site keeps working — the base URL becomes `iroh://<manager-node-id>`. Settings now takes a **Manager node-id** and shows this device's node-id for pairing. Build via `app/iroh-android/build-android.sh` (NDK cross-compile + UniFFI bindings; JNA runtime added).
-
-## 2026-08-22 (Full German→English pass)
-- The entire codebase is now English: comments, docstrings, and user-facing strings across the manager (`manager.py` + all `mgr/` modules), the web chat (`chatui.py`) and web UI (incl. the new Resources tab), the OpenRouter agent (`agent.py`), the Android app (all Kotlin + gradle/manifest/theme/README), the host services (voice/embed/mcp-hub), the Claude bridges, katfs (Rust node/client + web JS), all shell/build/guest-init scripts, Dockerfiles, systemd units, `install.sh`, `personas.json`, the CHANGELOG, and the READMEs. Behaviour is unchanged. Prompt-block tags the agent injects are now English too (`[Missions]`, `[Summary]`, `[Memory]`, `[Branch]`, `[Sidenote]`), and the default personas `assistent`/`uebersetzer` were renamed `assistant`/`translator`. Deliberately kept as input-tolerance literals (matched against user input, not source language): the Signal HITL `ja/nein` keywords, `/steps unbegrenzt`, `/reasoning aus`, `/back verwerfen`, and Indeed.de German date words in `indeed_filter`. The `ManagerSync` create-error detection in the app was updated to the manager's new English tokens (`exists`/`invalid`/`unknown`). All 69 tests green (test fixtures asserting on now-English agent output updated to match).
-
-## 2026-08-20 (UI: Changelog + Architecture in the footer)
-- New Resources tab: per-instance sizing (vCPU, configured RAM) plus live usage — actual RSS, CPU% (from /proc, per-core basis), and written overlay-disk size, with bars. Backed by a new /api/resources endpoint; test added.
-- Android app v5.19: uploaded photos now show a real thumbnail in the message bubble (Msg gained an image field, persisted + synced) instead of just a 📷 icon; plus an on-device crash log — uncaught exceptions are written to crash.log and viewable/copyable under Settings › Diagnose.
-- Security gateway (Layer A completed): the invisible-Unicode scrubber now also removes Unicode noncharacters (U+FDD0–FDEF, U+xFFFE/xFFFF per plane) and permanently-reserved default-ignorable code points (U+2065, U+FFF0–FFF8, U+E0000, tag/ignorable ranges) — the remaining deterministic watermark carriers from guillaumemeyer/watermarks-remover. Emoji/variation-selectors preserved; test added. Also: `manager/text_unicode.py` is now tracked (was missing, breaking the gateway on a fresh clone).
-- Tool-plugin integrity: content-hash pinning (idea from Microsoft's APM). Uploading/creating a plugin records a SHA-256 over its files; if a plugin is later edited out-of-band the Plugins tab flags it 'changed since approve' with an Approve button to re-pin. Pins in gitignored manager/plugins/.pins.json; test covers upload→tamper→approve→delete.
-- Policy tab: the 15s auto-refresh no longer wipes unsaved tool-checkbox changes (a dirty guard skips the re-render while you have pending edits), and Save shows real errors instead of a false '✓'. Added a set_instance_tools round-trip test (subset persists, all→cleared, unknown filtered).
-- Chat sync robustness (web + Android v5.18): when two devices' histories DIVERGE (from an earlier corruption or an out-of-band edit) the prefix-append merge used to stall forever, leaving one side on an older state. Now, if the remote conversation is newer and not shorter, the client adopts the server state as the merge point instead of getting stuck.
-- Android app v5.17: assistant messages now render basic Markdown (bold **, italic *, `code`, #-headings as bold, - / * bullets) via AnnotatedString — previously the app showed raw asterisks (only the web chat rendered Markdown).
-- Android app v5.16: fix streamed reply landing in the USER bubble (raw ⟦think⟧ markers visible) after a mic-interrupt+re-record — chunks now target the assistant message by a stable key instead of a positional index that could drift. Msg gained a `key` (excluded from equals so multi-device merge is unaffected).
-- Android app v5.15: FIX 'Socket is closed' on server chats (regression from v5.12). The 2s read-timeout used for interrupt-polling closed the socket whenever a model took >2s for the first token (e.g. gemini-2.5-pro thinking). Read-timeout is back to 600s and the mic interrupt now cancels via a disconnect handle instead — responsive AND no false timeouts.
-- Android app v5.14: the 'Assist button opens instance' setting is now a dropdown of the live server instances (with '— active instance —' for the default) instead of a free-text field.
-- Android app v5.13: new setting 'Assist button opens instance' — the device assistant button (ACTION_ASSIST) now opens/records against a configurable server instance (empty = current). Set it in Settings › Server connection.
-- Android app v5.12 (voice): (1) recording no longer cuts off mid-sentence during natural pauses — silence hang raised 2.2s→3.5s and the keep-alive threshold lowered; (2) tapping the mic again while the agent is answering now cancels that turn (stream aborted within ~2s) and starts a fresh recording, so you can correct your previous statement. The mic button is enabled during a response.
-- Tool plugins now support multi-file projects (each tool its own folder, put on sys.path) next to single .py files, plus a Plugins tab in the web UI: drag-and-drop a .py or .zip, generate a boilerplate, list/delete. Zip extraction is zip-slip-guarded and 5 MB-capped, admin-only. README documents the plugin convention (adapted from pi.dev).
-- Web chat: your own messages now have a Copy button too (previously only assistant messages did) and bubble text is explicitly selectable — a background redraw during streaming/long-poll no longer forces you to re-select to copy.
-- New tool plugin `indeed_filter` (adapted from gvfullstack/JobSearchAutomation): stdlib-only post-filter that narrows a found job list to genuinely NEW postings (parses 'today'/'N days ago'/ISO dates, filters by since_date) plus include/exclude keywords — no scraping. Wired into the jobresearcher task for precise dedup.
-- Hardening: unhandled exceptions in a GET/POST route now return a clean HTTP 500 (and log a traceback) instead of dropping the connection — so a future route bug surfaces as an error the agent can read/retry, not a silent RemoteDisconnected.
-- Fix: `playbook_add` failed with RemoteDisconnected in every agent — `mgr/rules.py` used `uuid`/`time` without importing them, so `/api/playbook-add` crashed mid-request and the manager dropped the connection (memory/list worked as they don't use those). Added the imports; regression test covers it.
-- Slash typeahead: Esc now reliably closes the picker whenever it's visible and keeps it closed while you keep typing the same /command (reopens on a fresh /).
-- Web slash typeahead: now lists all 8 agent commands (added /fresh, /branch, /back) and was restyled into a command-palette (rounded panel, header hint, bold command + muted description, full-row highlight).
-- Graceful fallback when a local model emits invalid tool-call JSON: llama.cpp returns HTTP 500 ("Failed to parse tool call arguments as JSON") when a small model can't escape a large string argument (e.g. a whole file). The agent now retries that turn once WITHOUT tools so the model answers as text/code instead of losing the whole turn.
-- Android app v5.11: chat delete-tombstones (parity with web). Deleting a chat records `{id: deletedAt}`, pushes it in `{chats, tombstones}`, applies incoming tombstones from the long-poll (removing the local chat), and never resurrects a tombstoned chat unless genuinely re-edited. Deletions now sync App↔Web in both directions.
-- Chat deletions now sync across devices via tombstones: deleting a chat records a `{id: deletedAt}` marker that propagates through `/api/chats`; the server refuses to resurrect a tombstoned chat (even on an app re-push) unless it's genuinely edited afterwards (updatedAt > deletedAt, which clears the tombstone). Markers are TTL-pruned (60 days) and kept in the gitignored `chats_tombstones.json`.
-- Multi-device chat sync fixed (web `/chat`): (1) the initial conversation was selected before the shared server store finished loading, so a second device opened an empty thread with a fresh id instead of the shared one — now it awaits the pull first; (2) live-appended messages from another device weren't redrawn in the open chat because the merge mutated the same object the `f!==cur` guard skipped — now the open conversation always repaints on a merge.
-- Fix `_(empty reply)_` with local reasoning models (llama.cpp/Qwen3): the server streams thinking as `reasoning_content`, which the agent only recognised under the OpenRouter name `reasoning` and silently dropped — if the model emitted no plain `content`, the whole answer was lost. Now both field names stream as thinking, and a reasoning-only turn falls back to showing the reasoning instead of an empty reply.
-- Web chat slash-command typeahead: fixed a latent bug (undefined `escT`) that made the picker throw on render so the dropdown never appeared — now it opens on `/`, navigable with ↑/↓, accept with Enter/Tab, Esc to close. Includes prompt templates (tagged), and reflects `/steps … unlimited`.
-- /steps now takes any count 1..x (60-cap removed) plus `/steps unlimited` (0 = unbounded rounds; only the guardrails — token budget + rate-limit — then apply). Web-chat + app slash-command help updated.
-- Fix: streamed chat could break mid-sentence with slow/local models — during tool execution no bytes flowed and an idle proxy/client timeout (Traefik 180s) cut the connection. Agent now streams a visible tool-status (🔧) plus a heartbeat (·, HEARTBEAT_SEC=30) while tools run, keeping the stream alive.
-- Externalised all site-specific values (domains, LAN IPs, uplink NIC, guest DNS) into gitignored `site.json` + `mcp-catalog.json`; source now uses neutral placeholders (example.com / 1.1.1.1 / eth0). Repo HEAD is free of internal infrastructure.
-- Leak-filter now also masks HuggingFace tokens (hf_…).
-- Scrubbed phone-number defaults from templates/agent configs (now empty); merged the two page footers into a single row.
-- The topbar nav was overloaded (the bell + "Missions" pushed Changelog and
-    Architecture out of the visible row — the scrollbar is hidden, so they looked
-    "gone"). Both are now in a footer; the topbar ends at "Settings" and
-    fits on one line again. showTab now also highlights the footer links.
-
-
-## 2026-08-20 (Guardrails: Budget, Rate-Limit, Egress-Allowlist, Leak-Filter)
-- **Cost/frequency circuit breaker** at the key-injection proxy (where all
-    LLM calls pass through): daily token budget per instance (default 2M, from
-    llm_usage; override `BUDGET_TOKENS`) + frequency cap (default 60/min,
-    `LLM_RATE_MIN`). Exceeding it -> 429 + at most one notify per hour.
-    Motivation: the nightly heartbeat loop ran completely unthrottled.
-- **Task-frequency cap in the worker**: >6 runs/h of the same task -> suspended
-    for 1 h + notify (catches loops of any cause).
-- **Egress allowlist per instance** (`EGRESS_ALLOW` = domains/IPs): the VM may
-    then reach ONLY those (A-records resolved at start, otherwise as before "everything
-    except private"). Network level via an iptables FC chain.
-- **Leak-filter** on outbound channels (notify, send_signal): known
-    key patterns (sk-or-/sk-ant-/sk-/ptr_/gh*_/AKIA/xox*/JWT) are replaced,
-    NOT a generic 40-hex (git SHAs stay untouched — tested).
-- 57 tests green.
-
-
-## 2026-08-20 (Refactoring aftershocks: three worker bugs + notification click + UI)
-- **Root cause found thanks to the new worker.log**: (1) `chat_log_append` had slipped
-    into mgr/notify.py and couldn't find `load_chats` (NameError) -> task
-    results never reached the chat (the job-search symptom). Moved back into
-    manager.py (chat domain). (2) mgr/store.py was missing `import re` ->
-    `_next_run` crashed, next_run stayed in the past -> **scheduled
-    tasks ran in an endless loop** (heartbeat since that evening, job search
-    multiple times). (3) On post-run errors the worker left "running" orphans.
-- **Worker hardened**: each post-run step individually guarded (status
-    guarantee), a runtime orphan watch (>30 min running -> requeue),
-    diagnostic log run/worker.log (the journal is root-only).
-- **Notification click opens the real chat** (App 5.10 + Web): prefers the
-    agent's task chat, otherwise the most recent — instead of an empty window.
-- **Bell: "Clear"** actually removes notifications (`{clear:true}`);
-    opening still only marks them as read.
-- **UI**: clunky system scrollbars in the manager removed (dialogs overflow-x
-    hidden, slim theme-conform scrollbars globally).
-
-
-## 2026-08-20 (App 5.9: error messages expire + license header)
-- Status/error messages in the app stuck around permanently (e.g. DNS error
-    "Unable to resolve agents.example.com" when the phone isn't on the home network/VPN).
-    Now: errors expire after 8 s, hints after 4 s, and a
-    successful task load clears an earlier error immediately.
-- AGPL/SPDX header in all of the app's Kotlin sources (license catch-up).
-
-
-## 2026-08-20 (Fix: App/Tasks empty after the mgr/ refactoring)
-- Regression from the package split: `load_tasks`/`save_tasks` moved into
-    mgr/store.py, but the constant `TASKS_FILE` stayed undefined (configure
-    didn't set it). Consequence: `/api/tasks` crashed -> the app showed "no tasks",
-    and the task worker died, so two scheduled tasks (heartbeat, job search)
-    hung on "running" and never fired again.
-- Fix: `TASKS_FILE` in `store.configure()` + re-export. Plus **crash recovery**
-    `reclaim_stuck_tasks()` at worker start: orphaned "running" tasks are
-    requeued to scheduled/pending (self-healing from now on).
-- Regression tests: TASKS_FILE wired up, reclaim logic. 55 green.
-
-
-## 2026-08-19 (manager.py -> mgr/ package — refactoring complete)
-- Strangler-Fig refactoring done: **manager.py from 6,705 down to ~1,400 lines
-    of core logic** (3,388 total incl. HTTP handler + main). Nine modules under
-    `mgr/`: ui (web interface), store (SQLite history/usage/semantics + memory +
-    task file), signal (send/HITL/receive), missions, notify, rules
-    (playbooks+prompts), mcp, katfs, gateway.
-- Pattern applied consistently: manager.py stays the systemd entry point + facade (re-exports)
-    and composition layer (VM lifecycle, networking, secrets/instance_by_ip,
-    the HTTP handler `class H` and main wire the modules together — deliberately kept
-    here). mgr modules NEVER import from manager (cycle check clean);
-    cross-references (notify_add, sem_store, load_settings, chat_log_append,
-    orchestrator_ping, load_instances) via configure()/injection.
-- After EVERY slice: import check, 53 tests green, service restarted and
-    verified live (Signal receiver connected, katfs/gateway/hitl responding).
-    install.sh copies mgr/ along too. Four stumbles fixed cleanly along the way
-    (import order, stray injection lines, too large a cut, missing
-    uuid import) — exactly what the test net is there for.
-## 2026-08-19 (Tree chat + key-injection gateway ACTIVE)
-- **Tree chat (branches)**: side questions no longer pollute the main topic.
-    `/branch [topic]` opens a side branch (full inherited context,
-    nestable); `/back` closes it: the branch is condensed into ONE
-    `[side note]` line (or discarded without a trace with `/back drop`),
-    and the context is back at the branch point. Web chat: ⑂ button,
-    return bar, branch messages indented + collapsible; branch depth
-    syncs into the shared store. Trimming pauses while a branch is open. Proven E2E:
-    main topic intact, branch only as a side note.
-- **Key-injection gateway (OneCLI pattern), built by the Fable subagent and
-    ACTIVATED**: LLM keys no longer leave the host. Agents send chat
-    completions to the manager (`/api/llm/<backend>/chat/completions`), which
-    injects Authorization when forwarding (real SSE streaming, errors
-    transparent). Toggle `LLM_KEY_PROXY` in the settings (on); agent boot
-    shows `url=http://172.30.x.1:8700/api/llm/...`. `/model` switching stays
-    proxy-capable; llama still direct. The secret broker remains for
-    other secrets.
-- Tests: 53 green (tree chat open/close/drop, proxy URL/no bearer, route).
-
-
-## 2026-08-19 (Oracle tool + Playbooks panel)
-- **oracle** (pi.dev idea "second opinion before acting"): a second opinion before
-    risky actions — its own LLM call without tools, challenges the
-    assumptions, never acts itself; via ORACLE_MODEL optionally a stronger model.
-    A playbook forces the orchestrator to use it before delete_task & co.; on
-    "OBJECTION" it does not act. Verified live with the real MSFT-deletion failure scenario:
-    Oracle raised the correct objection, the agent refused + asked back.
-- **Playbooks panel** in the Personas tab: view, add, and
-    remove rules per agent (previously only possible via chat/API).
-
-
-## 2026-08-19 (Installer verified END-TO-END — QEMU rig with nested KVM)
-- Test rig: QEMU VM (Debian 12 Cloud, seed.iso instead of SMBIOS — that was the
-    hang-up), nested KVM confirmed (/dev/kvm in the VM).
-- **install.sh ran all the way through on the fresh machine**: preflight,
-    layout, Firecracker download, rootfs build via Docker IN the VM,
-    embed+mcp-hub containers, systemd service with a generated password.
-- **Final proof: a Firecracker microVM booted INSIDE the test VM**
-    (overlay boot incl. upper, web-bridge answers 200). The only expected
-    deviation: NFS WARN (no NFS in the rig) — degrades correctly and continues.
-- One installer bug found+fixed: the smoke test failed with 401 because it
-    curled without the freshly generated password — 401 now counts as "alive".
-
-
-## 2026-08-19 (Fix: "Thinking" kept popping open during streaming)
-- paint() replaces the last message on every token completely during streaming — and
-    always set the details element back to `open`. Now the
-    user-chosen open/closed state is remembered before the repaint and restored
-    afterwards; collapsed stays collapsed.
-
-
-## 2026-08-19 (/steps + jobresearcher fix + config route)
-- **/steps [n]** — change the max tool steps per turn at runtime (1-60,
-    until restart; permanently via AGENT_MAX_STEPS). Reason: research runs of the
-    jobresearcher ended with "(max tool steps reached)" at the default 12.
-- **New admin route** POST /api/instances/<n>/config {key,value} — set/delete a single
-    config value (secrets excluded). Used to put jobresearcher
-    permanently on AGENT_MAX_STEPS=30; duplicate task (daily 08:00) deleted.
-- /steps in the web slash hint and app picker (app entry comes with the next APK).
-
-
-## 2026-08-19 (pi.dev ideas adopted: /model, steering, prompts, plugins)
-- **/model** — switch model (and backend) mid-session, without
-    restart, context preserved: `/model orcarouter:anthropic/claude-sonnet-4.6`,
-    `/model <id>` (model only), `/model` (show). Effective until restart.
-    Verified live incl. backend switch OrcaRouter->OpenRouter->back.
-- **Steering** — call in to the running agent: a new message is injected between
-    two tool steps as a `[steering]` user message instead of
-    waiting. Web: Enter with text during a response (button ■ still aborts);
-    App 5.8: send while busy. Guest endpoint `POST /api/steer`
-    (queued=false if no turn is running -> send normally).
-- **Prompt templates** — recurring jobs as a slash command:
-    maintain them in the Personas tab, in chat `/name [extra]`; expansion happens in the
-    agent -> works in Web, App AND Signal. Store prompts.json,
-    `GET/POST /api/prompts`. Slash suggestions now in the web chat too.
-- **Tool plugins** (pi.dev extension idea, translated) — one .py file per tool
-    in `firecracker/plugins/` (DESC/PARAMS/REQUIRED + run()); the manager puts
-    them on the config disk, the agent loads them at start (/config/plugins).
-    Collisions with built-in tools are rejected. Example `wuerfel.py`;
-    live: "tools=36", the call works. New tool = file + stop/start.
-- 48 tests green (new: model-switch, steering-queue, prompt-expansion+store,
-    plugin-loader incl. collision protection).
-
-
-## 2026-08-19 (pi/prime decommissioned)
-- Usage analysis (llm_usage, task_runs, instances): pi and prime were **never**
-    used; their purpose (multi-provider) is better covered by openrouter/orcarouter/llama,
-    and the bridges had no access to the kAIm56
-    ecosystem (tools/memory/missions). Removed: templates, rootfs images
-    (~7 GB), Docker images, secret-policy entries, OVERLAY_ROOTFS, installer
-    references, repo directories. The source code stays in the git history.
-
-
-## 2026-08-19 (Installer: curl | sh)
-- **install.sh** in the kaim56 repo: installs the whole solution on a
-    fresh machine (preflight incl. KVM check, runtime layout, Firecracker
-    v1.16.1 from GitHub, guest kernel via VMLINUX_URL, rootfs+embed+mcp-hub
-    builds, systemd unit with a generated password, offline tests as a smoke test).
-    Flags: --check/--files-only/--no-build/--with-voice/--with-agents; idempotent.
-- Portability for that: GUEST_DNS, CLAUDE_CRED_SRC, AGENT_DIR (NFS), FC_DIR
-    (build scripts), test paths now via env; folder-picker HOME dynamic.
-- Repo completed: embed/, mcp-hub/, tests/, run-tests.sh checked in;
-    the complete live state synced.
-- Verified: --check green; --files-only built a fresh target layout from
-    which manager.py imports and **30 offline tests run green**; the real
-    Firecracker release was fetched from GitHub. Open for curl|sh: push the repo to
-    GitHub + vmlinux as a release asset (VMLINUX_URL).
-
-
-## 2026-08-19 (Fix: tool-catalog drift + drift guard)
-- The four mission tools and `offload_read` were missing from the manager tool catalog
-    (`AGENT_TOOLS_CATALOG`) — so they didn't show up in the create-instance
-    form and a tool allowlist would have silently blocked them. Added.
-- **New drift test** (`test_tool_catalog_matches_agent`): agent BUILTIN and
-    manager catalog must be congruent — a forgotten
-    catalog entry (or a ghost entry without a tool) turns the suite red.
-
-
-## 2026-08-19 (Fix: browser terminal broke after ~10 s idle)
-- The terminal's WS tunnel opened the guest socket with
-    `create_connection(timeout=10)` — the connect timeout stayed as a READ
-    timeout on the socket, and after 10 s of silence `recv()` tore down the tunnel
-    ("connection closed"). Fix: timeout set to None after connect, plus
-    TCP keepalive on both sides (half-dead connections die anyway).
-    Verified: survived 16 s idle on the open WS.
-
-
-## 2026-08-19 (Overlay added for pi/prime/claude)
-- The overlay boot block (fc_upper -> /mnt sync mount -> overlayfs ->
-    pivot_root, with ro-base fallback) is now also in the guest inits of
-    **pi, prime and claude**; all three images rebaked and verified via a
-    throwaway test instance (bridge boots, no overlay WARN).
-- `OVERLAY_ROOTFS` thus covers all four images — **every** instance boots
-    from the shared ro base + its own upper, and the persist toggle
-    ("💾 persistent") is available everywhere. private_rootfs() remains
-    only as a fallback for unknown images.
-- Disk savings per running instance: pi ~3 GB, prime ~4 GB, claude ~3 GB
-    copy avoided (now ~35 MB upper).
-
-
-## 2026-08-19 (Overlay rootfs + persistent disk per instance)
-- **Overlay boot** for the openrouter rootfs: the base attaches READ-ONLY to
-    all instances (Firecracker blocks writes -> the journal-sharing
-    bug from 08-15 is structurally gone), plus per instance a small rw upper
-    image; the guest init builds overlayfs + pivot_root. NO more 2-GB copy per start.
-    If the overlay build fails, the VM boots degraded on the
-    ro base and continues (fallback, never a boot refusal).
-- **Persistent disk, selectable per instance (default off):** a tag in the
-    instance table ("fresh each start" / "persistent"). On = the write layer
-    (4 GB sparse, instances/<n>-upper.ext4) survives stop/start — apt/pip/npm
-    installations persist. Right-click = factory reset of the layer.
-    Routes: /api/instances/<n>/persist + /diskreset.
-- **Learned & fixed:** (1) the ro root needs an existing mountpoint (/mnt
-    instead of mkdir /ov). (2) stop() is a power plug (SIGTERM to Firecracker)
-    — without a sync mount the upper lost the last writes (0-byte file
-    in the debugfs proof); the upper now mounts with -o sync.
-- **Proven E2E:** write a file -> stop/start -> content "SURVIVED-
-    RESTART" still there. Kernel check beforehand: all container/overlay features
-    active in the guest kernel (Docker/podman IN the VM thus possible; podman
-    would be the next step). orchestrator+hass run on overlay
-    (tools=35, tencent/hy3). 42 tests green. Other templates (claude/pi/
-    prime/llama) unchanged on the old copy path.
-
-
-## 2026-08-19 (Settings pane for TTS/STT)
-- **Voice section in the Settings tab**: a status line (service up? STT model,
-    available TTS voices via new `GET /api/voice-health`) + two new
-    settings: **TTS voice** (selection) and **TTS speed** (0.5–2.0).
-- **Voice service extended**: `/tts` accepts `voice` + `speed`
-    (Piper `--length_scale`, clamped), `/health` lists the voices.
-    Two new voices baked in: `de-eva_k-x_low` (German, female) and
-    `en-amy-medium` (English) next to `de-thorsten-medium`.
-- **Injection in the manager proxy**: app and web still send only `{"text"}` —
-    the manager mixes voice/speed from the settings into the `/api/tts` body
-    (explicit client values win). No client update needed.
-- The settings UI can now do selection fields (options in the SETTINGS_SCHEMA).
-- STT (Parakeet v3) has nothing meaningfully configurable (language automatic) —
-    so only a status display.
-
-
-## 2026-08-19 (Missions get their own tab/screen + clickable notifications)
-- **Missions separated out**: their own "Missions" tab in the web manager (instead of in the
-    Tasks tab; completed ones directly visible) and their own "Missions" screen
-    in App 5.7 (drawer entry with a flag icon).
-- **Notifications lead to action**: notification entries now carry
-    a `link` field (missions | tasks | chat:<instance>). Web: a click in the
-    bell dropdown jumps to the tab or opens the instance's chat
-    (arrow indicator). App: tapping the system notification opens the app
-    directly at the target (PendingIntent + notifLink extra, same pattern as the Assist intent).
-    Sources: agent notify -> chat:<instance>, mission completion/TTL -> missions.
-
-
-## 2026-08-19 (Missions — plan/progress store for multi-step jobs)
-- **Missions**: for multi-step jobs the orchestrator lays out its own
-    plan (`mission_start`: goal + steps), works through it via `create_task` and
-    keeps the progress in the manager (`missions.json`) — the working state
-    survives /reset, VM restart and the stateless heartbeat (injected as a
-    `[missions]` block per turn).
-- **Instant trigger**: once a task a mission step is waiting on finishes
-    (task_id on the step), the task worker pokes the orchestrator directly toward the
-    next push (`_mission_advance_fire`) — no waiting for the
-    heartbeat; that now only checks stalled steps as a fallback.
-- **Guardrails**: max 5 active missions / 20 steps / log capped;
-    a TTL sweep pauses missions inactive for 7 days + notification; completion ->
-    conclusion into the semantic memory + push (`notify`).
-- **Tools** (orchestrator only, TASK_ADMIN): `mission_start/missions/
-    mission_update/mission_finish`. Routes `/api/missions`, `/api/mission-*`
-    (guest source-IP gated), `/api/mission-admin` (UI: pause/continue/abort).
-- **UI**: a missions panel in the Tasks tab (Web: progress bar, current
-    step, log, pause/abort) and in **App 5.6** (Tasks screen:
-    mission cards, expandable with all steps + actions).
-- **Verified live**: a 2-step mission ran fully autonomously in ~40 s —
-    task done -> trigger -> step done -> next task -> trigger ->
-    mission_finish + completion notification. 39 tests green (lifecycle, caps,
-    mission_for_task, HTTP).
-
-
-## 2026-08-19 (Chat UI beautified in the Industry design)
-- The chat interface (/chat) cleanly pulled onto the **Industry** design system
-    (claude.ai/design, project styles.css as the source):
-  - **Blueprint objects**: composer and welcome panel with a hairline +
-    registration corners (corners turn accent-blue on focus).
-  - **Typography**: Barlow Condensed for headline, buttons, chips,
-    agent select; kicker labels (MICROVM AGENT, CHATS) in uppercase.
-  - **Token ramps** instead of ad-hoc values (accent-100…800, color-mix dividers);
-    dark mode derived from the same ramps.
-  - **Finishing touches**: agent chips as tag-accent, the active chat with an accent
-    inset bar, bubbles with a hairline + elevation, a running dot with glow,
-    styled scrollbars, ::selection, the Thinking block as an uppercase summary.
-  - Verified via headless-Chrome screenshots (light/dark/conversation).
-    JS logic unchanged; backup chatui.py.bak-design-*.
-
-
-## 2026-08-19 (Fix: "Save password?" popup on chat switch)
-- Chrome offered, when navigating to /chat, to save a "password for example.com" —
-    with the katfs node-id as the supposed username and the
-    masking marker `__unchanged__` as the password. Cause: the API-key fields
-    in the Settings tab were `type=password`; Chrome's password manager pairs such a
-    field with the next text field (katfs key) into a "login" and ignores
-    `autocomplete=off`. Fix: masking via CSS (`-webkit-text-security:disc`,
-    class `seckey`) instead of password semantics — no more popup, values stay
-    hidden; the real keys never leave the manager anyway (marker instead of value).
-
-
-## 2026-08-19 (Fix: dropdown reset in the new-instance form)
-- Reported as "template dropdown jumps back on transport switch".
-    An instrumented headless-Chrome test (CDP, setter trap on #tpl, 35 s with
-    all intervals): the template select itself is never reset.
-    What was found instead was an **async race in loadModels**: the fetch of the
-    OpenRouter model list (upstream, seconds on a cold cache) remembered the
-    value from the fetch START and rebuilt the model dropdown with it on arrival
-    — a selection made in the meantime visibly jumped back to the initial value
-    (coincidentally timed with the transport click). Fix: read the value on RESOLVE,
-    no longer touch detached selects.
-- **Cache-Control: no-store** for the manager page: stale pages after
-    updates produced ghost errors (old JS logic against a new API).
-
-
-## 2026-08-19 (Fix: model dialog for orcarouter/llama)
-- Clicking the model of an orcarouter instance reported "This instance has no
-    model setting": the key list in the model dialog (editModel) only knew
-    OPENROUTER/ANTHROPIC/PI/PRIME. `ORCAROUTER_MODEL` and `LLAMA_MODEL`
-    added — the dialog now opens with the current model as free text.
-
-
-## 2026-08-19 (Activity panel: time filter + usage)
-- **Time filter** in the Activity dialog (1h / 24h / 7d / All) — filters the
-    audit actions client-side by `ts` (fetch limit 1000).
-- **Usage total for the period** in the same header: actions,
-    LLM calls, tokens (in->out) and cost from `llm_usage` via new
-    `GET /api/usage/<name>?since=` + helper `usage_for`. Deliberately as a SUM,
-    not per audit row: tokens accrue per LLM turn, not per tool call
-    (one turn triggers 0..N tool calls) — an attribution would be invented.
-
-
-## 2026-08-19 (App 5.5 — VAD fix for voice recording)
-- **Recording cut off mid-speech after ~4 s.** Cause: the background noise
-    was measured as the MAXIMUM of the first 400 ms — if you started talking immediately, speech flowed
-    into the "floor" and the threshold `floor*3` became unreachable, every
-    further measurement counted as silence. Fixes: floor as the MINIMUM over ~0.6 s
-    (capped), an absolute margin instead of a factor, and **hysteresis** — once speaking
-    is detected, a much lower threshold keeps the recording alive, so the
-    amplitude valleys between words don't count as silence. `VAD_HANG`
-    1800->2200 ms. Max recording duration unchanged `VAD_MAX = 120 s` (emergency brake).
-
-
-## 2026-08-19 (Notifications)
-- **Notification channel App + Web + Tool.** A new push channel next to Signal:
-  - **Agent tool `notify(title, message)`** -> `POST /api/notify` (guest, by
-    source IP; rate-limit 30/5min, audit). In the tool catalog.
-  - **Manager store** `notifications.json` (rev + long-poll like chats, cap 200):
-    `GET /api/notifications?since=&wait=` (admin, with `unread`),
-    `POST /api/notifications/read` (`{id}`|`{all:true}`).
-  - **Web manager:** a bell in the topbar with an unread badge + dropdown, long-poll,
-    optional browser notification (permission on click); opening acknowledges.
-  - **App (5.4):** its own poll loop -> Android system notification (channel
-    `kaim56_agent`, uses the existing POST_NOTIFICATIONS permission) for new,
-    unread entries since app start. `ManagerSync.pollNotifications/markNotifRead`.
-  - Verified E2E: the orchestrator calls `notify` -> lands in the store (`tools=31`).
-
-
-## 2026-08-18 (Playbooks, reasoning display, task management, Signal receiving, katfs)
-- **Harness pattern adopted** (based on strands-agents/harness-sdk,
-  Apache-2.0; ported, no new dependency — the agent stays stdlib-only):
-  - **Summarizing Context:** `_trim_history` no longer throws old messages
-    away, but condenses the oldest into a `[summary]` block
-    (system pinned, the last `CTX_PRESERVE_RECENT`=10 verbatim, an existing
-    summary folded in). Against both token runaway AND context loss.
-  - **Context offloader:** tool outputs > `OFFLOAD_MIN` are moved entirely into
-    `.offload/`; in the context a preview + reference remain, the rest is
-    reloadable via the new tool `offload_read(id, offset)`. Instead of a hard cut.
-  - **Goal loop:** `/goal <criterion>` sets a goal; a judge checks the
-    answer and lets it improve up to `GOAL_MAX_ATTEMPTS`=3. `/goal off` turns it off.
-  - **Tool hook + HITL:** a hard denylist (rm -rf /, fork bomb, mkfs …) always active;
-    optional approval of risky tools via Signal (opt-in `HITL=1`,
-    `HITL_TOOLS`) — the manager asks "ok <id>/no <id>", the agent polls
-    `/api/hitl`/`/api/hitl/<id>`. No Signal receiver -> doesn't block.
-  - **Activated:** rootfs rebaked, orchestrator + hass restarted
-    (`tools=30`, offload_read live). **App 5.2:** `/goal` in the slash picker.
-  - **Retry with backoff** around every model call (429/5xx, 0.5→8s), an empty
-    tools list is no longer sent along (which caused a 400 at the summarizer/judge).
-- **E2E test suite** (`tests/e2e.py`, `./run-tests.sh`) — stdlib unittest, no
-  dependency. Three tiers: OFFLINE (agent/manager functions via import —
-  backend choice, summarizing, offloader, hook denylist, goal, empty-tools fix,
-  provider switch incl. the ":free" pitfall, HITL store, katfs ZIP walk),
-  HTTP (against the running manager: /api/agents backend+model, /api/hitl,
-  katfs-status, template registration), LIVE (a free /goal round-trip
-  to the orchestrator VM). Missing tiers are cleanly skipped. 30 tests.
-  Runs from now on with every change (like Changelog/Architecture).
-- **Fix model self-report:** `/api/agents` only knew OPENROUTER/PI/PRIME
-  as a model key and reported the *template* as the provider — an orcarouter
-  agent thus appeared as "openrouter, without a model". Now: all MODEL_KEYS +
-  a real `backend` field. Additionally the agent knows its own backend/
-  model from the SYSTEM prompt (names it directly instead of via list_agents).
-- **Provider switch via set_model** ("orcarouter:tencent/hy3" sets both backend AND
-  model, removes the other MODEL_KEYS). **Orchestrator moved to production on
-  OrcaRouter `tencent/hy3`** (backend=orcarouter verified, tool
-  calling + key broker ok).
-- **OrcaRouter as a second LLM backend next to OpenRouter.** An OpenAI-compatible
-  gateway (`https://api.orcarouter.ai/v1`, key format `sk-orca-…`; or
-  self-hosted via OrcaRouter-Lite). The same agent code as OpenRouter —
-  chosen via env: if `ORCAROUTER_MODEL` (or `ORCAROUTER_URL`)
-  is set, the agent talks to OrcaRouter, otherwise OpenRouter. New: template
-  `orcarouter.json` (same rootfs), settings fields `ORCAROUTER_API_KEY`
-  (secret, 0600, via the broker) + `ORCAROUTER_URL`, `ORCAROUTER_MODEL` in
-  MODEL_KEYS, a secret-policy entry. **Set the key: Settings tab.**
-- **Playbooks — fixed rules the orchestrator learns itself.** Unlike
-  the semantic memory (surfaced by meaning), playbooks apply
-  ALWAYS. When the user says HOW something is to be done / corrects the approach, the
-  agent stores it via `playbook_add`; all rules are lifted into the prompt every turn.
-  Tools `playbook_add`/`playbooks`/`playbook_forget`, store
-  `playbooks.json` (per instance, cap 40), guest routes. Proven: rule "stock prices
-  via http_fetch from Yahoo" → /reset → vague question → answered correctly, without
-  naming the source again.
-- **Reasoning controllable + visible.** Slash `/reasoning [low|medium|high|off]`
-  toggles the OpenRouter reasoning parameter live (default off, via env
-  `OPENROUTER_REASONING` as a persistent default). The thinking is streamed separately
-  (markers in the token stream, kept out of the context) and shown in Web and App as
-  an expandable "Thinking" block. Copy/read-aloud take only the answer.
-- **Task management for the orchestrator.** `list_tasks`/`delete_task`/
-  `edit_task` (list with IDs, delete, change message/schedule). Only the
-  orchestrator gets them — via a flag `TASK_ADMIN` that the manager injects
-  deliberately; gated in the menu AND at the route (403 "orchestrator only").
-- **Signal: receiving + json-rpc.** The gateway switched from `native` to `json-rpc`
-  (receiving and sending can now happen simultaneously — in native mode a
-  long-poll locked the account and blocked sending). The receiver in the manager rebuilt onto
-  a stdlib WebSocket client (real-time push). A new Signal message
-  → orchestrator triggered immediately, reply back via send_signal.
-- **katfs file browser** in the Sharing tab (click through folders, view,
-  download; read-only, admin routes). Now with a **share selector**: with
-  multiple active browser shares, click one in the status panel → the tree
-  below switches to exactly that share (addressed via a `share` id). Also new
-  is **"Download all"** — the current folder is collected recursively
-  and delivered as a ZIP (route `/api/katfs/zip`, helper `katfs_zip`, cap
-  2000 files / 512 MB). The standalone **CLI share**
-  (`dist/katfs-share`) already existed — it shares a folder without a browser.
-  Node paths/bind configurable via env; a portable standalone bundle under
-  `katfs-standalone/` prepared.
-- **App 4.9–5.1:** text in bubbles selectable/copyable (SelectionContainer),
-  a slash-command picker above the input line (when you type "/"), thinking display.
-- **MSFT task repaired:** the daily task failed because the model
-  didn't use `http_fetch` and wrongly said "can't read pages".
-  Now a concrete instruction with a fixed Yahoo URL + field — delivers a real
-  quote.
-
-## 2026-08-17 (Orchestrator token runaway fixed)
-- **Cause:** the heartbeat ran `every 1m` (1,440 runs/day), and the
-  orchestrator never reset its conversation context — heartbeat and
-  app chats share ONE `_history`, which grew monotonically. Every call resent
-  the whole accumulated transcript: on average 73k input tokens, largest
-  call 183k, at ~5 tokens output. Total: 249M tokens, ~14 USD.
-- **Fix 1 — cadence:** heartbeat from `every 1m` to `every 30m` (factor 30).
-- **Fix 2 — stateless:** heartbeats now run with `/fresh` in a
-  THROWAWAY context (`_tool_loop` on a local list), the conversation
-  `_history` stays untouched. A hard reset was out of the question because it would have wiped
-  a running app chat (shared `_history`). Both switched
-  over: the scheduled task AND the instant trigger (`ORCH_HEARTBEAT_MSG`).
-- **Fix 3 — cap:** a general sliding context cap (`CTX_MAX_MSGS=20`,
-  cut only at clean turn boundaries, never mid tool cycle) — binds
-  the cost for long direct chats too.
-- Proven: 42+8=50 → /fresh heartbeat ("nothing to do") → "previous result times
-  two" = 100 (context survives the heartbeat, which still runs stateless).
-- Memory instruction defused: it made the orchestrator too meta
-  ("my memory is reset after every interaction" — misleading,
-  the short-term works). Now: remember normally within a conversation
-  and don't explain the memory mechanics unprompted; quietly store
-  only the durable via memory_store. Proven: "remember the test word Alpha" →
-  confirmed without a lecture; "what was my test word?" → "Alpha".
-
-## 2026-08-16 (Semantic memory: short-term + long-term)
-- **Short-term** stays the running conversation (`_history` in VM RAM, `/reset`
-  clears it). **Long-term** is now **semantic** instead of flat key/value:
-  `memory_store` embeds every note (model multilingual-e5 on the CPU,
-  a new `embed` container behind the manager on :8772) and stores text+vector in
-  `history.db`. On every question the agent embeds the user message,
-  the manager returns the **semantically nearest** notes (cosine), which come into the prompt as a
-  fresh `[memory]` block — only what fits the question,
-  not the whole store.
-- **No LLM, no graph DB needed** — embeddings run well on the i5, so
-  without waiting for the llama box and without Neo4j & co. (Graphiti/Cognee remain
-  a possible later expansion.) If the embedder fails, there is no
-  long-term context this turn instead of an error; the notes stay
-  stored.
-- Manager: table `semantic_memory`, `sem_store`/`sem_search`, guest route
-  `POST /api/memory-search`; `memory_store` additionally writes semantically.
-  Agent: injection per turn instead of a full dump on the first turn; an instruction to remember
-  the value as a complete sentence (otherwise the retrieved snippet is
-  useless — "… is the Watzmann", not just "Watzmann").
-- Proven end-to-end: remember a fact → /reset (short-term gone) → ask in different words
-  → correctly recalled (score 0.856, purely from long-term storage).
-
-## 2026-08-16 (Passing slash commands through — App 4.8 + claude bridge)
-- The app used to intercept EVERY /command and rejected unknown ones as "unknown
-  command" — the agents' own commands were thus unreachable.
-  Now the app keeps only its own (`/task`, `/agents`, `/help`), intercepts
-  `/login` with a hint (not needed, the agent is logged in via the host)
-  and **passes everything else through to the agent**.
-- With that `/reset` (a new context without a VM restart) takes effect immediately for the
-  OpenRouter/llama agents (they've long been able to) — and now also for the
-  claude template: `/reset` retrofitted into the web bridge (clears the
-  Claude Code session). Proven: set a code word → /reset → the agent no longer knows it;
-  claudy answers "New conversation", orchestrator "Context
-  reset".
-- The app's `/help` now states that other /commands go to the agent.
-
-## 2026-08-16 (Behavior guardrails from Anthropic's system prompts)
-- Adopted, in spirit, the model-agnostic parts of Anthropic's published
-  system prompts into the base prompt of the OpenRouter/llama agents
-  (`agent.py`, applies to every model and to personas too):
-  - **Don't hallucinate:** on uncertainty say so openly and check with web_search/
-    http_fetch instead of guessing; no invented sources/citations/links.
-  - **Tools first, then "can't":** before the agent claims incapacity or
-    a lack of access, it checks whether a tool exists for it — act
-    yourself before asking.
-  - **Unclear requests:** make a reasonable assumption and get going, ask back only on
-    a real blocker; finish tasks that were started.
-  - **Tone:** factual, no flattery/exaggerated apologies,
-    friendly reasoned disagreement instead of caving, no empty
-    filler words ("honestly", "actually").
-  - **Form:** concise and in prose; lists/bolding/headings only on
-    real need or on request; no speculation about others' intentions.
-- Not touched: the coding agents claude/pi/prime — they have their own, well-
-  tuned prompts. Proven on a hallucination test (a fictional premise
-  is named, not confirmed).
-
-## 2026-08-16 (Self-hosted LLM via llama.cpp)
-- **Settings tab:** new fields `LLAMA_ENDPOINT` (OpenAI-compatible base URL,
-  e.g. `http://10.0.0.50:8080/v1`) and `LLAMA_API_KEY` (optional, only if
-  the server runs with `--api-key`). The key is a secret (masked, via
-  the broker, never into the instance config).
-- **New template `llama`** (uses the existing openrouter rootfs — llama.cpp
-  is OpenAI-compatible, same agent code). The endpoint is prefilled from the
-  settings, the model name is a free-text field (whatever the server
-  serves). Model chip and model switching work (`LLAMA_MODEL` in
-  MODEL_KEYS).
-- **Agent:** if `LLAMA_ENDPOINT` is set, it talks to the local server instead of
-  OpenRouter — same tool loop, different base URL/model/key.
-  URL normalization accepts `host:8080`, `…/v1` and `…/v1/chat/completions`.
-  If the key is missing, it runs without auth (for llama.cpp without `--api-key` the
-  normal case, not an error). Error messages and the startup log now name the
-  active backend.
-- **LAN gating:** if the llama server is on a private LAN IP, the
-  manager opens exactly that target in the instance's FORWARD chain — like the
-  MCP endpoints. Proven end-to-end against an OpenAI-compatible stub
-  (settings → prefill → agent → backend → SSE streaming, app and
-  web path).
-
-## 2026-08-15 (claudy: subscription login + raw JSON in chat fixed)
-- **"Not logged in":** the claude template runs Claude Code internally and
-  had no login. A new guest route `GET /api/claude-credentials` (claude
-  template only, by source IP): the guest fetches the **live**
-  `claudeAiOauth` block from the host at boot — thereby automatically following the user's next
-  `/login`; the short-lived accessToken is renewed per session by Claude
-  Code itself (refresh token stable for 20 days). Only the subscription block is
-  delivered, not the user's mcpOAuth tokens; the host file stays
-  untouched. For non-guests 403.
-- **Raw `{"reply": …}` in the app chat:** the claude bridge can't stream
-  and answers with JSON — the app showed it bare including `·`. The
-  manager proxy now, on JSON responses to `api/chat[/stream]`, unpacks the
-  `reply` and passes it on as text/plain (as the web chat has long
-  done). Proven: app path and web path deliver clean text, claudy answers
-  logged in ("Yes, I am logged in and ready").
-
-## 2026-08-15 (MCP hub on the host + LAN gating for the guests)
-- **Finding first:** with `internet=on` every VM could reach the whole LAN — Home
-  Assistant and Portainer were reachable by every agent, whether or not the MCP
-  was assigned to it. Now a dedicated FORWARD chain per instance:
-  MCP endpoints of the assigned servers (from the catalog) → ACCEPT, guest DNS
-  (1.1.1.1:53) → ACCEPT, private networks → **REJECT** (immediate
-  failure instead of a 30-s timeout), internet → ACCEPT. Proven in four directions
-  (orchestrator↛HA, orchestrator→internet, hass→HA, hass↛Portainer).
-- **MCP hub** (`mcp-hub/`, Docker, 127.0.0.1:8771): the MCP server processes
-  now run ONCE per (instance, server) on the host instead of in every VM. Guests
-  only speak JSON-RPC via `POST /api/mcp`; the manager authorizes
-  by source IP against `MCP_SERVERS`, injects the secrets host-side and
-  passes through to the hub. **Tokens and the LAN no longer reach the VM**;
-  `/api/mcp-config` now delivers secrets only as placeholders. Every
-  `tools/call` is in the audit (guest and manager side). The hub restarts dead
-  processes and repeats their initialization; on instance stop their
-  processes are terminated.
-- Guest image: `mcp-portainer` removed (−104 MB); `mcp-remote` stays as a
-  fallback for managers without `/api/mcp`. Proven end-to-end: hass queries
-  the live state via the hub ("One light is currently on"),
-  orchestrator gets a rejection for unassigned servers.
-
-## 2026-08-15 (Architecture tab + one SVG parser trap)
-- New tab **Architecture** next to the changelog: a diagram (SVG, follows the
-  light/dark theme) plus 15 reference cards for all components including
-  security boundaries.
-- Two traps along the way, both only visible in real Chromium (jsdom forgives
-  them): a `<style>` element **inside** the inline SVG ends the SVG context on HTML
-  parsing — everything after it falls out invisibly; and with unquoted
-  attributes `height=56/>` eats the slash into the value
-  (`height="56/"` → the element draws nothing). Rules into the page CSS, attributes
-  quoted, verified via headless screenshot.
-
-## 2026-08-15 (Memory: instruction + injection; an ext4 incident with consequences)
-- **Every system prompt** (personas too) gets a standing memory instruction
-  appended in agent.py: remember important things immediately via `memory_store`,
-  update existing ones, keep no log. On the **first turn after
-  a restart** the agent injects its remembered facts into the
-  prompt itself (not at boot — the guest network may not be up yet).
-  Proven end-to-end: remember → VM restart → correctly recalled.
-- **Incident during verification:** `EXT4 error loading journal` at boot.
-  Cause: all instances of a template shared **the same**
-  writable rootfs file — two running VMs, one journal. Fixed: each VM
-  gets its own **fresh copy** at start (sparse, ~550 MB, deleted on stop);
-  master image repaired with e2fsck. Side effect: a restart
-  boots the current template image for sure.
-
-## 2026-08-15 (Model switch for existing instances)
-- The model chip in the instance row is now a button: a dialog with the same
-  picker as at creation (OpenRouter shortlist, ⟳, free text). New route
-  `POST /api/instances/<n>/model` + `set_model()`; effective after stop/start.
-  Automatically locked for guest VMs (not in the POST allowlist).
-
-## 2026-08-15 (Signal sending for agents)
-- New tool **send_signal**: agents can write to the user
-  (finished task, finding, follow-up question). Sending runs in the **manager**
-  (`/api/signal` → signal-cli REST); the bot number and API stay in the host.
-- **Leash:** recipients must be in `ALLOWED_SENDERS` — an agent can
-  only write to people who are allowed to give it commands anyway. Plus throttling
-  (10 per 5 min, rejections don't count) and an audit entry per call.
-  `SIGNAL_API` new in the settings.
-
-## 2026-08-15 (Security gateway, toggleable per chat)
-- A shield icon in App and Web, state at the manager (`gateway.json`), filtering
-  too — a guest VM can't turn it off. Removes, in **both**
-  directions, invisible Unicode characters (tag characters U+E0020–E007F,
-  zero-width, bidi overrides, homoglyph spaces) and from uploads
-  EXIF/XMP/C2PA (JPEG/PNG/WEBP, byte-surgical, image data untouched).
-- The stream filter cuts at word boundaries — emoji ZWJ chains survive,
-  a smuggled command spread across chunks does not (test: 67 characters
-  removed, the model answers the visible question). What was removed is counted
-  visibly. Basis: `text_unicode.py` from watermarks-remover (MIT),
-  **only** the Unicode layer — the project's watermark/C2PA removal
-  stays deliberately out (SECURITY-GATEWAY.md).
-- Without a `chat` field in the request everything stays as before — older clients run
-  unchanged.
-
-## 2026-08-15 (KatAgent 4.3–4.7: hands-free voice, assistant, small things)
-- **4.3:** speech-pause detection — recording ends by itself (threshold from
-  the room noise of the first tenths, stop only after speech has occurred);
-  tapping the bubble stops the output (during which the whole bubble is the
-  stop button), new voice input aborts it (a generation counter against
-  synthesis arriving late).
-- **4.4:** gateway toggle in the header, counter in the sync line.
-- **4.5:** the version number next to the name in the drawer header (from the
-  installed package, not BuildConfig).
-- **4.6:** the app registers as a **digital assistant** (ASSIST/VOICE_COMMAND,
-  singleTask): a long press on the power button starts recording immediately.
-  Deliberately not over the lock screen. Assign it under Settings →
-  Default apps → Digital assistant.
-- **4.7:** trailing time before sending 1.2 → 1.8 s.
-
-## 2026-08-15 (Voice stage 2: the app hears and speaks — KatAgent 4.2)
-- Microphone button in the input line: record (AAC/M4A, 16 kHz mono), send to the
-  manager, **submit the recognized text directly, hands-free**. New
-  permission `RECORD_AUDIO` with a runtime request.
-- A speaker under every agent response; **only what was asked by voice is
-  read aloud automatically**.
-- `ManagerSync.stt()` and `.tts()` talk to the manager routes from stage 1
-  (basic auth like the rest of the traffic, 120 s read timeout).
-- Recordings under 2 KB are discarded ("too short") instead of sending an empty
-  recognition.
-- Two Kotlin traps during the build: `send()` is a local function and must not be
-  called before its declaration (now via a flag that a
-  LaunchedEffect processes), and `VolumeUp` is not under `AutoMirrored`.
-
-## 2026-08-15 (Voice: stage 1 — service, manager routes, microphone in the web)
-- A new **voice service** (`voice/`): Parakeet TDT v3 (ONNX int8) for
-  recognition, Piper with the Thorsten voice for output, plus ffmpeg for
-  format conversion. One host container, loopback, ~700 MB of models once in
-  memory instead of per microVM.
-- The manager passes it through as `/api/stt` and `/api/tts` — the only door to the
-  outside. Both are in the guest allowlist, so that later agents
-  (e.g. the Signal bridge) can transcribe too.
-- Web interface: a microphone button in the input line (recording in the browser,
-  recognition in the manager, submitted directly hands-free) and a
-  "Read aloud" per response. **Only what was asked by voice is read
-  aloud** — otherwise it reads long explanations unprompted.
-- Measured through the manager: speaking 0.38 s, recognizing 0.31 s; in the round trip
-  6.5 s of audio produced in 0.67 s and recognized again in 0.61 s.
-- A trap along the way: binding to 127.0.0.1 inside the container makes the service
-  unreachable — Docker's port forwarding doesn't know the container loopback.
-  The restriction belongs on the host side of the mapping.
-
-## 2026-08-14 (Security review: a VM could mount the host file system)
-- **Critical, fixed.** The GET routes were locked against guests, the
-  writing ones **not**: an agent VM reaches the broker at the gateway (where
-  it fetches its secrets) and could thereby call, among others,
-  `POST /api/instances/<n>/mounts`. The manager runs as root and
-  exports the requested folder via NFS into the guest — a compromised
-  VM could thus mount `/` writable. Likewise open:
-  `/api/create` (new instance with arbitrary mounts), `/api/settings`
-  (ALLOWED_SENDERS/SIGNAL_NUMBER = control channel), `/api/tasks`, `/api/personas`,
-  `/api/instances/<n>/{delete,internet,tools,start,stop}`. The secret allowlist,
-  tool gating and egress rules were thereby circumventable.
-- Fix: an **allowlist** right at the top of `do_POST` — guests may only reach `/api/usage`,
-  `/api/audit`, `/api/task`, `/api/chat-log` and `/api/memory/…`, everything else
-  403. Deliberately an allowlist instead of individual checks: a new route is then
-  closed by default, not open by default.
-- Verified: admin routes still 200, a real guest message still arrives
-  (usage counter 45 -> 46 after a prompt).
-- **Stored XSS, fixed.** In the server-side rendering there was not a single
-  HTML escape. The model id (arbitrary since the free text field), description,
-  mount paths and tool list landed raw in the markup of the admin page. A new
-  `h()` (html.escape) in front; proven with a prepared instance: 0 raw,
-  4 neutralized occurrences.
-- **Open (configuration, not code):** `MANAGER_PASS` is empty, `_auth()` then lets
-  everyone through. Protection hangs solely on Traefik — whoever reaches 10.0.0.10:8700
-  directly is admin. See the note below.
-
-## 2026-08-14 (Stale views: Tasks, Policy and usage catch up)
-- **Finding from practice:** in the Tasks table the last result still showed
-  a DNS error from 08:08, while `tasks.json` had long since carried "Nothing to do."
-  and a successful run at 17:08. The table only loads
-  once when the page is opened — whoever left the tab open saw arbitrarily old
-  states and thought a fixed problem was current.
-- Tasks and Policy now catch up every 15 s, but only for the visible
-  tab and not in a background tab (`document.hidden`).
-- The usage rows are no longer only server-side rendered: they carry
-  a `data-usage` and are updated from `/api/usage`, as is the total in
-  the footer. So the counter grows as you watch.
-- On the side: the host's timezone was on `America/Chicago` (UTC and NTP
-  were correct, only the zone wasn't) — 7 hours of offset in `daily HH:MM`,
-  in the day boundary of the usage counter and in all server timestamps.
-  After `timedatectl set-timezone Europe/Berlin` the manager needs a
-  restart, glibc reads the zone only once per process.
-
-## 2026-08-14 (Rest of the surfaces checked against Industry)
-- **The web chat (`/chat`) was the biggest hole**: its own palette with an orange
-  accent (#e8590c), 14 px rounding, system-ui. Now Industry tokens under the
-  same variable names — slate blue, Barlow/Barlow Condensed, angular,
-  hairlines. Own message filled like `.btn-primary`, reply as a card
-  with a hairline — the same layout as in the app.
-- **Finding in the manager:** `.radio .dot` was angular (2 px). In the system the
-  radio dot is explicitly **round** (`border-radius: 50%`) — corrected. The
-  status dot in the chat stays round for the same reason.
-- **Browser terminal**: the console stays dark (there is no
-  system component for it, and a light terminal background would be worse), but the bar
-  and buttons now follow the dark band, slate blue, angular, Barlow.
-- **Open: katfs share page** (`katfs/web/index.html`) — its own dark
-  palette with blue/green, rounding 5/10/50 %, system-ui. Not touched,
-  because the WASM bridge hangs there too.
-
-## 2026-08-14 (App follows the "Industry" design system)
-- Tokens read directly from the project (`DesignSync get_file` on
-  `theme.json` + `styles.css`) instead of rebuilt — the app had so far only
-  adopted colors and font family.
-- **Angular without exception**: at the end `styles.css` overrides the `radius:4` from
-  `theme.json` with `border-radius:0` for Card/Button/Input/Tag/Dialog. Shapes
-  to 0, circular avatars and mode symbols as well as the 2/3/8-dp rounding removed.
-- **Type scale 1:1**: h1 42 / h2 32 / h3 25 / h4 20 / h5 16, headings with
-  line-height 1.12 and -0.015em, body 15/1.55; `labelSmall` now carries the
-  h6 role (13 px, uppercase, 0.08em) instead of Material's default.
-- **Grid** from `density: 0.85` as `IndustrySpacing` (3.4/6.8/10.2/13.6/20.4/27.2).
-- New `IndustryComponents.kt`: `blueprintFrame()` draws a hairline plus the
-  four register marks *outside* the box (in CSS `.corner tl|tr|bl|br`),
-  plus `BlueprintBox`, `Tag` and `IndustryDivider`.
-- **Chat bubbles** without Material tinting: own message filled like
-  `.btn-primary`, the agent's reply transparent with a hairline like `.card`.
-- Dark mode stays (the phone is used at night) — in the system it is not
-  foreseen as `band: light`, so here a deliberate extension.
-- KatAgent **3.9** (versionCode 39).
-
-## 2026-08-14 (Fix: question from the app disappeared)
-- **Regression from the live sync (3.7).** The merge replaced conversation
-  objects (`byId[id] = r`). But `send()` holds a reference to
-  `current.messages` and streams the reply there — if the object was
-  swapped, question and answer landed in a detached list:
-  gone from the app, never saved, never pushed.
-- The merge **now fills the existing object** instead of replacing it, and
-  messages are only **appended**: only if the local list is a prefix of
-  the remote one is it adopted. So a newer state from the
-  other side (Web/Manager, possibly with a leading clock) can no longer wipe a just-typed,
-  not-yet-pushed question. The open conversation
-  stays entirely untouched during a running turn.
-- The same safeguard in the web interface (`chatui.py`) — there
-  `send()` holds the reply object just the same.
-- KatAgent **3.8** (versionCode 38).
-
-## 2026-08-14 (Token counter per instance)
-- A new table `llm_usage` in `history.db` and guest route **`POST /api/usage`**:
-  the agent reports tokens and cost after every LLM call, the manager books
-  them onto the instance. The attribution comes from the **source IP**, not from the
-  body — one VM can't fake another's usage.
-- `GET /api/usage` (admin, locked for guests) delivers per instance today and
-  total: calls, tokens in/out, cost.
-- The instance table shows the row under the model chip, the footer the
-  total across all instances.
-- `agent.py`: requests `usage:{include:true}` (so OpenRouter sends along the real
-  cost per call), reports streaming as well as non-streaming, and
-  `OPENROUTER_URL` is now settable via env. Reporting is fire-and-forget: if
-  the manager is down, it doesn't disturb the chat.
-- Rootfs `openrouter` rebuilt; verified: a prompt to the orchestrator
-  booked 1313/29 tokens and $0.0005.
-- Limit: only the `openrouter` template reports. `pi` and `prime` call their
-  own CLIs, `claude` bills via the subscription — there are (still) no
-  numbers there.
-
-## 2026-08-14 (Guests without internet: HOSTIF pointed nowhere)
-- **Finding:** since the reboot at 03:07 no microVM reached DNS or the LLM
-  (`gaierror -3`) anymore, and the orchestrator heartbeat also ran into nothing. The cause was
-  not the VM, but the host's NAT rule: the unit set
-  `Environment=HOSTIF=eth0`, but the uplink is called `eth0`. MASQUERADE on
-  a non-existent interface hits nothing — the guests' packets went out
-  unmasqueraded and never came back. No log, no error message.
-- **Fix:** `manager.py` no longer relies blindly on the name. A
-  set `HOSTIF` applies only if `/sys/class/net/<name>` exists; otherwise
-  the interface of the default route wins (with a hint in the log). The unit template
-  now has the line commented out.
-- Verified: after a manager and instance restart the orchestrator answers in
-  1.6 s ("pong") instead of after a 20 s DNS timeout.
-- Note: the installed unit under `/etc/systemd/system/` still carries
-  `HOSTIF=eth0` (root-only). Thanks to the detection this is harmless, but should
-  be cleaned up at some point.
-
-## 2026-08-14 (Chats live between app and web)
-- `/api/chats` can now **long-poll**: `?since=<rev>&wait=<sec>` blocks until
-  someone writes, then answers with `{rev, chats}` (on timeout
-  `chats:null`). Without the parameters the plain list unchanged — old clients
-  keep running. Every write to the store increments a time-based monotone
-  revision and wakes all waiters (`threading.Condition`).
-- The web interface hangs permanently on this long-poll: new messages from
-  the app appear without reloading (measured ~50 ms after the push). The currently
-  streaming chat is skipped in the merge so no partial text is lost;
-  the push after local changes was shortened from 1200 to 400 ms.
-- On the side: the guest lock for `/api/chats` & co. compared the full path
-  and would no longer have recognized a query string — it now compares the path
-  without the query.
-- **The app catches up (KatAgent 3.7, versionCode 37):** a new
-  `ManagerSync.pollChats()` (long-poll with a suitably raised read timeout) and
-  a continuous loop in `MainActivity` instead of the one-off `sync()` at start.
-  While a reply is streaming (`busy`) nothing is merged; the merge writes
-  only locally (`store.save`), so it doesn't push back -> no ping-pong.
-  With that the sync is live in both directions. APK: `katagent-3.7.apk`.
-
-## 2026-08-14 (Rebrand: kAIm56)
-- **"Firecracker Manager" is gone from the UI — the product is `kAIm56`.**
-  Renamed in the page title, the topbar wordmark, the footer, the chat UI's
-  back-link, the basic-auth realm, the outgoing User-Agent and the startup log.
-- New **`logo.svg`** (hexagon + triangle with side midpoints, incircle and
-  centroid) served at `/logo.svg` and `/favicon.ico`, used as the browser-tab
-  icon on both the manager and the chat page. The header mark inherits the text
-  colour (`currentColor` for the navy) so it carries in light and dark theme;
-  the teal stays the accent.
-- The topbar no longer prints the hostname next to the wordmark (that was
-  `location.host`, i.e. `agents.example.com` — never a hardcoded string). Header is
-  now mark + name only.
-- Unchanged on purpose: the `firecracker-manager.service` unit, the `~/firecracker`
-  directory and the Firecracker binary path — those are the hypervisor, not the brand.
-
-## 2026-08-14 (Model dropdown + UI now fully English)
-- **Every template can now pick its LLM.** The `claude` template had no model
-  field at all — new param `ANTHROPIC_MODEL` (dropdown: account default,
-  `opus`/`sonnet`/`haiku` aliases, or a pinned id). It reaches Claude Code as an
-  env var via the config disk (`set -a; . /config/config.env` in guest-init), so
-  it applies to the signal, web and mail transports without a rootfs rebuild.
-  Select options may now be `{value,label}` pairs, not just strings.
-- **Model as a dropdown** for the `pi` and `prime` templates: `PI_MODEL` /
-  `PRIME_MODEL` are `type: select, source: openrouter` (tool-capable models from
-  the shortlist), just like `OPENROUTER_MODEL` — no more free-text typing.
-- Every model dropdown gained **"— other model id… —"**, which swaps the select
-  for a text field (direct Anthropic/OpenAI ids are not in the OpenRouter
-  catalog); the ⟳ button switches back to the list. A stored value outside the
-  shortlist stays selected instead of silently falling back to the first entry.
-- **UI and API messages are English throughout** — create form, Policy, Tasks,
-  Security/Changelog, the activity dialog, the instance rows, the chat UI
-  (`chatui.py`) and every `msg` the API returns. Code comments stay German.
-
-## 2026-08-14 (Instant trigger for the orchestrator)
-- A new user message (Signal via /api/chat-log, App/Web via /api/chats)
-  pokes the orchestrator **debounced (8 s)** — it reacts in seconds
-  instead of only at the 2-h heartbeat. Coalesces bursts, one run at a time, fires only
-  on genuinely new inbox (peek). Pure manager code, no rootfs build.
-- Verified: message -> ~15 s later orchestrator auto-started ->
-  read_inbox -> create_task(target=remote) for the request. The 2-h heartbeat
-  stays as a fallback (time-based/recurring checks).
-
-
-## 2026-08-14 (Orchestrator inbox: Signal/chat store as the source)
-- A new tool **`read_inbox`** (guest route `/api/inbox`): new user messages
-  from the shared chat store (Signal/App/Web) since the last run, with a
-  **watermark** (each message only once; ?peek=1 = preview without consuming).
-  Task conversations hidden.
-- The orchestrator's heartbeat now reads the inbox first. Verified:
-  a new Signal message "check basement door 22:00" -> read_inbox -> recall_tasks
-  -> list_agents -> create_task(target=hass, daily 22:00). Correct routing to the
-  capable instance, inbox consumed afterwards.
-
-
-## 2026-08-14 (Orchestrator heartbeat "Lloyd")
-- A new tool **`list_agents`** (guest route `/api/agents`): agent roster +
-  capabilities (model/MCP) for routing — without secrets.
-- **`orchestrator` persona** created: manages work instead of doing it —
-  list_agents -> recall_tasks (duplicate check) -> create_task to the CAPABLE
-  instance (or ephemeral). From existing building blocks, hardly any new code.
-- **`orchestrator` instance** (gemini-2.5-flash) + a recurring **heartbeat
-  task** (every 2h). The worker wakes the instance for the run and leaves it
-  running afterwards.
-- Verified: a heartbeat with a concrete occasion -> recall_tasks (no dupl.)
-  -> create_task(daily 08:00) created correctly.
-- Open: the heartbeat can so far use Web/HTTP and delegate to capable agents
-  (e.g. hass), but NOT YET read host logs/email/the Signal chat store
-  — for each of those it needs a small source tool (next step).
-
-
-## 2026-08-14 (Queryable task history / base knowledge)
-- A new **SQLite history** (`history.db`, stdlib — no dependency): every
-  executed task (worker + synchronous create_task) is stored with target, task,
-  result, ok, schedule, origin. WAL mode, thread-safe.
-- Agent tool **`recall_tasks(query, limit)`** via `GET /api/history` — agents
-  query the past ("have we done this already?"), BEFORE create_task
-  against duplicates. So the (upcoming) orchestrator has its base knowledge.
-- Verified: create_task -> result in history; recall_tasks(query) finds the
-  run again (target/task/result + time).
-- Idea adopted from the Symphony discussion (queryable memory), NOT the
-  coding-specific Symphony itself.
-
-
-## 2026-08-14 (Tasks from the VM: create_task)
-- A new agent tool **`create_task(task, target, schedule, wait)`** — callable from any
-  VM (gated via AGENT_TOOLS). Manager guest route `POST /api/task`.
-- **Routing instead of a VM per task:** `target=<instance>` runs the task where
-  its tools/MCP/secrets live (e.g. `hass` for Home Assistant);
-  `target=ephemeral` spins up a fresh, isolated VM and tears it down afterwards.
-- **Sync/async:** `wait=true` blocks and delivers the result directly;
-  otherwise it runs in the background worker and the result lands in the
-  shared chat history (`task-<target>`) — visible in App/Web/Signal.
-- `schedule` (every Nm|Nh|Nd, daily HH:MM, hourly) for recurring tasks.
-- Runaway protection: ephemeral children (task-*/sub-*) may not create tasks
-  themselves. `spawn_subagent` poll tightened from 3 s to 1 s.
-- Verified: ephemeral sync -> `TASKOK`; async -> worker done + chat entry;
-  no ephemeral corpses. v1 serial (one task at a time) — parallelism
-  with an N cap is the next step.
-
-
-## 2026-08-13 (Signal into the shared chat sync)
-- Signal messages used to run only in the VM's signal_loop to the Signal API and
-  never landed in the shared store. Now every bridge turn (question+
-  answer) reports to **`POST /api/chat-log`** (guest recognized by source IP); the manager
-  appends it as a conversation `sig-<instance>-<sender>` to `chats.json`. So
-  Signal chats appear in **App and Web** like normal chats.
-- Implemented in all three bridges (openrouter/pi/prime), images rebuilt.
-  Verified: guest POST -> a `Signal · remote` conversation in the store.
-- Limit: the **claude** Signal bridge (claude-signal-firecracker) is a
-  separate code state and NOT yet connected.
-
-
-## 2026-08-10 (Audit + Policy view)
-
-### Audit log per instance
-- The agent reports every tool call to the manager (`/api/audit`,
-  guest recognized by source IP) — **tool + target field** (URL for http_fetch, query
-  for web_search, path for file/katfs tools, command head for bash) and an
-  ok flag. **Never** secret values or file contents (get_secret logs only the
-  name). Lands as `audit/<name>.jsonl` **on the host** — survives
-  VM restarts, capped to the last 2000 lines. `GET /api/audit/<name>`
-  is admin-only. Verified: `http_fetch -> https://example.com`,
-  `web_search -> bumblebee`; a guest gets `forbidden` on reading.
-
-### Policy tab
-- One view **per instance** that pulls the scattered controls together:
-  internet (live toggle), model, **an editable tool allowlist**
-  (`POST /api/instances/<n>/tools`, effective after stop/start), allowed secrets,
-  MCP servers, katfs share — plus an **Activity** button with the last
-  tools/URLs called from the audit log. `GET /api/policy` (admin-only).
-
-### Instance table
-- Each row now shows the **model in use** (a chip instead of an emoji).
-
-### Chat UI
-- `/chat` sends `Cache-Control: no-store`; icons as inline SVG directly in the HTML
-  (the grey emoji boxes were cached old pages + a missing emoji font).
-
-
-## 2026-08-10 (Addendum: pi/prime fix)
-- The credential switch had mined pi/prime: keys were stripped from the config,
-  but only openrouter-agent fetched them via the broker. Now
-  **pi and prime** also fetch missing provider keys at start from the broker
-  (`ensure_provider_keys`), policy added for both templates. Verified
-  (pi -> `piok` from the LLM, prime -> key from the broker, nothing on the config disk).
-- Both build scripts got the same fixes as openrouter: `mkfs.ext4` PATH
-  and an **atomic** rootfs install (mv instead of cp into the running file).
-
+Terse by design: one line per change, newest first. The narrative behind each
+entry (root causes, measurements, alternatives considered) lives in git
+history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
+commit messages.
+
+## 2026-09-08
+- if-chain gone: every HTTP path is a registered route, `_do_GET`/`_do_POST` dispatch only; 104 routes, test guards the chain stays empty
+- Route handlers share `_body`/`_json`/`_guest` helpers and one error decorator; unknown API paths answer 404 instead of the admin page
+- Architecture tab: client row reordered (Desktop client first), iroh/Traefik arrows re-routed; README screenshot regenerated
+- Git history rewritten (git-filter-repo): phone numbers, LAN prefix, private host, `mcp-catalog.json`, author e-mails scrubbed
+- GitHub is `origin` with full history; `push-github.sh` squash publisher removed; Gitea kept as private archive remote `gitea`
+- Agent appends playbooks, recall notes and missions right before the current message instead of at the top of the context
+- voicecommand "Uhr" playbook rewritten as a positive rule with examples — the negative wording was ignored by the model
+- caldav-mcp: `patch-caldav.js` normalizes `YYYY-MM-DD HH:MM zone` and bare dates into ISO with offset for `start`/`end`/`due`/`until`
+- `[Now]` line names the UTC offset and the exact tool-input datetime form; voicecommand playbook: default calendar, 1 h default, never ask
+- `ha_control`: area name + group cue ("licht", "alle") beats a good fuzzy hit (≥0.9 still wins) — relay was switched instead of lights
+- `ha_control`: `learn_alias` no longer crashes on a `None` alias in HA's registry
+- `/api/tts` filters every text with `speakable_text()` (tool lines, think blocks, code, URLs) — Read aloud spoke "🔧 ha_control …"
+
+## 2026-09-07
+- `espclient/` (MrVoice, push-to-talk ESP32-S3 client, ESP-IDF/PlatformIO) joins the monorepo; credentials via NVS/`config_local.h`
+- Architecture tab gains an "ESP32 client (MrVoice)" card
+- Voice turns via `/api/chat/<inst>` mirrored into the shared chat store as `Voice · <inst> · <time>` (`voice_session()`); `/reset` archives
+- `/api/stt-recent/audio?i=N` (admin) returns the N-th most recent STT upload (last 5, memory only) — diagnosed the ESP32's flat-line mic
+- `[Now]` line moved from context top to right before the current message with "earlier times are outdated" — gemini-flash reused stale times
+- `GET /api/stt-recent` (admin): last 50 STT transcripts with time, seconds and caller, memory only
+- Hub processes get `TZ` = host zone via `mgr/mcp.py: hub_env()` (catalog may override) — ts-caldav parsed Berlin times as UTC
+- caldav patches moved to `mcp-hub/patch-caldav.js`; `list-events` returns `YYYY-MM-DD HH:MM <zone>`, whole-day events as plain dates
+- `[Now]` line tells the model to convert `…Z` timestamps before stating a time; known limit: recurring events report master DTSTART
+- mcp-hub image patches caldav-mcp `list-calendars` to absolute URLs against `CALDAV_BASE_URL` — relative hrefs broke `list-events`
+- Agent injects one `[Now]` system line per turn (weekday, date, time, zone); manager writes `TZ` (`GUEST_TZ` override) into every config disk
+- `--smoke` and the live test wait up to 120 s for the agent bridge before asking `/tools`
+- Policy tab: MCP servers of an existing instance as checkboxes; Save MCP writes `MCP_SERVERS` via the config route, offers Restart now
+- Each MCP server shows its `${SECRET}` placeholders as released/unreleased; route refuses names not in the catalog (`mcp_servers_error()`)
+- Stale-image detection: `image_state()` compares VM start with image build time; `/api/instances` carries `stale`, tab shows "old image"
+- New `restart` action (stop + start) and "Restart on new image" button; idle worker `image_sweep()` pushes once per rebuild
+- `build-openrouter-rootfs.sh --smoke <instance>` restarts that instance after the build and runs the model-free `/tools` registry test
+- Agent `_resolve_tool_name()` accepts a bare MCP tool name when it matches exactly one registered tool — model dropped the `server__` prefix
+- New `/tools` command lists the registry as the model sees it, without a model call
+- `LiveAgent.test_tools_registry_after_rebuild` smoke-tests `/tools` on every instance started after the current rootfs build
+- `spawn_subagent(task, model=)` rebuilt on `create_task(target=ephemeral, wait=true)` — the old `/i/<name>/` path had 403'd since 08-14
+- `create_task` and `/api/task` accept `model`; carried into `_run_ephemeral` (`OPENROUTER_MODEL`) for waited and queued runs
+
+## 2026-09-06
+- Architecture tab: "Fedora voice client" renamed "Desktop client" (text only)
+- `resolve_task_target()` strips a leading `@` and refuses unknown names at task create/edit — MSFT task silently failed on `@orchestrator`
+- Worker pushes "Scheduled task failed: <id>" once per distinct failure text; hourly `task_target_sweep()` pushes "Task target unknown" once
+- Tasks editor can move a task to another instance (`update_task(..., instance=)`); MSFT task retargeted and reworded to fetch, not schedule
+- Web UI dead: a `'\n'` Python escape in `mgr/ui_js.py` broke the whole client script; fixed to `'\\n'`
+- `tests/check_js.py` + `run-tests.sh` step 0d run `node --check` on the rendered client script (host node or the mcp-hub container)
+- Plugins tab: file names deep-link into code-server (`site.json` key `CODE_ROOT`); in-manager viewer and `/api/plugins/<name>/file` removed
+- code-server container needs the live manager tree mounted (command in `manager/README.md`)
+- Missions tab: Edit (goal, steps by position, status incl. reopen) and Delete for any status via `/api/mission-admin`; all finished listed
+- Plugins tab: read-only source viewer `GET /api/plugins/<name>/file` (admin, path-confined, 512 KB) so approval is not blind (superseded)
+- Guest GET denylist `guest_get_blocked`: `/`, `/chat`, `/katfs…`, `/i/<name>/…` — a VM could open every other VM's terminal
+- `/api/task` target policy `guest_may_target`: self or `ephemeral` only, others via `DELEGATE_TARGETS` (comma list, `*`); orchestrator keeps all
+- `/api/agents`, `/api/history`, `/api/hitl/<id>` scoped per guest; `/api/inbox` orchestrator-only among guests
+- Host firewall: `ensure_guest_input_rules()` limits guest→host to :8700 and :2049; `ensure_antispoof()` per tap drops foreign source IPs
+- `_auth` exempts guests (source IP + allow/deny lists) — a set `MANAGER_PASS` would have locked every agent out
+- CalDAV as MCP server: `caldav-mcp` (11 tools, events + VTODO) installed in the `mcp-hub` image; catalog entry `caldav` configured by env
+- `CALDAV_PASSWORD` as `${CALDAV_PASSWORD}` from the host secret store; released for `myassistant`/`voicecommand`; values still placeholders
+
+## 2026-09-04
+- Architecture SVG: Halo glasses (off the app) and Fedora/Linux voice client added; `iroh-gw` beside Traefik; two new component cards
+- `voicecommand` instance got its secret releases (HA/mrmusic/portainer) — Home Assistant had loaded 0 tools
+- New agent tool `ha_control(spoken, action)`: deterministic matching in the manager (exact → strong fuzzy → area + group cue → weak fuzzy)
+- `ha_control` auto-learns the spoken phrase as an HA alias on fuzzy hits; HA token never leaves the host
+- `mgr/haalias.py` (HA WebSocket registry + REST), guest routes `/api/ha-alias` + `/api/ha-control`; "Gartenhaus" HA area created
+- Voice client: `"prompt"` config / `--prompt` prepends a `[Voice-Client] …` frame to every spoken message (default: short, speakable)
+- Voice client speaks sentence-streamed (splitter on the token stream, think/code held); `--headless` prints stage timings
+- mrmusic MCP registered (`mcp-remote` → `https://mrmusic.kat56.de/mcp`, `${MRMUSIC_TOKEN}` host-side); released for myassistant, 7 tools
+
+## 2026-09-03
+- Heartbeat skip reschedule was never saved → same heartbeat re-skipped every 5 s; `worker_claim()` now has an explicit dirty contract
+- Voice client local wake word (`"wake_mode": "local"`): `--enroll` records MFCC templates, subsequence DTW gate, pure Go; `--wake-test`
+- On a local wake hit the word is cut from the audio and only the remainder goes to STT — so "Kaim" works despite STT mangling
+- Wake-word fixes: channel mean in the model, enrollment takes trimmed to voiced core, distance uses c1..c12
+- Wake word takes a comma-list of variants (default `"Kati, Katharina"`), Levenshtein 1 for 4+ letters; tray shows dropped utterances as ✕
+- Voice client and tunnel are one binary: release build embeds `kaim56-tunnel` via `go:embed`, materialized under `~/.cache/kaim56-voice/`
+- Voice client `"iroh": "<node-id>"` config: client spawns `kaim56-tunnel` itself (Pdeathsig), no `base_url`/`user`/`pass` needed
+- Voice client refuses a config still carrying the `manager.example` placeholder at startup
+- Voice client `"wake_word"` (default `"Kat"`): only transcripts starting with the word reach the agent; word alone answers "Ja?"
+- New `kaim56-tunnel` (third binary in `iroh-gw` crate): 127.0.0.1:8701 listener splices TCP onto iroh streams; `--id` prints the NodeId
+
+## 2026-09-02
+- Voice client rewritten in Go: one static binary, tray via `fyne.io/systray`, same config file and VAD; `--probe "text"` runs the whole chain
+- `run-tests.sh` step 0c runs `go vet` + `go test` (skipped without a Go toolchain)
+- `voice-client/`: single-file Python tray client (GNOME/KDE), energy VAD, `/api/stt` → `/api/chat/<inst>` → `/api/tts`; mic muted meanwhile
+- VAD noise floor learns only from unvoiced frames — loud speech dragged the threshold past its own RMS
+- Agent prompt: store the essence of attached documents in the same turn; "where knowledge goes" rule (memory/playbook/skill/recall_tasks)
+- Memory writes support deletion (`value: null`); e2e memory test cleans up; saddler ignores `e2e-*` instances
+- Saddler reports usage and cost per instance (both windows, from `llm_usage`)
+- Idle heartbeats no longer wake the model: worker reschedules the scheduled heartbeat when inbox is empty and no mission is active
+- RMW races closed: gateway toggle via `with_gateway()`, one lock across both `chats.json` cycles; dead second lock in gateway.py removed
+- Four more GET routes in the routing table (prompts, resources, iroh status, voice-health): 17 enumerable
+- `mgr/ui.py` split into css / html (`ARCH_SVG` its own constant) / js, assembled to a byte-identical `PAGE`
+- katfs web client published as a standalone site at `https://uneidel.github.io/katfs-web/`; page reads `?key=`/`#` client-side
+- Python review (`python-code-quality`, `python-security-audit`): 14 of 56 silent excepts now log where silence hid damage
+- `/api/browse` bounded to `BROWSE_ROOTS` (default /home, /srv, /mnt, /media; site.json override) — it enumerated the whole filesystem as root
+- `configure()` injection contracts typed across all mgr modules
+- ruff (pyflakes rules) is step 0b of `run-tests.sh`, optional; first run found 10 issues, all fixed
+- wdm0006/python-skills (MIT): 31 skills imported into `.claude/skills/` as dev skills, prefixed `python-`/`rust-`; agent catalog back to 67
+- Task store RMW race closed: `with_tasks(mutator)` is the only way to change the store; all ten call sites converted; five-thread test
+- `tests/check_names.py` (undefined-name gate, stdlib AST) is step 0 of `run-tests.sh` and a pre-commit hook
+- Gate found four dormant defects: `save_gateway` import, `base64` in `mgr/gateway.py`, both secret functions never injected in `mgr/mcp.py`
+- Task creation was broken for 13 days (missing `uuid` import in `store.py` since the mgr/ split); `test_add_task_roundtrip` added
+- Notify route audits the failure reason (`empty` / `rate limit`) — 38 "failures" were the e2e suite; Activity badge says `failed`
+- Activity panel shows error text under failed calls and a result peek for healthy ones
+- Audit records tool calls AFTER execution: real `ok`, error text, result excerpt, per-turn id (additive fields)
+- `mgr/saddler.py` + `GET /api/saddler`: weekly failure digest grouped by error shape, this week vs last; orchestrator-only among guests
+- Weekly scheduled task hands the digest to the orchestrator to diagnose and propose playbook lines; patches stay a human decision
+
+## 2026-09-01
+- Claude guest: `kaim56_mcp.py` stdio MCP server exposes memory_store/recall, `web_search`, `list_skills`, `load_skill`, `notify` as tools
+- `/branch` renamed `/aside` across agent, web chat, app (v5.32) and Claude bridge; `/branch` stays a silent alias
+- Claude guest-init writes a "kAIm56 platform" section (memory, websearch, skills, notify recipes) into the workspace `CLAUDE.md`
+- Test fixture: `known` backend set includes `claude`
+- Claude web bridge intercepts platform slashes: `/fresh`, `/model sonnet|opus|haiku|<id>|default`; other built-ins answer "OpenRouter only"
+- Web chat branch button is an in-house inline SVG (no proprietary icon); app v5.31 slash picker adds `/fresh`, `/branch`, `/back`
+- System prompt states where tools execute (the agent's own microVM, not the provider) and to retry instead of concluding "blocked"
+- `http_fetch` sends a browser user agent plus Accept-Language — portals 403 obvious bot agents
+- `memory_recall` URL-quotes the key, manager URL-decodes path segments, slashes stay in the key — a key with a space could never be recalled
+- `http_fetch` converts HTML to readable text with link targets in brackets; `raw=true` keeps the body; read cap 5 MB
+- Tool schemas: `web_search` says Brave-backed, `http_fetch` documents text conversion and `raw`
+- `GET /api/websearch` + `mgr/websearch.py`: search served by the manager; Brave (`BRAVE_API_KEY`) → DDG HTML (ads filtered) → Bing
+- `web_search` multi-backend: DDG bot challenge detected and named, Bing fallback; a dead backend is a spoken error, not "no results"
+- `_pdf_text` falls back to `pdftotext` in the `kaim56-pdftotext` container (alpine + poppler) before the built-in extractor
+- Web chat paperclip takes PDF/DOCX/ODT/text via `/api/extract`; chip previews the extracted text; images keep the vision path
+- App v5.30: document chip expands on tap to preview the extracted text
+- App v5.29: document attachments (PDF, DOCX, ODT, TXT/MD/CSV/HTML) via admin `POST /api/extract`; `mgr/extract.py` stdlib-only, honest errors
+- POST dispatcher consults the routing table first; `/api/extract` is the first table-registered POST route
+- Agent strips images from history and retries when the provider rejects an image — every `myassistant` turn had died, nothing ever stored
+
+## 2026-08-31
+- Mission advance push collects completions per owner for `MISSION_COLLECT_SECS` (8 s) into one message — each push is a full `/fresh` turn
+- `list_skills` returns names only (~250 tokens); `list_skills(query=…)` searches; `GET /api/skills?meta=1` serves metadata without bodies
+- Type-aware offload previews: JSON outline, logs with duplicates folded and error lines kept, text head slice; `re` import added to the agent
+- `mgr/routes.py` router: exact paths beat prefixes, longest prefix first; first route group migrated Strangler-style
+- Route access is a route property (`@ROUTER.get(..., admin=True)`); `Router.inventory()` enumerates the surface
+- Test extracts route literals from both dispatchers and fails when a prefix branch shadows an exact one
+- `docs/index.html`: static landing page (isolation SVG, features, security, FAQ), no build step
+- Fresh UI screenshots via DevTools protocol with instance names and spend blurred from browser-reported rectangles
+- Last German UI strings translated (usage line, missions tab, mission log)
+
+## 2026-08-30
+- `tools/halo/emu_test.py`: unmodified `katagent.lua` runs on Brilliant Labs' Halo emulator; nine checks incl. the `01 00 00` packet ack
+- Device Lua must be pure ASCII (runtime reads latin-1); display measured at 59 columns × 13 lines → defaults 56 × 12; app v5.28
+- App v5.27 `VoiceCommand.kt`: "Photo"/"screenshot"/"stop" handled locally at utterance start; question after the command survives
+- Photo by voice end to end: glasses camera → JPEG into the chat → reply on the display (`Halo.PhotoCollector`, `HaloBle.awaitPhoto()`)
+- Phone screenshot recognised but not wired (needs MediaProjection or accessibility service)
+- App v5.26 `HaloController.kt`: connect, upload Lua modules, click → recording → `/api/stt` → instance → reply with line wrapping
+- `HaloDryLink` fakes the glasses for tests and a "Dry run" button; Settings gained a "Glasses (Halo)" section
+- `HaloBle.kt`: filtered scan, MTU 517, notifications, writes paced by GATT + app-level acks; `BLUETOOTH_SCAN`/`CONNECT` permissions
+- Ack check was written against the wire form while the receive side strips `0x01` — every write would have timed out; fixed
+- `assets/halo/katagent.lua`: glasses-side app on the unmodified SDK modules (BSD-3-Clause); `tools/halo/test_frame_app.lua` fakes `frame`
+- Stop handler no longer clears `streaming` early — it swallowed the final audio chunk `0x06`
+- `Halo.kt` aligned with the SDK `plain_text` layout and message codes; ack constants and photo chunk flags added
+
+## 2026-08-29
+- `Halo.kt`: BLE protocol of the Brilliant Labs glasses ported to Kotlin (GATT, packet framing, audio chunks, WAV header); no Android deps
+- Bluetooth behind the `HaloLink` interface; 15 JVM unit tests (`gradle testDebugUnitTest`); BLE implementation, Lua app and UI still to come
+
+## 2026-08-27
+- 55 skills from github.com/daedalus/skills imported (67 total); no upstream license → `skills.json` gitignored, originals in `examples/`
+- Skill bodies no longer inlined in the page; editor fetches `GET /api/skills/<name>` on demand (page ~195 KB instead of ~870 KB)
+- VS Code link in the footer from `CODE_URL` in gitignored `site.json` (link, not embed — mixed content)
+- Missions no longer orchestrator-only: any persistent agent owns its own via `/api/missions` and `/api/mission-start|update|finish`
+- `mission_update` gained `target` (executing instance), stored on the step, in the log and shown in UI/app
+- Advance trigger pushes to the mission owner instead of `ORCH_INSTANCE`; admin actions resolve the owner by id (`mission_owner(mid)`)
+- App v5.25: Missions screen loads all owners, shows owner and executing agent per step
+
+## 2026-08-26
+- App v5.24: non-2xx error bodies shown as one clean line (`⚠️ HTTP 503: …`) instead of raw HTML streamed into the bubble
+- Manager `/i/<inst>/api/…` answers plain text 503 when the instance is not running; browser path keeps HTML
+
+## 2026-08-24
+- App reaches the manager over iroh (P2P, NAT-traversed, e2e encrypted): Rust gateway `iroh-gw` (ALPN `kaim56-mgr/0`) relays to :8700
+- Auth = phone node-id allowlist re-read per connection; `mgr/irohgw.py` + `/api/iroh`, Sharing-tab card, `iroh-gw.service`, installer builds it
+- App native module `app/iroh-android` (Rust + UniFFI); `IrohUrlConnection` speaks HTTP/1.1 over an iroh stream; base URL `iroh://<node-id>`
+
+## 2026-08-22
+- Full German→English pass: comments, docstrings, user-facing strings across manager, chat, agent, app, services, bridges, katfs, scripts, docs
+- Prompt-block tags now English (`[Missions]`, `[Summary]`, `[Memory]`, `[Branch]`, `[Sidenote]`); personas renamed `assistant`/`translator`
+- Kept as input-tolerance literals: Signal HITL `ja/nein`, `/steps unbegrenzt`, `/reasoning aus`, `/back verwerfen`, Indeed.de date words
+
+## 2026-08-20
+- New Resources tab: per-instance vCPU/RAM plus live RSS, CPU% and overlay-disk size (`/api/resources`)
+- App v5.19: photo thumbnails in the bubble (Msg `image` field); on-device crash log under Settings › Diagnose
+- Security gateway Layer A: scrubber also removes Unicode noncharacters and reserved default-ignorables; `text_unicode.py` now tracked
+- Tool-plugin integrity: SHA-256 pinning; Plugins tab flags "changed since approve" with an Approve button; pins in `manager/plugins/.pins.json`
+- Policy tab: auto-refresh no longer wipes unsaved tool-checkbox edits; Save shows real errors
+- Chat sync (web + app v5.18): diverged histories adopt the newer, not-shorter server state instead of stalling forever
+- App v5.17: basic Markdown in assistant messages; v5.16: streamed reply keyed by stable message key (landed in the user bubble before)
+- App v5.15: read-timeout back to 600 s, mic interrupt cancels via disconnect handle — "Socket is closed" when first token took >2 s
+- App v5.14/v5.13: "Assist button opens instance" setting, as a dropdown of live instances
+- App v5.12: silence hang 2.2→3.5 s; tapping the mic during a reply cancels the turn and starts a fresh recording
+- Tool plugins support multi-file folders; Plugins tab with drag-and-drop .py/.zip (zip-slip guarded, 5 MB cap), boilerplate, list/delete
+- Web chat: Copy button on own messages; bubble text stays selectable through redraws
+- New plugin `indeed_filter` (adapted from gvfullstack/JobSearchAutomation): post-filters job lists to new postings; wired into jobresearcher
+- Unhandled route exceptions return HTTP 500 with a traceback instead of dropping the connection
+- `playbook_add` crashed with RemoteDisconnected: `mgr/rules.py` used `uuid`/`time` without importing them
+- Slash typeahead: Esc closes reliably; lists all 8 agent commands (`/fresh`, `/branch`, `/back` added), command-palette styling
+- llama.cpp invalid tool-call JSON (HTTP 500): agent retries the turn once without tools
+- Chat delete-tombstones sync App↔Web (app v5.11): `{id: deletedAt}` markers via `/api/chats`, 60-day TTL, `chats_tombstones.json`
+- Multi-device web chat sync: awaits the server pull before selecting a conversation; open chat repaints on merge
+- `_(empty reply)_` with llama.cpp/Qwen3: `reasoning_content` streams as thinking too; reasoning-only turn shows the reasoning
+- Web slash typeahead fixed (undefined `escT` threw on render); `/steps` takes any count, `/steps unlimited` (0)
+- Agent streams a visible tool-status (🔧) and heartbeat (`HEARTBEAT_SEC=30`) during tool execution — Traefik 180 s idle cut the stream
+- Site-specific values externalised into gitignored `site.json` + `mcp-catalog.json`; source uses neutral placeholders
+- Leak-filter masks HuggingFace tokens (hf_…); phone-number defaults scrubbed from templates
+- Changelog and Architecture moved to a footer row — the topbar overflowed and hid them
+- Guardrails at the key-injection proxy: daily token budget (`BUDGET_TOKENS`, 2M) + rate cap (`LLM_RATE_MIN`, 60/min) → 429 + notify
+- Worker task-frequency cap: >6 runs/h of the same task → suspended 1 h + notify
+- `EGRESS_ALLOW` per instance (domains/IPs resolved at start) via an iptables FC chain
+- Leak-filter on notify/send_signal for known key patterns (sk-or-/sk-ant-/ptr_/gh*_/AKIA/xox*/JWT); git SHAs untouched
+- Worker bugs from the refactoring: `chat_log_append` back in manager.py (NameError), `import re` in `mgr/store.py` (scheduled tasks looped)
+- Worker hardened: each post-run step guarded, runtime orphan watch (>30 min running → requeue), diagnostic `run/worker.log`
+- Notification click opens the real chat (app 5.10 + web); bell "Clear" removes notifications; slim theme scrollbars
+- App 5.9: errors expire after 8 s, hints after 4 s; AGPL/SPDX header in all Kotlin sources
+- `TASKS_FILE` undefined after the mgr/ split → `/api/tasks` crashed, worker died; fixed in `store.configure()` + `reclaim_stuck_tasks()`
+
+## 2026-08-19
+- Strangler-Fig refactoring done: manager.py 6,705 → ~1,400 lines core; nine `mgr/` modules (ui, store, signal, missions, notify, rules, …)
+- mgr modules never import manager; cross-references via `configure()`/injection; install.sh copies `mgr/`
+- Tree chat: `/branch [topic]` opens a nestable side branch, `/back` condenses it to one `[side note]` line (`/back drop` discards)
+- Key-injection gateway active: agents call `/api/llm/<backend>/chat/completions`, manager injects Authorization; toggle `LLM_KEY_PROXY`
+- New `oracle` tool: second opinion without tools before risky actions (`ORACLE_MODEL`); playbook forces it before `delete_task`
+- Playbooks panel in the Personas tab (view/add/remove per agent)
+- Installer verified end to end on a QEMU rig with nested KVM: a Firecracker microVM booted inside the test VM; smoke test accepts 401 as alive
+- "Thinking" details no longer pops open on every streamed token — open/closed state preserved across repaint
+- `/steps [n]` changes max tool steps at runtime; `AGENT_MAX_STEPS` permanent; jobresearcher set to 30
+- New admin route `POST /api/instances/<n>/config {key,value}` sets/deletes a single config value (secrets excluded)
+- `/model` switches model/backend mid-session without restart, context preserved
+- Steering: a message during a running turn is injected as `[steering]` between tool steps; app 5.8; guest `POST /api/steer`
+- Prompt templates as slash commands (Personas tab, `prompts.json`, `GET/POST /api/prompts`); expansion in the agent → Web, App and Signal
+- Tool plugins: one .py per tool in `firecracker/plugins/` (DESC/PARAMS/REQUIRED + run()), loaded from `/config/plugins`; collisions rejected
+- pi/prime templates decommissioned (never used; ~7 GB rootfs freed); source stays in git history
+- `install.sh` (curl | sh): preflight, layout, Firecracker v1.16.1, kernel via `VMLINUX_URL`, rootfs/embed/mcp-hub builds, systemd unit
+- Portability: `GUEST_DNS`, `CLAUDE_CRED_SRC`, `AGENT_DIR`, `FC_DIR` via env; embed/, mcp-hub/, tests/, run-tests.sh checked in
+- Mission tools and `offload_read` added to `AGENT_TOOLS_CATALOG`; drift test keeps agent BUILTIN and manager catalog congruent
+- Browser terminal died after ~10 s idle: connect timeout stayed as read timeout; set to None after connect plus TCP keepalive
+- Overlay boot added to pi/prime/claude guest inits; `OVERLAY_ROOTFS` covers all four images
+- Overlay rootfs: ro base + per-instance rw upper via overlayfs + pivot_root; no more 2 GB copy per start; degraded ro fallback
+- Persistent disk per instance (default off): upper survives stop/start; `/api/instances/<n>/persist` + `/diskreset`; upper mounted `-o sync`
+- Voice section in Settings: status via `GET /api/voice-health`, TTS voice and speed; service `/tts` takes `voice` + `speed`; two new voices
+- Manager mixes voice/speed from settings into the `/api/tts` body — no client update needed
+- Missions get their own tab (web) and screen (app 5.7); notifications carry a `link` (missions | tasks | chat:<instance>) and open the target
+- Missions: `mission_start/missions/mission_update/mission_finish` (orchestrator, TASK_ADMIN), `missions.json`, survives /reset and VM restart
+- Mission advance fires directly when a waited task finishes (`_mission_advance_fire`); caps 5 active / 20 steps; 7-day TTL sweep
+- Missions panel in the Tasks tab and app 5.6; routes `/api/missions`, `/api/mission-*`, `/api/mission-admin`
+- Chat UI (/chat) pulled onto the Industry design system (blueprint corners, Barlow Condensed, token ramps, dark mode)
+- Chrome "Save password?" popup on chat switch: API-key fields were `type=password`; masked via CSS `-webkit-text-security` instead
+- Model dropdown jumped back: async race in `loadModels` read the value at fetch start, now on resolve; manager page `Cache-Control: no-store`
+- Model dialog knows `ORCAROUTER_MODEL` and `LLAMA_MODEL`
+- Activity dialog: time filter (1h/24h/7d/All) and usage total via `GET /api/usage/<name>?since=` (`usage_for`)
+- App 5.5 VAD: floor as minimum over ~0.6 s, absolute margin, hysteresis — recording cut off mid-speech after ~4 s; `VAD_HANG` 2200 ms
+- Notifications: agent tool `notify(title, message)` → `POST /api/notify`; `notifications.json` with long-poll; web bell; app 5.4
+
+## 2026-08-18
+- Harness pattern (strands-agents/harness-sdk, ported): `_trim_history` summarizes the oldest messages into a `[summary]` block
+- Context offloader: tool outputs > `OFFLOAD_MIN` go to `.offload/`, preview + reference stay; new tool `offload_read(id, offset)`
+- `/goal <criterion>`: a judge checks the answer, up to `GOAL_MAX_ATTEMPTS`=3; app 5.2 picker
+- Tool hook: hard denylist (rm -rf /, fork bomb, mkfs) always on; optional HITL approval via Signal (`HITL=1`, `HITL_TOOLS`, `/api/hitl`)
+- Retry with backoff around every model call (429/5xx); empty tools list no longer sent (400 at summarizer/judge)
+- E2E test suite `tests/e2e.py` / `./run-tests.sh`: OFFLINE, HTTP and LIVE tiers, stdlib unittest; runs with every change
+- `/api/agents` reports all MODEL_KEYS plus a real `backend` field; agent knows its backend/model from the system prompt
+- `set_model("orcarouter:tencent/hy3")` sets backend and model; orchestrator moved to OrcaRouter `tencent/hy3`
+- OrcaRouter as second LLM backend: template `orcarouter.json`, `ORCAROUTER_API_KEY`/`ORCAROUTER_URL`/`ORCAROUTER_MODEL`
+- Playbooks: fixed rules the orchestrator learns (`playbook_add`/`playbooks`/`playbook_forget`, `playbooks.json`, cap 40), always in the prompt
+- `/reasoning [low|medium|high|off]` toggles OpenRouter reasoning; thinking streamed separately and shown as an expandable block
+- `list_tasks`/`delete_task`/`edit_task` for the orchestrator only via injected `TASK_ADMIN` flag (menu and route gated)
+- Signal receiving: gateway switched to `json-rpc`, stdlib WebSocket receiver; new message triggers the orchestrator immediately
+- katfs file browser in the Sharing tab: share selector, "Download all" as ZIP (`/api/katfs/zip`, cap 2000 files / 512 MB); `katfs-share` CLI
+- App 4.9–5.1: selectable bubble text, slash-command picker, thinking display
+- MSFT task repaired with a fixed Yahoo URL and `http_fetch` instruction
+
+## 2026-08-17
+- Orchestrator token runaway (249M tokens): heartbeat `every 1m` → `every 30m`; heartbeats run stateless with `/fresh` in a throwaway context
+- Sliding context cap `CTX_MAX_MSGS=20`, cut only at clean turn boundaries
+- Memory instruction defused: no unprompted lectures about memory mechanics; durable facts quietly via `memory_store`
+
+## 2026-08-16
+- Semantic long-term memory: `memory_store` embeds notes (multilingual-e5 on CPU, new `embed` container :8772) into `history.db`
+- Per turn the manager returns the semantically nearest notes as a `[memory]` block (`sem_store`/`sem_search`, `POST /api/memory-search`)
+- App 4.8 passes unknown slash commands through to the agent (keeps `/task`, `/agents`, `/help`); `/reset` retrofitted into the claude web bridge
+- Behavior guardrails from Anthropic's published system prompts in the OpenRouter/llama base prompt (no hallucination, tools first, tone)
+- Self-hosted LLM via llama.cpp: settings `LLAMA_ENDPOINT` + `LLAMA_API_KEY`, template `llama`, `LLAMA_MODEL`; LAN target opened in FORWARD
+
+## 2026-08-15
+- claudy: guest route `GET /api/claude-credentials` delivers the live `claudeAiOauth` block at boot (claude template only, by source IP)
+- Manager proxy unpacks JSON `{"reply": …}` from the claude bridge into text/plain for the app
+- Per-instance FORWARD chain: assigned MCP endpoints + guest DNS ACCEPT, private networks REJECT, internet ACCEPT — VMs could reach the LAN
+- MCP hub (`mcp-hub/`, 127.0.0.1:8771): MCP processes run once per (instance, server) on the host; guests speak JSON-RPC via `POST /api/mcp`
+- Secrets injected host-side; `/api/mcp-config` delivers placeholders only; every `tools/call` audited; `mcp-portainer` removed from the image
+- New Architecture tab: theme-aware SVG plus 15 component cards; `<style>` inside inline SVG and unquoted attributes were the traps
+- Standing memory instruction in every system prompt; agent injects remembered facts on the first turn after restart
+- ext4 journal incident: all instances of a template shared one writable rootfs; each VM now gets its own fresh copy at start
+- Model chip is a button: `POST /api/instances/<n>/model` + `set_model()`, effective after stop/start
+- New tool `send_signal`: sending via manager `/api/signal`; recipients must be in `ALLOWED_SENDERS`; 10 per 5 min; `SIGNAL_API` setting
+- Security gateway per chat (`gateway.json`, shield icon): strips invisible Unicode both ways and EXIF/XMP/C2PA from uploads (`text_unicode.py`)
+- KatAgent 4.3–4.7: speech-pause detection, tap to stop output, gateway toggle, version in drawer, digital-assistant registration
+- KatAgent 4.2: microphone button (AAC/M4A 16 kHz) → `ManagerSync.stt()`, hands-free submit; speaker per reply; voice-asked replies read aloud
+- Voice service (`voice/`): Parakeet TDT v3 STT, Piper TTS (Thorsten), ffmpeg; routes `/api/stt` and `/api/tts`; web microphone + Read aloud
+
+## 2026-08-14
+- Critical: POST routes were open to guests — a VM could `POST /api/instances/<n>/mounts` and NFS-mount `/` writable; guest POST allowlist
+- Stored XSS fixed: `h()` (html.escape) on model id, description, mount paths and tool list in the admin page
+- Open: `MANAGER_PASS` empty → `_auth()` lets everyone through; protection rests on Traefik
+- Tasks and Policy tabs refresh every 15 s when visible; usage rows update from `/api/usage`
+- Host timezone was `America/Chicago` → `Europe/Berlin`; manager restart needed (glibc reads the zone once)
+- Web chat, radio dot and browser terminal aligned with the Industry design; katfs share page left as is
+- App follows the Industry design system: angular shapes, type scale, `IndustrySpacing`, `IndustryComponents.kt`; KatAgent 3.9
+- Question from the app disappeared: sync merge replaced the conversation object `send()` held; merge fills in place, append-only; KatAgent 3.8
+- Token counter per instance: `llm_usage` table, guest `POST /api/usage` attributed by source IP, admin `GET /api/usage`; openrouter only
+- Guests without internet: `HOSTIF=eth0` did not exist → MASQUERADE hit nothing; `HOSTIF` used only if present, else default-route interface
+- `/api/chats` long-poll (`?since=<rev>&wait=<sec>`); web hangs on it; guest lock compares path without query; KatAgent 3.7 `pollChats()`
+- Rebrand: "Firecracker Manager" → kAIm56 in title, wordmark, footer, realm, User-Agent; new `logo.svg` at `/logo.svg` and `/favicon.ico`
+- Every template picks its LLM: `ANTHROPIC_MODEL` for claude, `PI_MODEL`/`PRIME_MODEL` as OpenRouter selects; "other model id…" free text
+- UI and API messages English throughout (code comments stay German)
+- Instant trigger: a new user message pokes the orchestrator debounced (8 s); 2-h heartbeat stays as fallback
+- New tool `read_inbox` (`/api/inbox`): new user messages from the shared chat store with a watermark (`?peek=1`)
+- New tool `list_agents` (`/api/agents`); `orchestrator` persona and instance (gemini-2.5-flash) with a 2-h heartbeat task
+- SQLite `history.db` records every executed task; tool `recall_tasks(query, limit)` via `GET /api/history`
+- New tool `create_task(task, target, schedule, wait)` via `POST /api/task`: `target=<instance>` or `ephemeral`; ephemeral children may not nest
+
+## 2026-08-13
+- Signal bridge turns report to `POST /api/chat-log`; appended as `sig-<instance>-<sender>` conversations, visible in App and Web
+- Limit: the claude Signal bridge is not yet connected
 
 ## 2026-08-10
-
-### Agent capabilities (controllable per instance)
-- **Internet toggle.** A new instance option `internet` (default on). Off =
-  the VM may not leave its own /30: no LAN, no web — and thereby
-  **no LLM**, the agent then can't think (labeled so in the UI).
-  The manager broker at the gateway (8700, host-local) stays reachable.
-  Toggleable **live** via the instance table (🌐/🚫), without a restart —
-  `apply_internet` sets/removes the egress rules of the tap.
-- **Tool allowlist.** A new option `tools` at creation (a checkbox list from
-  `/api/agent-tools`). Lands as `AGENT_TOOLS=<names>` in the config; the agent
-  filters with it both **schema AND execution** (`tool_enabled`) — a model can neither see
-  nor force a disabled tool. Verified: a subset -> boot
-  reports `tools=3` instead of 17, `list_dir` not present in the model.
-  Note: `bash` is the master key — whoever really wants to lock file/web
-  must also deselect `bash`.
-
-### Chat UI
-
-### Tasks tab
-- The scheduled work (backend + worker + `tasks.json` had long existed, just without
-  a UI) now has a **"Tasks" tab**: a job = a message to an
-  instance, one-off or recurring (`every Nm|Nh|Nd`, `daily HH:MM`,
-  `hourly`). A list with status/next run/last result, create
-  and delete. A stopped instance is started for the run. `/api/tasks`
-  is admin-only (guests blocked).
-
-- Color emoji (📎 🖥️ 🔄 🤖) swapped for inline SVGs. Without an installed
-  emoji font they appeared as grey boxes (tofu) — now the icons
-  render everywhere. (Reported: a grey box next to the send button = 📎.)
-
-### Diagnostics
-- "gemma can't search the internet" was **not** a network problem (egress 200):
-  the free gemma model simply doesn't call `web_search`, but talks
-  about searching and leaks `<|channel>` tokens. Pick a stronger tool-capable model
-  (Models tab) or force the tool in the prompt.
-
-
-## 2026-08-09 (Security scan Agents + katfs)
-
-### katfs — cross-tenant hole closed (critical)
-- The node bound to `0.0.0.0:8790` and **never checked the caller**. Every
-  microVM could enumerate `/shares` and, with `?share=<any>`, read/write/delete every active
-  share — even that of another operator. Proven
-  in the test: instance `remote` read `id_rsa` from a foreign share and wrote
-  a backdoor into it.
-- Fix: the node now binds only **127.0.0.1**. Guests go via the
-  manager broker (`/api/katfs/ls|read|write|delete`), which recognizes the instance by
-  source IP and enforces the share from **its** config. `&share=`
-  from the guest is ignored. Write capped at 64 MiB. The agent no longer calls
-  the node, but the broker.
-- Verified from the attacker's position (a compromised agent with a shell):
-  direct access to the node → connection refused; a foreign share via
-  `&share=` → unreachable; its own share → works.
-
-### Net — guest isolation
-- microVMs could route among each other; an agent reached the unprotected
-  ports 8080/7682 of another instance. Fix: tap ACCEPTs restricted to non-pool
-  targets + `pool->pool` DROP. Test: `remote` → `gemma:8080` runs into a
-  timeout (blocked), internet egress unchanged (200).
-
-### Manager — further guest leaks closed
-- `/api/chats` and `/api/tasks` added to the guest guard.
-- `/api/memory/<instance>`: for guests the name comes from the source IP, not
-  from the path — no more foreign memories.
-
-
-Changes to the manager and the surroundings (katfs, openrouter agent). Newest first.
+- Audit log per instance: every tool call reported to `/api/audit` (tool + target, never values); `audit/<name>.jsonl` on the host, admin read
+- Policy tab per instance: internet toggle, model, editable tool allowlist (`POST /api/instances/<n>/tools`), secrets, MCP, share, Activity
+- Instance table shows the model in use as a chip; `/chat` sends `Cache-Control: no-store`, icons inline SVG
+- pi/prime fetch missing provider keys from the broker at start (`ensure_provider_keys`); build scripts get `mkfs.ext4` PATH and atomic install
+- Internet toggle per instance (`internet`, live via `apply_internet`); off = no LAN, no web, no LLM
+- Tool allowlist per instance (`AGENT_TOOLS`), filtered in schema and execution; `bash` remains the master key
+- Tasks tab for the existing scheduler: one-off or recurring jobs to an instance; `/api/tasks` admin-only
+- Color emoji swapped for inline SVGs (tofu without an emoji font)
+- Diagnosis: free gemma model talks about searching but never calls `web_search`
 
 ## 2026-08-09
-
-### Credentials
-- **API keys removed from the instances.** `SECRET_PARAMS` is discarded at creation and
-  when building the config disk; the agent fetches `OPENROUTER_API_KEY` at
-  runtime via `/api/secret/<name>`. The manager recognizes the guest by the
-  source IP and checks the allowlist from `secret-policy.json`. Existing state is
-  cleaned up at start.
-- **`/api/settings` sealed.** The route handed out the keys in cleartext to every
-  microVM. Now a guest guard on `/api/settings` and `/api/instances`,
-  and set secrets go out only as `__unchanged__`.
-- **MCP tokens removed from the instances.** Instead of `MCP_CONFIG` with inserted
-  values, `MCP_SERVERS=<names>` is stored; the agent fetches the
-  configuration via `/api/mcp-config`, and the manager inserts only the secrets released for
-  this instance by policy. A migration lifts the server names out of
-  the old blob and enters the necessary secrets per instance.
-- `settings.json` to 0600.
-
-### katfs
-- **Multiple shares at once.** The node used to hold exactly one; each
-  new one displaced the old one, two sharing machines flapped against each other. Each
-  share now reports at `hello` a stable **share-id** plus folder name,
-  platform and `readonly`. `GET /shares` lists them, `?share=<id>` selects.
-- **Selection at creation.** In the create form the share stands as a dropdown,
-  the value lands as `KATFS_SHARE` in the instance config.
-- **`katfs-share`** — the provider as a native program (`iroh-fs/client/`).
-  Solves the Firefox/Safari problem: there is no API there that writes into a real
-  user folder. Stable share-id from hostname + path, auto-reconnect,
-  `--ro`.
-- **`delete`** as a fifth operation, with three locks: the root of the share,
-  `..`, and non-empty directories without `recursive=1`.
-- The share page passed through under **`/katfs/`** — same origin, same
-  auth and thus HTTPS, which the File System Access API strictly requires.
-  `?key=<node-id>` inserts a foreign node.
-- Error messages now carry their cause (`Directory not empty` instead of just
-  `delete <path>`), all the way into the agent too.
-
-### Manager UI
-- **Rebuilt** onto the design system *Industry*: Barlow, blueprint frames,
-  tabs instead of one long page, hash-routed.
-- **Folder browser** behind the 📁 in every mount row (`/api/browse`, only
-  directory names, admin-only). The `prompt()` for existing instances has
-  given way to a real dialog.
-- **"Models" tab** — the full OpenRouter catalog live, from it the shortlist for the
-  create form (`models.json`). Previously a constant in the source.
-- **"Sharing" tab** — katfs status, shares, sharing key.
-- `deepseek/deepseek-v4-flash-0731` added to the selection.
-
-### Operations
-- **The rootfs rebuild is atomic.** Previously `cp` into the target file — if a VM
-  held it open, the next boot ended in an ext4 checksum panic. Now put beside
-  and rehang via `mv`, plus a warning on a running instance.
-- `KillMode=process` in the unit, so that a manager restart doesn't tear down all
-  running microVMs. **Not installed yet** — see the open points.
-- `node/build.sh` and `client/build.sh` for katfs (Docker, no local Rust).
-- `build-openrouter-rootfs.sh` finds `mkfs.ext4` even without root in the PATH.
+- katfs cross-tenant hole (critical): node bound to `0.0.0.0:8790` without caller check; now 127.0.0.1, guests via broker `/api/katfs/*`
+- Guest isolation: microVMs could route to each other; tap ACCEPTs restricted, `pool->pool` DROP
+- `/api/chats` and `/api/tasks` added to the guest guard; `/api/memory/<instance>` name from source IP, not path
+- API keys removed from instances: agent fetches `OPENROUTER_API_KEY` via `/api/secret/<name>` against `secret-policy.json`
+- `/api/settings` and `/api/instances` guest-guarded; set secrets go out as `__unchanged__`; `settings.json` 0600
+- MCP tokens removed from instances: `MCP_SERVERS=<names>` plus `/api/mcp-config` with policy-released secrets only; migration lifts old blobs
+- katfs multiple shares at once (stable share-id, `GET /shares`, `?share=<id>`); `KATFS_SHARE` dropdown at creation
+- `katfs-share` native provider (`iroh-fs/client/`, `--ro`, auto-reconnect); `delete` operation with three locks; share page under `/katfs/`
+- Manager UI rebuilt on the Industry design system: Barlow, blueprint frames, hash-routed tabs
+- Folder browser (`/api/browse`, admin-only) in mount rows; Models tab (live OpenRouter catalog → `models.json`); Sharing tab
+- Rootfs rebuild atomic (mv instead of cp); `KillMode=process` in the unit (not yet installed); Docker build scripts for katfs
