@@ -139,6 +139,35 @@ docker run --rm -v "$PWD":/project -v katagent-gradle:/root/.gradle katagent-bui
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## Desktop voice client
+
+`voice-client/` is one static Go binary for the Linux desktop (GNOME/KDE topbar).
+`./build.sh` produces the release build with the iroh tunnel embedded; `go build .`
+gives a dev build that looks for `kaim56-tunnel` next to the binary. First run writes
+`~/.config/kaim56-voice.json`; put the manager's iroh NodeId there (web UI → iroh tab)
+and add the client's identity to the allowlist once. `--headless` prints states and
+transcripts, `--probe "…"` proves the whole chain without a microphone, `--enroll` records
+your own wake word for the local model. Details: `voice-client/README.md`.
+
+## ESP32 voice device (MrVoice)
+
+`espclient/` is a push-to-talk client for a Seeed XIAO ESP32-S3 (8 MB flash, 8 MB PSRAM)
+with an INMP441 microphone, a MAX98357A amplifier and one button — ESP-IDF 5.4 via
+PlatformIO, stock IDF components only. Hold the button to record, release to send: WAV →
+`/api/stt` → `/api/chat/<instance>` (sentence-streamed) → `/api/tts` → I2S.
+
+```bash
+cd espclient
+cp src/config_local.h.example src/config_local.h   # WiFi + manager URL/credentials (gitignored)
+pio run -e esp32s3                                  # build
+pio run -e esp32s3 --target upload                  # flash
+pio device monitor                                  # serial console: `probe` runs the full chain
+pio test -e native                                  # host-side unit tests, no hardware
+```
+
+Settings live in NVS and can also be set through the device's captive portal.
+Wiring and pin map: `espclient/Readme.md`; behaviour and design notes: `espclient/CLAUDE.md`.
+
 ## katfs
 
 `katfs/node` (host gateway) and `katfs/client` are Rust crates; `katfs/web` is the
