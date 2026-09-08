@@ -3459,490 +3459,21 @@ class H(BaseHTTPRequestHandler):
     def _do_GET(self):
         if not self._auth():
             return
-        # Tabelle zuerst. Was dort steht, kann von keiner spaeteren Praefix-
-        # Verzweigung mehr verdeckt werden — das ist der ganze Zweck.
-        hit = ROUTER.resolve("GET", self.path)
-        if hit is not None:
-            fn, admin_only = hit
-            if admin_only and instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-            out = fn(self)
-            if out is None:
-                return                      # die Route hat selbst geantwortet
-            body, ct = out
-            self.send_response(200)
-            self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        if self._dispatch("GET"):
             return
-        if guest_get_blocked(self.path) and instance_by_ip(self.client_address[0]) is not None:
+        # No route: the admin UI for everything else (index, deep links).
+        # Guests get nothing here; unknown API paths a clean 404.
+        if instance_by_ip(self.client_address[0]) is not None:
             return self._forbid()
-        if self.path.split("?", 1)[0].rstrip("/") == "/chat":
-            q = self.path.split("?", 1)[1] if "?" in self.path else ""
-            want = urllib.parse.parse_qs(q).get("i", [""])[0]
-            body = chatui.render(web_instances(), want, LOGO_INLINE).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            # Don't cache: otherwise the browser holds on to an old version (that
-            # was the cause of the gray emoji boxes after the icon fix).
-            self.send_header("Cache-Control", "no-store, must-revalidate")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        if self.path.split("?", 1)[0] == "/katfs":
-            self.send_response(301)
-            self.send_header("Location", "/katfs/")
-            self.end_headers()
-            return
-        if self.path.startswith("/katfs/"):
-            return self._katfs_proxy()
-        if self.path.startswith("/i/"):
-            name, _, tail = self.path[3:].partition("/")
-            if tail.split("?", 1)[0].rstrip("/").split("/")[0] == "term":
-                return self._term_route(name, tail.split("?", 1)[0])
-            return self._proxy("GET")
-        # Secrets broker: guests only (instance identified by source IP), allowlist.
-        if self.path == "/api/secrets":
-            inst = instance_by_ip(self.client_address[0])
-            keys = sorted(allowed_secret_keys(inst)) if inst else []
-            b = json.dumps({"allowed": keys, "instance": inst.get("name") if inst else None}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b)
-            return
-        if self.path == "/api/claude-credentials":
-            # Subscription login for the claude template: the guest fetches the
-            # LIVE credential of the host at boot (so it follows the user's next
-            # /login). Only the claudeAiOauth block — the mcpOAuth tokens
-            # (Atlassian etc.) are none of the VM's business. Strictly gated:
-            # only a real guest whose instance runs the claude template.
-            inst = instance_by_ip(self.client_address[0])
-            ok = inst is not None and (inst.get("template") == "claude")
-            if not ok:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"claude template guests only"}')
-                return
-            try:
-                with open(CLAUDE_CRED_SRC) as fh:
-                    full = json.load(fh)
-                out = json.dumps({"claudeAiOauth": full["claudeAiOauth"]}).encode()
-                code = 200
-            except (OSError, ValueError, KeyError):
-                out = b'{"error":"no host credential (run claude /login on the host)"}'
-                code = 503
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers()
-            self.wfile.write(out)
-            return
-        if self.path.startswith("/api/secret/"):
-            name = self.path.split("/api/secret/", 1)[1]
-            inst = instance_by_ip(self.client_address[0])
-            allowed = allowed_secret_keys(inst) if inst else set()
-            if name not in allowed:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "not allowed"}).encode())
-                return
-            val = secret_store().get(name, "")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"value": val}).encode())
-            return
-        if self.path == "/api/agent-tools":
-            body = json.dumps({"tools": AGENT_TOOLS_CATALOG}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        # Agent roster for routing (orchestrator/list_agents). Guest-allowed,
-        # capabilities only — no secrets. Ephemeral children hidden.
-        if self.path == "/api/agents":
-            roster = []
-            guest = instance_by_ip(self.client_address[0])
-            for i in load_instances():
-                if i["name"].startswith(("task-", "sub-")):
-                    continue
-                # A guest lists only what it may delegate to (own name,
-                # DELEGATE_TARGETS; the orchestrator: all).
-                if guest is not None and not guest_may_target(guest, i["name"]):
-                    continue
-                cfg = i.get("config") or {}
-                mkey = next((k for k in MODEL_KEYS if cfg.get(k)), "")
-                # Derive the backend from the set model key (NOT from the
-                # template — that stays e.g. "openrouter" even after switching to
-                # orcarouter/llama via set_model).
-                backend = {v: k for k, v in PROVIDER_MODEL_KEY.items()}.get(
-                    mkey, i.get("template", ""))
-                if cfg.get("LLAMA_ENDPOINT"):
-                    backend = "llama"
-                roster.append({
-                    "name": i["name"], "template": i.get("template", ""),
-                    "backend": backend,
-                    "running": is_running(i),
-                    "model": cfg.get(mkey, "") if mkey else "",
-                    "mcps": [n for n in (cfg.get("MCP_SERVERS", "") or "").split(",") if n],
-                })
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"agents": roster}, ensure_ascii=False).encode())
-            return
-        # Inbox for the orchestrator: new user messages (Signal/app/web) since
-        # the last run. Guest-allowed; ?peek=1 sets no watermark.
-        if self.path.startswith("/api/inbox"):
-            # The inbox is EVERY user message of every chat — among guests
-            # only the orchestrator (whose job it is) may read it.
-            guest = instance_by_ip(self.client_address[0])
-            if guest is not None and guest["name"] != ORCH_INSTANCE:
-                return self._forbid()
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            data = {"messages": inbox_since(peek=(q.get("peek", ["0"])[0] == "1"))}
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        # RUNNING tasks (not the history) — for the agent's list_tasks/delete_task.
-        # Guest-open; tasks carry no secrets.
-        if self.path.startswith("/api/missions"):
-            # Guest: only its OWN missions (every agent may own missions, not
-            # just the orchestrator). Admin: ?instance= or all.
-            g = instance_by_ip(self.client_address[0])
-            if g is not None:
-                data = {"missions": mission_list(g["name"])}
-            else:
-                q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-                inst = q.get("instance", [""])[0]
-                data = {"missions": mission_list(inst)} if inst else                     {"by_instance": load_missions()}
-            body = json.dumps(data, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.startswith("/api/playbooks"):
-            g = instance_by_ip(self.client_address[0])
-            inst = g["name"] if g else urllib.parse.parse_qs(
-                self.path.split("?", 1)[1] if "?" in self.path else "").get("instance", [""])[0]
-            body = json.dumps({"playbooks": pb_list(inst)}, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.startswith("/api/tasks-open"):
-            _g = instance_by_ip(self.client_address[0])
-            if _g is not None and _g.get("name") != ORCH_INSTANCE:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
-            rows = [{"id": t.get("id"), "instance": t.get("instance"),
-                     "schedule": t.get("schedule", ""), "status": t.get("status", ""),
-                     "next_run": t.get("next_run", 0),
-                     "message": str(t.get("message", ""))[:200]} for t in load_tasks()]
-            body = json.dumps({"tasks": rows}, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        # Queryable task history (institutional knowledge). Open to guests
-        # (recall_tasks) AND admin/UI — holds operational knowledge, no secrets.
-        if self.path.startswith("/api/history"):
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            # Guest: only runs it created or executed; the orchestrator and the
-            # admin/UI see everything.
-            guest = instance_by_ip(self.client_address[0])
-            scope = guest["name"] if guest is not None and guest["name"] != ORCH_INSTANCE else None
-            data = {"rows": history_search(q.get("q", [""])[0], q.get("limit", ["20"])[0],
-                                           instance=scope)}
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        # Admin-only: read the consolidated policy per instance + audit log.
-        if self.path.startswith("/api/usage/"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            q = urllib.parse.parse_qs(self.path.partition("?")[2])
-            nm = re.sub(r"[^a-zA-Z0-9_-]", "", self.path.split("/api/usage/", 1)[1].split("?")[0])
-            try:
-                since = int(q.get("since", ["0"])[0] or 0)
-            except ValueError:
-                since = 0
-            out = json.dumps(usage_for(nm, since)).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/policy" or self.path.startswith("/api/audit/"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            if self.path == "/api/policy":
-                data = {"instances": [effective_policy(i) for i in load_instances()]}
-            else:
-                nm = re.sub(r"[^a-zA-Z0-9_-]", "", self.path.split("/api/audit/", 1)[1].split("?")[0])
-                data = {"instance": nm, "events": audit_read(nm, limit=1000)}
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        if self.path == "/api/models":
-            body = json.dumps({"curated": sorted(load_curated())}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        # Counterpart to /api/secret/<name>, but for MCP: only the guest itself,
-        # only its own servers, and secrets only as far as the policy allows it.
-        # This way MCP_CONFIG no longer has to live in the instance.
-        # katfs file access for guests: only the own instance, only the share
-        # assigned to it. The node itself is loopback-only since the fix, so the
-        # only path for guests leads through here — with an enforced share, no
-        # enumeration, no foreign access.
-        if self.path.split("?", 1)[0] in ("/api/katfs/ls", "/api/katfs/read"):
-            inst = instance_by_ip(self.client_address[0])
-            if inst is None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            op = "ls" if self.path.split("?", 1)[0].endswith("/ls") else "read"
-            try:
-                st, ct, data = katfs_proxy_fs(op, katfs_share_for(inst), q.get("path", ["."])[0])
-            except urllib.error.HTTPError as e:
-                st, ct, data = e.code, "application/json", e.read()
-            except Exception as e:
-                st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
-            self.send_response(st); self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(data))); self.end_headers()
-            self.wfile.write(data); return
-        if self.path == "/api/mcp-config":
-            inst = instance_by_ip(self.client_address[0])
-            if inst is None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"guests only"}')
-                return
-            names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
-            allowed = allowed_secret_keys(inst)
-            # allowed=set(): since the MCP hub the server processes run on the
-            # host — the guest only needs the NAMES anymore. Secrets stay as
-            # ${PLACEHOLDER} and no longer leave the manager.
-            # (The local fallback in the guest thus starts without credentials
-            # and fails at the target — visible in the log, not silently.)
-            blob = build_mcp_config(names, allowed=set()) if names else ""
-            missing = sorted(mcp_required_secrets(names) - allowed)
-            data = json.loads(blob) if blob else {"mcpServers": {}}
-            if missing:
-                data["unresolved"] = missing
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode())
-            return
-        # Admin-only (guests blocked by source IP): folder browser + katfs status.
-        if self.path.startswith("/api/katfs/zip"):
-            # "Download everything": the current folder of a share as a ZIP.
-            # Admin-only like the browser below it.
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            root = q.get("path", ["."])[0]
-            share = q.get("share", [""])[0]
-            try:
-                data, stats = katfs_zip(share, root)
-            except Exception as e:
-                body = json.dumps({"error": str(e)}).encode()
-                self.send_response(502); self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body))); self.end_headers()
-                self.wfile.write(body); return
-            leaf = os.path.basename(root.rstrip("/")) if root not in (".", "") else "katfs"
-            fn = (leaf or "katfs") + ".zip"
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", f'attachment; filename="{fn}"')
-            self.send_header("X-Katfs-Files", str(stats.get("files", 0)))
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers(); self.wfile.write(data); return
-        if self.path.startswith("/api/katfs/browse") or self.path.startswith("/api/katfs/file"):
-            # File browser in the Sharing tab. Admin-only (guests blocked by
-            # source IP); the node addresses the currently connected share.
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            path = q.get("path", ["."])[0]
-            share = q.get("share", [""])[0]
-            op = "ls" if "/browse" in self.path else "read"
-            try:
-                st, ct, data = katfs_proxy_fs(op, share, path)
-            except urllib.error.HTTPError as e:
-                st, ct, data = e.code, "application/json", e.read()
-            except Exception as e:
-                st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
-            if op == "read" and st == 200:
-                # Images/text should be viewable in the new tab, otherwise download.
-                ct = mimetypes.guess_type(path)[0] or "application/octet-stream"
-                disp = "attachment" if q.get("dl", [""])[0] == "1" else "inline"
-                fn = os.path.basename(path) or "file"
-                self.send_response(200)
-                self.send_header("Content-Type", ct)
-                self.send_header("Content-Disposition", f'{disp}; filename="{fn}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers(); self.wfile.write(data); return
-            self.send_response(st); self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(data))); self.end_headers()
-            self.wfile.write(data); return
-        if self.path.split("?", 1)[0] == "/api/plugins":
-            body = json.dumps({"plugins": list_plugins()}, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.startswith("/api/hitl/"):
-            hid = self.path[len("/api/hitl/"):].split("?", 1)[0].strip()
-            guest = instance_by_ip(self.client_address[0])
-            out = json.dumps({"status": hitl_status(hid, guest["name"] if guest else None)}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path.startswith("/api/browse") or self.path.startswith("/api/katfs/status"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            if self.path.startswith("/api/browse"):
-                data = list_dirs(q.get("path", ["/"])[0], q.get("hidden", [""])[0] == "1")
-            else:
-                data = katfs_status()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        # Admin-only (guests blocked by source IP): secret names + policy for the UI.
-        if self.path in ("/api/changelog", "/api/security"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-            data = ({"text": load_changelog()} if self.path == "/api/changelog"
-                    else {"issues": load_security()})
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        if self.path in ("/api/secret-keys", "/api/secret-policy", "/api/mcps"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-            if self.path == "/api/secret-keys":
-                data = {"keys": sorted(secret_store().keys())}
-            elif self.path == "/api/mcps":
-                data = load_mcps()
-            else:
-                data = load_secret_policy()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
-            return
-        # Admin UI only: guests have no business here. /api/settings served the
-        # API keys in plain text until just now — bypassing broker and policy.
-        _p = self.path.split("?", 1)[0]
-        # Rest der Admin-Liste; die migrierten Pfade tragen ihr admin=True
-        # inzwischen an der Route selbst (siehe ROUTER oben).
-        if _p in ("/api/chats", "/api/notifications"):
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-        if _p == "/api/chats":
-            q = urllib.parse.parse_qs(self.path.partition("?")[2])
-            if "since" in q or "wait" in q:
-                try:
-                    since = int(q.get("since", ["0"])[0] or 0)
-                    wait = min(30.0, max(0.0, float(q.get("wait", ["25"])[0] or 0)))
-                except ValueError:
-                    since, wait = 0, 0.0
-                rev, chats = wait_chats(since, wait)
-                body = json.dumps({"rev": rev, "chats": chats,
-                                   "tombstones": load_tombstones()}).encode()
-            else:
-                body = json.dumps(load_chats()).encode()
-            ct = "application/json"
-        elif _p == "/api/notifications":
-            q = urllib.parse.parse_qs(self.path.partition("?")[2])
-            if "since" in q or "wait" in q:
-                try:
-                    since = int(q.get("since", ["0"])[0] or 0)
-                    wait = min(30.0, max(0.0, float(q.get("wait", ["25"])[0] or 0)))
-                except ValueError:
-                    since, wait = 0, 0.0
-                rev, notifs = wait_notifs(since, wait)
-                lst = notifs if notifs is not None else []
-                unread = sum(1 for n in load_notifications() if not n.get("read"))
-                body = json.dumps({"rev": rev, "notifications": notifs, "unread": unread}).encode()
-            else:
-                lst = load_notifications()
-                body = json.dumps({"notifications": lst,
-                                   "unread": sum(1 for n in lst if not n.get("read"))}).encode()
-            ct = "application/json"
-        elif self.path.startswith("/api/memory/"):
-            # Path segments are URL-decoded: keys may carry spaces/umlauts, and
-            # a slash inside a key stays one key (everything after the instance).
-            seg = [urllib.parse.unquote(x)
-                   for x in self.path[len("/api/memory/"):].split("/")]
-            if len(seg) > 2:
-                seg = [seg[0], "/".join(seg[1:])]
-            # A guest may only read its OWN memory — the name then comes from the
-            # source IP, not from the path. Only the host (admin, not an instance)
-            # may specify a foreign name in the path.
-            guest = instance_by_ip(self.client_address[0])
-            inst = guest["name"] if guest else seg[0]
-            if len(seg) >= 2 and seg[1]:
-                body = json.dumps({"value": mem_recall(inst, seg[1])}, ensure_ascii=False).encode()
-            else:
-                body = json.dumps(mem_recall(inst), ensure_ascii=False).encode()
-            ct = "application/json"
-        elif self.path.startswith("/api/openrouter-models"):
-            body = json.dumps(openrouter_models("refresh=1" in self.path,
-                                                "tools=1" in self.path,
-                                                "relevant=1" in self.path)).encode()
-            ct = "application/json"
-        else:
-            if instance_by_ip(self.client_address[0]) is not None:
-                return self._forbid()
-            body = render().encode()
-            ct = "text/html; charset=utf-8"
+        if self.path.split("?", 1)[0].startswith("/api/"):
+            return self._json({"error": "not found"}, 404)
+        body = render().encode()
         self.send_response(200)
-        self.send_header("Content-Type", ct)
-        if ct.startswith("text/html"):
-            # Never cache: a stale manager page after an update produces ghost
-            # errors (old JS logic against a new API).
-            self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # Never cache: a stale manager page after an update produces ghost
+        # errors (old JS logic against a new API).
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -4041,680 +3572,1025 @@ class H(BaseHTTPRequestHandler):
     def _do_POST(self):
         if not self._auth():
             return
-        _pp = self.path.split("?", 1)[0]
+        p = self.path.split("?", 1)[0]
         if instance_by_ip(self.client_address[0]) is not None and not (
-                _pp in GUEST_POST_PATHS or _pp.startswith(GUEST_POST_PREFIXES)):
-            self.send_response(403)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":"forbidden"}')
+                p in GUEST_POST_PATHS or p.startswith(GUEST_POST_PREFIXES)):
+            return self._forbid()
+        if self._dispatch("POST"):
             return
-        hit = ROUTER.resolve("POST", _pp)
-        if hit is not None:
-            fn, admin_only = hit
-            if admin_only and instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"forbidden"}')
-                return
-            out = fn(self)
-            if out is None:
-                return
+        self._json({"msg": "unknown"}, 404)
+
+    def _dispatch(self, method):
+        """Route-table lookup. True when a route answered (or was forbidden)."""
+        hit = ROUTER.resolve(method, self.path)
+        if hit is None:
+            return False
+        fn, admin_only = hit
+        if admin_only and instance_by_ip(self.client_address[0]) is not None:
+            self._forbid()
+            return True
+        out = fn(self)
+        if out is not None:
             body, ct = out
-            self.send_response(200)
-            self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        if _pp.startswith("/api/llm/"):
-            # LLM key injection: its own branch right up front, because the
-            # response may be streamed and doesn't fit the JSON schema of the
-            # other routes.
-            return self._llm_proxy(_pp)
-        if _pp == "/api/iroh":
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            act = b.get("action")
-            if act == "add":
-                ok, msg = irohgw_allow_add(b.get("id", ""), b.get("label", ""))
-            elif act == "remove":
-                ok, msg = irohgw_allow_remove(b.get("id", ""))
-            else:
-                ok, msg = False, "unknown action"
-            out = json.dumps({"ok": ok, "msg": msg, **irohgw_status()}).encode()
-            self.send_response(200 if ok else 400)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        # Voice: the service listens on loopback and is not reachable from
-        # outside. The manager is the only door — it already knows the caller
-        # (basic auth or source IP) and passes raw audio or WAV through unchanged
-        # instead of repackaging it.
-        if _pp in ("/api/stt", "/api/tts"):
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            payload = self.rfile.read(ln) if ln else b""
-            if _pp == "/api/tts":
-                # Mix in voice/speed from the shared settings — app and web send
-                # only {"text"}; explicit client values win.
-                try:
-                    b = json.loads(payload or b"{}")
-                    b["text"] = speakable_text(b.get("text", ""))
-                    st = load_settings()
-                    if st.get("TTS_VOICE") and not b.get("voice"):
-                        b["voice"] = st["TTS_VOICE"]
-                    if st.get("TTS_SPEED") and not b.get("speed"):
-                        b["speed"] = float(str(st["TTS_SPEED"]).replace(",", "."))
-                    payload = json.dumps(b).encode()
-                except (ValueError, TypeError):
-                    pass
-            try:
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{VOICE_PORT}{_pp[len('/api'):]}",
-                    data=payload, method="POST",
-                    headers={"Content-Type": self.headers.get(
-                        "Content-Type", "application/octet-stream")})
-                with urllib.request.urlopen(req, timeout=180) as r:
-                    data = r.read()
-                    ct = r.headers.get("Content-Type", "application/json")
-                code = 200
-                if _pp == "/api/stt":
-                    try:
-                        j = json.loads(data)
-                        g = instance_by_ip(self.client_address[0])
-                        stt_remember(j.get("text", ""), j.get("seconds"),
-                                     g["name"] if g else self.client_address[0],
-                                     audio=payload,
-                                     ctype=self.headers.get("Content-Type", ""))
-                    except (ValueError, TypeError):
-                        pass
-            except urllib.error.HTTPError as e:
-                data, ct, code = e.read(), "application/json", e.code
-            except Exception as e:
-                data = json.dumps({"error": f"voice service unreachable: {e!r}"}).encode()
-                ct, code = "application/json", 503
-            self.send_response(code)
-            self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-        if self.path == "/api/usage":
-            # An agent's usage report. Like /api/audit, only for real guests:
-            # the instance comes from the source IP, not from the body —
-            # otherwise a VM could forge another one's usage.
-            inst = instance_by_ip(self.client_address[0])
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if inst is not None:
-                usage_add(inst["name"], body.get("model", ""),
-                          body.get("prompt_tokens"), body.get("completion_tokens"),
-                          body.get("cost"))
-            self.send_response(204); self.end_headers(); return
-        if self.path == "/api/mcp":
-            # A guest's MCP call -> hub. Real guests only: the instance comes
-            # from the source IP; the admin can pass "instance" in the body for
-            # testing.
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            inst = instance_by_ip(self.client_address[0])
-            if inst is None and b.get("instance"):
-                inst = next((i for i in load_instances()
-                             if i["name"] == b["instance"]), None)
-            if inst is None:
-                st, out = 403, {"error": "unknown caller"}
-            else:
-                st, out = mcp_hub_call(inst, str(b.get("server") or ""),
-                                       b.get("payload") or {})
-                m = (b.get("payload") or {}).get("method", "")
-                if m == "tools/call":
-                    try:
-                        audit_append(inst["name"], "mcp:" + str(b.get("server")),
-                                     ((b.get("payload") or {}).get("params") or {}).get("name", ""),
-                                     st == 200 and "error" not in out)
-                    except Exception:
-                        pass
-            body = json.dumps(out).encode()
-            self.send_response(st)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers(); self.wfile.write(body); return
-        if self.path in ("/api/task-edit", "/api/task-delete"):
-            _g = instance_by_ip(self.client_address[0])
-            if _g is not None and _g.get("name") != ORCH_INSTANCE:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"orchestrator only"}'); return
-        if self.path == "/api/task-edit":
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            msg = update_task(str(b.get("id") or ""), b.get("message"), b.get("schedule"))
-            out = json.dumps({"result": msg}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/task-delete":
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            tid = str(b.get("id") or "")
-            def del_mut(tasks):
-                keep = [x for x in tasks if x.get("id") != tid]
-                gone = len(tasks) - len(keep)
-                tasks[:] = keep
-                return bool(gone), gone
-            gone = with_tasks(del_mut)
-            out = json.dumps({"deleted": gone, "id": tid}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path in ("/api/playbook-add", "/api/playbook-remove"):
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            g = instance_by_ip(self.client_address[0])
-            inst = g["name"] if g else (b.get("instance") or "")
-            if self.path.endswith("add"):
-                r = pb_add(inst, b.get("text") or b.get("rule") or "")
-                out = {"id": r, "added": bool(r and r != "exists"), "note": r}
-            else:
-                out = {"removed": pb_remove(inst, b.get("id") or "")}
-            data = json.dumps(out).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data))); self.end_headers()
-            self.wfile.write(data); return
-        if self.path == "/api/memory-search":
-            # Semantic search in long-term memory. Like /api/memory, the instance
-            # is the guest's (source IP); the admin may specify "instance" in the
-            # body (for testing).
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            guest = instance_by_ip(self.client_address[0])
-            target = guest["name"] if guest else (b.get("instance") or "")
-            hits = sem_search(target, b.get("query", ""), b.get("k", 5)) if target else []
-            out = json.dumps({"hits": hits}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers(); self.wfile.write(out); return
-        if self.path in ("/api/mission-start", "/api/mission-update",
-                         "/api/mission-finish"):
-            # Mission write access: every persistent agent (its own missions)
-            # or admin. Ephemeral VMs are excluded — they are deleted after the
-            # task, their mission would dangle without an owner.
-            g = instance_by_ip(self.client_address[0])
-            if g is not None and g["name"].startswith(("task-", "sub-")):
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"ephemeral VMs may not own missions"}'); return
-            inst = g["name"] if g else ORCH_INSTANCE
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if self.path.endswith("start"):
-                mid, note = mission_start(inst, b.get("goal", ""), b.get("steps") or [])
-                out = {"id": mid, "note": note}
-            elif self.path.endswith("update"):
-                out = {"msg": mission_update(inst, b.get("id", ""),
-                                             step=b.get("step"), status=b.get("status"),
-                                             result=b.get("result", ""),
-                                             task_id=b.get("task_id", ""),
-                                             add_step=b.get("add_step", ""),
-                                             note=b.get("note", ""),
-                                             target=b.get("target", ""))}
-            else:
-                out = {"msg": mission_finish(inst, b.get("id", ""),
-                                             summary=b.get("summary", ""),
-                                             failed=bool(b.get("failed")))}
-            body = json.dumps(out, ensure_ascii=False).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.startswith("/api/mission-admin"):
-            # UI: pause/resume/abort, delete, edit — admin only (guests blocked).
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            # Without an instance mission_admin resolves the owner itself —
-            # web UI and app only know the mission id, and the owner can be any
-            # agent since missions are no longer orchestrator-only.
-            action = b.get("action", "")
-            if action == "delete":
-                msg = mission_delete(b.get("instance", ""), b.get("id", ""))
-            elif action == "edit":
-                msg = mission_edit(b.get("instance", ""), b.get("id", ""),
-                                   goal=b.get("goal"), steps=b.get("steps"),
-                                   status=b.get("status"))
-            else:
-                msg = mission_admin(b.get("instance", ""), b.get("id", ""), action)
-            out = {"msg": msg}
-            body = json.dumps(out).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body); return
-        if self.path.split("?", 1)[0].startswith("/api/plugins"):
-            # Manage tool plugins (upload/boilerplate/delete): admin only.
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            pp = self.path.split("?", 1)[0]
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            raw_body = self.rfile.read(ln) if ln else b""
-            if ln > PLUGIN_MAX_BYTES:
-                out = json.dumps({"error": "file too large (max 5 MB)"}).encode()
-            else:
-                try:
-                    b = json.loads(raw_body or b"{}")
-                except ValueError:
-                    b = {}
-                parts = pp.strip("/").split("/")
-                if len(parts) == 4 and parts[3] == "delete":
-                    ok = plugin_delete(parts[2])
-                    out = json.dumps({"msg": "deleted" if ok else "not found"}).encode()
-                elif len(parts) == 4 and parts[3] == "pin":
-                    h = plugin_pin(parts[2])
-                    out = json.dumps({"msg": "approved" if h else "not found", "sha": (h or "")[:12]}).encode()
-                elif pp == "/api/plugins/new":
-                    err = plugin_write_py(b.get("name", ""), PLUGIN_BOILERPLATE)
-                    out = json.dumps({"error": err} if err else {"msg": "created"}).encode()
-                else:
-                    kind = b.get("kind"); name = b.get("name", "")
-                    if kind == "zip":
-                        try:
-                            raw = base64.b64decode(b.get("data_b64", ""))
-                        except Exception:
-                            raw = b""
-                        err = plugin_write_zip(name, raw)
-                    else:
-                        code = b.get("code")
-                        if code is None and b.get("data_b64"):
-                            code = base64.b64decode(b.get("data_b64", "")).decode("utf-8", "replace")
-                        err = plugin_write_py(name, code or PLUGIN_BOILERPLATE)
-                    out = json.dumps({"error": err} if err else {"msg": "saved"}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/prompts":
-            # Management of prompt templates: admin only.
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if b.get("delete"):
-                msg = prompt_delete(b.get("name", ""))
-            else:
-                msg = prompt_upsert(b.get("name", ""), b.get("text", ""))
-            out = json.dumps({"msg": msg}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/notify":
-            # The agent sends a push notification to app + web. Instance by IP.
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            inst = instance_by_ip(self.client_address[0])
-            _nm = inst["name"] if inst else "admin"
-            nid, note = notify_add(_nm, body.get("title", ""),
-                                   body.get("body") or body.get("message", ""),
-                                   link=("chat:" + _nm) if inst else "")
-            try:
-                # The WHY travels along ("empty" / "rate limit: …") — without it
-                # the saddler once diagnosed the e2e suite's intentional empty
-                # notification as an external service outage.
-                audit_append(inst["name"] if inst else "admin", "notify",
-                             (body.get("title") or "")[:60], bool(nid),
-                             err="" if nid else str(note))
-            except Exception:
-                pass
-            out = json.dumps({"id": nid, "note": note}).encode()
-            self.send_response(200 if nid else 429)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/notifications/read":
-            # App/web acknowledge read notifications (admin, not guest).
-            if instance_by_ip(self.client_address[0]) is not None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"forbidden"}'); return
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if body.get("clear"):
-                n = notif_clear()
-            else:
-                n = notif_mark_read(body.get("id"), bool(body.get("all")))
-            out = json.dumps({"marked": n}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/hitl":
-            # The agent asks for approval of a risky tool. Instance by IP.
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            inst = instance_by_ip(self.client_address[0])
-            hid = hitl_create(inst["name"] if inst else "admin",
-                              str(body.get("tool", ""))[:40], str(body.get("target", ""))[:200])
-            out = json.dumps({"id": hid}).encode()
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out))); self.end_headers()
-            self.wfile.write(out); return
-        if self.path == "/api/signal":
-            # Signal send for agents. The recipient is checked against
-            # ALLOWED_SENDERS, the bot number comes from the settings — the VM
-            # knows neither.
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            ok, note = signal_send(body.get("text") or body.get("message"), body.get("to"))
-            inst = instance_by_ip(self.client_address[0])
-            try:
-                audit_append(inst["name"] if inst else "admin", "send_signal",
-                             (body.get("to") or "default"), ok)
-            except Exception:
-                pass
-            out = json.dumps({"ok": ok, "note": note}).encode()
-            self.send_response(200 if ok else 400)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers(); self.wfile.write(out); return
-        if self.path == "/api/audit":
-            inst = instance_by_ip(self.client_address[0])
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if inst is not None:   # only log real guests, silently discard otherwise
-                try:
-                    audit_append(inst["name"], body.get("tool", ""),
-                                 body.get("target", ""), body.get("ok", True),
-                                 err=body.get("err", ""), result=body.get("result", ""),
-                                 turn=body.get("turn", ""))
-                except Exception:
-                    pass
-            self.send_response(204); self.end_headers(); return
-        # Queue a task from within a VM (create_task tool). The caller is
-        # identified by source IP; it chooses the TARGET (capable instance or
-        # 'ephemeral'), but not its own identity. Ephemeral children
-        # (task-*/sub-*) may NOT create tasks themselves (no runaway).
-        if self.path == "/api/task":
-            inst = instance_by_ip(self.client_address[0])
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if inst is None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
-            if inst["name"].startswith(("task-", "sub-")):
-                out = {"error": "ephemeral VMs may not create tasks"}
-            else:
-                target, terr = resolve_task_target(body.get("target"))
-                message = str(body.get("message", "")).strip()
-                schedule = str(body.get("schedule", "")).strip()
-                wait = bool(body.get("wait"))
-                model = str(body.get("model") or "").strip()[:120]   # ephemeral only
-                if not message:
-                    out = {"error": "message missing"}
-                elif terr:
-                    out = {"error": terr}
-                elif not guest_may_target(inst, target):
-                    out = {"error": f"target '{target}' not allowed for this instance "
-                                    "(own name, 'ephemeral', or a DELEGATE_TARGETS entry "
-                                    "in its config)"}
-                elif wait and not schedule:
-                    ok, res = _run_task_now(target, message, model)
-                    history_add(target, message, res, ok, origin=inst["name"])
-                    out = {"ok": ok, "result": res}
-                else:
-                    t = add_task(target, message, schedule, model=model)
-                    out = {"id": t["id"], "status": t["status"], "target": target}
-            self.send_response(200); self.send_header("Content-Type", "application/json")
-            self.end_headers(); self.wfile.write(json.dumps(out, ensure_ascii=False).encode())
-            return
-        # Signal turn into the shared chat history (app+web). Guests only, the
-        # instance comes from the source IP — the guest doesn't choose it.
-        if self.path == "/api/chat-log":
-            inst = instance_by_ip(self.client_address[0])
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            body = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-            if inst is not None:
-                try:
-                    chat_log_append(inst["name"], body.get("sender", ""),
-                                    body.get("user", ""), body.get("reply", ""))
-                except Exception as e:
-                    # a swallowed append is a hole in the shared chat history
-                    print(f"[quiet] chat_log_append failed: {e!r}", flush=True)
-                try:
-                    orchestrator_ping()   # Signal message -> orchestrator immediately
-                except Exception:
-                    pass
-            self.send_response(204); self.end_headers(); return
-        if self.path.split("?", 1)[0] in ("/api/katfs/write", "/api/katfs/delete"):
-            inst = instance_by_ip(self.client_address[0])
-            if inst is None:
-                self.send_response(403); self.send_header("Content-Type", "application/json")
-                self.end_headers(); self.wfile.write(b'{"error":"guests only"}'); return
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            path = q.get("path", [""])[0]
-            share = katfs_share_for(inst)
-            ln = int(self.headers.get("Content-Length", 0) or 0)
-            if self.path.split("?", 1)[0].endswith("/write"):
-                if ln > KATFS_MAX_WRITE:
-                    self.send_response(413); self.send_header("Content-Type", "application/json")
-                    self.end_headers(); self.wfile.write(b'{"error":"too large"}'); return
-                body = self.rfile.read(ln) if ln else b""
-                args = ("write", share, path, False, body)
-            else:
-                if ln:
-                    self.rfile.read(ln)
-                args = ("delete", share, path, q.get("recursive", ["0"])[0] == "1", None)
-            try:
-                st, ct, data = katfs_proxy_fs(*args)
-            except urllib.error.HTTPError as e:
-                st, ct, data = e.code, "application/json", e.read()
-            except Exception as e:
-                st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
-            self.send_response(st); self.send_header("Content-Type", ct)
-            self.send_header("Content-Length", str(len(data))); self.end_headers()
-            self.wfile.write(data); return
-        if self.path.startswith("/api/chat/"):
-            return self._chat_stream(
-                urllib.parse.unquote(self.path[len("/api/chat/"):].split("?", 1)[0]))
-        if self.path.startswith("/i/"):
-            return self._proxy("POST")
-        parts = self.path.strip("/").split("/")
-        msg = "unknown"
-        try:
-            if parts == ["api", "settings"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                msg = save_settings(json.loads(self.rfile.read(ln) or b"{}"))
-            elif parts == ["api", "security"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = save_security(b.get("issues") or [])
-            elif parts == ["api", "gateway"]:
-                # {"chat": "<id>", "on": true} — guests have no business here,
-                # otherwise a VM could switch off its own filter.
-                if instance_by_ip(self.client_address[0]) is not None:
-                    msg = "forbidden (admin only)"
-                else:
-                    ln = int(self.headers.get("Content-Length", 0) or 0)
-                    b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-                    cid = str(b.get("chat") or "")
-                    if not cid:
-                        msg = "chat missing"
-                    else:
-                        def gw_mut(d, _cid=cid, _on=bool(b.get("on"))):
-                            if _on:
-                                d["chats"][_cid] = True
-                            else:
-                                d["chats"].pop(_cid, None)
-                        with_gateway(gw_mut)
-                        msg = f"gateway {'on' if b.get('on') else 'off'} for {cid}"
-            elif parts == ["api", "models"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = save_curated(b.get("curated") or [])
-            elif parts == ["api", "chats"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                n = merge_chats(json.loads(self.rfile.read(ln) or b"[]"))
-                msg = f"{n} chats saved" if n >= 0 else "error while saving"
-                try:
-                    orchestrator_ping()   # new app/web message -> orchestrator immediately
-                except Exception:
-                    pass
-            elif parts == ["api", "tasks"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                target, terr = resolve_task_target(b.get("instance"))
-                if not b.get("instance") or not b.get("message"):
-                    msg = "instance/message missing"
-                elif terr:
-                    msg = terr
-                else:
-                    t = add_task(target, b.get("message", ""), b.get("schedule", ""))
-                    msg = f"task {t['id']} created ({t['status']})"
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "delete":
-                tid = parts[2]
-                with_tasks(lambda ts, _tid=tid: (True, ts.__setitem__(
-                    slice(None), [x for x in ts if x["id"] != _tid])))
-                msg = f"task {tid} deleted"
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" and parts[3] == "update":
-                ln = int(self.headers.get("Content-Length", 0) or 0)
-                b = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
-                inst_new, terr = (resolve_task_target(b.get("instance"))
-                                  if b.get("instance") else (None, ""))
-                msg = terr or update_task(parts[2], b.get("message"), b.get("schedule"),
-                                          instance=inst_new)
-            elif parts == ["api", "secret-policy"]:
-                if instance_by_ip(self.client_address[0]) is not None:
-                    msg = "forbidden (admin only)"
-                else:
-                    ln = int(self.headers.get("Content-Length", 0))
-                    msg = save_secret_policy(json.loads(self.rfile.read(ln) or b"{}"))
-            elif parts == ["api", "mcps"]:
-                if instance_by_ip(self.client_address[0]) is not None:
-                    msg = "forbidden (admin only)"
-                else:
-                    ln = int(self.headers.get("Content-Length", 0))
-                    b = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = upsert_mcp(b.get("name", ""), b.get("description", ""), b.get("command", ""), b.get("args", []), b.get("env"))
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "mcps" and parts[3] == "delete":
-                if instance_by_ip(self.client_address[0]) is not None:
-                    msg = "forbidden (admin only)"
-                else:
-                    msg = delete_mcp(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
-            elif parts == ["api", "personas"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = upsert_persona(b.get("name", ""), b.get("prompt", ""))
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "personas" and parts[3] == "delete":
-                msg = delete_persona(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
-            elif parts == ["api", "skills"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""))
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "skills" and parts[3] == "delete":
-                msg = delete_skill(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
-            elif parts == ["api", "ha-alias"]:
-                # Guest teaches HA a spoken-name alias (STT mishears "Decke"
-                # as "denke"). The HA token stays on the host — the guest sends
-                # only (spoken, entity_id); the manager writes the alias.
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = _haalias.learn_alias(b.get("spoken", ""), b.get("entity", ""))
-            elif parts == ["api", "ha-control"]:
-                # Deterministic voice control of HA: the manager matches the
-                # spoken target server-side (exact -> area -> fuzzy), switches
-                # it, and auto-learns the alias on a fuzzy hit. No LLM in the
-                # matching loop, so a small/fast model stays reliable.
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                msg = _haalias.control(b.get("spoken", ""), b.get("action", ""))
-            elif len(parts) == 3 and parts[0] == "api" and parts[1] == "memory":
-                ln = int(self.headers.get("Content-Length", 0))
-                b = json.loads(self.rfile.read(ln) or b"{}")
-                guest = instance_by_ip(self.client_address[0])
-                target = guest["name"] if guest else parts[2]
-                key, value = b.get("key", ""), b.get("value")   # null = delete
-                msg = mem_store(target, key, value)
-                # Additionally store the same thing semantically. If the embedder
-                # fails, the flat memory above stays written anyway.
-                sem = sem_store(target, value, key) if value is not None else False
-                msg += " (+semantic)" if sem else ("" if value is None else " (semantic off)")
-            elif parts == ["api", "create"]:
-                ln = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(ln) or b"{}")
-                cfg = body.get("config", {}) or {}
-                mcps = [str(m) for m in (body.get("mcps") or []) if m]
-                if mcps:
-                    cfg["MCP_SERVERS"] = ",".join(mcps)
-                # Tool allowlist: only set it if it's a real subset (all
-                # selected -> omit = all). Drop unknown names.
-                tools = [t for t in (body.get("tools") or []) if t in AGENT_TOOL_NAMES]
-                if tools and set(tools) != AGENT_TOOL_NAMES:
-                    cfg["AGENT_TOOLS"] = ",".join(tools)
-                msg = create_instance(body.get("name", ""), body.get("template", ""),
-                                      cfg, body.get("mounts", []),
-                                      internet=body.get("internet", True))
-            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "instances":
-                name, action = parts[2], parts[3]
-                if action == "delete":
-                    msg = delete_instance(name)
-                elif action == "mounts":
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = set_mounts(name, body.get("mounts", []))
-                elif action == "internet":
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = set_internet(name, bool(body.get("on", True)))
-                elif action == "tools":
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = set_instance_tools(name, body.get("tools") or [])
-                elif action == "config":
-                    # Set/delete a single config key (admin; secrets stay out —
-                    # those only go through the broker).
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    key = str(body.get("key", "")).strip()
-                    val = body.get("value", "")
-                    inst2 = next((i for i in load_instances() if i["name"] == name), None)
-                    if not inst2:
-                        msg = "unknown"
-                    elif not re.fullmatch(r"[A-Z][A-Z0-9_]{1,40}", key) or key in NEVER_PERSIST:
-                        msg = f"error: key '{key}' not allowed"
-                    elif key == "MCP_SERVERS" and mcp_servers_error(val):
-                        msg = "error: " + mcp_servers_error(val)
-                    else:
-                        cfg2 = inst2.setdefault("config", {})
-                        if val in ("", None):
-                            cfg2.pop(key, None)
-                        else:
-                            cfg2[key] = str(val)
-                        with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-                            json.dump(inst2, fh, indent=2)
-                        msg = f"{key} " + ("removed" if val in ("", None) else f"= {val}") +                               (" (applies after stop/start)" if is_running(inst2) else "")
-                elif action == "persist":
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = set_persist_disk(name, bool(body.get("on")))
-                elif action == "diskreset":
-                    msg = reset_upper(name)
-                elif action == "model":
-                    # Not in GUEST_POST_PATHS — guest VMs never reach here
-                    # (the allowlist at the start of do_POST blocks them with 403).
-                    ln = int(self.headers.get("Content-Length", 0))
-                    body = json.loads(self.rfile.read(ln) or b"{}")
-                    msg = set_model(name, body.get("model", ""))
-                else:
-                    inst = next((i for i in load_instances() if i["name"] == name), None)
-                    if inst:
-                        if action == "restart":       # stop/start: picks up a rebuilt image
-                            stop(inst)
-                            msg = start(inst)
-                        else:
-                            msg = start(inst) if action == "start" else stop(inst) if action == "stop" else "??"
-        except Exception as e:
-            msg = f"error: {e!r}"
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+            self._send(body, ct)
+        return True
+
+    # ---- small helpers every route uses ------------------------------------
+    def _send(self, body, ct="application/json", code=200):
+        self.send_response(code)
+        self.send_header("Content-Type", ct)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(json.dumps({"msg": msg}).encode())
+        self.wfile.write(body)
+
+    def _json(self, obj, code=200):
+        self._send(json.dumps(obj, ensure_ascii=False).encode(), "application/json", code)
+
+    def _raw(self):
+        ln = int(self.headers.get("Content-Length", 0) or 0)
+        return self.rfile.read(ln) if ln else b""
+
+    def _body(self, default=None):
+        """JSON body; {} (or `default`) when empty or malformed."""
+        raw = self._raw()
+        if not raw:
+            return {} if default is None else default
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return {} if default is None else default
+
+    def _guest(self):
+        return instance_by_ip(self.client_address[0])
+
+
+# =============================================================================
+# HTTP routes — one function per path, registered in ROUTER. The handler
+# methods _do_GET/_do_POST only authenticate, apply the guest allow/deny
+# lists, dispatch through the table and fall back to the admin UI / 404.
+# A route gets the handler `h`; it either returns (body, content-type) for a
+# plain 200 or answers itself via h._json(obj, code) / h.wfile and returns
+# None. `admin=True` = guests (VMs, identified by source IP) get 403.
+# Grouped by domain; new routes go HERE, never into an if-chain.
+# =============================================================================
+
+def _msg_route(method, path, prefix=False, admin=True):
+    """Decorator for the {"msg": …} family (UI actions): the function returns
+    a status string; exceptions become "error: …" instead of a dropped
+    connection, exactly as the old chain did."""
+    def deco(fn):
+        def wrapped(h):
+            try:
+                msg = fn(h)
+            except Exception as e:
+                msg = f"error: {e!r}"
+            return json.dumps({"msg": msg}).encode(), "application/json"
+        wrapped.__name__ = fn.__name__
+        ROUTER.add(method, path, wrapped, prefix=prefix, admin=admin)
+        return fn
+    return deco
+
+
+def _qs(h):
+    return urllib.parse.parse_qs(h.path.partition("?")[2])
+
+
+def _tail(h, prefix):
+    """Path remainder after `prefix`, query stripped, URL-decoded per segment."""
+    return [urllib.parse.unquote(x) for x in h.path.split("?", 1)[0][len(prefix):].split("/")]
+
+
+# ---- pages and proxies ------------------------------------------------------
+@ROUTER.get("/chat", admin=True)
+def _rt_chat_page(h):
+    want = _qs(h).get("i", [""])[0]
+    body = chatui.render(web_instances(), want, LOGO_INLINE).encode()
+    h.send_response(200)
+    h.send_header("Content-Type", "text/html; charset=utf-8")
+    # Don't cache: otherwise the browser holds on to an old version (that
+    # was the cause of the gray emoji boxes after the icon fix).
+    h.send_header("Cache-Control", "no-store, must-revalidate")
+    h.send_header("Content-Length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
+
+
+@ROUTER.get("/katfs", admin=True)
+def _rt_katfs_redirect(h):
+    h.send_response(301)
+    h.send_header("Location", "/katfs/")
+    h.end_headers()
+
+
+@ROUTER.get("/katfs/", prefix=True, admin=True)
+def _rt_katfs_proxy(h):
+    return h._katfs_proxy()
+
+
+@ROUTER.get("/i/", prefix=True, admin=True)
+def _rt_instance_proxy_get(h):
+    name, _, tail = h.path[3:].partition("/")
+    if tail.split("?", 1)[0].rstrip("/").split("/")[0] == "term":
+        return h._term_route(name, tail.split("?", 1)[0])
+    return h._proxy("GET")
+
+
+@ROUTER.post("/i/", prefix=True, admin=True)
+def _rt_instance_proxy_post(h):
+    return h._proxy("POST")
+
+
+@ROUTER.post("/api/chat/", prefix=True, admin=True)
+def _rt_chat_stream(h):
+    return h._chat_stream(urllib.parse.unquote(h.path[len("/api/chat/"):].split("?", 1)[0]))
+
+
+@ROUTER.post("/api/llm/", prefix=True)
+def _rt_llm_proxy(h):
+    # LLM key injection: streamed, so it answers itself.
+    return h._llm_proxy(h.path.split("?", 1)[0])
+
+
+# ---- secrets, credentials, MCP config (guests, by source IP) ----------------
+@ROUTER.get("/api/secrets")
+def _rt_secrets(h):
+    inst = h._guest()
+    keys = sorted(allowed_secret_keys(inst)) if inst else []
+    return h._json({"allowed": keys, "instance": inst.get("name") if inst else None})
+
+
+@ROUTER.get("/api/claude-credentials")
+def _rt_claude_credentials(h):
+    # Subscription login for the claude template: the guest fetches the LIVE
+    # credential of the host at boot. Only the claudeAiOauth block — the
+    # mcpOAuth tokens are none of the VM's business. Strictly gated: only a
+    # real guest whose instance runs the claude template.
+    inst = h._guest()
+    if inst is None or inst.get("template") != "claude":
+        return h._json({"error": "claude template guests only"}, 403)
+    try:
+        with open(CLAUDE_CRED_SRC) as fh:
+            full = json.load(fh)
+        return h._json({"claudeAiOauth": full["claudeAiOauth"]})
+    except (OSError, ValueError, KeyError):
+        return h._json({"error": "no host credential (run claude /login on the host)"}, 503)
+
+
+@ROUTER.get("/api/secret/", prefix=True)
+def _rt_secret(h):
+    name = h.path.split("/api/secret/", 1)[1]
+    inst = h._guest()
+    allowed = allowed_secret_keys(inst) if inst else set()
+    if name not in allowed:
+        return h._json({"error": "not allowed"}, 403)
+    return h._json({"value": secret_store().get(name, "")})
+
+
+@ROUTER.get("/api/mcp-config")
+def _rt_mcp_config(h):
+    # Counterpart to /api/secret/<name>, but for MCP: only the guest itself,
+    # only its own servers. Since the hub the processes run on the host — the
+    # guest needs the NAMES; secrets stay ${PLACEHOLDER} and never leave.
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
+    blob = build_mcp_config(names, allowed=set()) if names else ""
+    missing = sorted(mcp_required_secrets(names) - allowed_secret_keys(inst))
+    data = json.loads(blob) if blob else {"mcpServers": {}}
+    if missing:
+        data["unresolved"] = missing
+    return h._json(data)
+
+
+@ROUTER.post("/api/mcp")
+def _rt_mcp_call(h):
+    # A guest's MCP call -> hub. The instance comes from the source IP; the
+    # admin can pass "instance" in the body for testing.
+    b = h._body()
+    inst = h._guest()
+    if inst is None and b.get("instance"):
+        inst = next((i for i in load_instances() if i["name"] == b["instance"]), None)
+    if inst is None:
+        return h._json({"error": "unknown caller"}, 403)
+    st, out = mcp_hub_call(inst, str(b.get("server") or ""), b.get("payload") or {})
+    if (b.get("payload") or {}).get("method", "") == "tools/call":
+        try:
+            audit_append(inst["name"], "mcp:" + str(b.get("server")),
+                         ((b.get("payload") or {}).get("params") or {}).get("name", ""),
+                         st == 200 and "error" not in out)
+        except Exception:
+            pass
+    return h._json(out, st)
+
+
+# ---- agents, tasks, missions, playbooks, memory (guest-scoped) --------------
+@ROUTER.get("/api/agent-tools")
+def _rt_agent_tools(h):
+    return h._json({"tools": AGENT_TOOLS_CATALOG})
+
+
+@ROUTER.get("/api/agents")
+def _rt_agents(h):
+    # Roster for routing (list_agents). Capabilities only — no secrets. A
+    # guest lists only what it may delegate to; ephemeral children hidden.
+    guest = h._guest()
+    roster = []
+    for i in load_instances():
+        if i["name"].startswith(("task-", "sub-")):
+            continue
+        if guest is not None and not guest_may_target(guest, i["name"]):
+            continue
+        cfg = i.get("config") or {}
+        mkey = next((k for k in MODEL_KEYS if cfg.get(k)), "")
+        # Backend from the set model key, not the template (which stays
+        # "openrouter" after a switch to orcarouter/llama via set_model).
+        backend = {v: k for k, v in PROVIDER_MODEL_KEY.items()}.get(mkey, i.get("template", ""))
+        if cfg.get("LLAMA_ENDPOINT"):
+            backend = "llama"
+        roster.append({"name": i["name"], "template": i.get("template", ""),
+                       "backend": backend, "running": is_running(i),
+                       "model": cfg.get(mkey, "") if mkey else "",
+                       "mcps": [n for n in (cfg.get("MCP_SERVERS", "") or "").split(",") if n]})
+    return h._json({"agents": roster})
+
+
+@ROUTER.get("/api/inbox")
+def _rt_inbox(h):
+    # EVERY user message of every chat — among guests only the orchestrator.
+    guest = h._guest()
+    if guest is not None and guest["name"] != ORCH_INSTANCE:
+        return h._forbid()
+    peek = _qs(h).get("peek", ["0"])[0] == "1"
+    return h._json({"messages": inbox_since(peek=peek)})
+
+
+@ROUTER.get("/api/missions")
+def _rt_missions(h):
+    # Guest: only its OWN missions. Admin: ?instance= or all.
+    g = h._guest()
+    if g is not None:
+        return h._json({"missions": mission_list(g["name"])})
+    inst = _qs(h).get("instance", [""])[0]
+    return h._json({"missions": mission_list(inst)} if inst else {"by_instance": load_missions()})
+
+
+@ROUTER.get("/api/playbooks")
+def _rt_playbooks(h):
+    g = h._guest()
+    inst = g["name"] if g else _qs(h).get("instance", [""])[0]
+    return h._json({"playbooks": pb_list(inst)})
+
+
+@ROUTER.get("/api/tasks-open")
+def _rt_tasks_open(h):
+    g = h._guest()
+    if g is not None and g.get("name") != ORCH_INSTANCE:
+        return h._json({"error": "orchestrator only"}, 403)
+    rows = [{"id": t.get("id"), "instance": t.get("instance"),
+             "schedule": t.get("schedule", ""), "status": t.get("status", ""),
+             "next_run": t.get("next_run", 0), "message": str(t.get("message", ""))[:200]}
+            for t in load_tasks()]
+    return h._json({"tasks": rows})
+
+
+@ROUTER.get("/api/history")
+def _rt_history(h):
+    # Guest: only runs it created or executed; orchestrator and admin: all.
+    q = _qs(h)
+    guest = h._guest()
+    scope = guest["name"] if guest is not None and guest["name"] != ORCH_INSTANCE else None
+    return h._json({"rows": history_search(q.get("q", [""])[0], q.get("limit", ["20"])[0],
+                                           instance=scope)})
+
+
+@ROUTER.get("/api/hitl/", prefix=True)
+def _rt_hitl_status(h):
+    hid = _tail(h, "/api/hitl/")[0].strip()
+    guest = h._guest()
+    return h._json({"status": hitl_status(hid, guest["name"] if guest else None)})
+
+
+@ROUTER.get("/api/memory/", prefix=True)
+def _rt_memory_get(h):
+    # Keys may carry spaces/umlauts; a slash inside a key stays one key. A
+    # guest reads only its OWN memory — the name comes from the source IP.
+    seg = _tail(h, "/api/memory/")
+    if len(seg) > 2:
+        seg = [seg[0], "/".join(seg[1:])]
+    guest = h._guest()
+    inst = guest["name"] if guest else seg[0]
+    if len(seg) >= 2 and seg[1]:
+        return h._json({"value": mem_recall(inst, seg[1])})
+    return h._json(mem_recall(inst))
+
+
+@ROUTER.post("/api/memory/", prefix=True)
+def _rt_memory_post(h):
+    b = h._body()
+    guest = h._guest()
+    target = guest["name"] if guest else _tail(h, "/api/memory/")[0]
+    key, value = b.get("key", ""), b.get("value")   # null = delete
+    msg = mem_store(target, key, value)
+    # Also store semantically; if the embedder fails the flat memory stays.
+    sem = sem_store(target, value, key) if value is not None else False
+    msg += " (+semantic)" if sem else ("" if value is None else " (semantic off)")
+    return h._json({"msg": msg})
+
+
+@ROUTER.post("/api/memory-search")
+def _rt_memory_search(h):
+    b = h._body()
+    guest = h._guest()
+    target = guest["name"] if guest else (b.get("instance") or "")
+    hits = sem_search(target, b.get("query", ""), b.get("k", 5)) if target else []
+    return h._json({"hits": hits})
+
+
+@ROUTER.post("/api/task")
+def _rt_task_create_guest(h):
+    # create_task tool: the caller is identified by source IP and chooses the
+    # TARGET, not its identity. Ephemeral children may not create tasks.
+    inst = h._guest()
+    body = h._body()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    if inst["name"].startswith(("task-", "sub-")):
+        return h._json({"error": "ephemeral VMs may not create tasks"})
+    target, terr = resolve_task_target(body.get("target"))
+    message = str(body.get("message", "")).strip()
+    schedule = str(body.get("schedule", "")).strip()
+    model = str(body.get("model") or "").strip()[:120]   # ephemeral only
+    if not message:
+        return h._json({"error": "message missing"})
+    if terr:
+        return h._json({"error": terr})
+    if not guest_may_target(inst, target):
+        return h._json({"error": f"target '{target}' not allowed for this instance "
+                                 "(own name, 'ephemeral', or a DELEGATE_TARGETS entry in its config)"})
+    if body.get("wait") and not schedule:
+        ok, res = _run_task_now(target, message, model)
+        history_add(target, message, res, ok, origin=inst["name"])
+        return h._json({"ok": ok, "result": res})
+    t = add_task(target, message, schedule, model=model)
+    return h._json({"id": t["id"], "status": t["status"], "target": target})
+
+
+def _orchestrator_or_admin(h):
+    g = h._guest()
+    return g is None or g.get("name") == ORCH_INSTANCE
+
+
+@ROUTER.post("/api/task-edit")
+def _rt_task_edit(h):
+    if not _orchestrator_or_admin(h):
+        return h._json({"error": "orchestrator only"}, 403)
+    b = h._body()
+    return h._json({"result": update_task(str(b.get("id") or ""), b.get("message"), b.get("schedule"))})
+
+
+@ROUTER.post("/api/task-delete")
+def _rt_task_delete(h):
+    if not _orchestrator_or_admin(h):
+        return h._json({"error": "orchestrator only"}, 403)
+    tid = str(h._body().get("id") or "")
+
+    def del_mut(tasks):
+        keep = [x for x in tasks if x.get("id") != tid]
+        gone = len(tasks) - len(keep)
+        tasks[:] = keep
+        return bool(gone), gone
+    return h._json({"deleted": with_tasks(del_mut), "id": tid})
+
+
+@ROUTER.post("/api/playbook-add")
+@ROUTER.post("/api/playbook-remove")
+def _rt_playbook_edit(h):
+    b = h._body()
+    g = h._guest()
+    inst = g["name"] if g else (b.get("instance") or "")
+    if h.path.split("?", 1)[0].endswith("add"):
+        r = pb_add(inst, b.get("text") or b.get("rule") or "")
+        return h._json({"id": r, "added": bool(r and r != "exists"), "note": r})
+    return h._json({"removed": pb_remove(inst, b.get("id") or "")})
+
+
+@ROUTER.post("/api/mission-start")
+@ROUTER.post("/api/mission-update")
+@ROUTER.post("/api/mission-finish")
+def _rt_mission_write(h):
+    # Every persistent agent (its own missions) or admin. Ephemeral VMs are
+    # excluded — deleted after the task, their mission would dangle.
+    g = h._guest()
+    if g is not None and g["name"].startswith(("task-", "sub-")):
+        return h._json({"error": "ephemeral VMs may not own missions"}, 403)
+    inst = g["name"] if g else ORCH_INSTANCE
+    b = h._body()
+    p = h.path.split("?", 1)[0]
+    if p.endswith("start"):
+        mid, note = mission_start(inst, b.get("goal", ""), b.get("steps") or [])
+        return h._json({"id": mid, "note": note})
+    if p.endswith("update"):
+        return h._json({"msg": mission_update(inst, b.get("id", ""), step=b.get("step"),
+                                              status=b.get("status"), result=b.get("result", ""),
+                                              task_id=b.get("task_id", ""), add_step=b.get("add_step", ""),
+                                              note=b.get("note", ""), target=b.get("target", ""))})
+    return h._json({"msg": mission_finish(inst, b.get("id", ""), summary=b.get("summary", ""),
+                                          failed=bool(b.get("failed")))})
+
+
+@ROUTER.post("/api/mission-admin", admin=True)
+def _rt_mission_admin(h):
+    # UI: pause/resume/abort, delete, edit. Without an instance the owner is
+    # resolved from the id — web UI and app only know the mission id.
+    b = h._body()
+    action = b.get("action", "")
+    if action == "delete":
+        msg = mission_delete(b.get("instance", ""), b.get("id", ""))
+    elif action == "edit":
+        msg = mission_edit(b.get("instance", ""), b.get("id", ""), goal=b.get("goal"),
+                           steps=b.get("steps"), status=b.get("status"))
+    else:
+        msg = mission_admin(b.get("instance", ""), b.get("id", ""), action)
+    return h._json({"msg": msg})
+
+
+# ---- reports from guests: usage, audit, notify, hitl, signal, chat-log ------
+@ROUTER.post("/api/usage")
+def _rt_usage_report(h):
+    # Only real guests: the instance comes from the source IP, not the body.
+    inst = h._guest()
+    body = h._body()
+    if inst is not None:
+        usage_add(inst["name"], body.get("model", ""), body.get("prompt_tokens"),
+                  body.get("completion_tokens"), body.get("cost"))
+    h.send_response(204); h.end_headers()
+
+
+@ROUTER.post("/api/audit")
+def _rt_audit_report(h):
+    inst = h._guest()
+    body = h._body()
+    if inst is not None:   # only log real guests, silently discard otherwise
+        try:
+            audit_append(inst["name"], body.get("tool", ""), body.get("target", ""),
+                         body.get("ok", True), err=body.get("err", ""),
+                         result=body.get("result", ""), turn=body.get("turn", ""))
+        except Exception:
+            pass
+    h.send_response(204); h.end_headers()
+
+
+@ROUTER.post("/api/notify")
+def _rt_notify(h):
+    body = h._body()
+    inst = h._guest()
+    nm = inst["name"] if inst else "admin"
+    nid, note = notify_add(nm, body.get("title", ""), body.get("body") or body.get("message", ""),
+                           link=("chat:" + nm) if inst else "")
+    try:
+        # The WHY travels along ("empty" / "rate limit: …").
+        audit_append(nm, "notify", (body.get("title") or "")[:60], bool(nid), err="" if nid else str(note))
+    except Exception:
+        pass
+    return h._json({"id": nid, "note": note}, 200 if nid else 429)
+
+
+@ROUTER.post("/api/notifications/read", admin=True)
+def _rt_notifications_read(h):
+    body = h._body()
+    n = notif_clear() if body.get("clear") else notif_mark_read(body.get("id"), bool(body.get("all")))
+    return h._json({"marked": n})
+
+
+@ROUTER.post("/api/hitl")
+def _rt_hitl_create(h):
+    body = h._body()
+    inst = h._guest()
+    hid = hitl_create(inst["name"] if inst else "admin", str(body.get("tool", ""))[:40],
+                      str(body.get("target", ""))[:200])
+    return h._json({"id": hid})
+
+
+@ROUTER.post("/api/signal")
+def _rt_signal_send(h):
+    # Recipient checked against ALLOWED_SENDERS, bot number from settings —
+    # the VM knows neither.
+    body = h._body()
+    ok, note = signal_send(body.get("text") or body.get("message"), body.get("to"))
+    inst = h._guest()
+    try:
+        audit_append(inst["name"] if inst else "admin", "send_signal", (body.get("to") or "default"), ok)
+    except Exception:
+        pass
+    return h._json({"ok": ok, "note": note}, 200 if ok else 400)
+
+
+@ROUTER.post("/api/chat-log")
+def _rt_chat_log(h):
+    # Signal turn into the shared chat history. Guests only, instance by IP.
+    inst = h._guest()
+    body = h._body()
+    if inst is not None:
+        try:
+            chat_log_append(inst["name"], body.get("sender", ""), body.get("user", ""), body.get("reply", ""))
+        except Exception as e:
+            print(f"[quiet] chat_log_append failed: {e!r}", flush=True)
+        try:
+            orchestrator_ping()   # Signal message -> orchestrator immediately
+        except Exception:
+            pass
+    h.send_response(204); h.end_headers()
+
+
+# ---- voice ----------------------------------------------------------------
+@ROUTER.post("/api/stt")
+@ROUTER.post("/api/tts")
+def _rt_voice(h):
+    # The voice service listens on loopback; the manager is the only door and
+    # passes raw audio / WAV through unchanged.
+    p = h.path.split("?", 1)[0]
+    payload = h._raw()
+    if p == "/api/tts":
+        # Read-aloud filter + voice/speed from the settings (explicit client values win).
+        try:
+            b = json.loads(payload or b"{}")
+            b["text"] = speakable_text(b.get("text", ""))
+            st = load_settings()
+            if st.get("TTS_VOICE") and not b.get("voice"):
+                b["voice"] = st["TTS_VOICE"]
+            if st.get("TTS_SPEED") and not b.get("speed"):
+                b["speed"] = float(str(st["TTS_SPEED"]).replace(",", "."))
+            payload = json.dumps(b).encode()
+        except (ValueError, TypeError):
+            pass
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{VOICE_PORT}{p[len('/api'):]}", data=payload,
+                                     method="POST", headers={"Content-Type": h.headers.get(
+                                         "Content-Type", "application/octet-stream")})
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = r.read()
+            ct = r.headers.get("Content-Type", "application/json")
+        code = 200
+        if p == "/api/stt":
+            try:
+                j = json.loads(data)
+                g = h._guest()
+                stt_remember(j.get("text", ""), j.get("seconds"), g["name"] if g else h.client_address[0],
+                             audio=payload, ctype=h.headers.get("Content-Type", ""))
+            except (ValueError, TypeError):
+                pass
+    except urllib.error.HTTPError as e:
+        data, ct, code = e.read(), "application/json", e.code
+    except Exception as e:
+        data = json.dumps({"error": f"voice service unreachable: {e!r}"}).encode()
+        ct, code = "application/json", 503
+    h.send_response(code)
+    h.send_header("Content-Type", ct)
+    h.send_header("Content-Length", str(len(data)))
+    h.end_headers()
+    h.wfile.write(data)
+
+
+# ---- katfs (guest: own share only; admin: browser) -------------------------
+def _katfs_answer(h, op, share, path, *extra):
+    try:
+        st, ct, data = katfs_proxy_fs(op, share, path, *extra)
+    except urllib.error.HTTPError as e:
+        st, ct, data = e.code, "application/json", e.read()
+    except Exception as e:
+        st, ct, data = 503, "application/json", json.dumps({"error": str(e)}).encode()
+    return st, ct, data
+
+
+@ROUTER.get("/api/katfs/ls")
+@ROUTER.get("/api/katfs/read")
+def _rt_katfs_guest_fs(h):
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    op = "ls" if h.path.split("?", 1)[0].endswith("/ls") else "read"
+    st, ct, data = _katfs_answer(h, op, katfs_share_for(inst), _qs(h).get("path", ["."])[0])
+    h._send(data, ct, st)
+
+
+@ROUTER.post("/api/katfs/write")
+@ROUTER.post("/api/katfs/delete")
+def _rt_katfs_guest_write(h):
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    q = _qs(h)
+    path, share = q.get("path", [""])[0], katfs_share_for(inst)
+    ln = int(h.headers.get("Content-Length", 0) or 0)
+    if h.path.split("?", 1)[0].endswith("/write"):
+        if ln > KATFS_MAX_WRITE:
+            return h._json({"error": "too large"}, 413)
+        st, ct, data = _katfs_answer(h, "write", share, path, False, h.rfile.read(ln) if ln else b"")
+    else:
+        if ln:
+            h.rfile.read(ln)
+        st, ct, data = _katfs_answer(h, "delete", share, path, q.get("recursive", ["0"])[0] == "1", None)
+    h._send(data, ct, st)
+
+
+@ROUTER.get("/api/katfs/zip", admin=True)
+def _rt_katfs_zip(h):
+    q = _qs(h)
+    root, share = q.get("path", ["."])[0], q.get("share", [""])[0]
+    try:
+        data, stats = katfs_zip(share, root)
+    except Exception as e:
+        return h._json({"error": str(e)}, 502)
+    leaf = os.path.basename(root.rstrip("/")) if root not in (".", "") else "katfs"
+    h.send_response(200)
+    h.send_header("Content-Type", "application/zip")
+    h.send_header("Content-Disposition", f'attachment; filename="{(leaf or "katfs")}.zip"')
+    h.send_header("X-Katfs-Files", str(stats.get("files", 0)))
+    h.send_header("Content-Length", str(len(data)))
+    h.end_headers(); h.wfile.write(data)
+
+
+@ROUTER.get("/api/katfs/browse", admin=True)
+@ROUTER.get("/api/katfs/file", admin=True)
+def _rt_katfs_browse(h):
+    q = _qs(h)
+    path, share = q.get("path", ["."])[0], q.get("share", [""])[0]
+    op = "ls" if "/browse" in h.path else "read"
+    st, ct, data = _katfs_answer(h, op, share, path)
+    if op == "read" and st == 200:
+        # Images/text viewable in the new tab, otherwise download.
+        ct = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        disp = "attachment" if q.get("dl", [""])[0] == "1" else "inline"
+        h.send_response(200)
+        h.send_header("Content-Type", ct)
+        h.send_header("Content-Disposition", f'{disp}; filename="{os.path.basename(path) or "file"}"')
+        h.send_header("Content-Length", str(len(data)))
+        h.end_headers(); h.wfile.write(data)
+        return
+    h._send(data, ct, st)
+
+
+@ROUTER.get("/api/katfs/status", admin=True)
+def _rt_katfs_status(h):
+    return h._json(katfs_status())
+
+
+@ROUTER.get("/api/browse", admin=True)
+def _rt_host_browse(h):
+    q = _qs(h)
+    return h._json(list_dirs(q.get("path", ["/"])[0], q.get("hidden", [""])[0] == "1"))
+
+
+# ---- admin reads --------------------------------------------------------------
+@ROUTER.get("/api/usage/", prefix=True, admin=True)
+def _rt_usage_for(h):
+    nm = re.sub(r"[^a-zA-Z0-9_-]", "", _tail(h, "/api/usage/")[0])
+    try:
+        since = int(_qs(h).get("since", ["0"])[0] or 0)
+    except ValueError:
+        since = 0
+    return h._json(usage_for(nm, since))
+
+
+@ROUTER.get("/api/policy", admin=True)
+def _rt_policy(h):
+    return h._json({"instances": [effective_policy(i) for i in load_instances()]})
+
+
+@ROUTER.get("/api/audit/", prefix=True, admin=True)
+def _rt_audit_read(h):
+    nm = re.sub(r"[^a-zA-Z0-9_-]", "", _tail(h, "/api/audit/")[0])
+    return h._json({"instance": nm, "events": audit_read(nm, limit=1000)})
+
+
+@ROUTER.get("/api/models")
+def _rt_models(h):
+    return h._json({"curated": sorted(load_curated())})
+
+
+@ROUTER.get("/api/plugins")
+def _rt_plugins(h):
+    return h._json({"plugins": list_plugins()})
+
+
+@ROUTER.get("/api/changelog", admin=True)
+def _rt_changelog(h):
+    return h._json({"text": load_changelog()})
+
+
+@ROUTER.get("/api/security", admin=True)
+def _rt_security(h):
+    return h._json({"issues": load_security()})
+
+
+@ROUTER.get("/api/secret-keys", admin=True)
+def _rt_secret_keys(h):
+    return h._json({"keys": sorted(secret_store().keys())})
+
+
+@ROUTER.get("/api/secret-policy", admin=True)
+def _rt_secret_policy(h):
+    return h._json(load_secret_policy())
+
+
+@ROUTER.get("/api/mcps", admin=True)
+def _rt_mcps(h):
+    return h._json(load_mcps())
+
+
+@ROUTER.get("/api/openrouter-models", admin=True)
+def _rt_openrouter_models(h):
+    return h._json(openrouter_models("refresh=1" in h.path, "tools=1" in h.path, "relevant=1" in h.path))
+
+
+def _since_wait(q):
+    try:
+        since = int(q.get("since", ["0"])[0] or 0)
+        wait = min(30.0, max(0.0, float(q.get("wait", ["25"])[0] or 0)))
+    except ValueError:
+        since, wait = 0, 0.0
+    return since, wait
+
+
+@ROUTER.get("/api/chats", admin=True)
+def _rt_chats(h):
+    q = _qs(h)
+    if "since" in q or "wait" in q:
+        rev, chats = wait_chats(*_since_wait(q))
+        return h._json({"rev": rev, "chats": chats, "tombstones": load_tombstones()})
+    return h._json(load_chats())
+
+
+@ROUTER.get("/api/notifications", admin=True)
+def _rt_notifications(h):
+    q = _qs(h)
+    if "since" in q or "wait" in q:
+        rev, notifs = wait_notifs(*_since_wait(q))
+        unread = sum(1 for n in load_notifications() if not n.get("read"))
+        return h._json({"rev": rev, "notifications": notifs, "unread": unread})
+    lst = load_notifications()
+    return h._json({"notifications": lst, "unread": sum(1 for n in lst if not n.get("read"))})
+
+
+# ---- admin writes: the {"msg": …} family ---------------------------------------
+@ROUTER.post("/api/iroh", admin=True)
+def _rt_iroh(h):
+    b = h._body()
+    act = b.get("action")
+    if act == "add":
+        ok, msg = irohgw_allow_add(b.get("id", ""), b.get("label", ""))
+    elif act == "remove":
+        ok, msg = irohgw_allow_remove(b.get("id", ""))
+    else:
+        ok, msg = False, "unknown action"
+    return h._json({"ok": ok, "msg": msg, **irohgw_status()}, 200 if ok else 400)
+
+
+@ROUTER.post("/api/prompts", admin=True)
+def _rt_prompts(h):
+    b = h._body()
+    msg = prompt_delete(b.get("name", "")) if b.get("delete") else prompt_upsert(b.get("name", ""), b.get("text", ""))
+    return h._json({"msg": msg})
+
+
+@ROUTER.post("/api/plugins", admin=True)
+@ROUTER.post("/api/plugins/", prefix=True, admin=True)
+def _rt_plugins_manage(h):
+    pp = h.path.split("?", 1)[0]
+    ln = int(h.headers.get("Content-Length", 0) or 0)
+    raw_body = h.rfile.read(ln) if ln else b""
+    if ln > PLUGIN_MAX_BYTES:
+        return h._json({"error": "file too large (max 5 MB)"})
+    try:
+        b = json.loads(raw_body or b"{}")
+    except ValueError:
+        b = {}
+    parts = pp.strip("/").split("/")
+    if len(parts) == 4 and parts[3] == "delete":
+        return h._json({"msg": "deleted" if plugin_delete(parts[2]) else "not found"})
+    if len(parts) == 4 and parts[3] == "pin":
+        sha = plugin_pin(parts[2])
+        return h._json({"msg": "approved" if sha else "not found", "sha": (sha or "")[:12]})
+    if pp == "/api/plugins/new":
+        err = plugin_write_py(b.get("name", ""), PLUGIN_BOILERPLATE)
+        return h._json({"error": err} if err else {"msg": "created"})
+    name = b.get("name", "")
+    if b.get("kind") == "zip":
+        try:
+            raw = base64.b64decode(b.get("data_b64", ""))
+        except Exception:
+            raw = b""
+        err = plugin_write_zip(name, raw)
+    else:
+        code = b.get("code")
+        if code is None and b.get("data_b64"):
+            code = base64.b64decode(b.get("data_b64", "")).decode("utf-8", "replace")
+        err = plugin_write_py(name, code or PLUGIN_BOILERPLATE)
+    return h._json({"error": err} if err else {"msg": "saved"})
+
+
+@_msg_route("POST", "/api/settings")
+def _rt_settings_save(h):
+    return save_settings(h._body())
+
+
+@_msg_route("POST", "/api/security")
+def _rt_security_save(h):
+    return save_security(h._body().get("issues") or [])
+
+
+@_msg_route("POST", "/api/gateway")
+def _rt_gateway_toggle(h):
+    # {"chat": "<id>", "on": true}
+    b = h._body()
+    cid = str(b.get("chat") or "")
+    if not cid:
+        return "chat missing"
+
+    def gw_mut(d, _cid=cid, _on=bool(b.get("on"))):
+        if _on:
+            d["chats"][_cid] = True
+        else:
+            d["chats"].pop(_cid, None)
+    with_gateway(gw_mut)
+    return f"gateway {'on' if b.get('on') else 'off'} for {cid}"
+
+
+@_msg_route("POST", "/api/models")
+def _rt_models_save(h):
+    return save_curated(h._body().get("curated") or [])
+
+
+@_msg_route("POST", "/api/chats")
+def _rt_chats_merge(h):
+    n = merge_chats(h._body(default=[]))
+    try:
+        orchestrator_ping()   # new app/web message -> orchestrator immediately
+    except Exception:
+        pass
+    return f"{n} chats saved" if n >= 0 else "error while saving"
+
+
+@_msg_route("POST", "/api/tasks")
+def _rt_tasks_create(h):
+    b = h._body()
+    target, terr = resolve_task_target(b.get("instance"))
+    if not b.get("instance") or not b.get("message"):
+        return "instance/message missing"
+    if terr:
+        return terr
+    t = add_task(target, b.get("message", ""), b.get("schedule", ""))
+    return f"task {t['id']} created ({t['status']})"
+
+
+@_msg_route("POST", "/api/tasks/", prefix=True)
+def _rt_tasks_admin(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) != 4:
+        return "unknown"
+    tid, action = parts[2], parts[3]
+    if action == "delete":
+        with_tasks(lambda ts, _tid=tid: (True, ts.__setitem__(slice(None), [x for x in ts if x["id"] != _tid])))
+        return f"task {tid} deleted"
+    if action == "update":
+        b = h._body()
+        inst_new, terr = (resolve_task_target(b.get("instance")) if b.get("instance") else (None, ""))
+        return terr or update_task(tid, b.get("message"), b.get("schedule"), instance=inst_new)
+    return "unknown"
+
+
+@_msg_route("POST", "/api/secret-policy")
+def _rt_secret_policy_save(h):
+    return save_secret_policy(h._body())
+
+
+@_msg_route("POST", "/api/mcps")
+def _rt_mcps_upsert(h):
+    b = h._body()
+    return upsert_mcp(b.get("name", ""), b.get("description", ""), b.get("command", ""), b.get("args", []), b.get("env"))
+
+
+@_msg_route("POST", "/api/mcps/", prefix=True)
+def _rt_mcps_delete(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) == 4 and parts[3] == "delete":
+        return delete_mcp(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
+    return "unknown"
+
+
+@_msg_route("POST", "/api/personas")
+def _rt_personas_upsert(h):
+    b = h._body()
+    return upsert_persona(b.get("name", ""), b.get("prompt", ""))
+
+
+@_msg_route("POST", "/api/personas/", prefix=True)
+def _rt_personas_delete(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) == 4 and parts[3] == "delete":
+        return delete_persona(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
+    return "unknown"
+
+
+@_msg_route("POST", "/api/skills")
+def _rt_skills_upsert(h):
+    b = h._body()
+    return upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""))
+
+
+@_msg_route("POST", "/api/skills/", prefix=True)
+def _rt_skills_delete(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) == 4 and parts[3] == "delete":
+        return delete_skill(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
+    return "unknown"
+
+
+@_msg_route("POST", "/api/ha-alias", admin=False)
+def _rt_ha_alias(h):
+    # Guest teaches HA a spoken-name alias; the HA token stays on the host.
+    b = h._body()
+    return _haalias.learn_alias(b.get("spoken", ""), b.get("entity", ""))
+
+
+@_msg_route("POST", "/api/ha-control", admin=False)
+def _rt_ha_control(h):
+    # Deterministic voice control: matched server-side, no LLM in the loop.
+    b = h._body()
+    return _haalias.control(b.get("spoken", ""), b.get("action", ""))
+
+
+@_msg_route("POST", "/api/create")
+def _rt_instance_create(h):
+    body = h._body()
+    cfg = body.get("config", {}) or {}
+    mcps = [str(m) for m in (body.get("mcps") or []) if m]
+    if mcps:
+        cfg["MCP_SERVERS"] = ",".join(mcps)
+    # Tool allowlist only as a real subset (all selected -> omit = all).
+    tools = [t for t in (body.get("tools") or []) if t in AGENT_TOOL_NAMES]
+    if tools and set(tools) != AGENT_TOOL_NAMES:
+        cfg["AGENT_TOOLS"] = ",".join(tools)
+    return create_instance(body.get("name", ""), body.get("template", ""), cfg,
+                           body.get("mounts", []), internet=body.get("internet", True))
+
+
+def _set_config_key(name, key, val):
+    """Set/delete a single config key (secrets stay out — broker only)."""
+    inst = next((i for i in load_instances() if i["name"] == name), None)
+    if not inst:
+        return "unknown"
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,40}", key) or key in NEVER_PERSIST:
+        return f"error: key '{key}' not allowed"
+    if key == "MCP_SERVERS" and mcp_servers_error(val):
+        return "error: " + mcp_servers_error(val)
+    cfg = inst.setdefault("config", {})
+    if val in ("", None):
+        cfg.pop(key, None)
+    else:
+        cfg[key] = str(val)
+    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
+        json.dump(inst, fh, indent=2)
+    return (f"{key} " + ("removed" if val in ("", None) else f"= {val}")
+            + (" (applies after stop/start)" if is_running(inst) else ""))
+
+
+@_msg_route("POST", "/api/instances/", prefix=True)
+def _rt_instance_action(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) != 4:
+        return "unknown"
+    name, action = parts[2], parts[3]
+    if action == "delete":
+        return delete_instance(name)
+    if action == "mounts":
+        return set_mounts(name, h._body().get("mounts", []))
+    if action == "internet":
+        return set_internet(name, bool(h._body().get("on", True)))
+    if action == "tools":
+        return set_instance_tools(name, h._body().get("tools") or [])
+    if action == "config":
+        b = h._body()
+        return _set_config_key(name, str(b.get("key", "")).strip(), b.get("value", ""))
+    if action == "persist":
+        return set_persist_disk(name, bool(h._body().get("on")))
+    if action == "diskreset":
+        return reset_upper(name)
+    if action == "model":
+        return set_model(name, h._body().get("model", ""))
+    inst = next((i for i in load_instances() if i["name"] == name), None)
+    if not inst:
+        return "unknown"
+    if action == "restart":       # stop/start: picks up a rebuilt image
+        stop(inst)
+        return start(inst)
+    if action == "start":
+        return start(inst)
+    if action == "stop":
+        return stop(inst)
+    return "??"
+
 
 
 def mcp_servers_error(value):

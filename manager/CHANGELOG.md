@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-08 (the if-chain is gone: 104 routes in the table, the handler is a dispatcher)
+
+- `_do_GET` (490 lines) and `_do_POST` (759 lines) were the platform's growth rings: every feature landed as another `elif`. Both are now a dispatcher of a dozen lines each — auth, guest allow/deny, `ROUTER.resolve`, fallback — and every path is a named function registered in `mgr/routes.py`'s table, grouped by domain (pages/proxies, secrets, agents/tasks/missions/memory, guest reports, voice, katfs, admin reads, admin writes). Three handler helpers (`_body`, `_json`, `_guest`) replaced the copy-pasted Content-Length/JSON/send_response blocks; the `{"msg": …}` UI actions share one decorator that turns exceptions into `error: …` as before. Every path the old chain answered resolves in the table (cross-checked mechanically); unknown API paths now answer 404 instead of the admin page. A test asserts the chain stays empty. Verified live: suite green after restart, every route family smoke-tested, a guest turn through the table.
+
 ## 2026-09-08 (architecture tab: desktop client moved to the left of the client row)
 
 - Client row reordered to Desktop client · Halo glasses → KatAgent · Browser · Signal; the iroh-tunnel arrow now runs straight down into iroh-gw, the app's iroh arrow and the browser's Traefik arrow re-routed without crossings. README screenshot of the tab regenerated the same way as this morning (headless Chrome over DevTools, names/costs/hosts masked).

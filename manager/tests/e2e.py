@@ -880,7 +880,7 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.CODE_URL, m.CODE_ROOT = old
         # the old in-manager viewer route is gone: guests never had it, admins use VS Code
-        self.assertNotIn("/api/plugins/", {p for _, _, p, _ in m.ROUTER.inventory()})
+        self.assertNotIn(("GET", "/api/plugins/"), {(meth, p) for meth, _, p, _ in m.ROUTER.inventory()})
 
     def test_set_instance_tools_roundtrip(self):
         """Saving policy tools: a subset persists (tools_all=False), ALL tools
@@ -1465,13 +1465,24 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(kind, ("exact", "prefix"))
             self.assertTrue(path.startswith("/"))
             self.assertIsInstance(admin, bool)
-        by_path = {p: admin for _, _, p, admin in inv}
+        by_route = {(meth, p): admin for meth, _, p, admin in inv}
         # Settings once served the API keys in plain text — guests must not see it.
-        self.assertTrue(by_path["/api/settings"], "/api/settings must stay admin-only")
-        self.assertTrue(by_path["/api/instances"])
-        # The agents need these, so they are deliberately open to guests.
-        self.assertFalse(by_path["/api/skills"])
-        self.assertFalse(by_path["/api/personas"])
+        self.assertTrue(by_route[("GET", "/api/settings")], "/api/settings must stay admin-only")
+        self.assertTrue(by_route[("POST", "/api/settings")])
+        self.assertTrue(by_route[("GET", "/api/instances")])
+        # The agents need these reads, so they are deliberately open to guests —
+        # the writes on the same paths are admin-only.
+        self.assertFalse(by_route[("GET", "/api/skills")])
+        self.assertFalse(by_route[("GET", "/api/personas")])
+        self.assertTrue(by_route[("POST", "/api/skills")])
+        self.assertTrue(by_route[("POST", "/api/personas")])
+        # The whole HTTP surface lives in the table now: no if-chain left.
+        from mgr.routes import source_routes
+        src = open(MANAGER_PATH).read()
+        chain = src[src.index("    def _do_GET(self):"):src.index("    def _dispatch(self, method):")]
+        self.assertEqual([p for _, p, _ in source_routes(chain)], [],
+                         "a path literal crept back into the handler chain")
+        self.assertGreater(len(inv), 90)
 
     def test_skills_page_carries_no_contents(self):
         """Regression: the page inlined the COMPLETE skills.json. With the
