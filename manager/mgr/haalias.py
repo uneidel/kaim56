@@ -184,24 +184,33 @@ def control(spoken, action):
             if r > best:
                 best, best_it, best_name = r, it, n
 
-    # 2) a STRONG single match beats an area match — "Gartenhaus denke rechts"
-    #    names one lamp, even though it contains the area word.
-    if best_it and best >= 0.72:
-        switch(best_it["entity_id"])
-        learned = learn_alias(spoken, best_it["entity_id"])
-        return (f"{action}: {best_name} ({best_it['entity_id']}) "
-                f"[fuzzy {best:.2f}] — {learned}")
-
-    # 3) area (group): area name present AND a group cue ("licht"/"lampe"/"alle")
+    # area (group) candidate: area name present AND a group cue ("licht"/"lampe"/"alle")
     cue = any(w in want for w in ("licht", "lampe", "lampen", "alle", "lichter"))
+    area_hit = None
     for aid, aname in idx["areas"].items():
         na = _norm(aname)
         if na and na in want and cue:
             eids = [it["entity_id"] for it in idx["entities"]
                     if it["area_id"] == aid and it["entity_id"].startswith("light.")]
             if eids:
-                switch(eids)
-                return f"{action}: {len(eids)} lights in area '{aname}'"
+                area_hit = (aname, eids)
+                break
+
+    # 2) a NEAR-EXACT single match beats the area — "Gartenhaus denke rechts"
+    #    names one lamp, even though it contains the area word. A merely good
+    #    fuzzy hit does not: "Gartenhauslicht" scored 0.76 against the relay
+    #    "gartenhaus_switch L1" and switched the socket instead of the lights.
+    if best_it and best >= 0.72 and not (area_hit and best < 0.9):
+        switch(best_it["entity_id"])
+        learned = learn_alias(spoken, best_it["entity_id"])
+        return (f"{action}: {best_name} ({best_it['entity_id']}) "
+                f"[fuzzy {best:.2f}] — {learned}")
+
+    # 3) area (group)
+    if area_hit:
+        aname, eids = area_hit
+        switch(eids)
+        return f"{action}: {len(eids)} lights in area '{aname}'"
 
     # 4) weaker fuzzy single entity as a last resort; learn the alias
     if best_it and best >= 0.6:
@@ -257,7 +266,7 @@ def learn_alias(spoken, entity_id):
         if not lst.get("success"):
             return f"error: entity '{entity_id}' not found"
         aliases = list(lst["result"].get("aliases") or [])
-        if any(a.lower() == spoken.lower() for a in aliases):
+        if any(str(a or "").lower() == spoken.lower() for a in aliases):
             return f"alias '{spoken}' already on {entity_id}"
         aliases.append(spoken)
         upd = call(2, {"type": "config/entity_registry/update",

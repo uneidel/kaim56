@@ -2910,6 +2910,34 @@ def _rt_settings(h):
     return json.dumps(settings_for_ui()).encode(), "application/json"
 
 
+# What TTS should NOT read: tool status lines ("🔧 ha_control …"), think blocks,
+# code fences, markdown decor, URLs. The desktop client filters this itself;
+# the web chat's "Read aloud", the app and the ESP client send the reply as
+# is — so the manager filters once for everyone, right before Piper.
+_SPK_THINK = re.compile(r"⟦think⟧.*?(?:⟦/think⟧|$)", re.S)
+_SPK_TOOL = re.compile(r"^[ \t]*🔧.*$", re.M)
+_SPK_FENCE = re.compile(r"```.*?(?:```|$)", re.S)
+_SPK_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_SPK_URL = re.compile(r"https?://\S+")
+_SPK_DECOR = re.compile(r"[*_`#>|]")
+_SPK_SPACE = re.compile(r"[ \t]+")
+_SPK_NL = re.compile(r"\n{2,}")
+
+
+def speakable_text(text):
+    """Reply text -> read-aloud text (same rules as the desktop client)."""
+    t = str(text or "")
+    t = _SPK_THINK.sub("", t)
+    t = _SPK_TOOL.sub("", t)
+    t = _SPK_FENCE.sub(" Codeblock übersprungen. ", t)
+    t = _SPK_LINK.sub(r"\1", t)
+    t = _SPK_URL.sub("", t)
+    t = _SPK_DECOR.sub("", t)
+    t = _SPK_SPACE.sub(" ", t)
+    t = _SPK_NL.sub("\n", t)
+    return t.strip()
+
+
 # Last transcripts from /api/stt, in memory only (no file: spoken words are
 # not something to persist by accident). Answers "what did STT hear?" from
 # the web UI/API instead of guessing from the model's reply.
@@ -4072,6 +4100,7 @@ class H(BaseHTTPRequestHandler):
                 # only {"text"}; explicit client values win.
                 try:
                     b = json.loads(payload or b"{}")
+                    b["text"] = speakable_text(b.get("text", ""))
                     st = load_settings()
                     if st.get("TTS_VOICE") and not b.get("voice"):
                         b["voice"] = st["TTS_VOICE"]

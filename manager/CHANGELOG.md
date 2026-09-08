@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-08 (Gartenhauslicht switched the relay; read-aloud skips tool lines)
+
+- "Gartenhauslicht an" over voicecommand answered "Es gab ein Problem". Two defects in `ha_control`: the fuzzy match scored 0.76 against the relay `switch.gartenhaus_switch_l1` and, because a fuzzy hit ≥ 0.72 beat the area rule, switched the SOCKET instead of the two ceiling lights; then `learn_alias` crashed on a `None` alias in HA's registry (`'NoneType' object has no attribute 'lower'` — the same crash the 09-04 Ofensteckdose call showed). Now an area name plus a group cue ("licht", "lampe", "alle") wins over a merely good fuzzy hit; only a near-exact one (≥ 0.9, "Gartenhaus Tecke rechts") still picks the single lamp. Aliases are read None-safe. Proven live through the manager route: on → "2 lights in area 'Gartenhaus'", off → same.
+- "Read aloud" spoke the tool status lines ("🔧 ha_control …"). The manager now filters every `/api/tts` text with `speakable_text()` — the desktop client's rules (tool lines, think blocks, code fences → "Codeblock übersprungen", links keep their text, URLs and markdown decor dropped) — so the web chat's Read aloud, the app and the ESP client get it without changes. Tests for the matching order and the filter. 129 tests green.
+
 ## 2026-09-07 (espclient/ joins the monorepo)
 
 - **MrVoice**, the push-to-talk client on a Seeed XIAO ESP32-S3 (ESP-IDF 5.4 via PlatformIO, stock IDF only; INMP441 mic, MAX98357A amp, one button), is now `espclient/` in the repo: 53 files, 432 kB, sources plus wiring README, design spec, plan and the host-side unit tests (`pio test -e native`). It follows the porting brief and speaks the same four manager endpoints as the desktop client over HTTPS with Basic auth; WiFi and manager credentials come from NVS / `src/config_local.h` (gitignored, example provided) — the committed defaults are empty. Scanned: no credentials, only placeholders.

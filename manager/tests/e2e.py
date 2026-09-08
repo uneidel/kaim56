@@ -1197,6 +1197,20 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(sorted(calls[0][1]["entity_id"]),
                              ["light.gartenhaus_decke_links", "light.gartenhaus_decke_rechts"])
 
+            # 2026-09-08: "Gartenhauslicht an" scored 0.76 against the relay
+            # switch.gartenhaus_switch_l1 and switched THAT. Area + cue must
+            # beat a merely good fuzzy hit; a near-exact one still wins.
+            idx["entities"].append({"entity_id": "switch.gartenhaus_switch_l1",
+                                    "names": ["gartenhaus_switch L1"], "area_id": "gh"})
+            calls.clear(); learned.clear()
+            r = ha.control("Gartenhauslicht", "on")
+            self.assertEqual(sorted(calls[0][1]["entity_id"]),
+                             ["light.gartenhaus_decke_links", "light.gartenhaus_decke_rechts"], r)
+            self.assertEqual(learned, [])
+            calls.clear(); learned.clear()
+            r = ha.control("Gartenhaus Tecke rechts", "on")      # near-exact still single
+            self.assertEqual(calls[0][1]["entity_id"], "light.gartenhaus_decke_rechts")
+
             # nonsense -> no switch
             calls.clear()
             r = ha.control("völliger Unsinn xyz", "on")
@@ -1613,6 +1627,18 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.CHATS_FILE, m.TOMBSTONES_FILE = oc, ot
             m._voice_sessions.clear()
+
+    def test_tts_reads_no_tool_lines(self):
+        """Read aloud must skip tool status, think blocks, fences and decor —
+        filtered in the manager so web, app and ESP get it for free."""
+        m = self.m
+        self.assertEqual(m.speakable_text("🔧 ha_control …\nEs gab ein Problem."), "Es gab ein Problem.")
+        self.assertEqual(m.speakable_text("  🔧 caldav__list-events …\n\nAm Freitag: **Frühstück**."),
+                         "Am Freitag: Frühstück.")
+        self.assertEqual(m.speakable_text("⟦think⟧ plan ⟦/think⟧Es ist 10 Uhr."), "Es ist 10 Uhr.")
+        self.assertEqual(m.speakable_text("Siehe [Doku](https://x.y/z) und https://a.b/c."), "Siehe Doku und")
+        self.assertIn("Codeblock übersprungen", m.speakable_text("Hier:\n```py\nprint(1)\n```\nfertig"))
+        self.assertEqual(m.speakable_text(""), "")
 
     def test_stt_recent_ring(self):
         """What did STT hear? Newest first, bounded, in memory only."""
