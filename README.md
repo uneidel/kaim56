@@ -21,8 +21,7 @@ The web manager — one microVM per agent, live model/backend, per-instance usag
 
 ![Instances](docs/img/instances.png)
 
-The built-in **Architecture** view (rendered from the running manager; screenshot from
-2026-08-31 — the live tab has since gained the desktop, ESP32 and Halo clients):
+The built-in **Architecture** view (rendered from the running manager):
 
 ![Architecture](docs/img/architecture.png)
 
