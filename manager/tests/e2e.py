@@ -2741,6 +2741,24 @@ class ManagerFunctions(unittest.TestCase):
             m.RUN_DIR = old[0]
             os.umask(old[2])
 
+    def test_notify_route_rejects_empty(self):
+        """Empty notification -> 429, id null. Offline on purpose: as an HTTP
+        test it ran against the live manager on every suite run and left one
+        'admin/notify empty' line in the live audit each time (138 of them
+        looked like a misbehaving admin instance)."""
+        m = self.m
+        old = m.instance_by_ip, m.audit_append, m.PW
+        try:
+            m.instance_by_ip = lambda ip: None
+            m.audit_append = lambda *a, **k: None
+            m.PW = ""
+            h = self._post_handler("/api/notify", "10.0.0.5", b'{"title": "", "message": ""}')
+            h.do_POST()
+            self.assertEqual(self._status(h), 429)
+            self.assertIsNone(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]).get("id"))
+        finally:
+            m.instance_by_ip, m.audit_append, m.PW = old
+
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST
         was gated. The denylist names the admin UI, chat, katfs and /i/."""
@@ -2954,13 +2972,6 @@ class ManagerHTTP(unittest.TestCase):
             _http("/api/memory/e2e-memtest", "POST", {"key": k, "value": None})
         st, txt = _http("/api/memory/e2e-memtest")
         self.assertEqual(json.loads(txt), {}, "test residue left in memory store")
-
-    def test_notify_route_rejects_empty(self):
-        # Empty notification -> 429, id null: the route exists, without
-        # polluting the live store (no ping to the device).
-        st, txt = _http("/api/notify", "POST", {"title": "", "message": ""})
-        self.assertEqual(st, 429)
-        self.assertIsNone(json.loads(txt).get("id"))
 
     def test_orcarouter_template_registered(self):
         st, txt = _http("/")

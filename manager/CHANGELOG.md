@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-09
+- Audit noise: the empty-notify check runs offline now; as an HTTP test it left an `admin/notify empty` audit line on every suite run (138 of them read like a misbehaving admin instance)
 - NFS per instance: the workspace `agent/<name>` and every host folder are exported to that VM's address only (no pool-wide root export, no crossmnt); guests mount by absolute path, `AGENT_EXPORT` on the config disk
 - Guest writes are squashed to a dedicated system user `kaim56-guest` (created by the manager) instead of the operator's uid; workspaces and memory folders belong to it, group = operator
 - State files (chats, missions, tasks, history, audit) are root-only (umask 077 + one-time chmod); ten failed logins lock the client for 15 minutes
