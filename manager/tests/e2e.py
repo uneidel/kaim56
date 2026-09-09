@@ -677,6 +677,55 @@ class AgentLogic(unittest.TestCase):
             a.or_chat, a.exec_tool, a.MAX_STEPS, a._deadline[0] = old[:4]
             a._history[:] = old[4]
 
+    def test_turn_markers_and_spans(self):
+        """A turn posts start/end markers (kind, steps, ms, outcome), every LLM
+        call a usage span with turn/step/ms, every tool call an audit line with
+        ms; slash commands produce no trace."""
+        a = self.a
+        posts = []
+        old = a._mgr, a.or_chat, a.exec_tool, a.report_usage, list(a._history), a.MAX_STEPS, a.BUILTIN.get("web_search")
+        try:
+            a._mgr = lambda base, path, payload=None, timeout=60: posts.append((path, payload))
+            a.report_usage = lambda u, ms=None, ok=True, err="": posts.append(("/api/usage", {"turn": a._turn_id[0], "step": a._turn_step[0], "ms": ms, "ok": ok, "err": err}))
+            calls = [0]
+            def chat(msgs, tools, model=None):
+                calls[0] += 1
+                a._turn_step[0] += 1; a.report_usage({}, ms=5)      # what or_chat does
+                if calls[0] == 1:
+                    return {"role": "assistant", "content": None,
+                            "tool_calls": [{"id": "1", "function": {"name": "web_search", "arguments": "{}"}}]}
+                return {"role": "assistant", "content": "done"}
+            a.or_chat = chat
+            a.BUILTIN["web_search"] = (lambda **kw: "1. hit", {}, [])
+            a.MAX_STEPS = 5
+            self.assertEqual(a.run("/fresh find it", kind="task"), "done")
+            kinds = [(p, b.get("event")) for p, b in posts if p == "/api/trace"]
+            self.assertEqual(kinds, [("/api/trace", "start"), ("/api/trace", "end")])
+            end = next(b for p, b in posts if p == "/api/trace" and b["event"] == "end")
+            self.assertEqual((end["kind"], end["steps"], end["outcome"]), ("fresh", 2, "ok"))
+            self.assertGreaterEqual(end["ms"], 0)
+            turn = end["turn"]
+            usage = [b for p, b in posts if p == "/api/usage"]
+            self.assertEqual([u["step"] for u in usage], [1, 2])
+            self.assertTrue(all(u["turn"] == turn for u in usage))
+            audits = [b for p, b in posts if p == "/api/audit"]
+            self.assertEqual(len(audits), 1)
+            self.assertEqual(audits[0]["turn"], turn)
+            self.assertIn("ms", audits[0])
+            posts.clear()
+            a.run("/steps")                                       # a slash command: no markers
+            self.assertEqual([p for p, _ in posts if p == "/api/trace"], [])
+            self.assertEqual(a._outcome_of("(max tool steps reached)"), "max_steps")
+            self.assertEqual(a._outcome_of("x ⏱️ (time budget exhausted — partial result)"), "deadline")
+            self.assertEqual(a._outcome_of("⚠️ LLM HTTP 500"), "error")
+        finally:
+            a._mgr, a.or_chat, a.exec_tool, a.report_usage = old[:4]
+            a._history[:] = old[4]; a.MAX_STEPS = old[5]
+            if old[6] is not None:
+                a.BUILTIN["web_search"] = old[6]
+            else:
+                a.BUILTIN.pop("web_search", None)
+
     # --- Tree-Chat: /branch + /back -------------------------------------------
     def test_branch_and_back(self):
         a = self.a
@@ -2640,7 +2689,7 @@ class ManagerFunctions(unittest.TestCase):
         seen = []
         old = m.usage_add
         try:
-            m.usage_add = lambda *a: seen.append(a)
+            m.usage_add = lambda *a, **kw: seen.append(a)
             inst = {"name": "vm1"}
             m._proxy_usage(inst, "openrouter", b'{"model":"x/y","usage":{"prompt_tokens":10,"completion_tokens":5,"cost":0.001}}')
             m._proxy_usage(inst, "openrouter", b'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}\n')
@@ -2842,6 +2891,74 @@ class ManagerFunctions(unittest.TestCase):
             self.assertGreaterEqual(m.TASK_TIMEOUT, 1800)
         finally:
             m.urllib.request.urlopen, m.net_of, m.load_instances, m.is_running, m._run_named = old
+
+    def test_trace_stitches_turn_llm_and_tool_spans(self):
+        """One turn = one span tree. The agent sends a start marker, its LLM
+        calls (usage with turn/step/ms), its tool calls (audit with turn/ms)
+        and an end marker; GET /api/trace/<inst>?turn= returns them stitched
+        and ordered, the audit output keeps its shape (plus ms), an old DB
+        gains the span columns without a migration error."""
+        import mgr.store as st
+        import sqlite3
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-trace-")
+        old = st.HISTORY_DB, m.AUDIT_DIR, m.instance_by_ip, m.load_settings, list(st._migrated)
+        try:
+            st.HISTORY_DB = os.path.join(tmp, "history.db")
+            m.AUDIT_DIR = os.path.join(tmp, "audit")
+            with sqlite3.connect(st.HISTORY_DB) as c:        # a DB from before the span columns
+                c.execute("CREATE TABLE llm_usage(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, "
+                          "instance TEXT, model TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL)")
+                c.execute("INSERT INTO llm_usage(ts,instance,model,prompt_tokens,completion_tokens,cost) "
+                          "VALUES(1,'vm1','old',1,1,0)")
+            st._migrated[0] = False
+            inst = {"name": "vm1", "index": 3, "template": "openrouter", "config": {}}
+            m.instance_by_ip = lambda ip: inst if ip == "172.30.3.2" else None
+            m.load_settings = lambda: {}                    # proxy off: the agent reports usage
+            def post(path, body):
+                h = self._post_handler(path, "172.30.3.2", json.dumps(body).encode()); h.do_POST()
+                return self._status(h)
+            self.assertEqual(post("/api/trace", {"turn": "t1", "event": "start", "kind": "task"}), 204)
+            self.assertEqual(post("/api/usage", {"model": "x/y", "prompt_tokens": 100, "completion_tokens": 20,
+                                                 "turn": "t1", "step": 1, "ms": 900}), 204)
+            self.assertEqual(post("/api/audit", {"tool": "web_search", "target": "cronn", "ok": True,
+                                                 "result": "1. cronn", "turn": "t1", "ms": 340}), 204)
+            self.assertEqual(post("/api/audit", {"tool": "http_fetch", "target": "https://x", "ok": False,
+                                                 "err": "HTTP 403", "turn": "t1", "ms": 1200}), 204)
+            self.assertEqual(post("/api/usage", {"model": "x/y", "prompt_tokens": 0, "completion_tokens": 0,
+                                                 "turn": "t1", "step": 2, "ms": 50, "ok": False, "err": "HTTP 429"}), 204)
+            self.assertEqual(post("/api/trace", {"turn": "t1", "event": "end", "kind": "task",
+                                                 "steps": 2, "ms": 2600, "outcome": "ok"}), 204)
+            # an admin, not a guest, may not file markers; a guest gets no trace read
+            h = self._post_handler("/api/trace", "10.0.0.5", b'{"turn":"t2","event":"start"}'); h.do_POST()
+            self.assertEqual(self._status(h), 403)
+            h = self._handler("/api/trace/vm1?turn=t1", "172.30.3.2"); h._do_GET()
+            self.assertEqual(self._status(h), 403)
+            h = self._handler("/api/trace/vm1?turn=t1", "10.0.0.5"); h._do_GET()
+            tr = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual(tr["turn"]["kind"], "task")
+            self.assertEqual((tr["turn"]["steps"], tr["turn"]["ms"], tr["turn"]["outcome"]), (2, 2600, "ok"))
+            self.assertEqual((tr["turn"]["llm_calls"], tr["turn"]["llm_failed"], tr["turn"]["in"]), (2, 1, 100))
+            self.assertEqual([x["step"] for x in tr["llm"]], [1, 2])
+            self.assertEqual([x["ms"] for x in tr["llm"]], [900, 50])
+            self.assertEqual([x["ok"] for x in tr["llm"]], [True, False])
+            self.assertEqual([x["tool"] for x in tr["tools"]], ["web_search", "http_fetch"])
+            self.assertEqual([x["ms"] for x in tr["tools"]], [340, 1200])
+            self.assertTrue(all(x["ms"] > 0 for x in tr["llm"] + tr["tools"]))
+            h = self._handler("/api/trace/vm1", "10.0.0.5"); h._do_GET()
+            lst = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["turns"]
+            self.assertEqual([t["turn"] for t in lst], ["t1"])
+            # the audit reader is unchanged apart from ms
+            recs = m.audit_read("vm1")
+            self.assertEqual(set(recs[0]) - {"ms"}, {"ts", "tool", "target", "ok", "err", "turn"})
+            # an end without a start still yields a full row; old rows have no turn
+            st.turn_end("vm1", "t9", ms=10, steps=1, outcome="error")
+            self.assertEqual(st.turns_read("vm1")[0]["turn"], "t9")
+            self.assertEqual(st.usage_for("vm1")["calls"], 3)          # the old row still counts
+            self.assertEqual(st.turns_prune(30), 0)
+        finally:
+            st.HISTORY_DB, m.AUDIT_DIR, m.instance_by_ip, m.load_settings = old[:4]
+            st._migrated[0] = old[4][0]
 
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST

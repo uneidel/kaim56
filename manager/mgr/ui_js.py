@@ -185,28 +185,65 @@ async function openActivity(name){
   document.getElementById('actdlg').style.display='grid';
   document.getElementById('actrows').innerHTML='<tr><td class=text-muted style="padding:12px">…</td></tr>';
   try{ACT_EVENTS=(await (await fetch('/api/audit/'+encodeURIComponent(name))).json()).events||[];}catch(e){ACT_EVENTS=[];}
+  ACT_TURNS={};
+  try{for(const t of ((await (await fetch('/api/trace/'+encodeURIComponent(name)+'?limit=200')).json()).turns||[]))ACT_TURNS[t.turn]=t;}catch(e){}
   actRender();
 }
+let ACT_TURNS={}, ACT_OPEN={};
+function actToggle(id){ACT_OPEN[id]=!ACT_OPEN[id];actRender();}
+function actMs(ms){return ms==null?'':(ms>=1000?(ms/1000).toFixed(1)+' s':ms+' ms');}
 function actWindow(sec){
   ACT_WIN=sec;
   document.querySelectorAll('#actwin button').forEach(b=>b.classList.toggle('on',(+b.dataset.w)===sec));
   actRender();
 }
+function actRow(e){
+  const d=new Date((e.ts||0)*1000).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  // Failed calls show WHY (the audit carries the error text now); healthy
+  // ones show a peek at the result. The word changed too: "denied" implied
+  // policy, but ok:false mostly means the call itself failed.
+  const extra = e.ok===false
+    ? (e.err?`<div style="font-size:11px;color:var(--color-neutral-600)">${escT(e.err)}</div>`:'')
+    : (e.result?`<div class=text-muted style="font-size:11px">${escT(e.result)}</div>`:'');
+  const ms = e.ms!=null?`<span class=text-muted style="font-size:11px;white-space:nowrap"> · ${actMs(e.ms)}</span>`:'';
+  return `<tr><td class=text-muted style="white-space:nowrap;font-size:12px">${d}</td>`+
+    `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">failed</span>':''}</td>`+
+    `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}${ms}${extra}</td></tr>`;
+}
 function actRender(){
   const cut = ACT_WIN ? (Date.now()/1000 - ACT_WIN) : 0;
   const ev = ACT_EVENTS.filter(e=>(e.ts||0) >= cut);
-  document.getElementById('actrows').innerHTML=ev.map(e=>{
-    const d=new Date((e.ts||0)*1000).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    // Failed calls show WHY (the audit carries the error text now); healthy
-    // ones show a peek at the result. The word changed too: "denied" implied
-    // policy, but ok:false mostly means the call itself failed.
-    const extra = e.ok===false
-      ? (e.err?`<div style="font-size:11px;color:var(--color-neutral-600)">${escT(e.err)}</div>`:'')
-      : (e.result?`<div class=text-muted style="font-size:11px">${escT(e.result)}</div>`:'');
-    return `<tr><td class=text-muted style="white-space:nowrap;font-size:12px">${d}</td>`+
-      `<td class=mono style="font-size:12.5px">${escT(e.tool)}${e.ok===false?' <span class="tag tag-neutral" style="font-size:10px">failed</span>':''}</td>`+
-      `<td class=mono style="font-size:12px;word-break:break-all;color:var(--color-accent-700)">${escT(e.target||'')}${extra}</td></tr>`;
-  }).join('')||'<tr><td class=text-muted style="padding:12px">nothing in the selected range</td></tr>';
+  // Traces: audit lines grouped by turn (newest turn first, as the audit is);
+  // a group head carries what the turn row knows — duration, steps, LLM
+  // calls, tokens, outcome. Lines without a turn (old audits, notify,
+  // send_signal) stay as "unbound" at the end.
+  const groups=[], byTurn={}, loose=[];
+  for(const e of ev){
+    if(!e.turn){loose.push(e);continue;}
+    if(!byTurn[e.turn]){byTurn[e.turn]={id:e.turn,rows:[]};groups.push(byTurn[e.turn]);}
+    byTurn[e.turn].rows.push(e);
+  }
+  let html='';
+  for(const g of groups){
+    const t=ACT_TURNS[g.id]||{}, open=!!ACT_OPEN[g.id], first=g.rows[g.rows.length-1];
+    const d=new Date(((t.ts_start||first.ts)||0)*1000).toLocaleString(undefined,{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const failed=g.rows.filter(e=>e.ok===false).length;
+    const oc=t.outcome||'', ocTag=oc&&oc!=='ok'?` <span class="tag tag-neutral" style="font-size:10px">${escT(oc)}</span>`:'';
+    const facts=[t.ms!=null?actMs(t.ms):null, t.steps!=null?t.steps+' steps':null,
+      t.llm_calls?t.llm_calls+' LLM'+(t.llm_failed?' ('+t.llm_failed+' failed)':''):null,
+      (t.in||t.out)?(t.in||0)+'/'+(t.out||0)+' tok':null,
+      g.rows.length+' tool'+(g.rows.length===1?'':'s')+(failed?' ('+failed+' failed)':'')].filter(Boolean).join(' · ');
+    html+=`<tr style="cursor:pointer;background:var(--color-neutral-50)" onclick="actToggle('${esc(g.id)}')">`+
+      `<td class=text-muted style="white-space:nowrap;font-size:12px">${open?'▾':'▸'} ${d}</td>`+
+      `<td class=mono style="font-size:12px">${escT(t.kind||'turn')} <span class=text-muted>${escT(g.id)}</span>${ocTag}</td>`+
+      `<td class=text-muted style="font-size:11.5px">${escT(facts)}</td></tr>`;
+    if(open) html+=g.rows.map(actRow).join('');
+  }
+  if(loose.length){
+    if(groups.length) html+=`<tr><td colspan=3 class=text-muted style="font-size:11px;padding:6px 8px">unbound (no turn)</td></tr>`;
+    html+=loose.map(actRow).join('');
+  }
+  document.getElementById('actrows').innerHTML=html||'<tr><td class=text-muted style="padding:12px">nothing in the selected range</td></tr>';
   actUsage(cut, ev.length);
 }
 async function actUsage(cut, nEv){

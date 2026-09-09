@@ -51,6 +51,14 @@ def _hist_conn():
         ts INTEGER, instance TEXT, model TEXT,
         prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_usage_inst_ts ON llm_usage(instance, ts)")
+    _migrate_spans(c)
+    # Traces: one row per agent turn; its LLM calls are the llm_usage rows and
+    # its tool calls the audit lines with the same turn id.
+    c.execute("""CREATE TABLE IF NOT EXISTS turns(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance TEXT, turn TEXT, kind TEXT,
+        ts_start INTEGER, ts_end INTEGER, ms INTEGER, steps INTEGER, outcome TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_turns_inst_ts ON turns(instance, ts_start)")
     # Semantic long-term memory: per memory a text + embedding vector
     # (as JSON). Search loads an instance's vectors and computes cosine in
     # memory — at a personal scale (hundreds) that is enough without
@@ -62,17 +70,124 @@ def _hist_conn():
     return c
 
 
-def usage_add(instance, model, prompt_tokens, completion_tokens, cost):
+_SPAN_COLS = (("turn", "TEXT"), ("ms", "INTEGER"), ("step", "INTEGER"),
+              ("ok", "INTEGER DEFAULT 1"), ("err", "TEXT"))
+_migrated = [False]
+
+
+def _migrate_spans(c):
+    """llm_usage grew span columns (turn, ms, step, ok, err); an existing DB
+    gets them added once. Checked once per process, not per connection."""
+    if _migrated[0]:
+        return
+    have = {r[1] for r in c.execute("PRAGMA table_info(llm_usage)")}
+    for col, typ in _SPAN_COLS:
+        if col not in have:
+            try:
+                c.execute(f"ALTER TABLE llm_usage ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
+    _migrated[0] = True
+
+
+def usage_add(instance, model, prompt_tokens, completion_tokens, cost,
+              turn="", ms=None, step=None, ok=True, err=""):
     try:
         with _hist_lock, _hist_conn() as c:
             c.execute("INSERT INTO llm_usage(ts,instance,model,prompt_tokens,"
-                      "completion_tokens,cost) VALUES(?,?,?,?,?,?)",
+                      "completion_tokens,cost,turn,ms,step,ok,err) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                       (int(time.time()), str(instance)[:80], str(model)[:120],
                        int(prompt_tokens or 0), int(completion_tokens or 0),
-                       float(cost or 0.0)))
+                       float(cost or 0.0), str(turn or "")[:16],
+                       None if ms is None else int(ms), None if step is None else int(step),
+                       1 if ok else 0, str(err or "")[:400]))
         return "ok"
     except Exception as e:
         return f"error: {e!r}"
+
+
+# ---- turns (traces) ---------------------------------------------------------
+def turn_start(instance, turn, kind="chat", ts=None):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            c.execute("INSERT INTO turns(instance,turn,kind,ts_start) VALUES(?,?,?,?)",
+                      (str(instance)[:80], str(turn)[:16], str(kind or "chat")[:16],
+                       int(ts or time.time())))
+        return "ok"
+    except Exception as e:
+        return f"error: {e!r}"
+
+
+def turn_end(instance, turn, ms=None, steps=None, outcome="ok", kind="chat"):
+    """Close the turn's row; a turn whose start was lost gets a full row."""
+    try:
+        now = int(time.time())
+        with _hist_lock, _hist_conn() as c:
+            cur = c.execute(
+                "UPDATE turns SET ts_end=?, ms=?, steps=?, outcome=? WHERE id = "
+                "(SELECT id FROM turns WHERE instance=? AND turn=? ORDER BY id DESC LIMIT 1)",
+                (now, None if ms is None else int(ms), None if steps is None else int(steps),
+                 str(outcome or "ok")[:16], str(instance)[:80], str(turn)[:16]))
+            if cur.rowcount == 0:
+                c.execute("INSERT INTO turns(instance,turn,kind,ts_start,ts_end,ms,steps,outcome) "
+                          "VALUES(?,?,?,?,?,?,?,?)",
+                          (str(instance)[:80], str(turn)[:16], str(kind or "chat")[:16],
+                           now - int((ms or 0) / 1000), now, None if ms is None else int(ms),
+                           None if steps is None else int(steps), str(outcome or "ok")[:16]))
+        return "ok"
+    except Exception as e:
+        return f"error: {e!r}"
+
+
+_TURN_COLS = ("id", "instance", "turn", "kind", "ts_start", "ts_end", "ms", "steps", "outcome")
+
+
+def _turn_rows(c, where, params):
+    rows = [dict(zip(_TURN_COLS, r)) for r in c.execute(
+        "SELECT id,instance,turn,kind,ts_start,ts_end,ms,steps,outcome FROM turns "
+        f"WHERE {where} ORDER BY ts_start DESC, id DESC", params)]
+    for t in rows:                      # the LLM side of the turn, summed
+        n, pt, ct, cost, bad = c.execute(
+            "SELECT COUNT(*), SUM(prompt_tokens), SUM(completion_tokens), SUM(cost), "
+            "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) FROM llm_usage WHERE instance=? AND turn=?",
+            (t["instance"], t["turn"])).fetchone()
+        t.update({"llm_calls": n or 0, "in": pt or 0, "out": ct or 0,
+                  "cost": round(cost or 0.0, 4), "llm_failed": bad or 0})
+    return rows
+
+
+def turns_read(instance, limit=50, since=0):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            return _turn_rows(c, "instance=? AND ts_start>=?", (instance, int(since or 0)))[:limit]
+    except Exception:
+        return []
+
+
+def turn_trace(instance, turn):
+    """{turn, llm} for one turn: the turn row (None if unknown) and its LLM
+    spans in order. The tool spans come from the audit (manager side)."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            rows = _turn_rows(c, "instance=? AND turn=?", (instance, turn))
+            llm = [dict(zip(("ts", "model", "in", "out", "cost", "step", "ms", "ok", "err"), r))
+                   for r in c.execute(
+                       "SELECT ts, model, prompt_tokens, completion_tokens, cost, step, ms, ok, err "
+                       "FROM llm_usage WHERE instance=? AND turn=? ORDER BY ts, id", (instance, turn))]
+        for r in llm:
+            r["ok"] = bool(r["ok"] is None or r["ok"])
+        return {"turn": rows[0] if rows else None, "llm": llm}
+    except Exception:
+        return {"turn": None, "llm": []}
+
+
+def turns_prune(days=30):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            return c.execute("DELETE FROM turns WHERE ts_start < ?",
+                             (int(time.time()) - days * 86400,)).rowcount
+    except Exception:
+        return 0
 
 
 def usage_summary():

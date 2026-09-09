@@ -544,7 +544,8 @@ def _llm_headers():
     the manager sets it while forwarding; a bearer from the VM would be
     at best a dummy and only suggest a key were present here."""
     h = {"Content-Type": "application/json",
-         "HTTP-Referer": "https://agents.example.com", "X-Title": "kaim56-agent"}
+         "HTTP-Referer": "https://agents.example.com", "X-Title": "kaim56-agent",
+         "X-Kaim-Turn": _turn_id[0], "X-Kaim-Step": str(_turn_step[0])}   # the span, for the proxy's books
     if not _llm_proxy_active():
         h["Authorization"] = f"Bearer {ensure_or_key()}"
     return h
@@ -1419,7 +1420,7 @@ def _audit_target(name, args):
 _turn_id = [""]
 
 
-def audit(name, args, ok=True, err="", result=""):
+def audit(name, args, ok=True, err="", result="", ms=None):
     """Log a tool call at the manager (per instance, on the host — survives VM
     restarts). Best-effort: if the broker fails, the agent continues normally.
     Carries tool, target (URL/path/query), ok, a short ERROR TEXT and a short
@@ -1427,12 +1428,56 @@ def audit(name, args, ok=True, err="", result=""):
     one that failed politely (the audit used to say ok:true while a tool
     returned "⚠️ blocked"). NEVER secret values or full file contents."""
     try:
-        _mgr(_manager_base(), "/api/audit",
-             {"tool": name, "target": _audit_target(name, args), "ok": bool(ok),
-              "err": str(err)[:300], "result": str(result)[:300],
-              "turn": _turn_id[0]}, timeout=5)
+        rec = {"tool": name, "target": _audit_target(name, args), "ok": bool(ok),
+               "err": str(err)[:300], "result": str(result)[:300],
+               "turn": _turn_id[0]}
+        if ms is not None:
+            rec["ms"] = int(ms)
+        _mgr(_manager_base(), "/api/audit", rec, timeout=5)
     except Exception:
         pass
+
+
+# ---- traces: one turn = one span tree (turn -> LLM calls -> tool calls) -----
+# The manager stitches them together from three feeds it already had: the
+# audit (tool calls), the usage (LLM calls) and — new — a turn marker. Each
+# record carries the turn id and its duration; nothing else changes.
+_turn_step = [0]        # LLM calls so far in this turn (the span index)
+_turn_t0 = [0.0]        # monotonic start of the turn
+_turn_kind = ["chat"]
+
+
+def trace_turn(event, **kw):
+    """POST /api/trace {turn, event:start|end, kind, steps, ms, outcome}.
+    Best-effort like audit(): the manager being away must not touch a turn."""
+    try:
+        _mgr(_manager_base(), "/api/trace",
+             {"turn": _turn_id[0], "event": event, "kind": _turn_kind[0], **kw}, timeout=5)
+    except Exception:
+        pass
+
+
+def _trace_begin(kind):
+    _turn_kind[0] = kind
+    _turn_step[0] = 0
+    _turn_t0[0] = time.monotonic()
+    trace_turn("start")
+
+
+def _trace_end(outcome):
+    trace_turn("end", steps=_turn_step[0], ms=int((time.monotonic() - _turn_t0[0]) * 1000),
+               outcome=outcome)
+
+
+def _outcome_of(text):
+    t = str(text or "")
+    if "(max tool steps reached)" in t:
+        return "max_steps"
+    if "time budget exhausted" in t:
+        return "deadline"
+    if t.lstrip().startswith("⚠️"):
+        return "error"
+    return "ok"
 
 
 # Result strings that mean "the tool ran but the CALL failed" — tools report
@@ -1476,45 +1521,52 @@ def _tools_report():
 
 def exec_tool(name, args):
     name = _resolve_tool_name(name)
+    t0 = time.monotonic()
+
+    def _audit(**kw):        # every exit books the call with its duration
+        audit(name, args, ms=int((time.monotonic() - t0) * 1000), **kw)
     # Hook/intervention: denylist + optional HITL approval BEFORE execution.
     allow, reason = _hook_before_tool(name, args)
     if not allow:
-        audit(name, args, ok=False)
+        _audit(ok=False)
         return f"Tool '{name}' not executed: {reason}"
     try:
         if name in BUILTIN:
             if not tool_enabled(name):
-                audit(name, args, ok=False, err="tool not enabled")
+                _audit(ok=False, err="tool not enabled")
                 return f"Tool '{name}' is not enabled for this instance."
             out = str(BUILTIN[name][0](**args))
         elif name in _mcp_tools:
             srv, tool = _mcp_tools[name]
             out = str(_mcp[srv].call(tool, args))
         else:
-            audit(name, args, ok=False, err="unknown tool")
+            _audit(ok=False, err="unknown tool")
             return f"unknown tool: {name}"
     except Exception as e:
-        audit(name, args, ok=False, err=repr(e))
+        _audit(ok=False, err=repr(e))
         return f"Tool error ({name}): {e!r}"
     failed = _looks_failed(out)
-    audit(name, args, ok=not failed,
-          err=out[:300] if failed else "", result="" if failed else out[:200])
+    _audit(ok=not failed, err=out[:300] if failed else "", result="" if failed else out[:200])
     return _finalize_output(name, out)
 
 
 # --- report usage -----------------------------------------------------------
-def report_usage(u):
-    """Report tokens/cost of a call to the manager (fire-and-forget).
-    The manager recognizes the instance by its source IP; we send only numbers.
-    If the manager fails, that must not disturb the chat -> swallow everything."""
+def report_usage(u, ms=None, ok=True, err=""):
+    """Report tokens/cost of a call to the manager (fire-and-forget) — plus the
+    span: turn, step (LLM call index in the turn), duration, and for a call
+    that failed after all retries ok:false with the error. The manager
+    recognizes the instance by its source IP; we send only numbers and the
+    error text. If the manager fails, that must not disturb the chat."""
     if not isinstance(u, dict):
-        return
+        u = {}
     try:
         payload = json.dumps({
             "model": OR_MODEL,
             "prompt_tokens": u.get("prompt_tokens") or 0,
             "completion_tokens": u.get("completion_tokens") or 0,
             "cost": u.get("cost") or 0.0,
+            "turn": _turn_id[0], "step": _turn_step[0], "ms": ms,
+            "ok": bool(ok), "err": str(err or "")[:400],
         }).encode()
         req = urllib.request.Request(f"{_manager_base()}/api/usage", data=payload,
                                      method="POST",
@@ -1837,13 +1889,15 @@ def or_chat(messages, tools, model=None):
         _b["reasoning"] = {"effort": _reasoning}
     body = json.dumps(_b).encode()
     last = ""
+    _turn_step[0] += 1
+    t0 = time.monotonic()
     for attempt in range(LLM_RETRIES + 1):
         req = urllib.request.Request(_llm_url(), data=body, method="POST",
                                      headers=_llm_headers())
         try:
             r = urllib.request.urlopen(req, timeout=120)
             d = json.loads(r.read().decode())
-            report_usage(d.get("usage"))
+            report_usage(d.get("usage"), ms=int((time.monotonic() - t0) * 1000))
             return d["choices"][0]["message"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", "replace")[:400]
@@ -1855,11 +1909,13 @@ def or_chat(messages, tools, model=None):
             last = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
+            report_usage({}, ms=int((time.monotonic() - t0) * 1000), ok=False, err=last)
             return {"content": last}
         except Exception as e:
             last = f"⚠️ {LLM_NAME} error: {e!r}"
             if attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
+            report_usage({}, ms=int((time.monotonic() - t0) * 1000), ok=False, err=last)
             return {"content": last}
     return {"content": last}
 
@@ -2252,14 +2308,14 @@ def _turn_steps(message):
     return n, m.group(2).strip()
 
 
-def run(user_message, deadline=0.0):
+def run(user_message, deadline=0.0, kind="chat"):
     global MAX_STEPS
     _deadline[0] = float(deadline or 0)
     ts = _turn_steps(user_message)
     if ts:
         saved, MAX_STEPS = MAX_STEPS, ts[0]
         try:
-            return run(ts[1])
+            return run(ts[1], kind=kind)
         finally:
             MAX_STEPS = saved
     _turn_id[0] = uuid.uuid4().hex[:8]
@@ -2290,7 +2346,13 @@ def run(user_message, deadline=0.0):
         hist = [{"role": "system", "content": SYSTEM},
                 {"role": "system", "content": _now_line()},
                 {"role": "user", "content": m}]
-        return _tool_loop(hist)
+        _trace_begin("fresh")
+        out = "⚠️ (no answer)"
+        try:
+            out = _tool_loop(hist)
+            return out
+        finally:
+            _trace_end(_outcome_of(out))
     _trim_history()
     _inject_playbooks()
     _inject_missions()
@@ -2299,12 +2361,14 @@ def run(user_message, deadline=0.0):
     _recall(user_message)
     _history.append({"role": "user", "content": user_message})
     _busy[0] = True
+    _trace_begin(kind)
+    out = "⚠️ (no answer)"
     try:
-        if _goal:
-            return _run_goal(_history, user_message)
-        return _tool_loop(_history)
+        out = _run_goal(_history, user_message) if _goal else _tool_loop(_history)
+        return out
     finally:
         _busy[0] = False
+        _trace_end(_outcome_of(out))
 
 
 def _strip_history_images(messages):
@@ -2350,6 +2414,8 @@ def or_chat_stream(messages, tools, on_token):
     # Only retry the connection setup (mid-stream is not sensibly retryable,
     # since tokens may already have flowed).
     r = None
+    _turn_step[0] += 1
+    _t0 = time.monotonic()
     for attempt in range(LLM_RETRIES + 1):
         req = urllib.request.Request(_llm_url(), data=body, method="POST",
                                      headers=_llm_headers())
@@ -2380,11 +2446,13 @@ def or_chat_stream(messages, tools, on_token):
             m = f"⚠️ {LLM_NAME} HTTP {e.code}: {err_body[:300]}"
             if e.code in _RETRY_CODES and attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
+            report_usage({}, ms=int((time.monotonic() - _t0) * 1000), ok=False, err=m)
             on_token(m); return {"role": "assistant", "content": m}
         except Exception as e:
             m = f"⚠️ {LLM_NAME} error: {e!r}"
             if attempt < LLM_RETRIES:
                 _retry_sleep(attempt); continue
+            report_usage({}, ms=int((time.monotonic() - _t0) * 1000), ok=False, err=m)
             on_token(m); return {"role": "assistant", "content": m}
     try:
         for raw in r:
@@ -2399,7 +2467,7 @@ def or_chat_stream(messages, tools, on_token):
             except Exception:
                 continue
             if chunk.get("usage"):          # the last chunk carries the billing
-                report_usage(chunk["usage"])
+                report_usage(chunk["usage"], ms=int((time.monotonic() - _t0) * 1000))
             try:
                 delta = chunk["choices"][0]["delta"]
             except (KeyError, IndexError):
@@ -2446,7 +2514,7 @@ def or_chat_stream(messages, tools, on_token):
     return msg
 
 
-def run_stream(user_message, on_token, image=None, deadline=0.0):
+def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream"):
     _deadline[0] = float(deadline or 0)
     _turn_id[0] = uuid.uuid4().hex[:8]
     """Like run(), but streams the answer tokens via on_token. Tool rounds
@@ -2500,11 +2568,15 @@ def run_stream(user_message, on_token, image=None, deadline=0.0):
         content = user_message
     _history.append({"role": "user", "content": content})
     _busy[0] = True
+    _trace_begin(kind)
+    outcome = "error"
     try:
         if _goal:
             # With an active goal the answer is refined against the judge (not
             # streamed) and then emitted as a whole.
-            on_token(_run_goal(_history, user_message))
+            ans = _run_goal(_history, user_message)
+            on_token(ans)
+            outcome = _outcome_of(ans)
             return
         for _ in _step_iter():
             _drain_steer(_history, on_token)
@@ -2512,6 +2584,7 @@ def run_stream(user_message, on_token, image=None, deadline=0.0):
                 _history.append({"role": "system", "content": _DEADLINE_NOTE})
                 _history.append(or_chat_stream(_history, [], on_token))
                 on_token("\n\n⏱️ (time budget exhausted — partial result)")
+                outcome = "deadline"
                 return
             msg = or_chat_stream(_history, TOOLS, on_token)
             _history.append(msg)
@@ -2519,6 +2592,7 @@ def run_stream(user_message, on_token, image=None, deadline=0.0):
             if not tcs:
                 if _drain_steer(_history, on_token):
                     continue
+                outcome = _outcome_of(msg.get("content"))
                 return
             for tc in tcs:
                 fn = tc["function"]
@@ -2545,8 +2619,10 @@ def run_stream(user_message, on_token, image=None, deadline=0.0):
                 log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
                 _history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
         on_token("\n(max tool steps reached)")
+        outcome = "max_steps"
     finally:
         _busy[0] = False
+        _trace_end(outcome)
 
 
 # Tool plugins (pi.dev extension idea, ported): one .py file per tool,

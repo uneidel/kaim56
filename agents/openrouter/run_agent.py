@@ -132,6 +132,7 @@ class H(BaseHTTPRequestHandler):
             deadline = float(d.get("deadline") or 0)   # Zeitbudget des Aufrufers (Manager-Task)
         except (TypeError, ValueError):
             deadline = 0.0
+        kind = "task" if d.get("kind") == "task" else None   # Trace-Art: Task-Lauf oder Chat
         # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
         # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
         if self.path.rstrip("/").endswith("/steer"):
@@ -157,11 +158,11 @@ class H(BaseHTTPRequestHandler):
                     pass
             try:
                 if message or image:
-                    agent.run_stream(message, emit, image, deadline=deadline)
+                    agent.run_stream(message, emit, image, deadline=deadline, kind=kind or "stream")
             except Exception as ex:
                 emit(f"⚠️ {ex!r}")
             return
-        reply = agent.run(message, deadline=deadline) if message else ""
+        reply = agent.run(message, deadline=deadline, kind=kind or "chat") if message else ""
         b = json.dumps({"reply": reply}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-09
+- Traces: one span tree per turn (turn → LLM calls → tool calls, each with duration) stitched from the audit, the usage and a new `/api/trace` marker; `GET /api/trace/<instance>?turn=` returns it, the Activity dialog groups audit lines by turn; `llm_usage` gains turn/ms/step/ok/err, new `turns` table (30-day retention)
 - Task timeouts: the manager hands each turn a deadline, the agent stops its tool loop in time and answers with a partial result; worker-run tasks get 30 min (`TASK_TIMEOUT`); `/steps N <text>` (alias `/maxSteps`) caps one turn — a job search ran past the old 10-minute limit and its result was lost
 - Audit noise: the empty-notify check runs offline now; as an HTTP test it left an `admin/notify empty` audit line on every suite run (138 of them read like a misbehaving admin instance)
 - NFS per instance: the workspace `agent/<name>` and every host folder are exported to that VM's address only (no pool-wide root export, no crossmnt); guests mount by absolute path, `AGENT_EXPORT` on the config disk

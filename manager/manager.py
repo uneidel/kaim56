@@ -102,7 +102,7 @@ VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # voice service, loopba
 # The manager runs as root and may read the 0600 file; the guest fetches it at
 # boot via /api/claude-credentials (claude template only, by source IP).
 CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", "/home/ulrich/.claude/.credentials.json")
-GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log",
+GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
@@ -1034,7 +1034,8 @@ _store.configure(BASE)
 from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_lock, _hist_conn,  # noqa: E402,F401
                        usage_add, usage_summary, usage_for, history_add, history_search,
                        load_tasks, save_tasks, add_task, update_task, _next_run,
-                       _embed, sem_store, sem_search, load_memory, mem_store, mem_recall, with_tasks)
+                       _embed, sem_store, sem_search, load_memory, mem_store, mem_recall, with_tasks,
+                       turn_start, turn_end, turns_read, turn_trace, turns_prune)
 _missions.sem_store = sem_store   # injection (mgr/missions)
 
 
@@ -1046,7 +1047,8 @@ def _chat_post(inst, message, timeout=600):
     deadline along and stops its tool loop in time — a run that outlives the
     caller answers into the void (a 12-step job search once did)."""
     url = f"http://{net_of(inst)['guest']}:{WEB_GUEST_PORT}/api/chat"
-    data = json.dumps({"message": message, "deadline": time.time() + timeout - 30}).encode()
+    data = json.dumps({"message": message, "deadline": time.time() + timeout - 30,
+                       "kind": "task"}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     body = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
@@ -1526,6 +1528,10 @@ def _task_worker():
                     _memfs.sweep([i["name"] for i in load_instances() if uses_harness(i)])
                 except Exception as e:
                     _wlog(f"memfs-sweep failed: {e!r}")
+                try:
+                    turns_prune(30)          # traces older than the weekly digest's reach
+                except Exception as e:
+                    _wlog(f"turns-prune failed: {e!r}")
             try:
                 image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
@@ -2905,7 +2911,7 @@ AUDIT_DIR = os.path.join(BASE, "audit")
 AUDIT_MAX_LINES = 2000
 
 
-def audit_append(inst_name, tool, target, ok, err="", result="", turn=""):
+def audit_append(inst_name, tool, target, ok, err="", result="", turn="", ms=None):
     os.makedirs(AUDIT_DIR, exist_ok=True)
     p = os.path.join(AUDIT_DIR, f"{inst_name}.jsonl")
     rec = {"ts": int(time.time()), "tool": str(tool)[:64],
@@ -2919,6 +2925,11 @@ def audit_append(inst_name, tool, target, ok, err="", result="", turn=""):
         rec["result"] = str(result)[:300]
     if turn:
         rec["turn"] = str(turn)[:16]
+    if ms is not None:
+        try:
+            rec["ms"] = int(ms)          # the span's duration (additive field)
+        except (TypeError, ValueError):
+            pass
     with open(p, "a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     # trim occasionally so the file doesn't grow without bound
@@ -3972,6 +3983,9 @@ class H(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(out); return
         payload = self._raw(BODY_MAX_LLM)
         ginst = instance_by_ip(self.client_address[0])
+        span = {"turn": self.headers.get("X-Kaim-Turn", "")[:16],
+                "step": self.headers.get("X-Kaim-Step", "") or None}
+        _t0 = time.monotonic()
         try:
             want_stream = bool(json.loads(payload or b"{}").get("stream"))
         except (ValueError, AttributeError):
@@ -3987,6 +4001,10 @@ class H(BaseHTTPRequestHandler):
             # Pass upstream errors through 1:1: the agent has its own retry
             # logic for 429/5xx and shows 4xx bodies as an error message.
             data = e.read()
+            if ginst is not None:            # a failed LLM span, with the reason
+                usage_add(ginst["name"], backend, 0, 0, 0, ok=False,
+                          err=f"HTTP {e.code}: {data[:300].decode('utf-8', 'replace')}",
+                          ms=int((time.monotonic() - _t0) * 1000), **span)
             self.send_response(e.code)
             self.send_header("Content-Type", e.headers.get("Content-Type", "application/json"))
             self.send_header("Content-Length", str(len(data)))
@@ -4016,7 +4034,7 @@ class H(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         if b'"usage"' in chunk:
-                            _proxy_usage(ginst, backend, chunk)
+                            _proxy_usage(ginst, backend, chunk, ms=int((time.monotonic() - _t0) * 1000), **span)
                 except (BrokenPipeError, ConnectionResetError):
                     pass               # client gone -> upstream closes via with
             else:
@@ -4024,7 +4042,7 @@ class H(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-                _proxy_usage(ginst, backend, data)
+                _proxy_usage(ginst, backend, data, ms=int((time.monotonic() - _t0) * 1000), **span)
 
     def _do_POST(self):
         if not self._auth():
@@ -4111,9 +4129,10 @@ def ws_forward_headers(items):
             if k.lower() in _WS_KEEP or k.lower().startswith("sec-websocket-")]
 
 
-def _proxy_usage(inst, backend, raw):
+def _proxy_usage(inst, backend, raw, ms=None, turn="", step=None):
     """Book the tokens the UPSTREAM reports for this guest: the budget guard
-    must not rest on what the agent chooses to tell us via /api/usage."""
+    must not rest on what the agent chooses to tell us via /api/usage. The
+    span (turn, step from the request headers, duration) rides along."""
     if inst is None:
         return
     raw = raw.strip()
@@ -4124,7 +4143,7 @@ def _proxy_usage(inst, backend, raw):
         u = j.get("usage") or {}
         if isinstance(u, dict) and (u.get("prompt_tokens") or u.get("completion_tokens")):
             usage_add(inst["name"], j.get("model") or backend, u.get("prompt_tokens"),
-                      u.get("completion_tokens"), u.get("cost"))
+                      u.get("completion_tokens"), u.get("cost"), turn=turn, ms=ms, step=step)
     except (ValueError, AttributeError, TypeError):
         pass
 
@@ -4528,8 +4547,51 @@ def _rt_usage_report(h):
     body = h._body()
     if inst is not None and (load_settings().get("LLM_KEY_PROXY") or "") != "1":
         usage_add(inst["name"], body.get("model", ""), body.get("prompt_tokens"),
-                  body.get("completion_tokens"), body.get("cost"))
+                  body.get("completion_tokens"), body.get("cost"),
+                  turn=body.get("turn", ""), ms=body.get("ms"), step=body.get("step"),
+                  ok=body.get("ok", True), err=body.get("err", ""))
     h.send_response(204); h.end_headers()
+
+
+@ROUTER.post("/api/trace")
+def _rt_trace(h):
+    # Turn markers from the agent: start opens a turns row, end closes it with
+    # duration, steps and outcome. Guests only, instance by IP, rate-limited.
+    inst = h._guest()
+    body = h._body()
+    if inst is None:
+        return h._forbid()
+    if not rate_ok(("trace", inst["name"]), 120, 300):
+        return h._json({"error": "rate limit"}, 429)
+    turn = str(body.get("turn") or "")[:16]
+    if turn:
+        if body.get("event") == "start":
+            turn_start(inst["name"], turn, body.get("kind") or "chat")
+        elif body.get("event") == "end":
+            turn_end(inst["name"], turn, ms=body.get("ms"), steps=body.get("steps"),
+                     outcome=body.get("outcome") or "ok", kind=body.get("kind") or "chat")
+    h.send_response(204); h.end_headers()
+
+
+@ROUTER.get("/api/trace/", prefix=True, admin=True)
+def _rt_trace_read(h):
+    # One turn as a span tree: the turn row, its LLM calls (llm_usage) and its
+    # tool calls (audit lines with that turn id), each with duration. Without
+    # ?turn= the last 50 turns of the instance.
+    nm = re.sub(r"[^a-zA-Z0-9_-]", "", _tail(h, "/api/trace/")[0])
+    q = _qs(h)
+    turn = re.sub(r"[^a-zA-Z0-9_-]", "", q.get("turn", [""])[0])[:16]
+    if not turn:
+        try:
+            limit = max(1, min(int(q.get("limit", ["50"])[0]), 500))
+        except ValueError:
+            limit = 50
+        return h._json({"instance": nm, "turns": turns_read(nm, limit=limit)})
+    t = turn_trace(nm, turn)
+    # audit_read is newest-first; the file order is the call order (ts has
+    # only seconds, so a stable sort on ts alone would swap calls of one second)
+    tools = [e for e in reversed(audit_read(nm, limit=AUDIT_MAX_LINES)) if e.get("turn") == turn]
+    return h._json({"instance": nm, "turn": t["turn"], "llm": t["llm"], "tools": tools})
 
 
 @ROUTER.post("/api/audit")
@@ -4540,7 +4602,8 @@ def _rt_audit_report(h):
         try:
             audit_append(inst["name"], body.get("tool", ""), body.get("target", ""),
                          body.get("ok", True), err=body.get("err", ""),
-                         result=body.get("result", ""), turn=body.get("turn", ""))
+                         result=body.get("result", ""), turn=body.get("turn", ""),
+                         ms=body.get("ms"))
         except Exception:
             pass
     h.send_response(204); h.end_headers()
