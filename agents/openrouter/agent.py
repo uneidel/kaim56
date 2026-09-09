@@ -2192,11 +2192,32 @@ def _branch_close(cmd):
             ("." if drop or not note else f" — sidenote: {note}"))
 
 
+# Wall-clock budget of the current turn (epoch seconds, 0 = none). The manager
+# sets it per task from its own timeout: a task that ran 12 steps of slow web
+# fetches once needed more than the manager's 10 minutes, the manager gave up,
+# the agent finished into the void and the result was lost. With a deadline
+# the loop stops fetching in time and answers with what it has.
+_deadline = [0.0]
+DEADLINE_MARGIN = 45           # seconds before the deadline reserved for the final answer
+_DEADLINE_NOTE = ("[TimeBudget] The time budget for this turn is exhausted. Answer NOW with "
+                  "what you have: a partial result is fine, say what is still missing. "
+                  "No more tools.")
+
+
+def _out_of_time():
+    return bool(_deadline[0]) and time.time() > _deadline[0] - DEADLINE_MARGIN
+
+
 def _tool_loop(hist):
     """Tool loop on an arbitrary message list. `hist` is either
     the persistent _history (conversation) or a throwaway list (heartbeat)."""
     for _ in _step_iter():
         _drain_steer(hist)
+        if _out_of_time():
+            hist.append({"role": "system", "content": _DEADLINE_NOTE})
+            msg = or_chat(hist, [])                       # tools off: the final answer
+            hist.append(msg)
+            return (msg.get("content") or "(empty answer)") + "\n\n⏱️ (time budget exhausted — partial result)"
         msg = or_chat(hist, TOOLS)
         hist.append(msg)
         tcs = msg.get("tool_calls")
@@ -2211,13 +2232,36 @@ def _tool_loop(hist):
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            out = exec_tool(fn["name"], args)
+            out = "(time budget exhausted — not executed)" if _out_of_time() else exec_tool(fn["name"], args)
             log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
             hist.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
     return "(max tool steps reached)"
 
 
-def run(user_message):
+_STEPS_PREFIX = re.compile(r"^/(?:steps|maxsteps)\s+(\d+|unlimited)\s+(\S.*)$", re.I | re.S)
+
+
+def _turn_steps(message):
+    """'/steps 40 <text>' (alias /maxSteps): the step cap for THIS turn only,
+    (n, text); None when the message is not of that form. A task once carried
+    '/maxSteps 100 …' as plain text — no such command, the model just read it."""
+    m = _STEPS_PREFIX.match(message.strip())
+    if not m:
+        return None
+    n = 0 if m.group(1).lower() == "unlimited" else max(1, int(m.group(1)))
+    return n, m.group(2).strip()
+
+
+def run(user_message, deadline=0.0):
+    global MAX_STEPS
+    _deadline[0] = float(deadline or 0)
+    ts = _turn_steps(user_message)
+    if ts:
+        saved, MAX_STEPS = MAX_STEPS, ts[0]
+        try:
+            return run(ts[1])
+        finally:
+            MAX_STEPS = saved
     _turn_id[0] = uuid.uuid4().hex[:8]
     user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
@@ -2402,7 +2446,8 @@ def or_chat_stream(messages, tools, on_token):
     return msg
 
 
-def run_stream(user_message, on_token, image=None):
+def run_stream(user_message, on_token, image=None, deadline=0.0):
+    _deadline[0] = float(deadline or 0)
     _turn_id[0] = uuid.uuid4().hex[:8]
     """Like run(), but streams the answer tokens via on_token. Tool rounds
     produce no text; the final answer is streamed.
@@ -2463,6 +2508,11 @@ def run_stream(user_message, on_token, image=None):
             return
         for _ in _step_iter():
             _drain_steer(_history, on_token)
+            if _out_of_time():
+                _history.append({"role": "system", "content": _DEADLINE_NOTE})
+                _history.append(or_chat_stream(_history, [], on_token))
+                on_token("\n\n⏱️ (time budget exhausted — partial result)")
+                return
             msg = or_chat_stream(_history, TOOLS, on_token)
             _history.append(msg)
             tcs = msg.get("tool_calls")

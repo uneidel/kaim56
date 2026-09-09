@@ -630,6 +630,53 @@ class AgentLogic(unittest.TestCase):
             a.BUILTIN.pop("echoplug", None)
             a.PLUGIN_TOOLS.discard("echoplug")
 
+    def test_turn_deadline_and_per_turn_steps(self):
+        """A turn with a deadline stops calling tools before it runs out and
+        answers with what it has; '/steps N <text>' (alias /maxSteps) caps the
+        steps for that turn only."""
+        a = self.a
+        old = a.or_chat, a.exec_tool, a.MAX_STEPS, a._deadline[0], list(a._history)
+        calls = []
+        try:
+            def chat(msgs, tools, model=None):
+                final = msgs[-1].get("content") == a._DEADLINE_NOTE
+                calls.append(not final)
+                if not final:
+                    return {"role": "assistant", "content": None,
+                            "tool_calls": [{"id": "1", "function": {"name": "web_search", "arguments": "{}"}}]}
+                return {"role": "assistant", "content": "partial: 2 hits so far"}
+            a.or_chat = chat
+            a.exec_tool = lambda name, args: "hit"
+            hist = [{"role": "system", "content": "s"}, {"role": "user", "content": "search"}]
+            a._deadline[0] = time.time() + a.DEADLINE_MARGIN - 1          # already inside the margin
+            out = a._tool_loop(hist)
+            self.assertIn("partial: 2 hits", out)
+            self.assertIn("time budget", out)
+            self.assertEqual(calls, [False])                                # one call, tools off
+            self.assertTrue(any(a._DEADLINE_NOTE in str(m.get("content")) for m in hist))
+            # a deadline far away: the loop runs its steps as usual
+            calls.clear(); a._deadline[0] = time.time() + 3600; a.MAX_STEPS = 2
+            self.assertEqual(a._tool_loop([{"role": "user", "content": "x"}]), "(max tool steps reached)")
+            self.assertEqual(calls, [True, True])
+            # /steps N <text> for one turn, /maxSteps alias, then the old cap again
+            a.MAX_STEPS = 12
+            self.assertEqual(a._turn_steps("/maxSteps 100 Tägliche Jobsuche"), (100, "Tägliche Jobsuche"))
+            self.assertEqual(a._turn_steps("/steps unlimited go"), (0, "go"))
+            self.assertIsNone(a._turn_steps("/steps 30"))                   # the setter, not a turn
+            self.assertIsNone(a._turn_steps("Jobsuche /steps 3"))
+            seen = []
+            old_loop = a._tool_loop
+            a._tool_loop = lambda hist: (seen.append(a.MAX_STEPS), "ok")[1]
+            try:
+                self.assertEqual(a.run("/steps 3 hallo", deadline=0), "ok")
+            finally:
+                a._tool_loop = old_loop
+            self.assertEqual(seen, [3])
+            self.assertEqual(a.MAX_STEPS, 12)
+        finally:
+            a.or_chat, a.exec_tool, a.MAX_STEPS, a._deadline[0] = old[:4]
+            a._history[:] = old[4]
+
     # --- Tree-Chat: /branch + /back -------------------------------------------
     def test_branch_and_back(self):
         a = self.a
@@ -1943,8 +1990,8 @@ class ManagerFunctions(unittest.TestCase):
         seen = []
         old_eph, old_named, old_file = m._run_ephemeral, m._run_named, st.TASKS_FILE
         try:
-            m._run_ephemeral = lambda msg, model=None: (seen.append(("eph", msg, model)), (True, "r"))[1]
-            m._run_named = lambda inst, msg: (seen.append(("named", inst, msg)), (True, "r"))[1]
+            m._run_ephemeral = lambda msg, model=None, timeout=600: (seen.append(("eph", msg, model)), (True, "r"))[1]
+            m._run_named = lambda inst, msg, timeout=600: (seen.append(("named", inst, msg)), (True, "r"))[1]
             m._run_task_now("ephemeral", "do", "google/gemini-2.5-flash")
             m._run_task_now("ephemeral", "do")
             m._run_task_now("hass", "do", "google/gemini-2.5-flash")
@@ -2758,6 +2805,43 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIsNone(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]).get("id"))
         finally:
             m.instance_by_ip, m.audit_append, m.PW = old
+
+    def test_task_runs_carry_a_deadline_and_the_worker_timeout(self):
+        """The bridge call carries deadline = now + timeout - margin; the worker
+        gives a task TASK_TIMEOUT, a waiting guest keeps 600 s; a timeout reads
+        as a timeout, not as a stack trace."""
+        m = self.m
+        sent = []
+        old = m.urllib.request.urlopen, m.net_of, m.load_instances, m.is_running, m._run_named
+
+        class _R:
+            def __init__(self, body): self.body = body
+            def read(self): return self.body
+        try:
+            m.net_of = lambda inst: {"guest": "172.30.9.2"}
+            def fake_open(req, timeout=None):
+                sent.append((json.loads(req.data.decode()), timeout))
+                if timeout == 5:
+                    raise TimeoutError("timed out")
+                return _R(b'{"reply": "done"}')
+            m.urllib.request.urlopen = fake_open
+            inst = {"name": "vm1", "index": 9}
+            self.assertEqual(m._chat_post(inst, "hi", timeout=1800), "done")
+            body, to = sent[-1]
+            self.assertEqual(to, 1800)
+            self.assertAlmostEqual(body["deadline"], time.time() + 1770, delta=5)
+            m.load_instances = lambda: [inst]
+            m.is_running = lambda i: True
+            ok, res = m._run_named("vm1", "hi", timeout=5)
+            self.assertFalse(ok); self.assertIn("no answer within 5 s", res)
+            got = []
+            m._run_named = lambda instance, message, timeout=600: (got.append(timeout), (True, "x"))[1]
+            m._run_task_now("vm1", "hi", None, timeout=m.TASK_TIMEOUT)
+            m._run_task_now("vm1", "hi")
+            self.assertEqual(got, [m.TASK_TIMEOUT, 600])
+            self.assertGreaterEqual(m.TASK_TIMEOUT, 1800)
+        finally:
+            m.urllib.request.urlopen, m.net_of, m.load_instances, m.is_running, m._run_named = old
 
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST

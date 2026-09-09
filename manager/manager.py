@@ -1038,10 +1038,15 @@ from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_loc
 _missions.sem_store = sem_store   # injection (mgr/missions)
 
 
+TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", "1800"))    # worker-run tasks: 30 min
+
+
 def _chat_post(inst, message, timeout=600):
-    """Non-streaming chat call to an instance's bridge."""
+    """Non-streaming chat call to an instance's bridge. The agent gets the
+    deadline along and stops its tool loop in time — a run that outlives the
+    caller answers into the void (a 12-step job search once did)."""
     url = f"http://{net_of(inst)['guest']}:{WEB_GUEST_PORT}/api/chat"
-    data = json.dumps({"message": message}).encode()
+    data = json.dumps({"message": message, "deadline": time.time() + timeout - 30}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     body = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
@@ -1051,7 +1056,7 @@ def _chat_post(inst, message, timeout=600):
         return body
 
 
-def _run_named(instance, message):
+def _run_named(instance, message, timeout=600):
     """Run a task on an EXISTING instance (its tools/MCP/secrets live there).
     Starts it if needed and waits until the bridge is up."""
     inst = next((i for i in load_instances() if i["name"] == instance), None)
@@ -1062,7 +1067,9 @@ def _run_named(instance, message):
             return (False, f"instance '{instance}' not ready")
         inst = next((i for i in load_instances() if i["name"] == instance), None)
     try:
-        return (True, _chat_post(inst, message))
+        return (True, _chat_post(inst, message, timeout=timeout))
+    except (TimeoutError, socket.timeout):
+        return (False, f"error: no answer within {timeout} s — the agent did not finish in time")
     except Exception as e:
         return (False, f"error: {e!r}")
 
@@ -1071,19 +1078,19 @@ EPHEMERAL_MAX = int(os.environ.get("EPHEMERAL_MAX", "2"))
 _ephemeral_slots = threading.BoundedSemaphore(EPHEMERAL_MAX)
 
 
-def _run_ephemeral(message, model=None):
+def _run_ephemeral(message, model=None, timeout=600):
     """Run a task in a FRESH, isolated VM that is deleted afterwards — at most
     EPHEMERAL_MAX at a time: every one is a full VM (RAM, tap, disk), and any
     guest may ask for one, so the rest queue instead of exhausting the host."""
     if not _ephemeral_slots.acquire(timeout=600):
         return (False, f"ephemeral VM slots busy ({EPHEMERAL_MAX} at a time) — try again later")
     try:
-        return _run_ephemeral_vm(message, model)
+        return _run_ephemeral_vm(message, model, timeout)
     finally:
         _ephemeral_slots.release()
 
 
-def _run_ephemeral_vm(message, model=None):
+def _run_ephemeral_vm(message, model=None, timeout=600):
     name = "task-" + uuid.uuid4().hex[:6]
     cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
     if model:
@@ -1095,7 +1102,7 @@ def _run_ephemeral_vm(message, model=None):
     try:
         if not wait_web(inst, timeout=120):
             return (False, "ephemeral VM not ready")
-        return (True, _chat_post(inst, message))
+        return (True, _chat_post(inst, message, timeout=timeout))
     except Exception as e:
         return (False, f"error: {e!r}")
     finally:
@@ -1152,13 +1159,14 @@ def task_target_sweep():
     return hit
 
 
-def _run_task_now(instance, message, model=None):
+def _run_task_now(instance, message, model=None, timeout=600):
     """Run a task — on a named instance (routing to the capability) or in an
     ephemeral VM (target == 'ephemeral'). `model` applies to the ephemeral VM
-    only — a named instance keeps its own configuration."""
+    only — a named instance keeps its own configuration. `timeout` is the
+    caller's patience; the worker allows TASK_TIMEOUT, a waiting guest 600 s."""
     if instance == "ephemeral":
-        return _run_ephemeral(message, (model or "").strip()[:120] or None)
-    return _run_named(instance, message)
+        return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout)
+    return _run_named(instance, message, timeout)
 
 
 # ---- Instant trigger for the orchestrator ----------------------------------
@@ -1436,7 +1444,7 @@ def _task_worker():
                 # (bug Aug 20: exception in the follow-up -> outer except ->
                 # the task never fired again and the chat entry was missing).
                 try:
-                    ok, res = _run_task_now(t["instance"], t["message"], t.get("model"))
+                    ok, res = _run_task_now(t["instance"], t["message"], t.get("model"), timeout=TASK_TIMEOUT)
                 except Exception as e:
                     ok, res = False, f"worker-exception (run): {e!r}"
                     _wlog(f"{t['id']}: {res}")
