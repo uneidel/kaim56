@@ -3878,11 +3878,15 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(r.status)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(out)))
+                if r.headers.get("X-Kaim-Turn"):
+                    self.send_header("X-Kaim-Turn", r.headers["X-Kaim-Turn"])
                 self.end_headers()
                 self.wfile.write(out)
                 return
             self.send_response(r.status)
             self.send_header("Content-Type", r.headers.get("Content-Type", "text/html; charset=utf-8"))
+            if r.headers.get("X-Kaim-Turn"):        # the turn id: the app fetches its trace by it
+                self.send_header("X-Kaim-Turn", r.headers["X-Kaim-Turn"])
             self.end_headers()
             # Pass through chunk by chunk + flush -> token streaming from the
             # agent. With the gateway a decoder runs in between: otherwise 4-KB

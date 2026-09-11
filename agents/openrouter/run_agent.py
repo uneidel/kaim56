@@ -5,6 +5,7 @@
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Transport-Layer fuer den OpenRouter-Agent: TRANSPORT=signal | web."""
 import json
+import uuid
 import os
 import time
 import urllib.error
@@ -133,6 +134,7 @@ class H(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             deadline = 0.0
         kind = "task" if d.get("kind") == "task" else None   # Trace-Art: Task-Lauf oder Chat
+        turn = uuid.uuid4().hex[:8]     # der Turn bekommt seinen Namen VOR den Headern
         # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
         # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
         if self.path.rstrip("/").endswith("/steer"):
@@ -148,6 +150,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Kaim-Turn", turn)      # the client can fetch the trace by it
             self.end_headers()
 
             def emit(tok):
@@ -158,14 +161,15 @@ class H(BaseHTTPRequestHandler):
                     pass
             try:
                 if message or image:
-                    agent.run_stream(message, emit, image, deadline=deadline, kind=kind or "stream")
+                    agent.run_stream(message, emit, image, deadline=deadline, kind=kind or "stream", turn=turn)
             except Exception as ex:
                 emit(f"⚠️ {ex!r}")
             return
-        reply = agent.run(message, deadline=deadline, kind=kind or "chat") if message else ""
-        b = json.dumps({"reply": reply}).encode()
+        reply = agent.run(message, deadline=deadline, kind=kind or "chat", turn=turn) if message else ""
+        b = json.dumps({"reply": reply, "turn": turn}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("X-Kaim-Turn", turn)
         self.end_headers()
         self.wfile.write(b)
 

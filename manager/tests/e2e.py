@@ -698,7 +698,8 @@ class AgentLogic(unittest.TestCase):
             a.or_chat = chat
             a.BUILTIN["web_search"] = (lambda **kw: "1. hit", {}, [])
             a.MAX_STEPS = 5
-            self.assertEqual(a.run("/fresh find it", kind="task"), "done")
+            self.assertEqual(a.run("/fresh find it", kind="task", turn="abc12345"), "done")
+            self.assertTrue(all(b["turn"] == "abc12345" for p, b in posts if p == "/api/trace"))   # named by the bridge
             kinds = [(p, b.get("event")) for p, b in posts if p == "/api/trace"]
             self.assertEqual(kinds, [("/api/trace", "start"), ("/api/trace", "end")])
             end = next(b for p, b in posts if p == "/api/trace" and b["event"] == "end")
@@ -2959,6 +2960,50 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             st.HISTORY_DB, m.AUDIT_DIR, m.instance_by_ip, m.load_settings = old[:4]
             st._migrated[0] = old[4][0]
+
+    def test_instance_proxy_forwards_the_turn_header(self):
+        """The bridge names a turn in X-Kaim-Turn; the manager's /i/<name>/
+        proxy passes it to the app on the streamed and on the JSON-unpacked
+        chat path, so the app can fetch the trace."""
+        m = self.m
+        import email.message
+
+        class _R:
+            def __init__(self, body, ct, turn):
+                self.status, self.body, self.pos = 200, body, 0
+                self.headers = email.message.Message()
+                self.headers["Content-Type"] = ct
+                if turn:
+                    self.headers["X-Kaim-Turn"] = turn
+            def read(self, n=None):
+                if n is None:
+                    out, self.pos = self.body[self.pos:], len(self.body); return out
+                out = self.body[self.pos:self.pos + n]; self.pos += len(out); return out
+        old = m.urllib.request.urlopen, m.load_instances, m.is_running, m.net_of, m.instance_by_ip, m.PW
+        try:
+            inst = {"name": "vm1", "index": 4, "config": {"TRANSPORT": "web"}}
+            m.load_instances = lambda: [inst]
+            m.is_running = lambda i: True
+            m.net_of = lambda i: {"guest": "172.30.4.2"}
+            m.instance_by_ip = lambda ip: None
+            m.PW = ""
+            m.urllib.request.urlopen = lambda req, timeout=None: _R(b"Hallo", "text/plain; charset=utf-8", "t0ken001")
+            h = self._post_handler("/i/vm1/api/chat/stream", "10.0.0.5", b'{"message":"hi"}')
+            h._proxy("POST")
+            raw = h.wfile.getvalue()
+            self.assertIn(b"X-Kaim-Turn: t0ken001", raw.split(b"\r\n\r\n", 1)[0])
+            self.assertTrue(raw.endswith(b"Hallo"))
+            m.urllib.request.urlopen = lambda req, timeout=None: _R(b'{"reply": "Hi", "turn": "t0ken002"}', "application/json", "t0ken002")
+            h = self._post_handler("/i/vm1/api/chat", "10.0.0.5", b'{"message":"hi"}')
+            h._proxy("POST")
+            raw = h.wfile.getvalue()
+            self.assertIn(b"X-Kaim-Turn: t0ken002", raw.split(b"\r\n\r\n", 1)[0])
+            self.assertTrue(raw.endswith(b"Hi"))                                  # unpacked for the app
+            m.urllib.request.urlopen = lambda req, timeout=None: _R(b"<p>x</p>", "text/html", "")
+            h = self._handler("/i/vm1/", "10.0.0.5"); h._proxy("GET")
+            self.assertNotIn(b"X-Kaim-Turn", h.wfile.getvalue())                # nothing to forward
+        finally:
+            m.urllib.request.urlopen, m.load_instances, m.is_running, m.net_of, m.instance_by_ip, m.PW = old
 
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST

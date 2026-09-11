@@ -725,6 +725,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // ignored and chatStream aborts (correcting the previous statement).
     val turnGen = remember { intArrayOf(0) }
     val cancelHandle = remember { arrayOfNulls<ServerAgent.CancelHandle>(1) }
+    var traceOpen by remember { mutableStateOf<String?>(null) }     // turn id whose trace is shown
 
     fun stopSpeak() {
         speakGen[0]++
@@ -948,7 +949,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             scope.launch {
                 val err = withContext(Dispatchers.IO) {
                     ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
-                        chatId = current.id, cancel = ch) { chunk ->
+                        chatId = current.id, cancel = ch,
+                        onTurn = { t -> mainHandler.post {
+                            val i = msgs.indexOfFirst { it.key == botKey }
+                            if (i >= 0) msgs[i] = msgs[i].copy(turn = t)
+                        } }) { chunk ->
                         if (myGen != turnGen[0]) return@chatStream
                         mainHandler.post {
                             if (myGen == turnGen[0]) {
@@ -1215,7 +1220,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             Bubble(m, agentLabel, current.mode, bubbleMax,
                                 speaking = speakingIdx == i,
                                 onSpeak = { t -> speakText(t, i) },
-                                onStopSpeak = { stopSpeak() })
+                                onStopSpeak = { stopSpeak() },
+                                onTrace = if (current.mode == "server") ({ t -> traceOpen = t }) else null)
                         }
                     }
                 }
@@ -1546,6 +1552,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
+    traceOpen?.let { t ->
+        TraceDialog(prefs, current.instance.ifBlank { prefs.instance }, t, onDismiss = { traceOpen = null })
+    }
     if (showAgents) {
         ServerAgentsDialog(prefs, onDismiss = { showAgents = false }, onStatus = { status = it })
     }
@@ -1692,6 +1701,7 @@ fun Bubble(
     speaking: Boolean = false,
     onSpeak: (String) -> Unit = {},
     onStopSpeak: () -> Unit = {},
+    onTrace: ((String) -> Unit)? = null,     // opens the turn's trace (server chats)
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -1793,6 +1803,13 @@ fun Bubble(
                     if (speaking) "Stop speaking" else "Read aloud",
                     Modifier.size(15.dp).tap { if (speaking) onStopSpeak() else onSpeak(th.answer) },
                     tint = if (speaking) Kat.accent else Kat.textGhost,
+                )
+                // The turn's trace (LLM calls, tool calls, durations) — the
+                // bridge named the turn in a response header, the manager has it.
+                if (m.turn != null && onTrace != null && !th.streaming) Text(
+                    "⟲ trace", fontSize = 11.sp, fontFamily = Plex, color = Kat.textSubtle,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).tap { onTrace(m.turn) }
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
                 )
             }
         }
@@ -2686,6 +2703,82 @@ fun SettingsScreen(
 }
 
 // ── Server agents (not drawn in the prototype — carried over unchanged) ──────
+
+/** One turn as a span tree: the turn row, its LLM calls and its tool calls,
+ *  each with duration — fetched from /api/trace/<instance>?turn=. */
+@Composable
+fun TraceDialog(prefs: Prefs, instance: String, turn: String, onDismiss: () -> Unit) {
+    var data by remember { mutableStateOf<org.json.JSONObject?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(turn) {
+        loading = true
+        data = withContext(Dispatchers.IO) { ManagerSync.trace(prefs.serverUrl, prefs.user, prefs.pass, instance, turn) }
+        loading = false
+    }
+    fun ms(v: Any?): String {
+        val n = (v as? Number)?.toLong() ?: return "–"
+        return if (n >= 1000) String.format("%.1f s", n / 1000.0) else "$n ms"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Kat.surface,
+        confirmButton = { TextButton(onDismiss) { Text("Close") } },
+        title = { Text("Trace $turn", fontFamily = PlexMono, fontSize = 15.sp) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                val d = data
+                if (!loading && d == null) Text("No trace from the manager.", style = MaterialTheme.typography.bodySmall)
+                if (d != null) {
+                    val t = d.optJSONObject("turn")
+                    if (t != null) {
+                        val head = buildString {
+                            append(t.optString("kind", "turn")); append(" · "); append(ms(t.opt("ms")))
+                            append(" · "); append(t.optInt("steps")); append(" steps")
+                            append(" · "); append(t.optInt("llm_calls")); append(" LLM")
+                            append(" · "); append(t.optInt("in")); append("/"); append(t.optInt("out")); append(" tok")
+                            val oc = t.optString("outcome", ""); if (oc.isNotEmpty() && oc != "ok") { append(" · "); append(oc) }
+                        }
+                        Text(head, fontSize = 12.5.sp, fontFamily = Plex, color = Kat.text)
+                    } else Text("turn row missing (still running or older than 30 days)",
+                        fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint)
+                    val llm = d.optJSONArray("llm"); val tools = d.optJSONArray("tools")
+                    if (llm != null && llm.length() > 0) {
+                        Text("LLM calls", fontSize = 11.sp, fontFamily = Plex, color = Kat.textSubtle,
+                            modifier = Modifier.padding(top = 4.dp))
+                        for (i in 0 until llm.length()) {
+                            val x = llm.getJSONObject(i)
+                            val ok = x.optBoolean("ok", true)
+                            Text("#${x.optInt("step")}  ${ms(x.opt("ms"))}  ${x.optInt("in")}/${x.optInt("out")} tok" +
+                                (if (!ok) "  ✗ " + x.optString("err").take(80) else ""),
+                                fontSize = 12.sp, fontFamily = PlexMono,
+                                color = if (ok) Kat.textDim else Kat.accentText)
+                        }
+                    }
+                    if (tools != null && tools.length() > 0) {
+                        Text("Tool calls", fontSize = 11.sp, fontFamily = Plex, color = Kat.textSubtle,
+                            modifier = Modifier.padding(top = 4.dp))
+                        for (i in 0 until tools.length()) {
+                            val x = tools.getJSONObject(i)
+                            val ok = x.optBoolean("ok", true)
+                            Column {
+                                Text("${x.optString("tool")}  ${ms(x.opt("ms"))}" + (if (!ok) "  ✗" else ""),
+                                    fontSize = 12.sp, fontFamily = PlexMono,
+                                    color = if (ok) Kat.text else Kat.accentText)
+                                val tgt = x.optString("target", ""); val err = x.optString("err", "")
+                                if (tgt.isNotEmpty()) Text(tgt.take(120), fontSize = 11.sp, fontFamily = PlexMono,
+                                    color = Kat.textFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                if (!ok && err.isNotEmpty()) Text(err.take(160), fontSize = 11.sp, fontFamily = Plex,
+                                    color = Kat.textDim, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    } else if (llm != null) Text("no tool calls", fontSize = 11.5.sp, fontFamily = Plex, color = Kat.textFaint)
+                }
+            }
+        },
+    )
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable

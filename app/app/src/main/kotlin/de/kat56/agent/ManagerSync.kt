@@ -5,6 +5,7 @@ package de.kat56.agent
 
 import android.util.Base64
 import org.json.JSONArray
+import android.net.Uri
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -172,13 +173,13 @@ object ManagerSync {
         } catch (e: Exception) { null }
     }
 
-    /** Result of a document extraction in the manager. */
+    /** Ergebnis einer Dokument-Extraktion im Manager. */
     data class Extracted(val name: String, val text: String, val note: String)
 
     /**
-     * Send a PDF/DOCX/text file to the manager; back comes the plain TEXT.
-     * The model never sees the binary — the text travels into the chat.
-     * Null = failed (reason in lastStatus).
+     * PDF/DOCX/Text zum Manager schicken; zurueck kommt der reine TEXT.
+     * Das Modell sieht nie die Binaerdatei — in den Chat wandert der Text.
+     * Null = fehlgeschlagen (Grund in lastStatus).
      */
     fun extract(baseUrl: String, user: String, pass: String,
                 name: String, data: ByteArray): Extracted? {
@@ -251,6 +252,13 @@ object ManagerSync {
         request("POST", "${baseUrl.trimEnd('/')}/api/mission-admin", user, pass,
             JSONObject().put("id", id).put("action", action)
                 .put("instance", instance).toString()) != null
+
+    /** Trace eines Turns: {turn:{…}, llm:[…], tools:[…]} vom Manager, null bei Fehler. */
+    fun trace(baseUrl: String, user: String, pass: String, instance: String, turn: String): JSONObject? {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/trace/${Uri.encode(instance)}?turn=${Uri.encode(turn)}",
+            user, pass, null) ?: return null
+        return try { JSONObject(raw) } catch (e: Exception) { null }
+    }
 
     /** Prompt-Templates (Slash-Kommandos) vom Manager. */
     fun listPrompts(baseUrl: String, user: String, pass: String): List<Pair<String, String>> {
@@ -371,7 +379,7 @@ object ManagerSync {
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.outputStream.use { it.write(body.toByteArray()) }
             } else if (rawBody != null) {
-                // Binary upload (document extraction): bytes as they are.
+                // Binaerupload (Dokument-Extraktion): Bytes unveraendert.
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/octet-stream")
                 conn.outputStream.use { it.write(rawBody) }

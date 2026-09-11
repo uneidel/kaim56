@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-11
+- Traces in the app: the bridge names each turn in an `X-Kaim-Turn` header, the instance proxy forwards it, KatAgent 5.34 stores it on the message and opens the span tree (LLM and tool calls with durations) behind „⟲ trace“
+
 ## 2026-09-09
 - Traces: one span tree per turn (turn → LLM calls → tool calls, each with duration) stitched from the audit, the usage and a new `/api/trace` marker; `GET /api/trace/<instance>?turn=` returns it, the Activity dialog groups audit lines by turn; `llm_usage` gains turn/ms/step/ok/err, new `turns` table (30-day retention)
 - Task timeouts: the manager hands each turn a deadline, the agent stops its tool loop in time and answers with a partial result; worker-run tasks get 30 min (`TASK_TIMEOUT`); `/steps N <text>` (alias `/maxSteps`) caps one turn — a job search ran past the old 10-minute limit and its result was lost

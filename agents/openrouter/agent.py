@@ -2308,17 +2308,19 @@ def _turn_steps(message):
     return n, m.group(2).strip()
 
 
-def run(user_message, deadline=0.0, kind="chat"):
+def run(user_message, deadline=0.0, kind="chat", turn=None):
+    """`turn`: the bridge names the turn up front so it can hand the id to the
+    client in a response header — the client then fetches the trace."""
     global MAX_STEPS
     _deadline[0] = float(deadline or 0)
     ts = _turn_steps(user_message)
     if ts:
         saved, MAX_STEPS = MAX_STEPS, ts[0]
         try:
-            return run(ts[1], kind=kind)
+            return run(ts[1], kind=kind, turn=turn)
         finally:
             MAX_STEPS = saved
-    _turn_id[0] = uuid.uuid4().hex[:8]
+    _turn_id[0] = turn or uuid.uuid4().hex[:8]
     user_message = _expand_prompt(user_message)
     if user_message.strip() == "/reset":
         del _history[1:]
@@ -2514,9 +2516,9 @@ def or_chat_stream(messages, tools, on_token):
     return msg
 
 
-def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream"):
+def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", turn=None):
     _deadline[0] = float(deadline or 0)
-    _turn_id[0] = uuid.uuid4().hex[:8]
+    _turn_id[0] = turn or uuid.uuid4().hex[:8]
     """Like run(), but streams the answer tokens via on_token. Tool rounds
     produce no text; the final answer is streamed.
     image: optional base64 JPEG -> sent as vision content to OpenRouter."""
