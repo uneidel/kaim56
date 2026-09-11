@@ -281,6 +281,7 @@ private val SLASH_CMDS = listOf(
     SlashCmd("/aside", "Open an aside — a follow-up beside the main thread"),
     SlashCmd("/back", "Close the aside and summarise it (/back drop = discard)"),
     SlashCmd("/reset", "Reset conversation context"),
+    SlashCmd("/tools", "List the tools the agent can use right now"),
     SlashCmd("/agents", "Open agent management"),
     SlashCmd("/help", "Show commands"),
 )
@@ -1286,13 +1287,18 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 }
 
                 // ── Slash command suggestions (only while typing the name) ──
+                // All matches, scrollable: a bare "/" lists every command and
+                // every prompt template, the list scrolls instead of being cut
+                // to five (the templates alone were more than that).
                 val slashMatches = if (input.startsWith("/") && !input.contains(' '))
-                    (SLASH_CMDS + promptCmds).filter { it.cmd.startsWith(input, ignoreCase = true) }.take(5)
+                    (SLASH_CMDS + promptCmds).filter { it.cmd.startsWith(input, ignoreCase = true) }
                 else emptyList()
                 if (slashMatches.isNotEmpty()) {
                     Hairline()
                     Column(
                         Modifier.fillMaxWidth().background(Kat.bg)
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState())
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
                         slashMatches.forEach { c ->

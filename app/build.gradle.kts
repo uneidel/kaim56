@@ -12,17 +12,17 @@ android {
         applicationId = "de.kat56.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 82
-        versionName = "5.32"
+        versionCode = 83
+        versionName = "5.33"
         ndk {
-            // Xiaomi 15 = arm64-v8a. Only this ABI -> significantly smaller APK.
+            // Xiaomi 15 = arm64-v8a. Nur diese ABI -> deutlich kleinere APK.
             abiFilters += "arm64-v8a"
         }
     }
 
     signingConfigs {
-        // Fixed key -> every APK has the same signature -> update in place,
-        // app storage (model) is preserved. Deliberately a simple dev password.
+        // Fester Schluessel -> jede APK hat dieselbe Signatur -> Update-in-place,
+        // App-Speicher (Modell) bleibt erhalten. Bewusst simples Dev-Passwort.
         create("stable") {
             storeFile = file("../keystore/katagent.jks")
             storePassword = "katagent"
@@ -54,9 +54,9 @@ android {
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        // Native libs COMPRESSED into the APK (instead of uncompressed) -> APK file
-        // significantly smaller (under the 30 MB send limit). Unpacked on install
-        // (a bit more storage / slower first start, otherwise uncritical).
+        // Native Libs KOMPRIMIERT in die APK (statt unkomprimiert) -> APK-Datei
+        // deutlich kleiner (unter dem 30-MB-Sendelimit). Werden beim Install
+        // entpackt (etwas mehr Speicher/langsamerer Erststart, sonst unkritisch).
         jniLibs {
             useLegacyPackaging = true
         }
@@ -70,18 +70,17 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    // Show/hide the full images and the attachment sheet (AnimatedVisibility).
+    // Ein-/Ausblenden der Vollbilder und des Anhang-Blatts (AnimatedVisibility).
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
-    // Full Google Material icons (R8 removes unused ones -> hardly any size increase).
+    // Vollständige Google-Material-Icons (R8 entfernt ungenutzte -> kaum Größenzuwachs).
     implementation("androidx.compose.material:material-icons-extended")
-    // UniFFI runtime for the native iroh transport (kaim_iroh)
     implementation("net.java.dev.jna:jna:5.14.0@aar")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // On-Device-LLM via LiteRT-LM (laedt .litertlm-Modelle inkl. Gemma 4; multimodal).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.14.0")
-    // Only for the JVM tests of the glasses protocol layer (Halo.kt) — runs
-    // without a device and without an emulator: gradle testDebugUnitTest
+    // Nur fuer JVM-Tests der Brillen-Protokollschicht (Halo.kt) — laeuft ohne
+    // Geraet und ohne Emulator: gradle testDebugUnitTest
     testImplementation("junit:junit:4.13.2")
 }
