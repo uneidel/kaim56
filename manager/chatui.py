@@ -308,16 +308,16 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
     <select id=agent onchange=pickAgent()></select>
     <span id=state><span class="dot"></span><span id=stateTxt>…</span></span>
     <span class=grow></span>
-    <button class=icon id=searchBtn title="Search in this chat" onclick=searchToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=7/><path d="m21 21-4.3-4.3"/></svg></button>
+    <button class=icon id=searchBtn title="Search in this chat" onclick=searchToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
     <button class=icon id=gwBtn title="Security Gateway" onclick=gwToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg></button>
     <span id=gwCount class=gwcount></span>
     <button class=icon id=termBtn title="Browser terminal" onclick=openTerm()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><rect x=2 y=3 width=20 height=14 rx=2/><path d="M8 21h8M12 17v4"/></svg></button>
-    <button class=icon id=panelBtn title="Session panel" onclick=panelToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><rect x=3 y=5 width=18 height=14/><path d="M15 5v14"/></svg></button>
+    <button class=icon id=panelBtn title="Session panel" onclick=panelToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><rect x="3" y="5" width="18" height="14"/><path d="M15 5v14"/></svg></button>
     <button class=icon title="Restart agent (resets the agent session)" onclick=restartAgent()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
   </header>
 
   <div id=searchbar>
-    <svg width=15 height=15 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=7/><path d="m21 21-4.3-4.3"/></svg>
+    <svg width=15 height=15 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
     <input id=sq placeholder="Search in this chat… (Enter next · Shift+Enter previous · Esc close)" autocomplete=off>
     <span id=smatch></span>
     <button class=sbtn title="Previous" onclick="searchStep(-1)"><svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6><path d="m18 15-6-6-6 6"/></svg></button>
@@ -673,7 +673,7 @@ function panelPaint(){
   const mcps=(d.mcps||[]);
   const need=d.need_secret||0;
   $('pbody').innerHTML=
-    `<div class="pcard blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>`+
+    `<div class="pcard blueprint">`+
     `<div class=phead><span class=pname>${esc(d.name)}</span><span class="pstate${d.running?' on':''}"><span class=sq></span>${d.running?'running':'off'}${d.stale?' · stale image':''}</span></div>`+
     `<div class=pgrid>${cell('Runtime',d.runtime)}${cell('Uptime',d.running?fmtUp(d.uptime):'—')}${cell('Commands',d.commands)}${cell('Login',d.login)}`+
     (d.model?cell('Model',d.model):'')+`</div>`+
