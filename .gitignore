@@ -71,3 +71,7 @@ manager/skills.json
 voice-client/kaim56-voice
 voice-client/kaim56-tunnel
 voice-client/embedded/
+
+# Local working notes and agent skills (the skills are imported without a licence): never in the repo
+CLAUDE.md
+.claude/

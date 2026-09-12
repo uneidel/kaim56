@@ -104,8 +104,8 @@ Per-client details live next to the code: `app/README.md`, `voice-client/README.
 - `manager/run-tests.sh` — the stdlib-only test suite in three tiers (unit, HTTP
   against the running manager, live against a VM) plus gates for undefined names
   and the web UI's JavaScript syntax. Green is the bar for every change.
-- `CLAUDE.md` — working conventions for humans and agents: the two-tree setup (live
-  system vs. repo), the update cycle, what never goes into the tree.
+- Working conventions (two-tree setup, update cycle, what never enters the tree) are
+  kept in a local `CLAUDE.md` next to the checkout; it is not part of the repository.
 - `manager/CHANGELOG.md` — one line per change, newest first.
 - `agents/openrouter/build-openrouter-rootfs.sh --smoke <instance>` rebuilds the
   agent image and proves it on one instance without a model call; the Instances
