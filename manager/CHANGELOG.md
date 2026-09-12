@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-12
+- Tool status lines („🔧 web_search …“) sit in a collapsed „Tools · n“ block under the answer, in the app (5.35) and the web chat; the answer text no longer carries them (and Markdown no longer italicises their underscores)
 - Web chat: session panel (runtime, uptime, login, MCP servers with secret state, platform services, Restart/Logs/Terminal) and inline search over the open chat (Enter/Shift+Enter walk the hits, Esc closes, Ctrl+F opens), from the claude.ai/design project „Agent Chat Ideas“; `GET /api/session/<instance>[/log]`
 - Skills from experience: after a long successful turn the agent distills a SKILL proposal (one extra model call, `SKILL_LEARN=0` disables, `SKILL_LEARN_MIN_STEPS`), plus a `propose_skill` tool; proposals are linted, announced and wait in the Skills tab for approval
 - `search_sessions`: full-text search (SQLite FTS5) over chats and task results, scoped to the guest's own instance, orchestrator sees all; `POST /api/sessions-search`

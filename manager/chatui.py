@@ -591,10 +591,23 @@ function splitThink(s){
     think+=s.slice(a+A.length,b); i=b+B.length; }
   return {think:think.trim(), ans, open};
 }
+/* Tool status lines ("🔧 web_search …" plus heartbeat dots) go into a
+   collapsed "Tools" block instead of the answer text. */
+function splitTools(s){
+  const tools=[],rest=[];
+  for(const line of s.split('\n')){
+    const t=line.trimStart();
+    if(t.startsWith('🔧')){const n=t.slice(2).trim().replace(/[…·. ]+$/,'').trim();if(n)tools.push(n);}
+    else rest.push(line);
+  }
+  return {tools,rest:rest.join('\n').replace(/^\n+|\n+$/g,'')};
+}
 function botHtml(content,cursor){
   const t=splitThink(content); let h='';
   if(t.think) h+=`<details class=think ${t.open?'open':''}><summary>💡 Thinking${t.open?' …':''}</summary><div class=thinkbody>${esc(t.think).replace(/\n/g,'<br>')}</div></details>`;
-  h+=md(t.ans)+(cursor?'<span class=cursor></span>':'');
+  const tl=splitTools(t.ans);
+  if(tl.tools.length) h+=`<details class=think><summary>🔧 Tools · ${tl.tools.length}${cursor?' · '+esc(tl.tools[tl.tools.length-1]):''}</summary><div class=thinkbody>${tl.tools.map(x=>'🔧 '+esc(x)).join('<br>')}</div></details>`;
+  h+=md(tl.rest)+(cursor?'<span class=cursor></span>':'');
   return h;
 }
 function scroll(){const l=$('log');l.scrollTop=l.scrollHeight}

@@ -223,6 +223,22 @@ private fun mdAnnotated(src: String): AnnotatedString = buildAnnotatedString {
     }
 }
 
+/** Tool status lines the agent streams ("🔧 web_search …", plus the
+ *  heartbeat dots while it runs) — shown collapsed under "Tools", not in
+ *  the answer text (where Markdown also turned the underscores into italics). */
+private data class ToolSplit(val tools: List<String>, val rest: String)
+private fun splitTools(s: String): ToolSplit {
+    val tools = ArrayList<String>(); val rest = StringBuilder()
+    for (line in s.split('\n')) {
+        val t = line.trimStart()
+        if (t.startsWith("\uD83D\uDD27")) {
+            val name = t.substring(2).trim().trimEnd('\u2026', '\u00B7', ' ', '.').trim()
+            if (name.isNotEmpty()) tools.add(name)
+        } else rest.append(line).append('\n')
+    }
+    return ToolSplit(tools, rest.toString().trim('\n'))
+}
+
 private fun splitThink(s: String): Thought {
     val a = "\u27E6think\u27E7"; val b = "\u27E6/think\u27E7"
     val th = StringBuilder(); val ans = StringBuilder(); var open = false; var i = 0
@@ -1717,7 +1733,8 @@ fun Bubble(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             val th = splitThink(m.text)
-            val body = if (m.user) m.text else th.answer
+            val tl = if (m.user) ToolSplit(emptyList(), m.text) else splitTools(th.answer)
+            val body = if (m.user) m.text else tl.rest
             if (!m.user && th.think.isNotBlank()) {
                 var open by remember { mutableStateOf(false) }
                 val show = th.streaming || open
@@ -1735,6 +1752,28 @@ fun Bubble(
                     Text(th.think, fontSize = 13.sp, lineHeight = 19.sp, fontFamily = Plex,
                         color = Kat.textMuted,
                         modifier = Modifier.widthIn(max = maxWidth).padding(start = 6.dp, bottom = 2.dp))
+                }
+            }
+            if (!m.user && tl.tools.isNotEmpty()) {
+                var open by remember { mutableStateOf(false) }
+                val last = tl.tools.last()
+                Row(
+                    Modifier.clip(RoundedCornerShape(10.dp)).tap { open = !open }
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(if (open) "\u25BE" else "\u25B8", fontSize = 11.sp, color = Kat.textSubtle)
+                    Text("Tools \u00B7 ${tl.tools.size}" + (if (!open) "  \u00B7  $last" else ""),
+                        fontSize = 11.5.sp, fontFamily = Plex, color = Kat.textSubtle,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (open) Column(Modifier.widthIn(max = maxWidth).padding(start = 6.dp, bottom = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    tl.tools.forEach { t ->
+                        Text("\uD83D\uDD27 $t", fontSize = 12.sp, lineHeight = 17.sp, fontFamily = PlexMono,
+                            color = Kat.textMuted)
+                    }
                 }
             }
             val shape = if (m.user)
@@ -1801,7 +1840,7 @@ fun Bubble(
                 if (th.answer.isNotBlank()) Icon(
                     if (speaking) Icons.Filled.StopCircle else Icons.Outlined.VolumeUp,
                     if (speaking) "Stop speaking" else "Read aloud",
-                    Modifier.size(15.dp).tap { if (speaking) onStopSpeak() else onSpeak(th.answer) },
+                    Modifier.size(15.dp).tap { if (speaking) onStopSpeak() else onSpeak(tl.rest) },
                     tint = if (speaking) Kat.accent else Kat.textGhost,
                 )
                 // The turn's trace (LLM calls, tool calls, durations) — the
