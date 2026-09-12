@@ -236,6 +236,57 @@ details.ast .row{margin-bottom:18px}
 .home{display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit}
 .home svg{flex:none}
 
+/* ---- Inline search (design "Agent chat — session panel + inline search") ---- */
+.icon.act{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent)}
+.icon.act:hover{color:var(--accent-contrast);background:var(--accent-600)}
+#searchbar{display:none;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);
+  background:var(--accent-100);flex:none}
+#searchbar.open{display:flex}
+#searchbar svg{flex:none;color:var(--accent-700)}
+#sq{flex:1;min-height:30px;padding:3px 8px;font:inherit;font-size:13px;color:var(--text);
+  background:var(--bg);border:1px solid var(--border);caret-color:var(--accent)}
+#sq:focus{border-color:var(--accent)}
+#smatch{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-700);
+  min-width:70px;text-align:right;font-variant-numeric:tabular-nums}
+.sbtn{width:26px;height:26px;display:grid;place-items:center;cursor:pointer;background:none;
+  border:1px solid var(--border);color:var(--text);padding:0}
+.sbtn:hover{border-color:var(--accent);color:var(--accent)}
+.sbtn.plain{border-color:transparent;color:var(--muted)}
+.row.dim{opacity:.35;transition:opacity .15s}
+.row.hit{opacity:1}
+.row.hit.cur .body{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+.row.me.hit.cur .body{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent),0 0 0 3px var(--bg)}
+mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inherit;padding:0 1px}
+.row.cur mark.sh{background:color-mix(in srgb,var(--accent) 55%,transparent)}
+
+/* ---- Session panel ---- */
+#panel{width:300px;flex:none;border-left:1px solid var(--border);background:var(--bg);
+  padding:16px 20px;display:flex;flex-direction:column;gap:16px;font-size:13px;overflow-y:auto}
+#panel.hidden{display:none}
+.pk{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.phead{display:flex;justify-content:space-between;align-items:center}
+.pcard{padding:14px}
+.pname{font-family:var(--font-heading);font-weight:600;font-size:22px;line-height:1.1}
+.pstate{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--accent-700)}
+.pstate .sq{width:7px;height:7px;background:var(--off)}
+.pstate.on .sq{background:var(--accent)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:12px;font-size:12px}
+.pgrid .k{color:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+.pgrid .v{word-break:break-word}
+.pbtns{display:flex;gap:6px;margin-top:14px}
+.pbtn{flex:1;font-family:var(--font-heading);font-weight:600;font-size:12px;padding:5px;cursor:pointer;
+  background:transparent;color:var(--text);border:1px solid var(--border)}
+.pbtn:hover{background:color-mix(in srgb,var(--text) 7%,transparent);border-color:var(--accent)}
+.pbtn.pri{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);font-size:13px;padding:7px}
+.pbtn.pri:hover{background:var(--accent-600)}
+.plist{display:grid}
+.plist>div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)}
+.plist .v{color:var(--accent-700);text-align:right}
+.ptags{display:flex;flex-wrap:wrap;gap:6px}
+.ptag{font-size:11px;letter-spacing:.02em;padding:3px 10px;border:1px solid var(--accent);color:var(--accent)}
+.ptag.ok{border-color:transparent;background:var(--accent-100);color:var(--accent-800)}
+
+@media(max-width:1100px){#panel{position:absolute;right:0;top:0;height:100%;z-index:6;box-shadow:var(--shadow-md)}}
 @media(max-width:820px){
   #side{position:absolute;z-index:5;height:100%;box-shadow:var(--shadow-md)}
   #side.hidden{margin-left:-270px}
@@ -257,11 +308,22 @@ details.ast .row{margin-bottom:18px}
     <select id=agent onchange=pickAgent()></select>
     <span id=state><span class="dot"></span><span id=stateTxt>…</span></span>
     <span class=grow></span>
+    <button class=icon id=searchBtn title="Search in this chat" onclick=searchToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=7/><path d="m21 21-4.3-4.3"/></svg></button>
     <button class=icon id=gwBtn title="Security Gateway" onclick=gwToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg></button>
     <span id=gwCount class=gwcount></span>
     <button class=icon id=termBtn title="Browser terminal" onclick=openTerm()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><rect x=2 y=3 width=20 height=14 rx=2/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button class=icon id=panelBtn title="Session panel" onclick=panelToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><rect x=3 y=5 width=18 height=14/><path d="M15 5v14"/></svg></button>
     <button class=icon title="Restart agent (resets the agent session)" onclick=restartAgent()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
   </header>
+
+  <div id=searchbar>
+    <svg width=15 height=15 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx=11 cy=11 r=7/><path d="m21 21-4.3-4.3"/></svg>
+    <input id=sq placeholder="Search in this chat… (Enter next · Shift+Enter previous · Esc close)" autocomplete=off>
+    <span id=smatch></span>
+    <button class=sbtn title="Previous" onclick="searchStep(-1)"><svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6><path d="m18 15-6-6-6 6"/></svg></button>
+    <button class=sbtn title="Next" onclick="searchStep(1)"><svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6><path d="m6 9 6 6 6-6"/></svg></button>
+    <button class="sbtn plain" title="Close" onclick="searchToggle(false)"><svg width=14 height=14 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
 
   <div id=log><div class=wrap id=msgs></div></div>
 
@@ -285,6 +347,11 @@ details.ast .row{margin-bottom:18px}
     <div class=foot id=foot></div>
   </div>
 </div>
+
+<aside id=panel class=hidden>
+  <div class=phead><span class=pk>Session</span><button class="sbtn plain" title="Close" onclick="panelToggle(false)"><svg width=14 height=14 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  <div id=pbody><div class=text-muted style="font-size:12px">…</div></div>
+</aside>
 
 <script>
 // Inline SVGs instead of colour emoji: those depend on an emoji font and
@@ -514,6 +581,7 @@ function draw(){
   }
   m.innerHTML=html;
   scroll();
+  searchApply();
 }
 function splitThink(s){
   const A='⟦think⟧', B='⟦/think⟧'; let think='',ans='',open=false,i=0;
@@ -547,6 +615,7 @@ function paint(){                      /* streaming: only update the last block 
     b.innerHTML=botHtml(cur.msgs[cur.msgs.length-1].content,true);
     if(keepOpen!==null){const d1=b.querySelector('details.think');if(d1)d1.open=keepOpen;}
     if(stick)scroll();
+    if(SEARCH.open)searchApply();
   });
 }
 function suggest(b){$('t').value=b.textContent;$('t').focus();autogrow()}
@@ -566,7 +635,110 @@ async function refreshState(){
   document.querySelector('#state .dot').className='dot'+(on?' on':'');
   $('stateTxt').textContent=on?'running':'off — starts on the first prompt';
   $('foot').textContent=`The agent keeps its own session — a new chat here does not reset it (restart button above).`;
+  panelLoad();
 }
+
+/* ---- Session panel (design: "Agent chat — session panel + inline search") ----
+   What the agent is and sees: runtime, uptime, login, its MCP servers with
+   their secret state, the platform services. Open by default on wide
+   screens; the choice is remembered. */
+const PKEY='fc-chat-panel';
+let PANEL={open:null,data:null,agent:''};
+function panelWanted(){
+  if(PANEL.open!==null)return PANEL.open;
+  try{const v=localStorage.getItem(PKEY);if(v!==null)return v==='1'}catch(e){}
+  return innerWidth>=1100;
+}
+function panelToggle(force){
+  PANEL.open=(typeof force==='boolean')?force:!panelWanted();
+  try{localStorage.setItem(PKEY,PANEL.open?'1':'0')}catch(e){}
+  panelPaint();
+  if(PANEL.open)panelLoad();
+}
+function fmtUp(s){if(!s)return '—';const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}h ${m}m`:`${m}m`}
+async function panelLoad(){
+  if(!panelWanted()||!agent)return;
+  try{PANEL.data=await (await fetch('/api/session/'+encodeURIComponent(agent))).json();PANEL.agent=agent}catch(e){PANEL.data=null}
+  panelPaint();
+}
+function panelPaint(){
+  const open=panelWanted();
+  $('panel').classList.toggle('hidden',!open);
+  $('panelBtn').classList.toggle('act',open);
+  if(!open)return;
+  const d=PANEL.data;
+  if(!d||d.error){$('pbody').innerHTML='<div class=text-muted style="font-size:12px">no session data</div>';return;}
+  const cell=(k,v)=>`<div><div class=k>${esc(k)}</div><div class=v>${esc(v)}</div></div>`;
+  const plat=(d.platform||[]).map(p=>`<div><span>${esc(p.name)}</span><span class=v>${esc(p.state)}</span></div>`).join('');
+  const mcps=(d.mcps||[]);
+  const need=d.need_secret||0;
+  $('pbody').innerHTML=
+    `<div class="pcard blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>`+
+    `<div class=phead><span class=pname>${esc(d.name)}</span><span class="pstate${d.running?' on':''}"><span class=sq></span>${d.running?'running':'off'}${d.stale?' · stale image':''}</span></div>`+
+    `<div class=pgrid>${cell('Runtime',d.runtime)}${cell('Uptime',d.running?fmtUp(d.uptime):'—')}${cell('Commands',d.commands)}${cell('Login',d.login)}`+
+    (d.model?cell('Model',d.model):'')+`</div>`+
+    `<div class=pbtns><button class=pbtn onclick=restartAgent()>Restart</button><button class=pbtn onclick=openLogs()>Logs</button><button class=pbtn onclick=openTerm()>Terminal</button></div></div>`+
+    `<div class=pk>Platform · kAIm56</div><div class=plist>${plat}</div>`+
+    `<div class=pk>MCP servers${mcps.length?(need?` · ${need} need a secret`:' · all ready'):''}</div>`+
+    (mcps.length?`<div class=ptags>${mcps.map(m=>`<span class="ptag${m.ready?' ok':''}" title="${esc(m.ready?'ready':'missing: '+m.missing.join(', '))}">${esc(m.name)}</span>`).join('')}</div>`
+      :`<div class=text-muted style="font-size:12px">none assigned</div>`)+
+    (need?`<a class="pbtn pri" style="text-align:center;text-decoration:none" href="/#secrets">Release secrets in the manager</a>`:'');
+}
+function openLogs(){if(agent)window.open('/api/session/'+encodeURIComponent(agent)+'/log','_blank')}
+
+/* ---- Inline search over the current chat ----
+   Header icon opens the bar; every message that matches stays bright, the
+   rest dims; Enter / Shift+Enter walk the hits, Esc closes. The highlight is
+   applied to text nodes after rendering, so Markdown stays intact. */
+let SEARCH={open:false,q:'',hits:[],cur:0};
+function searchToggle(force){
+  SEARCH.open=(typeof force==='boolean')?force:!SEARCH.open;
+  $('searchbar').classList.toggle('open',SEARCH.open);
+  $('searchBtn').classList.toggle('act',SEARCH.open);
+  if(SEARCH.open){$('sq').focus();$('sq').select();}
+  else{SEARCH.q='';$('sq').value='';SEARCH.hits=[];SEARCH.cur=0;}
+  searchApply();
+}
+function searchStep(d){if(!SEARCH.hits.length)return;SEARCH.cur=(SEARCH.cur+d+SEARCH.hits.length)%SEARCH.hits.length;searchApply();}
+function searchMark(el,q){
+  const walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null);
+  const nodes=[];let n;while((n=walker.nextNode()))nodes.push(n);
+  const ql=q.toLowerCase();
+  for(const t of nodes){
+    const v=t.nodeValue;const lv=v.toLowerCase();let i=lv.indexOf(ql);if(i<0)continue;
+    const frag=document.createDocumentFragment();let last=0;
+    while(i>=0){frag.appendChild(document.createTextNode(v.slice(last,i)));
+      const m=document.createElement('mark');m.className='sh';m.textContent=v.slice(i,i+q.length);frag.appendChild(m);
+      last=i+q.length;i=lv.indexOf(ql,last);}
+    frag.appendChild(document.createTextNode(v.slice(last)));
+    t.parentNode.replaceChild(frag,t);
+  }
+}
+function searchApply(){
+  const rows=[...$('msgs').querySelectorAll('.row')];
+  rows.forEach(r=>{r.classList.remove('dim','hit','cur');
+    r.querySelectorAll('mark.sh').forEach(m=>m.replaceWith(document.createTextNode(m.textContent)));r.normalize();});
+  const q=SEARCH.open?SEARCH.q.trim():'';
+  if(!q){$('smatch').textContent='';return;}
+  const ql=q.toLowerCase();
+  SEARCH.hits=rows.map((r,i)=>r.querySelector('.body')&&r.querySelector('.body').textContent.toLowerCase().includes(ql)?i:-1).filter(i=>i>=0);
+  if(SEARCH.cur>=SEARCH.hits.length)SEARCH.cur=0;
+  rows.forEach((r,i)=>{
+    if(SEARCH.hits.includes(i)){r.classList.add('hit');searchMark(r.querySelector('.body'),q);}else r.classList.add('dim');
+  });
+  $('smatch').textContent=SEARCH.hits.length?`${SEARCH.cur+1} / ${SEARCH.hits.length}`:'no match';
+  if(SEARCH.hits.length){const r=rows[SEARCH.hits[SEARCH.cur]];r.classList.add('cur');
+    const d=r.closest('details.ast');if(d)d.open=true;
+    r.scrollIntoView({block:'center',behavior:'smooth'});}
+}
+$('sq').addEventListener('input',()=>{SEARCH.q=$('sq').value;SEARCH.cur=0;searchApply();});
+$('sq').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();searchStep(e.shiftKey?-1:1);}
+  else if(e.key==='Escape'){e.preventDefault();searchToggle(false);$('t').focus();}
+});
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='f'&&cur&&cur.msgs.length){e.preventDefault();searchToggle(true);}
+});
 /* ---- Security Gateway ----
    Per chat, not per agent: the same agent can process foreign text in one
    chat (gateway on) and its own notes in the next (off). The state lives on
@@ -855,7 +1027,7 @@ load();loadTombs();drawAgents();
   if(last&&!cur)openChat(last.id); else if(!cur){draw();drawConvs()}
   chatSyncLoop();
 })();
-refreshState();gwLoad();setInterval(refreshState,15000);
+panelPaint();refreshState();gwLoad();setInterval(refreshState,15000);
 </script></body></html>"""
 
 

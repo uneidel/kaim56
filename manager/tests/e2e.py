@@ -3193,6 +3193,69 @@ class ManagerFunctions(unittest.TestCase):
             st.HISTORY_DB, m.load_chats, m.CHATS_FILE, m.instance_by_ip = old[:4]
             st._fts_state.clear(); st._fts_state.update(old[4])
 
+    def test_session_panel_data_and_log(self):
+        """The chat's session panel: runtime, uptime, login state, platform
+        rows, the instance's MCP servers with their secret state; the log
+        route returns the console tail; both admin-only, unknown instance 404;
+        nothing secret in the answer."""
+        import mgr.store as st
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-session-")
+        old = (m.load_instances, m.is_running, m.pidfile, m.load_settings, m.secret_store, m.load_secret_policy,
+               m.load_mcps, m.load_skills, m.RUN_DIR, m.instance_by_ip, m.PW, st.HISTORY_DB, m.image_state)
+        try:
+            inst = {"name": "vm1", "index": 3, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
+                    "config": {"OPENROUTER_MODEL": "x/y", "MCP_SERVERS": "caldav,homeassistant"}}
+            m.load_instances = lambda: [inst]
+            m.is_running = lambda i: True
+            m.image_state = lambda i: (False, 0, 0)
+            m.RUN_DIR = tmp; st.HISTORY_DB = os.path.join(tmp, "history.db")
+            pf = os.path.join(tmp, "vm1.pid"); open(pf, "w").write("1"); os.utime(pf, (time.time() - 7500,) * 2)
+            m.pidfile = lambda i: pf
+            with open(os.path.join(tmp, "vm1.log"), "w") as fh:
+                fh.write("[init] harness from /dev/vdc\nagent ready\n")
+            m.load_settings = lambda: {"LLM_KEY_PROXY": "1", "BRAVE_API_KEY": "b"}
+            m.secret_store = lambda: {"CALDAV_PASSWORD": "s3cret", "HA_TOKEN": "t"}
+            m.load_secret_policy = lambda: {"by_template": {}, "by_instance": {"vm1": ["HA_TOKEN"]}, "guest_readable": []}
+            m.load_mcps = lambda: [{"name": "caldav", "command": "c", "env": {"CALDAV_PASSWORD": "${CALDAV_PASSWORD}"}},
+                                   {"name": "homeassistant", "command": "h", "args": ["Bearer ${HA_TOKEN}"]}]
+            m.load_skills = lambda: [{"name": "a"}, {"name": "b"}]
+            m.instance_by_ip = lambda ip: None; m.PW = ""
+            d = m.session_info(inst)
+            self.assertEqual((d["runtime"], d["login"], d["model"]), ("openrouter-agent", "key proxy", "x/y"))
+            self.assertTrue(7400 < d["uptime"] < 7700)
+            self.assertEqual({x["name"]: x["ready"] for x in d["mcps"]}, {"caldav": False, "homeassistant": True})
+            self.assertEqual(d["need_secret"], 1)
+            self.assertIn("2 in catalog", [p["state"] for p in d["platform"] if p["name"] == "Skills"][0])
+            self.assertNotIn("s3cret", json.dumps(d))
+            h = self._handler("/api/session/vm1", "10.0.0.5"); h._do_GET()
+            body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual(body["name"], "vm1")
+            h = self._handler("/api/session/vm1/log", "10.0.0.5"); h._do_GET()
+            self.assertTrue(h.wfile.getvalue().endswith(b"agent ready\n"))
+            h = self._handler("/api/session/nope", "10.0.0.5"); h._do_GET()
+            self.assertEqual(self._status(h), 404)
+            m.instance_by_ip = lambda ip: inst
+            h = self._handler("/api/session/vm1", "172.30.3.2"); h._do_GET()
+            self.assertEqual(self._status(h), 403)                                  # guests: no
+            # a claude instance reports its host credential, not a key
+            m.instance_by_ip = lambda ip: None
+            cl = {**inst, "template": "claude", "config": {}}
+            self.assertIn(m.session_info(cl)["login"], ("ok", "missing (log in on the host)"))
+            self.assertEqual(m.session_info(cl)["commands"], "/reset /fresh /model")
+        finally:
+            (m.load_instances, m.is_running, m.pidfile, m.load_settings, m.secret_store, m.load_secret_policy,
+             m.load_mcps, m.load_skills, m.RUN_DIR, m.instance_by_ip, m.PW, st.HISTORY_DB, m.image_state) = old
+
+    def test_chat_page_carries_panel_and_search(self):
+        """The rendered chat page has the session panel, the search bar and
+        the two header toggles from the design; the agent list is embedded."""
+        import chatui
+        page = chatui.render([{"name": "vm1", "running": True}], "vm1", "")
+        for needle in ('id=panel', 'id=searchbar', 'id=searchBtn', 'id=panelBtn', "'/api/session/'",
+                       'function searchApply', 'function panelLoad', '"vm1"'):
+            self.assertIn(needle, page, needle)
+
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST
         was gated. The denylist names the admin UI, chat, katfs and /i/."""

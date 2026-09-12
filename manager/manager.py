@@ -3463,6 +3463,83 @@ def _rt_instances(h):
             "application/json")
 
 
+TEMPLATE_RUNTIME = {"openrouter": "openrouter-agent", "orcarouter": "openrouter-agent",
+                    "llama": "openrouter-agent (local model)", "claude": "claude-code",
+                    "pi": "pi", "prime": "prime"}
+TEMPLATE_COMMANDS = {"claude": "/reset /fresh /model",
+                     "default": "/reset /fresh /model /steps /goal /aside /back /tools /reasoning"}
+
+
+def session_info(inst):
+    """What the chat's session panel shows for an instance: runtime, uptime,
+    login state, the platform services as the agent sees them, and its MCP
+    servers with whether their secrets are released. Nothing secret in it."""
+    name, tpl = inst["name"], inst.get("template", "")
+    cfg = inst.get("config") or {}
+    running = is_running(inst)
+    try:
+        started = os.path.getmtime(pidfile(inst)) if running else 0
+    except OSError:
+        started = 0
+    if tpl == "claude":
+        login = "ok" if os.path.isfile(CLAUDE_CRED_SRC) else "missing (log in on the host)"
+    elif (load_settings().get("LLM_KEY_PROXY") or "") == "1":
+        login = "key proxy"
+    else:
+        keyname = "ORCAROUTER_API_KEY" if tpl in ("orcarouter", "llama") else "OPENROUTER_API_KEY"
+        login = "api key" if secret_store().get(keyname) else "no key"
+    mem_dir = _memfs.folder(name) if uses_harness(inst) else None
+    notes = 0
+    if mem_dir:
+        try:
+            notes = len([f for f in os.listdir(os.path.join(mem_dir, "notes")) if f.endswith(".md")])
+        except OSError:
+            pass
+    try:
+        with _hist_lock, _hist_conn() as c:
+            sem = c.execute("SELECT COUNT(*) FROM semantic_memory WHERE instance=?", (name,)).fetchone()[0]
+    except Exception:
+        sem = 0
+    platform = [
+        {"name": "Memory", "state": f"{notes} notes · {sem} semantic" if (notes or sem) else "empty", "ok": True},
+        {"name": "Web search", "state": "reachable" if (load_settings().get("BRAVE_API_KEY") or "") else "DuckDuckGo fallback", "ok": True},
+        {"name": "Skills", "state": f"{len(load_skills())} in catalog", "ok": True},
+        {"name": "Traces", "state": f"{len(turns_read(name, limit=50))} recent turns", "ok": True},
+    ]
+    allowed = allowed_secret_keys(inst)
+    mcps = []
+    for n in [x for x in (cfg.get("MCP_SERVERS", "") or "").split(",") if x]:
+        missing = sorted(mcp_required_secrets([n]) - allowed)
+        mcps.append({"name": n, "ready": not missing, "missing": missing})
+    return {"name": name, "template": tpl, "runtime": TEMPLATE_RUNTIME.get(tpl, tpl or "agent"),
+            "running": running, "uptime": int(time.time() - started) if started else 0,
+            "model": cfg.get("OPENROUTER_MODEL") or cfg.get("ANTHROPIC_MODEL") or "",
+            "stale": image_state(inst)[0], "login": login,
+            "commands": TEMPLATE_COMMANDS.get(tpl, TEMPLATE_COMMANDS["default"]),
+            "platform": platform, "mcps": mcps,
+            "need_secret": sum(1 for m in mcps if not m["ready"])}
+
+
+@ROUTER.get("/api/session/", prefix=True, admin=True)
+def _rt_session(h):
+    # /api/session/<instance>        -> the session panel's data
+    # /api/session/<instance>/log    -> the VM's console log tail (text)
+    parts = _tail(h, "/api/session/")
+    nm = re.sub(r"[^a-zA-Z0-9_-]", "", parts[0] if parts else "")
+    inst = next((i for i in load_instances() if i["name"] == nm), None)
+    if inst is None:
+        return h._json({"error": "unknown instance"}, 404)
+    if len(parts) > 1 and parts[1] == "log":
+        try:
+            with open(os.path.join(RUN_DIR, f"{nm}.log"), "rb") as fh:
+                fh.seek(0, 2); size = fh.tell(); fh.seek(max(0, size - 64 * 1024))
+                data = fh.read()
+        except OSError:
+            data = b"(no log yet)"
+        return data, "text/plain; charset=utf-8"
+    return h._json(session_info(inst))
+
+
 @ROUTER.get("/api/settings", admin=True)
 def _rt_settings(h):
     return json.dumps(settings_for_ui()).encode(), "application/json"
