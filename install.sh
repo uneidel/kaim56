@@ -134,12 +134,12 @@ fi
 # ── [6] systemd service ──────────────────────────────────────────────────────
 say "[6/7] systemd service (needs sudo)"
 HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
-PASS_LINE=""
-if [ ! -f /etc/systemd/system/firecracker-manager.service ]; then
+# The password lives in a root-only env file the unit always references;
+# it is generated once (an update run must not drop the login).
+PASS_LINE="EnvironmentFile=-/etc/firecracker-manager.env"
+if ! sudo test -f /etc/firecracker-manager.env; then
   PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
-  # The password lives in a root-only file, not in the world-readable unit.
   printf 'MANAGER_PASS=%s\n' "$PW" | sudo install -m 600 -o root -g root /dev/stdin /etc/firecracker-manager.env
-  PASS_LINE="EnvironmentFile=-/etc/firecracker-manager.env"
   echo "  web login: admin / $PW   (changeable in /etc/firecracker-manager.env)"
 fi
 sudo tee /etc/systemd/system/firecracker-manager.service >/dev/null <<UNIT

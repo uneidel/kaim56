@@ -3121,6 +3121,19 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(all(c[2] == "INPUT" and ("fc+" in c or m.POOL in c) for c in ins))
             # a pool source on the LAN interface is forged: dropped before any by-IP check
             self.assertIn(("iptables", "-I", "INPUT", "1", "-i", m.HOSTIF, "-s", m.POOL, "-j", "DROP"), ins)
+            # an ACCEPT that already exists (maybe below the DROP) is removed and re-inserted on top
+            calls.clear()
+            state = {"nfs": 1}      # one stray copy of the NFS rule
+            def sh2(*a, check=True):
+                calls.append(a)
+                if a[1] == "-D" and "2049" in a and state["nfs"] > 0:
+                    state["nfs"] -= 1; return types.SimpleNamespace(returncode=0)
+                return types.SimpleNamespace(returncode=1)
+            m.sh = sh2
+            m.ensure_guest_input_rules()
+            nfs = [c for c in calls if "2049" in c]
+            self.assertEqual([c[1] for c in nfs], ["-D", "-D", "-I"])      # delete until gone, then insert at 1
+            self.assertEqual(nfs[-1][2:4], ("INPUT", "1"))
             calls.clear()
             m.ensure_antispoof({"name": "hass", "index": 7})
             spec = ("-i", "fc7", "!", "-s", "172.30.7.2", "-j", "DROP")

@@ -5,7 +5,7 @@
 # host folders to that VM's address alone, squashed to the system user
 # kaim56-guest, and writes /etc/exports.d/fc-<name>.exports itself. This
 # script only provides what it cannot: the server package, the base folder,
-# the service, the firewall rule — and it retires the old pool-wide root
+# the service (the firewall rules are the manager's) — and it retires the old pool-wide root
 # export from earlier versions.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo: sudo $0"; exit 1; }
@@ -13,7 +13,7 @@ set -euo pipefail
 FC_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_DIR="${AGENT_DIR:-$(dirname "$FC_DIR")/agent}"
 
-echo "[1/4] nfs-kernel-server..."
+echo "[1/3] nfs-kernel-server..."
 if ! command -v exportfs >/dev/null; then
   if grep -qs '^deb cdrom:' /etc/apt/sources.list; then
     sed -i.bak-kaim56 '/^deb cdrom:/s/^/#/' /etc/apt/sources.list
@@ -23,14 +23,14 @@ if ! command -v exportfs >/dev/null; then
     || { echo "  ERROR: nfs-kernel-server not installable (check apt sources)."; exit 1; }
 fi
 
-echo "[2/4] Base folder $AGENT_DIR ..."
+echo "[2/3] Base folder $AGENT_DIR ..."
 mkdir -p "$AGENT_DIR"
 if id kaim56-guest >/dev/null 2>&1; then
   chown "kaim56-guest:$(stat -c %G "$FC_DIR")" "$AGENT_DIR"      # the manager repeats this at start
 fi
 chmod 755 "$AGENT_DIR"
 
-echo "[3/4] Exports: per instance, written by the manager ..."
+echo "[3/3] Exports: per instance, written by the manager ..."
 mkdir -p /etc/exports.d
 if [ -f /etc/exports.d/agent.exports ]; then
   mv -f /etc/exports.d/agent.exports /etc/exports.d/agent.exports.bak
@@ -38,11 +38,6 @@ if [ -f /etc/exports.d/agent.exports ]; then
 fi
 systemctl enable --now nfs-server 2>/dev/null || systemctl enable --now nfs-kernel-server
 exportfs -ra
-
-echo "[4/4] Firewall: NFS (2049) from the tap interfaces ..."
-if ! iptables -C INPUT -i 'fc+' -p tcp --dport 2049 -j ACCEPT 2>/dev/null; then
-  iptables -I INPUT 1 -i 'fc+' -p tcp --dport 2049 -j ACCEPT || true
-fi
 
 echo "DONE. Exports now (one block per running instance appears after its start):"
 exportfs -v || true

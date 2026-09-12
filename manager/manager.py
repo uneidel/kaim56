@@ -1849,9 +1849,13 @@ def ensure_guest_input_rules():
     if sh("iptables", "-C", "INPUT", "-i", "fc+", "-j", "DROP", check=False).returncode != 0:
         sh("iptables", "-I", "INPUT", "1", "-i", "fc+", "-j", "DROP", check=False)
     for spec in GUEST_INPUT_ACCEPT:
-        if sh("iptables", "-C", "INPUT", "-i", "fc+", *spec, "-j", "ACCEPT",
-              check=False).returncode != 0:
-            sh("iptables", "-I", "INPUT", "1", "-i", "fc+", *spec, "-j", "ACCEPT", check=False)
+        # Position matters, not just presence: an ACCEPT appended BELOW the
+        # DROP (an older setup script did that for NFS) never matches, and a
+        # presence check would leave it there. Remove every copy, insert on top.
+        for _ in range(8):
+            if sh("iptables", "-D", "INPUT", "-i", "fc+", *spec, "-j", "ACCEPT", check=False).returncode != 0:
+                break
+        sh("iptables", "-I", "INPUT", "1", "-i", "fc+", *spec, "-j", "ACCEPT", check=False)
     # A pool address arriving on the LAN interface is forged (a LAN box posing
     # as a stopped VM would pass every by-IP check): drop it first.
     if HOSTIF and sh("iptables", "-C", "INPUT", "-i", HOSTIF, "-s", POOL, "-j", "DROP",
