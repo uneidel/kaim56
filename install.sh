@@ -165,7 +165,10 @@ UNIT
 sudo sysctl -qw net.ipv4.ip_forward=1
 echo net.ipv4.ip_forward=1 | sudo tee /etc/sysctl.d/99-kaim56.conf >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now firecracker-manager
+sudo systemctl enable firecracker-manager >/dev/null 2>&1 || true
+# Restart, not "start": on an update the running manager would keep the old
+# code and the old unit environment (it did on the deployment test VM).
+sudo systemctl restart firecracker-manager
 
 # iroh gateway (only if the binary was built) — the app's P2P transport.
 if [ -x "$FC_DIR/bin/iroh-gw" ]; then
@@ -189,7 +192,8 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
   sudo systemctl daemon-reload
-  sudo systemctl enable --now iroh-gw
+  sudo systemctl enable iroh-gw >/dev/null 2>&1 || true
+  sudo systemctl restart iroh-gw
 fi
 
 # ── [7] Smoke test ───────────────────────────────────────────────────────────
