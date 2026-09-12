@@ -10,7 +10,7 @@ const SETTINGS=__SETTINGS__;
 const SETTINGS_SCHEMA=__SETTINGS_SCHEMA__;
 const PERSONAS=__PERSONAS__;
 const SKILLS=__SKILLS__;
-const CORNERS='<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
+const CORNERS='';   // registration corners retired (Ulrich, 2026-09-12)
 const I_EDIT='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>';
 const I_RUN='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>';
 const I_DEL='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
@@ -268,7 +268,7 @@ async function loadMissions(){
             :(d.missions||[]).map(m=>({...m,_inst:'orchestrator'}));
   const open=all.filter(m=>m.status==='active'||m.status==='paused');
   const closed=all.filter(m=>m.status==='done'||m.status==='failed');   // all of them: they can be edited/deleted
-  const cor='<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
+  const cor='';
   const bar=m=>{const t=(m.steps||[]).length||1,dn=(m.steps||[]).filter(s=>s.status==='done').length;
     return `<div style="display:flex;align-items:center;gap:8px;min-width:130px">
       <div style="flex:1;height:5px;background:var(--color-neutral-200)"><div style="width:${Math.round(dn/t*100)}%;height:100%;background:var(--color-accent)"></div></div>
@@ -835,7 +835,7 @@ async function loadChangelog(){
       (await fetch('/api/changelog')).json(),
       (await fetch('/api/security')).json()]);
     document.getElementById('changelog').innerHTML=
-      '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>'+md(c.text||'');
+      ''+md(c.text||'');
     ISSUES=(i.issues||[]).slice().sort((a,b)=>
       (a.status===b.status?0:a.status==='open'?-1:1)||
       (SEVORDER[a.severity]??9)-(SEVORDER[b.severity]??9));

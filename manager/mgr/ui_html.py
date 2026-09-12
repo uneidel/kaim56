@@ -48,7 +48,7 @@ HTML_TOP = """</head><body>
     <h6 style="color:var(--color-accent);margin:0 0 2px">Provision</h6>
     <h3 style="margin:0 0 18px">New instance from template</h3>
     <div class="panel blueprint">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      
       <div class=grid2>
         <div class=field><label>Template</label><select class=input id=tpl onchange=renderParams()>__TPLS__</select></div>
         <div class=field><label>Instance name</label><input class=input id=nm placeholder="e.g. fabric-gpt4o"></div>
@@ -92,7 +92,7 @@ HTML_TOP = """</head><body>
   </div>
   <div class=grid2 id=personas></div>
   <div class="panel blueprint" style="margin-top:32px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <h4 style="margin:0 0 16px">New persona</h4>
     <div style="display:grid;grid-template-columns:280px 1fr;gap:20px" class=pgrid>
       <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=pname placeholder="e.g. researcher"></div>
@@ -107,7 +107,7 @@ HTML_TOP = """</head><body>
     <div><h6>Recurring jobs</h6><h3 style="font-size:22px">Prompt templates</h3></div>
     <span class="note text-muted">As a slash command in chat: <code>/name [extra]</code> — the agent expands it server-side (web, app and Signal)</span>
   </div>
-  <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+  <div class="panel blueprint">
     <div id=promptlist><span class=text-muted style="font-size:13px">…</span></div>
     <div class=grid2 style="margin-top:16px">
       <div class=field><label>Name (becomes /name)</label><input class=input id=prname placeholder="daily"></div>
@@ -120,7 +120,7 @@ HTML_TOP = """</head><body>
     <div><h6>Learned rules</h6><h3 style="font-size:22px">Playbooks</h3></div>
     <span class="note text-muted">Fixed rules per agent — apply EVERY turn. The agent learns them itself from corrections (playbook_add); view, add, remove them here.</span>
   </div>
-  <div class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+  <div class="panel blueprint">
     <div class=field style="max-width:280px;margin-bottom:12px"><label>Agent</label>
       <select class=input id=pbinst onchange=loadPlaybooks()></select></div>
     <div id=pblist><span class=text-muted style="font-size:13px">…</span></div>
@@ -138,7 +138,7 @@ HTML_TOP = """</head><body>
   <div id=skprops></div>
   <div class=grid3 id=skills></div>
   <div class="panel blueprint" style="margin-top:32px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <h4 style="margin:0 0 16px">New skill</h4>
     <div class=grid2>
       <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=skname placeholder="e.g. postgres-expert"></div>
@@ -172,7 +172,7 @@ HTML_TOP = """</head><body>
   </div>
   <div class=grid2 id=mcps></div>
   <div class="panel blueprint" style="margin-top:32px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <h4 style="margin:0 0 16px">New MCP server</h4>
     <div class=grid2>
       <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=mcpname placeholder="e.g. homeassistant"></div>
@@ -202,7 +202,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">The full catalog, fetched live · ticked models are the shortlist offered when creating an instance</span>
   </div>
   <div class="banner blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke="var(--color-accent-700)" stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><circle cx=12 cy=12 r=10></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
     <span>The openrouter template only offers models that can do tool calling — a model without it stays hidden even when ticked.</span>
   </div>
@@ -237,7 +237,7 @@ HTML_TOP = """</head><body>
     <tbody id=taskrows></tbody>
   </table>
   <div class="panel blueprint" style="margin-top:32px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <h4 style="margin:0 0 16px" id=tk-head>New task</h4>
     <div class=grid2>
       <div class=field><label>Instance</label><select class=input id=tk-inst></select></div>
@@ -257,7 +257,7 @@ HTML_TOP = """</head><body>
     <div><h6>Multi-step work</h6><h3>Missions</h3></div>
     <span class="note text-muted">Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step · every mission can be edited or deleted here, whatever its status</span>
   </div>
-  <div id=missions class="panel blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+  <div id=missions class="panel blueprint">
     <span class=text-muted style="font-size:13px">…</span>
   </div>
   <p class=text-muted style="font-size:12.5px;margin-top:14px">Any agent creates a mission itself when a job needs several steps — e.g. via chat: "… — as a mission". The owner plans, the steps run on whichever instance has the needed tools.</p>
@@ -269,7 +269,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">A folder from the browser you are sitting at, handed to the agents over P2P (iroh) · nothing is mounted into the microVM</span>
   </div>
   <div class="panel blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div id=katfs-status><span class=text-muted style="font-size:13px">checking…</span></div>
     <div class=field style="margin-top:18px">
       <label>Sharing key — node-id of the katfs node the browser connects to</label>
@@ -293,7 +293,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">The Android app reaches the manager over iroh (P2P) &#183; no VPN, no exposed HTTPS port &#183; only allow-listed node-ids get through &#183; desktops use the same path via <code>kaim56-tunnel</code> (local port &#8594; iroh), so any plain-HTTP client rides the tunnel</span>
   </div>
   <div class="panel blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=field>
       <label>Manager node-id &#8212; paste this into the app (Settings &#8250; Server connection)</label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -321,7 +321,7 @@ HTML_TOP = """</head><body>
 
   <div class=grid2 style="margin-top:32px">
     <div class="card blueprint">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      
       <span class=card-title style="font-size:16px">How the agent reaches it</span>
       <p class=card-body>The share is not a filesystem — it is reachable only through the agent tools
       <code>remote_ls</code>, <code>remote_read(path)</code> and <code>remote_write(path, content)</code>,
@@ -329,7 +329,7 @@ HTML_TOP = """</head><body>
       Without an active share those tools answer <code>503 no browser connected</code>.</p>
     </div>
     <div class="card blueprint">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      
       <span class=card-title style="font-size:16px">Host folders instead</span>
       <p class=card-body>A folder that already lives on this host belongs in
       <b>Mount host folders</b> when creating an instance, or behind 📁 in the instance table —
@@ -342,7 +342,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">Browse the folder currently shared from a browser tab · read-only view</span>
   </div>
   <div class="panel blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div id=fbbar style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
       <button class="btn btn-secondary" id=fbup onclick=fbUp()>↑ up</button>
       <span id=fbpath class=mono style="font-size:12.5px;color:var(--color-neutral-600)">/</span>
@@ -360,7 +360,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">Per template/instance: which keys the host may substitute into that agent's MCP servers · <b>raw to guest</b>: which of those an agent may fetch via <code>get_secret(name)</code> — default none, since the hub and the LLM key proxy exist · values never written to disk</span>
   </div>
   <div class="banner blueprint" style="background:var(--color-neutral-100);margin:16px 0 20px;padding:9px 14px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <svg width=15 height=15 viewBox="0 0 24 24" fill=none stroke="var(--color-neutral-700)" stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
     <span style="color:var(--color-neutral-800);font-size:12.5px">Keep dangerous keys (Docker / network admin) unchecked.</span>
   </div>
@@ -374,7 +374,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">Findings from working on the system · text and rating live in <code>security.json</code>, only the status can be toggled here</span>
   </div>
   <div class="panel blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div id=issues><span class=text-muted style="font-size:13px">…</span></div>
   </div>
   <div class=panel-foot><span id=secissuemsg class=msg></span>
@@ -386,7 +386,7 @@ HTML_TOP = """</head><body>
     <span class="note text-muted">from <code>CHANGELOG.md</code></span>
   </div>
   <div class="panel blueprint md" id=changelog>
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
   </div>
 </section>
 
@@ -398,7 +398,7 @@ HTML_TOP = """</head><body>
   </div>
 
   <div class="panel blueprint" style="padding:18px">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     """
 
 ARCH_SVG = """<svg id="archsvg" viewBox="0 0 960 672" style="width:100%;height:auto;display:block;font-family:inherit">
@@ -501,7 +501,7 @@ HTML_BOTTOM = """
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px">
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>manager.py &#8212; the core</span>
+  <div class="card blueprint"><span class=card-title>manager.py &#8212; the core</span>
   <p class=card-body>Split into an <code>mgr/</code> package (ui, store, signal, missions, notify, rules, mcp, katfs, gateway, routes); manager.py stays the systemd entry, facade and composition root (VM lifecycle, networking, secrets, the HTTP handler). The HTTP surface is migrating from an if-chain to a routing table (<code>mgr/routes.py</code>): exact paths beat prefixes, every route carries whether a guest VM may call it, and the inventory is enumerable for audits. mgr modules never import back (no cycles); cross-refs are injected. Single-file Python service (stdlib only), runs as root under systemd
   (<code>firecracker-manager</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
   the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
@@ -518,7 +518,7 @@ HTML_BOTTOM = """
   <code>agent/&#8249;name&#8250;</code> and each host folder are exported to that VM's address only, every
   write squashed to the system user <code>kaim56-guest</code>, which owns nothing else.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Firecracker microVMs</span>
+  <div class="card blueprint"><span class=card-title>Firecracker microVMs</span>
   <p class=card-body>One VM per agent instance. Each gets a tap device <code>fc&#8249;N&#8250;</code> with a
   /30 subnet (host 172.30.N.1, guest 172.30.N.2) and NAT egress over the host uplink; internet
   can be switched off per instance. On every start the VM receives a fresh private copy of its
@@ -526,7 +526,7 @@ HTML_BOTTOM = """
   durable state lives centrally. A small read-only config disk carries the non-secret instance
   settings into the guest.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Agent runtime (agent.py)</span>
+  <div class="card blueprint"><span class=card-title>Agent runtime (agent.py)</span>
   <p class=card-body>Tool-calling loop against an OpenAI-compatible backend inside each VM
   (templates: openrouter, <b>orcarouter</b>, pi, prime; the claude template runs Claude Code headless
   instead). The same agent code drives OpenRouter, <b>OrcaRouter</b> (gateway,
@@ -539,7 +539,7 @@ HTML_BOTTOM = """
   first turn after a boot the agent injects its stored facts from <code>memory.json</code> into the
   prompt. Conversation context lives in VM RAM and dies with a restart &#8212; that is deliberate.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Harness patterns (context, goals, guardrails)</span>
+  <div class="card blueprint"><span class=card-title>Harness patterns (context, goals, guardrails)</span>
   <p class=card-body>Ported from strands-agents/harness-sdk (Apache-2.0) into the stdlib agent, no new deps.
   <b>Summarizing context:</b> on overflow the oldest turns are folded into a pinned
   <code>[Summary]</code> block instead of being dropped &#8212; last ~10 turns stay verbatim.
@@ -550,7 +550,7 @@ HTML_BOTTOM = """
   tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
   <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab; each is SHA-256 content-pinned so a later out-of-band edit shows as \u201cmodified\u201d until re-approved, and every file name in the tab opens the file in the host&#8217;s VS Code, so approval is never blind) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tests (E2E)</span>
+  <div class="card blueprint"><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib <code>unittest</code>, no dependency: <code>tests/e2e.py</code> /
   <code>./run-tests.sh</code>. Three tiers that cleanly skip a missing environment &#8212;
   <b>OFFLINE</b> imports agent and manager directly and checks the core logic (backend choice,
@@ -559,7 +559,7 @@ HTML_BOTTOM = """
   <code>/api/hitl</code>, katfs status); <b>LIVE</b> does a free <code>/goal</code> round-trip
   to the orchestrator VM. Runs on every change, together with the changelog and this tab.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Templates &amp; rootfs images</span>
+  <div class="card blueprint"><span class=card-title>Templates &amp; rootfs images</span>
   <p class=card-body><b>Install anywhere:</b> <code>install.sh</code> in the repo deploys the whole stack on a fresh KVM machine (preflight, layout, Firecracker download, builds, systemd) — verified end-to-end in a nested-KVM QEMU rig. Four templates (claude, openrouter, pi, prime), each with a Docker-built
   ext4 image under <code>instances/*.ext4</code>. The openrouter image carries node (npx MCP
   servers), python, mcp-remote, mcp-portainer and poppler; the agent code itself does not live
@@ -568,7 +568,7 @@ HTML_BOTTOM = """
   mounted at <code>/harness</code>. An agent fix is one instance restart; a rootfs rebuild is
   for packages. The Instances tab flags VMs started before the last rebuild of either.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Secret broker &amp; policy</span>
+  <div class="card blueprint"><span class=card-title>Secret broker &amp; policy</span>
   <p class=card-body><b>LLM keys go one step further:</b> with <code>LLM_KEY_PROXY</code> they never enter a VM — the manager injects them on egress (<code>/api/llm/&#8249;backend&#8250;</code>). API keys and tokens never land in instance configs or on the config disk.
   Two rights per key (<code>secret-policy.json</code>): a <b>release</b> to a template or instance
   lets the MCP hub substitute the value into a server config <i>on the host</i>; only a key that is
@@ -576,7 +576,7 @@ HTML_BOTTOM = """
   instance identified by source IP. Sources: the 0600 secret store and the manager settings. MCP
   configs are assembled server-side the same way (<code>/api/mcp-config</code>).</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Security gateway</span>
+  <div class="card blueprint"><span class=card-title>Security gateway</span>
   <p class=card-body>Per-chat toggle (shield icon in app and web). Strips invisible Unicode
   &#8212; tag characters U+E0020&#8211;E007F, zero-width, bidi overrides, homoglyph spaces, plus Unicode noncharacters (U+FDD0&#8211;FDEF, U+xFFFE/xFFFF) and reserved default-ignorables &#8212; from chat
   text in <em>both</em> directions, and EXIF/XMP/C2PA metadata from uploaded JPEG/PNG/WEBP,
@@ -584,7 +584,7 @@ HTML_BOTTOM = """
   emoji ZWJ chains survive. State and counters live in <code>gateway.json</code>, filtering happens in
   the manager &#8212; a guest cannot switch it off. Removed characters are counted visibly.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Chat sync</span>
+  <div class="card blueprint"><span class=card-title>Chat sync</span>
   <p class=card-body>One shared store (<code>chats.json</code>) for app, web and Signal turns.
   Clients long-poll <code>/api/chats?since=&#8249;rev&#8250;&amp;wait=&#8249;s&#8250;</code>; every write bumps a
   monotonic revision and wakes all waiters, so a message typed on the phone appears in the
@@ -593,7 +593,7 @@ HTML_BOTTOM = """
   (even on an app re-push) unless it is genuinely re-edited afterwards. The store is display
   history &#8212; it is not fed back into the model.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Tasks &amp; orchestrator</span>
+  <div class="card blueprint"><span class=card-title>Tasks &amp; orchestrator</span>
   <p class=card-body>Task queue with schedules (<code>every Nh</code>, <code>daily HH:MM</code>, &#8230;), editable in
   the Tasks tab. Tasks run on a capable instance or an ephemeral VM; results land in the shared
   chat history and in <code>history.db</code> (<code>task_runs</code>), queryable by agents via
@@ -603,7 +603,7 @@ HTML_BOTTOM = """
   reschedule the queue itself; the matching <code>/api/task-delete</code> and <code>/api/task-edit</code> routes
   are gated to that instance. <code>llm_usage</code> in the same DB feeds the per-instance spend counter and the Activity panel&#8217;s per-window usage (<code>/api/usage/&#8249;name&#8250;?since=</code>): tokens are summed per time window, not attributed to single audit lines (a turn triggers 0..N tool calls).</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Voice</span>
+  <div class="card blueprint"><span class=card-title>Voice</span>
   <p class=card-body>Docker container bound to 127.0.0.1:8770, reachable only through the
   manager (<code>/api/stt</code>, <code>/api/tts</code>). STT: Parakeet TDT v3 int8 (RTF &#8776;0.08 on this CPU),
   TTS: Piper (RTF &#8776;0.07) with three voices baked in (de-thorsten, de-eva_k, en-amy) &#8212;
@@ -620,7 +620,7 @@ HTML_BOTTOM = """
   It rides the iroh transport by default: given the gateway NodeId in its config it runs the
   embedded <code>kaim56-tunnel</code> as a child process — one binary, no HTTPS endpoint, no VPN.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Signal</span>
+  <div class="card blueprint"><span class=card-title>Signal</span>
   <p class=card-body>Two directions, both through the signal-cli REST API
   (<code>__SIGNAL_HOST__</code>, run in <code>json-rpc</code> mode). Inbound: the manager holds a
   stdlib WebSocket to <code>/v1/receive</code>; a message from an allow-listed sender is handed straight to
@@ -630,7 +630,7 @@ HTML_BOTTOM = """
   <code>ALLOWED_SENDERS</code> (only people who may command the bot can be written to), rate-limits
   10 per 5 minutes, audits every call. Bot number and API stay on the host.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Notifications</span>
+  <div class="card blueprint"><span class=card-title>Notifications</span>
   <p class=card-body>A push channel alongside Signal: the agent tool <code>notify(title, message)</code> writes
   via <code>/api/notify</code> into a small store (<code>notifications.json</code>, rev + long-poll
   like the chat store, capped, rate-limited). It is fetched via <code>/api/notifications?since=&amp;wait=</code>:
@@ -639,7 +639,7 @@ HTML_BOTTOM = """
   (missions / tasks / chat:&#8249;instance&#8250;) — a click (web bell) or tap (Android) leads straight
   to the action. Unlike <code>send_signal</code> this rings on app/web, not in Signal.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>KatAgent app</span>
+  <div class="card blueprint"><span class=card-title>KatAgent app</span>
   <p class=card-body>Android/Compose client. Talks only to the manager: chat via
   <code>/i/&#8249;name&#8250;/api/chat[/stream]</code>, sync via long-poll, voice via <code>/api/stt|tts</code>,
   gateway toggle via <code>/api/gateway</code>. Registers as the digital assistant (long-press power)
@@ -647,7 +647,7 @@ HTML_BOTTOM = """
   Local Gemma mode works offline on-device. Over iroh it dials the manager by NodeId
   (no public port); it is also the bridge for the Halo glasses (BLE).</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Halo glasses</span>
+  <div class="card blueprint"><span class=card-title>Halo glasses</span>
   <p class=card-body>Brilliant Labs Halo, a BLE peripheral of the KatAgent app &#8212; not a direct
   manager client. GATT framing <code>[0x01, code, len_hi, len_lo, payload]</code>, receiver-paced
   acks; the device runs an ASCII-only Lua app (runtime reads latin-1). Photo capture (0x07/0x08)
@@ -655,7 +655,7 @@ HTML_BOTTOM = """
   same <code>/api/stt</code> the app dictation uses; a voice command triggers the shot. Built and
   proven against a vendor-faithful emulator and a JVM-testable protocol layer before hardware.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>ESP32 client (MrVoice)</span>
+  <div class="card blueprint"><span class=card-title>ESP32 client (MrVoice)</span>
   <p class=card-body>Push-to-talk on a Seeed XIAO ESP32-S3 (<code>espclient/</code>, ESP-IDF 5.4, stock
   components only): button held = recording into PSRAM, release &#8594; WAV &#8594; <code>/api/stt</code>
   &#8594; <code>/api/chat/&#8249;inst&#8250;</code> (sentence-streamed) &#8594; <code>/api/tts</code> &#8594; I2S amplifier.
@@ -663,7 +663,7 @@ HTML_BOTTOM = """
   credentials live in NVS (captive-portal setup), <code>probe</code> on the serial console runs the
   chain without the microphone. Its turns show up live in the web chat (voice session, archived on <code>/reset</code>).</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Desktop client (voice)</span>
+  <div class="card blueprint"><span class=card-title>Desktop client (voice)</span>
   <p class=card-body>One static Go binary in the GNOME/KDE topbar (<code>voice-client/</code>). Hands-free:
   an energy VAD segments utterances, an optional wake word gates busy rooms &#8212; as a transcript
   check or a LOCAL own-voice model (MFCC/DTW, enrolled in 30&#8201;s) that keeps audio on the desktop
@@ -672,7 +672,7 @@ HTML_BOTTOM = """
   iroh via an <b>embedded</b> <code>kaim56-tunnel</code> (started as a child process) &#8212; one file,
   no HTTPS endpoint. Target instance and a custom prompt are configurable.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>katfs</span>
+  <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
   Agents reach it through manager-proxied tools (<code>remote_ls/read/write/delete</code>); the share
   page under Sharing manages it. Several browser tabs can serve at once &#8212; each is one share
@@ -680,13 +680,13 @@ HTML_BOTTOM = """
   and <b>Download all</b> streams the current folder recursively as a ZIP (<code>/api/katfs/zip</code>).
   Gives agents a controlled window into user files without mounting anything into a VM.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Memory &#8212; short &amp; long term</span>
+  <div class="card blueprint"><span class=card-title>Memory &#8212; short &amp; long term</span>
   <p class=card-body><b>Short term</b> is the conversation itself &#8212; the agent&#8217;s <code>_history</code> in VM RAM; <code>/reset</code> clears it, a restart too. <b>Long term is semantic:</b> <code>memory_store</code> embeds each note (multilingual-e5 on the CPU, <code>embed</code> container behind the manager) and stores text+vector in <code>history.db</code>. Every turn the agent embeds the user&#8217;s message and the manager returns the meaning-nearest notes (cosine), injected as a fresh <code>[Memory]</code> block &#8212; only what fits the question, not the whole store. No LLM and no graph DB needed, so it runs on this host today; degrades to no recall (never an error) if the embedder is down. A richer knowledge-graph memory (Graphiti/Cognee) stays a possible upgrade.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Playbooks &#8212; rules the agent learns</span>
+  <div class="card blueprint"><span class=card-title>Playbooks &#8212; rules the agent learns</span>
   <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Missions &#8212; multi-step autonomy</span>
+  <div class="card blueprint"><span class=card-title>Missions &#8212; multi-step autonomy</span>
   <p class=card-body>Plan + progress store for multi-step assignments, persisted on the host
   (<code>missions.json</code>, keyed by the OWNER instance) so the working state survives resets and
   restarts. <b>Cross-instance:</b> every agent may own missions &#8212; it plans
@@ -701,10 +701,10 @@ HTML_BOTTOM = """
   TTL auto-pause, finish writes a summary into semantic memory and pushes a notification. UI: Missions
   tab (web) / screen (app) with owner, progress, current step + executing agent, and pause/abort.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Reasoning &amp; thinking</span>
+  <div class="card blueprint"><span class=card-title>Reasoning &amp; thinking</span>
   <p class=card-body>Per-agent runtime toggle via the slash command <code>/reasoning [low|medium|high|off]</code> (sets OpenRouter&#8217;s reasoning parameter; off by default, <code>OPENROUTER_REASONING</code> for a persistent default). The model&#8217;s thinking is streamed separately (marker-wrapped in the token stream, kept OUT of the conversation context so it never bloats follow-ups) and rendered in web and app as a collapsible &#8220;Denken&#8221; block; copy and speak take only the answer. Costs extra tokens, so it is a toggle, not always-on.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Storage (all under firecracker/)</span>
+  <div class="card blueprint"><span class=card-title>Storage (all under firecracker/)</span>
   <p class=card-body><code>instances/*.json</code> instance configs &#183; <code>chats.json</code> shared chat store &#183; <code>notifications.json</code> push-Benachrichtigungen &#183;
   <code>memory.json</code> per-agent key-value memory &#183; <code>playbooks.json</code> per-agent standing rules &#183;
   <code>history.db</code> task runs + LLM usage + semantic memory (vectors) &#183; <code>gateway.json</code> security-gateway state &#183;
@@ -714,7 +714,7 @@ HTML_BOTTOM = """
   config disks and throwaway overlay uppers &#183; <code>instances/&#8249;n&#8250;-upper.ext4</code> persistent
   write layers (per-instance opt-in).</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>MCP servers &#8212; hub on the host</span>
+  <div class="card blueprint"><span class=card-title>MCP servers &#8212; hub on the host</span>
   <p class=card-body>Catalog in <code>mcp-catalog.json</code> (homeassistant via <code>mcp-remote</code>/SSE,
   portainer via <code>mcp-portainer</code>, read-only, caldav via <code>caldav-mcp</code> for
   calendar entries and tasks). The server processes run in the
@@ -728,7 +728,7 @@ HTML_BOTTOM = """
   active only when listed in <code>MCP_SERVERS</code>; the hub respawns dead processes and replays
   their initialization.</p></div>
 
-  <div class="card blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span class=card-title>Web UIs</span>
+  <div class="card blueprint"><span class=card-title>Web UIs</span>
   <p class=card-body>Two pages, both served by the manager, both in the Industry design system:
   this admin UI (embedded in <code>manager.py</code>, hash-routed tabs) and the chat UI
   (<code>chatui.py</code> under <code>/chat</code>: streaming, images, voice, gateway toggle, per-browser
@@ -741,8 +741,8 @@ HTML_BOTTOM = """
   <div style="margin-bottom:18px"><h6 style="color:var(--color-accent);margin:0 0 2px">Shared, persisted</h6><h3 style="margin:0">Settings</h3></div>
   <p class=text-muted style="font-size:13px;margin-bottom:22px">Values apply to all new instances; empty template fields are pre-filled from here.</p>
   <div class="panel blueprint">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-    <div class="banner blueprint" style="margin:0 0 16px;padding:9px 14px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><span id=voicestat class=text-muted style="font-size:12.5px">Voice: …</span></div>
+    
+    <div class="banner blueprint" style="margin:0 0 16px;padding:9px 14px"><span id=voicestat class=text-muted style="font-size:12.5px">Voice: …</span></div>
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
   </div>
@@ -765,7 +765,7 @@ HTML_BOTTOM = """
 
 <div id=picker class=dialog-backdrop style="display:none;z-index:60">
   <div class="dialog blueprint" style="width:min(560px,100%)">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=dialog-title>Choose a host folder</div>
     <div style="display:flex;gap:6px">
       <input class=input id=pkpath spellcheck=false onkeydown="if(event.key==='Enter')pkGo(this.value)">
@@ -784,7 +784,7 @@ HTML_BOTTOM = """
 
 <div id=midlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)midlgClose()">
   <div class="dialog blueprint" style="width:min(720px,100%)">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=dialog-title>Edit mission &#8212; <span id=midlgid class=mono style="font-size:16px"></span></div>
     <div class=dialog-body>Any status. Steps are matched by position: existing ones keep their status and result, new lines start open, removed lines are dropped. Setting the status back to <b>active</b> reopens the mission for its owner.</div>
     <div class=field><label>Goal</label><input class=input id=migoal maxlength=300></div>
@@ -799,7 +799,7 @@ HTML_BOTTOM = """
 </div>
 <div id=mdlg class=dialog-backdrop style="display:none">
   <div class="dialog blueprint" style="width:min(720px,100%)">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=dialog-title>Host folders — <span id=mdlgname class=mono style="font-size:16px"></span></div>
     <div class=dialog-body>Host path → guest path, "ro" = read-only. Saved changes are picked up by the reconciler in the running guest.</div>
     <div id=mdlgrows></div>
@@ -813,7 +813,7 @@ HTML_BOTTOM = """
 
 <div id=modeldlg class=dialog-backdrop style="display:none">
   <div class="dialog blueprint" style="width:min(560px,100%)">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=dialog-title>Model — <span id=modeldlgname class=mono style="font-size:16px"></span></div>
     <div class=dialog-body>The new model takes effect after the next stop/start of the instance.</div>
     <div id=modeldlgbox></div>
@@ -826,7 +826,7 @@ HTML_BOTTOM = """
 
 <div id=actdlg class=dialog-backdrop style="display:none">
   <div class="dialog blueprint" style="width:min(720px,100%)">
-    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    
     <div class=dialog-title>Activity — <span id=actname class=mono style="font-size:16px"></span></div>
     <div class=dialog-body>Tools and targets called most recently (URLs/paths/queries). No secret values, no file contents.</div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 10px">

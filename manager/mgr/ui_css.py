@@ -62,13 +62,7 @@ code{font-family:var(--font-mono);font-size:.88em;background:var(--color-neutral
   border:1px solid var(--color-divider);padding:.02rem .3rem}
 /* — blueprint frame — */
 .blueprint{position:relative;border:1px solid var(--color-divider);border-radius:0}
-.blueprint>.corner{position:absolute;width:11px;height:11px;
   color:color-mix(in srgb,var(--color-text) 55%,transparent)}
-.blueprint>.corner::before,.blueprint>.corner::after{content:"";position:absolute;background:currentColor}
-.blueprint>.corner::before{left:5px;top:0;width:1px;height:100%}
-.blueprint>.corner::after{top:5px;left:0;width:100%;height:1px}
-.blueprint>.corner.tl{top:-6px;left:-6px}.blueprint>.corner.tr{top:-6px;right:-6px}
-.blueprint>.corner.bl{bottom:-6px;left:-6px}.blueprint>.corner.br{bottom:-6px;right:-6px}
 /* — buttons — */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;
   text-decoration:none;font-family:var(--font-heading);font-weight:var(--font-heading-weight);

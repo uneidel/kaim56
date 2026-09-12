@@ -56,17 +56,9 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 ::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--text) 30%,transparent)}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* — Blueprint objects: square, hairline, registration corners — */
+/* — Blueprint objects: square, hairline — */
 .blueprint{position:relative;border:1px solid var(--border)}
-.blueprint>.corner{position:absolute;width:11px;height:11px;
   color:color-mix(in srgb,var(--text) 55%,transparent)}
-.blueprint>.corner::before,.blueprint>.corner::after{content:"";position:absolute;background:currentColor}
-.blueprint>.corner::before{left:5px;top:0;width:1px;height:100%}
-.blueprint>.corner::after{top:5px;left:0;width:100%;height:1px}
-.blueprint>.corner.tl{top:-6px;left:-6px}
-.blueprint>.corner.tr{top:-6px;right:-6px}
-.blueprint>.corner.bl{bottom:-6px;left:-6px}
-.blueprint>.corner.br{bottom:-6px;right:-6px}
 
 .kicker{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
   font-family:var(--font-body);font-weight:500}
@@ -208,7 +200,6 @@ details.ast .row{margin-bottom:18px}
 #box{max-width:760px;margin:0 auto;background:var(--panel);border:1px solid var(--border);
   box-shadow:var(--shadow-md);padding:7px 8px 7px 14px}
 #box:focus-within{border-color:var(--accent)}
-#box:focus-within>.corner{color:var(--accent)}
 #thumbs{display:flex;gap:6px;padding:6px 0 2px}
 #thumbs:empty{display:none}
 #thumbs .th{position:relative}
@@ -333,7 +324,7 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
       <button class=bb-btn onclick=backBranch()>↩ back to main thread</button>
     </div>
     <div id=slashhint style="max-width:760px;margin:0 auto 6px;display:none"></div>
-    <div id=box class=blueprint><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div id=box class=blueprint>
       <div id=thumbs></div>
       <div class=inrow>
         <button class=icon id=clipBtn title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
@@ -548,7 +539,7 @@ function draw(){
   const m=$('msgs');
   if(!cur||!cur.msgs.length){
     m.innerHTML=`<div id=hello><div class="panel blueprint">`+
-      `<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>`+
+      ``+
       `<div class=kicker>microVM agent</div>`+
       `<h2>What can ${esc(agent||'the agent')} help with?</h2>`+
       `<p>Runs in its own microVM. The agent keeps its context across chats.</p>`+
