@@ -29,6 +29,7 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
   --text:#1d1f20;--muted:color-mix(in srgb,#1d1f20 55%,transparent);--heading:#1d1f20;
   --accent:#5980a6;--accent-contrast:#f2f2f3;
   --accent-100:#eef6ff;--accent-400:#94bce3;--accent-600:#597ea3;--accent-700:#416180;--accent-800:#2c455d;
+  --accent-fill:#416180;--accent-fill-hover:#2c455d;   /* filled controls: deep in light, light in dark */
   --ok:#416180;--off:#98989b;
   --shadow:0 1px 2px color-mix(in srgb,#2b2b2d 14%,transparent);
   --shadow-md:0 3px 10px color-mix(in srgb,#2b2b2d 16%,transparent);
@@ -41,6 +42,7 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
   --text:#e8e9ea;--muted:color-mix(in srgb,#e8e9ea 55%,transparent);--heading:#e8e9ea;
   --accent:#94bce3;--accent-contrast:#141618;
   --accent-100:#1d2d3d;--accent-400:#94bce3;--accent-600:#b5d9fd;--accent-700:#94bce3;--accent-800:#2c455d;
+  --accent-fill:#94bce3;--accent-fill-hover:#b5d9fd;
   --ok:#94bce3;--off:#7a7a7d;
   --shadow:0 1px 2px rgba(0,0,0,.4);
   --shadow-md:0 3px 10px rgba(0,0,0,.45);
@@ -189,7 +191,7 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   background:var(--accent-100);border:1px solid var(--accent-400)}
 .bb-label{flex:1;font-size:.8rem;color:var(--accent-700)}
 .bb-btn{font-family:var(--font-heading);font-weight:600;font-size:.8rem;cursor:pointer;
-  background:var(--accent-700);color:var(--accent-contrast);border:1px solid var(--accent-700);padding:4px 12px}
+  background:var(--accent-fill);color:var(--accent-contrast);border:1px solid var(--accent-fill);padding:4px 12px}
 details.ast{margin:0 0 22px;border-left:2px solid var(--accent-400);padding-left:14px}
 details.ast>summary{cursor:pointer;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-700);margin-bottom:12px;user-select:none;list-style-position:inside}
@@ -217,9 +219,9 @@ details.ast .row{margin-bottom:18px}
 #t{flex:1;border:none;background:none;color:var(--text);font:inherit;font-size:1rem;resize:none;
   max-height:180px;padding:.55rem 0;outline:none}
 #t::placeholder{color:var(--muted)}
-#send{flex:none;width:36px;height:36px;border:1px solid var(--accent-700);cursor:pointer;font-size:1rem;
-  background:var(--accent-700);color:var(--accent-contrast)}
-#send:hover{background:var(--accent-800);border-color:var(--accent-800)}
+#send{flex:none;width:36px;height:36px;border:1px solid var(--accent-fill);cursor:pointer;font-size:1rem;
+  background:var(--accent-fill);color:var(--accent-contrast)}
+#send:hover{background:var(--accent-fill-hover);border-color:var(--accent-fill-hover)}
 #send[disabled]{opacity:.35;cursor:default}
 #send.stop{background:var(--text);color:var(--panel);border-color:var(--text)}
 .foot{max-width:760px;margin:8px auto 0;text-align:center;color:var(--muted);font-size:.72rem}
@@ -229,8 +231,8 @@ details.ast .row{margin-bottom:18px}
 .home svg{flex:none}
 
 /* ---- Inline search (design "Agent chat — session panel + inline search") ---- */
-.icon.act{color:var(--accent-contrast);background:var(--accent-700);border-color:var(--accent-700)}
-.icon.act:hover{color:var(--accent-contrast);background:var(--accent-800)}
+.icon.act{color:var(--accent-contrast);background:var(--accent-fill);border-color:var(--accent-fill)}
+.icon.act:hover{color:var(--accent-contrast);background:var(--accent-fill-hover)}
 #searchbar{display:none;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);
   background:var(--accent-100);flex:none}
 #searchbar.open{display:flex}
@@ -269,8 +271,8 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
 .pbtn{flex:1;font-family:var(--font-heading);font-weight:600;font-size:12px;padding:5px;cursor:pointer;
   background:transparent;color:var(--text);border:1px solid var(--border)}
 .pbtn:hover{background:color-mix(in srgb,var(--text) 7%,transparent);border-color:var(--accent)}
-.pbtn.pri{background:var(--accent-700);color:var(--accent-contrast);border-color:var(--accent-700);font-size:13px;padding:7px}
-.pbtn.pri:hover{background:var(--accent-800)}
+.pbtn.pri{background:var(--accent-fill);color:var(--accent-contrast);border-color:var(--accent-fill);font-size:13px;padding:7px}
+.pbtn.pri:hover{background:var(--accent-fill-hover)}
 .plist{display:grid}
 .plist>div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)}
 .plist .v{color:var(--accent-700);text-align:right}

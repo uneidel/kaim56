@@ -82,7 +82,8 @@ code{font-family:var(--font-mono);font-size:.88em;background:var(--color-neutral
   .btn-primary{background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)}
   .btn-primary:hover{background:var(--color-accent-700);border-color:var(--color-accent-700)}
   .btn-primary:active{background:var(--color-accent-800)}
-  .actwin button.on{color:var(--color-bg)}
+  .actwin button.on{background:var(--color-accent);color:var(--color-bg)}
+  .nbadge{background:var(--color-accent);color:var(--color-bg)}
 }
 .btn-secondary:hover{background:color-mix(in srgb,var(--color-text) 7%,transparent)}
 .btn-secondary:active{background:color-mix(in srgb,var(--color-text) 14%,transparent)}
@@ -149,7 +150,7 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .af-nav a:hover,.af-nav a[aria-current=page]{color:var(--color-accent)}
 .nbell{position:relative;flex:none;margin-left:14px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:1px solid var(--color-divider);border-radius:10px;background:var(--color-surface);color:var(--color-neutral-700);cursor:pointer}
 .nbell:hover{border-color:var(--color-accent);color:var(--color-accent)}
-.nbadge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--color-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center}
+.nbadge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--color-accent-700);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--color-text) 18%,transparent);border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--color-text) 32%,transparent)}
@@ -167,7 +168,7 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .actwin button{border:0;background:var(--color-surface);color:var(--color-neutral-700);font-size:12px;padding:5px 12px;cursor:pointer;border-right:1px solid var(--color-divider)}
 .actwin button:last-child{border-right:0}
 .actwin button:hover{color:var(--color-accent)}
-.actwin button.on{background:var(--color-accent);color:#fff}
+.actwin button.on{background:var(--color-accent-700);color:#fff}
 .seckey{-webkit-text-security:disc}
 .tabs{display:flex;gap:4px;align-self:stretch;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
