@@ -158,6 +158,9 @@ Environment=AGENT_ROOT=$BASE/agent
 $PASS_LINE
 ExecStart=/usr/bin/python3 $FC_DIR/manager.py
 Restart=on-failure
+# The VMs are children of the manager: KillMode=process ends only the
+# manager itself on restart/update, the agents keep running.
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
