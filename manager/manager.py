@@ -101,7 +101,11 @@ VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # voice service, loopba
 # Subscription login of the claude template: the user's credential on the host.
 # The manager runs as root and may read the 0600 file; the guest fetches it at
 # boot via /api/claude-credentials (claude template only, by source IP).
-CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", "/home/ulrich/.claude/.credentials.json")
+# Defaults derive from the layout the installer lays out: the manager tree
+# ($BASE/firecracker) sits next to the operator's home files, so the parent
+# of BASE is the home; nothing here names a particular user.
+HOME_DIR = os.path.dirname(BASE)
+CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", os.path.join(HOME_DIR, ".claude", ".credentials.json"))
 GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
@@ -333,7 +337,7 @@ def auth_succeeded(key):
 # its pseudo-root, the guest mounts them by absolute path. Inside the VM the
 # agent is uid 1000; on the host every access is squashed to GUEST_USER, a
 # system user that owns nothing but these folders.
-AGENT_ROOT = os.environ.get("AGENT_ROOT", "/home/ulrich/agent")
+AGENT_ROOT = os.environ.get("AGENT_ROOT", os.path.join(HOME_DIR, "agent"))
 AGENT_EXPORTS = "/etc/exports.d/agent.exports"       # the retired root export
 EXPORTS_D = "/etc/exports.d"
 FCMNT_ROOT = os.path.join(AGENT_ROOT, ".fcmnt")

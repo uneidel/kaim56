@@ -71,6 +71,7 @@ fi
 say "[3/7] Runtime layout under $BASE"
 mkdir -p "$FC_DIR/bin" "$FC_DIR/instances" "$FC_DIR/run" "$FC_DIR/audit"
 rsync -a "$SRC/manager/manager.py" "$SRC/manager/chatui.py" "$SRC/manager/webterm.py" \
+         "$SRC/manager/text_unicode.py" \
          "$SRC/manager/setup-nfs-host.sh" "$SRC/manager/logo.svg" \
          "$SRC/manager/mcp-catalog.json" "$SRC/manager/personas.json" \
          "$SRC/manager/secret-policy.json" "$SRC/manager/run-tests.sh" "$FC_DIR/" 2>/dev/null || true
@@ -153,6 +154,7 @@ WorkingDirectory=$FC_DIR
 Environment=PORT=8700
 Environment=HOSTIF=$HOSTIF
 Environment=GUEST_DNS=$GUEST_DNS
+Environment=AGENT_ROOT=$BASE/agent
 $PASS_LINE
 ExecStart=/usr/bin/python3 $FC_DIR/manager.py
 Restart=on-failure
@@ -191,6 +193,9 @@ UNIT
 fi
 
 # ── [7] Smoke test ───────────────────────────────────────────────────────────
+say "[6b/7] NFS server (workspace and memory folders of the VMs; needs sudo)"
+sudo AGENT_DIR="$BASE/agent" "$FC_DIR/setup-nfs-host.sh" | tail -3
+
 say "[7/7] Smoke test"
 sleep 3
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8700/" || echo 000)
@@ -199,7 +204,8 @@ case "$CODE" in
   *) fail "manager not responding (HTTP $CODE) — journalctl -u firecracker-manager";;
 esac
 FC_DIR="$FC_DIR" AGENT_PATH="$BASE/openrouter-agent/agent.py" \
-  python3 "$FC_DIR/tests/e2e.py" AgentLogic ManagerFunctions 2>&1 | tail -2 || true
+  python3 "$FC_DIR/tests/e2e.py" AgentLogic ManagerFunctions 2>&1 \
+  | grep -E '^(FAIL|ERROR):|^Ran |^OK|^FAILED' || true
 
 say "DONE"
 cat <<EOF
@@ -208,5 +214,5 @@ cat <<EOF
   Next steps:
     1. Settings tab: enter your OpenRouter or OrcaRouter API key
     2. Instances tab: create the first instance from the openrouter template
-    3. optional: sudo $FC_DIR/setup-nfs-host.sh  (host-folder mounts)
+    3. optional: --with-agents for the claude template, --with-voice for STT/TTS
 EOF

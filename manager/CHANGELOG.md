@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-12
+- Fresh-install fixes from the QEMU deployment test: `text_unicode.py` deployed, NFS set up by the installer (per-instance model, old root export retired), no operator paths in defaults (`AGENT_ROOT`, credentials, test runner, build scripts), neutral `secret-policy.json` in the repo, caldav test self-contained, smoke step shows failing tests
+
 ## 2026-09-11
 - Traces in the app: the bridge names each turn in an `X-Kaim-Turn` header, the instance proxy forwards it, KatAgent 5.34 stores it on the message and opens the span tree (LLM and tool calls with durations) behind „⟲ trace“
 

@@ -663,7 +663,7 @@ function pkOpen(start,cb){
   document.getElementById('pkquick').innerHTML=PK_QUICK.map(p=>
     `<button type=button class="btn btn-secondary btn-sm" data-p="${esc(p)}">${escT(p)}</button>`).join('');
   document.getElementById('picker').style.display='grid';
-  pkGo(start||'/home/ulrich');
+  pkGo(start||'/home');
 }
 function pkClose(){document.getElementById('picker').style.display='none';PK.cb=null}
 async function pkGo(p){
@@ -685,7 +685,7 @@ function pkChoose(){
 }
 function pkRow(btn){
   const row=btn.closest('.mrow'),h=row.querySelector('.mh'),g=row.querySelector('.mg');
-  pkOpen(h.value||'/home/ulrich',p=>{
+  pkOpen(h.value||'/home',p=>{
     h.value=p;
     if(!g.value){const b=p.split('/').filter(Boolean).pop();if(b)g.value='/mnt/'+b}
   });

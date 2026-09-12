@@ -2483,13 +2483,21 @@ class ManagerFunctions(unittest.TestCase):
         credential, and a missing release is visible instead of silent."""
         m = self.m
         import mgr.mcp as mcpmod
+        # Self-contained: a catalog entry and a policy of its own, so the test
+        # does not depend on this host's catalog (a fresh install has none).
+        entry = {"name": "caldav", "command": "caldav-mcp", "args": [],
+                 "env": {"CALDAV_BASE_URL": "https://cal.example.com/dav", "CALDAV_USERNAME": "me",
+                         "CALDAV_PASSWORD": "${CALDAV_PASSWORD}"}}
+        old = mcpmod.secret_store, mcpmod.load_mcps, m.load_mcps, m.load_secret_policy
+        mcpmod.load_mcps = m.load_mcps = lambda: [entry]
+        m.load_secret_policy = lambda: {"by_template": {}, "guest_readable": [],
+                                        "by_instance": {"myassistant": ["CALDAV_PASSWORD"], "voicecommand": ["CALDAV_PASSWORD"]}}
         self.assertIn("caldav", [x["name"] for x in m.load_mcps()])
         self.assertEqual(m.mcp_required_secrets(["caldav"]), {"CALDAV_PASSWORD"})
         for name in ("myassistant", "voicecommand"):
             self.assertIn("CALDAV_PASSWORD",
                           m.allowed_secret_keys({"name": name, "template": "openrouter"}),
                           f"{name} has no CALDAV_PASSWORD release")
-        old = mcpmod.secret_store
         mcpmod.secret_store = lambda: {"CALDAV_PASSWORD": "s3cret"}
         try:
             env = json.loads(m.build_mcp_config(
@@ -2499,7 +2507,7 @@ class ManagerFunctions(unittest.TestCase):
                 ["caldav"], allowed=set()))["mcpServers"]["caldav"]["env"]
             self.assertEqual(env["CALDAV_PASSWORD"], "${CALDAV_PASSWORD}")
         finally:
-            mcpmod.secret_store = old
+            mcpmod.secret_store, mcpmod.load_mcps, m.load_mcps, m.load_secret_policy = old
 
     # ---- guest boundary (multi-tenancy S-fixes, 2026-09-06) ------------------
     def _handler(self, path, ip, method="GET", auth=None):

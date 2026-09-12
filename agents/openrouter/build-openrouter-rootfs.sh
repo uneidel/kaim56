@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Baut das OpenRouter-Agent-Rootfs -> instances/openrouter-rootfs.ext4.
+FC_DIR="${FC_DIR:-$(cd "$(dirname "$0")/.." && pwd)/firecracker}"   # the manager tree next to this folder
 cd "$(dirname "$0")"
 # mkfs.ext4 liegt in /usr/sbin — das steht in der PATH einer normalen
 # Nutzer-Shell nicht drin, und root braucht es fuer ein Datei-Image nicht.
 export PATH="$PATH:/usr/sbin:/sbin"
-INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/openrouter-rootfs.ext4
+INST="${FC_DIR}"/instances/openrouter-rootfs.ext4
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
 
 echo "== [1] docker build =="
@@ -29,14 +30,14 @@ echo "== [4] als Instanz-Rootfs ablegen =="
 # als Blockgeraet offen, mischen sich altes und neues Image und der Gast faellt
 # beim naechsten Boot in einen ext4-Checksum-Panic. Erst danebenlegen, dann
 # atomar umhaengen — eine laufende VM behaelt ihren alten Inode bis zum Stop.
-for pid in "${FC_DIR:-/home/ulrich/firecracker}"/run/*.pid; do
+for pid in "${FC_DIR}"/run/*.pid; do
   [ -e "$pid" ] || continue
   p=$(cat "$pid" 2>/dev/null)
   # /proc statt kill -0: firecracker laeuft als root, ein Signal-Test aus einer
   # Nutzer-Shell schlaegt dort fehl und die Warnung bliebe stumm.
   if [ -n "$p" ] && [ -d "/proc/$p" ]; then
     n=$(basename "$pid" .pid)
-    grep -q "openrouter-rootfs" ""${FC_DIR:-/home/ulrich/firecracker}"/instances/$n.json" 2>/dev/null &&
+    grep -q "openrouter-rootfs" ""${FC_DIR}"/instances/$n.json" 2>/dev/null &&
       echo "⚠️  Instanz '$n' laeuft auf diesem Rootfs — sie sieht das neue Image erst nach Stop/Start."
   fi
 done
@@ -59,7 +60,7 @@ if [ "${1:-}" = "--smoke" ] && [ -n "${2:-}" ]; then
     sleep 3
   done
   echo "== [6] smoke: /tools-Registry pruefen =="
-  MANAGER_URL="$MGR" python3 "${FC_DIR:-/home/ulrich/firecracker}/tests/e2e.py" \
+  MANAGER_URL="$MGR" python3 "${FC_DIR}/tests/e2e.py" \
     LiveAgent.test_tools_registry_after_rebuild || fail "smoke test"
   echo "✅ SMOKE OK ($2 laeuft auf dem neuen Image, Registry vollstaendig)"
 fi

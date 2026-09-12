@@ -2,8 +2,9 @@
 # Builds ONLY the guest rootfs (rootfs.ext4) and places it as a claude instance.
 # No downloads (firecracker/vmlinux already sit in ../../firecracker/bin).
 # Deliberately WITHOUT 'set -e' -> shows every step/error instead of aborting silently.
+FC_DIR="${FC_DIR:-$(cd "$(dirname "$0")/.." && pwd)/firecracker}"   # the manager tree next to this folder
 cd "$(dirname "$0")"
-INST="${FC_DIR:-/home/ulrich/firecracker}"/instances/claude-rootfs.ext4
+INST="${FC_DIR}"/instances/claude-rootfs.ext4
 fail(){ echo "❌ ERROR in: $1"; exit 1; }
 
 echo "== [1] provide bridge.py + web_bridge.py =="
