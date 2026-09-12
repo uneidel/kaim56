@@ -2807,6 +2807,24 @@ class ManagerFunctions(unittest.TestCase):
             m.instance_by_ip, m.PW, m.USER = old
             m._auth_fails.clear()
 
+    def test_instance_json_is_operator_readable(self):
+        """save_instance leaves the JSON at 0640 whatever the umask; the tests
+        and the operator read it, and harden_files relaxes old ones."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-instjson-")
+        old = m.INST_DIR, os.umask(0o077)
+        try:
+            m.INST_DIR = tmp
+            m.save_instance({"name": "x", "template": "openrouter"})
+            self.assertEqual(os.stat(os.path.join(tmp, "x.json")).st_mode & 0o777, 0o640)
+            self.assertEqual(m.load_instances()[0]["name"], "x")
+            os.chmod(os.path.join(tmp, "x.json"), 0o600)
+            os.makedirs(os.path.join(tmp, "instances")); os.rename(os.path.join(tmp, "x.json"), os.path.join(tmp, "instances", "x.json"))
+            m.harden_files(tmp)
+            self.assertEqual(os.stat(os.path.join(tmp, "instances", "x.json")).st_mode & 0o777, 0o640)
+        finally:
+            m.INST_DIR = old[0]; os.umask(old[1])
+
     def test_harden_files_makes_state_private(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-harden-")

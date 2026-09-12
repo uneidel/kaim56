@@ -392,6 +392,23 @@ def sh(*args, check=True):
 
 
 # ---- instances -------------------------------------------------------------
+def save_instance(inst):
+    """Instance JSON: written by root, readable by the operator's group — it
+    carries no secrets by design (NEVER_PERSIST), and the tests, the build
+    script's --smoke and the operator read it. Under umask 077 a plain
+    open() would leave it root-only (load_instances then fails for anyone
+    but root, seen on the deployment test VM)."""
+    p = os.path.join(INST_DIR, f"{inst['name']}.json")
+    with open(p, "w") as fh:
+        json.dump(inst, fh, indent=2)
+    try:
+        os.chmod(p, 0o640)
+        if os.geteuid() == 0:
+            os.chown(p, 0, ADMIN_GID)
+    except OSError:
+        pass
+
+
 def load_instances():
     out = []
     for f in sorted(os.listdir(INST_DIR)) if os.path.isdir(INST_DIR) else []:
@@ -1635,8 +1652,7 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
              for m in (mounts or []) if isinstance(m, dict) and m.get("host") and m.get("guest")]
     if clean:
         inst["mounts"] = clean
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     return f"instance '{name}' created from template '{template}'"
 
 
@@ -1652,8 +1668,7 @@ def set_instance_tools(name, tools):
         cfg["AGENT_TOOLS"] = ",".join(sorted(sel))
     else:
         cfg.pop("AGENT_TOOLS", None)
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     running = " (applies after stop/start)" if is_running(inst) else ""
     return f"tools for '{name}' saved{running}"
 
@@ -1697,8 +1712,7 @@ def set_model(name, model):
             return (f"error: instance '{name}' has no model setting "
                     f"({'/'.join(MODEL_KEYS)})")
         cfg[key] = model
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     running = " (applies after stop/start)" if is_running(inst) else ""
     return f"model for '{name}' set to {model}{running}"
 
@@ -1708,8 +1722,7 @@ def set_internet(name, on):
     if not inst:
         return "unknown"
     inst["internet"] = bool(on)
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     if is_running(inst):
         apply_internet(inst, on)   # takes effect immediately, no restart needed
     return f"internet for '{name}': {'on' if on else 'off'}"
@@ -2243,8 +2256,7 @@ def set_mounts(name, mounts):
     inst["mounts"] = wanted
     ensure_guest_user()
     warn = [m["host"] for m in wanted if not m["readonly"] and not guest_can_write(m["host"])]
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     note = ""
     if is_running(inst):
         # apply LIVE: tear down removed folders, export the current (new) ones.
@@ -2526,8 +2538,7 @@ def set_persist_disk(name, on):
     if inst.get("rootfs") not in OVERLAY_ROOTFS:
         return "error: this template's rootfs has no overlay support (yet)"
     inst["persist_disk"] = bool(on)
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     running = " (applies after stop/start)" if is_running(inst) else ""
     return f"persistent disk for '{name}' {'ON' if on else 'off'}{running}"
 
@@ -5137,8 +5148,7 @@ def _set_config_key(name, key, val):
         cfg.pop(key, None)
     else:
         cfg[key] = str(val)
-    with open(os.path.join(INST_DIR, f"{name}.json"), "w") as fh:
-        json.dump(inst, fh, indent=2)
+    save_instance(inst)
     return (f"{key} " + ("removed" if val in ("", None) else f"= {val}")
             + (" (applies after stop/start)" if is_running(inst) else ""))
 
@@ -5235,8 +5245,7 @@ def migrate_mcp_config_out_of_instances():
                     touched = True
         cfg.pop("MCP_CONFIG", None)
         try:
-            with open(os.path.join(INST_DIR, f"{inst['name']}.json"), "w") as fh:
-                json.dump(inst, fh, indent=2)
+            save_instance(inst)
             print(f"[migrate] {inst['name']}: MCP_CONFIG -> MCP_SERVERS={','.join(names) or '-'}"
                   f"{' + Policy ' + ','.join(sorted(mcp_required_secrets(names))) if names else ''}",
                   flush=True)
@@ -5259,8 +5268,7 @@ def migrate_secrets_out_of_instances():
         for k in hit:
             cfg.pop(k)
         try:
-            with open(os.path.join(INST_DIR, f"{inst['name']}.json"), "w") as fh:
-                json.dump(inst, fh, indent=2)
+            save_instance(inst)
             print(f"[migrate] {inst['name']}: {', '.join(hit)} removed", flush=True)
         except OSError as e:
             print(f"[migrate] {inst['name']}: {e}", flush=True)
@@ -5277,6 +5285,13 @@ def harden_files(base=None):
             p = os.path.join(base, f)
             if os.path.isfile(p) and f.endswith((".json", ".jsonl", ".db", ".db-wal", ".db-shm", ".txt")):
                 os.chmod(p, 0o600); n += 1
+        idir = os.path.join(base, "instances")       # instance JSONs: operator-readable
+        if os.path.isdir(idir):
+            for f in os.listdir(idir):
+                if f.endswith(".json"):
+                    os.chmod(os.path.join(idir, f), 0o640)
+                    if os.geteuid() == 0:
+                        os.chown(os.path.join(idir, f), 0, ADMIN_GID)
         ad = os.path.join(base, "audit")
         if os.path.isdir(ad):
             os.chmod(ad, 0o700)
