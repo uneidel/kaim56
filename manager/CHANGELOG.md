@@ -6,6 +6,8 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-09-12
+- Skills from experience: after a long successful turn the agent distills a SKILL proposal (one extra model call, `SKILL_LEARN=0` disables, `SKILL_LEARN_MIN_STEPS`), plus a `propose_skill` tool; proposals are linted, announced and wait in the Skills tab for approval
+- `search_sessions`: full-text search (SQLite FTS5) over chats and task results, scoped to the guest's own instance, orchestrator sees all; `POST /api/sessions-search`
 - Tasks tab: a play button queues a task for the next worker tick (scheduled ones keep their schedule, finished one-offs run again)
 - Deployment test on a clean Debian 12 VM (nested KVM) passes end to end; fixes on the way: installer restarts services on update and keeps the login, `KillMode=process` in the unit, guest firewall rules by position (NFS ACCEPT above the DROP), instance JSONs 0640 for the operator
 - Fresh-install fixes from the QEMU deployment test: `text_unicode.py` deployed, NFS set up by the installer (per-instance model, old root export retired), no operator paths in defaults (`AGENT_ROOT`, credentials, test runner, build scripts), neutral `secret-policy.json` in the repo, caldav test self-contained, smoke step shows failing tests

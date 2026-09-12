@@ -107,6 +107,7 @@ VOICE_PORT = int(os.environ.get("VOICE_PORT", "8770"))   # voice service, loopba
 HOME_DIR = os.path.dirname(BASE)
 CLAUDE_CRED_SRC = os.environ.get("CLAUDE_CRED_SRC", os.path.join(HOME_DIR, ".claude", ".credentials.json"))
 GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
+                    "/api/skill-proposals", "/api/sessions-search",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
@@ -1056,7 +1057,8 @@ from mgr.store import (HISTORY_DB, MEMORY_FILE, TASKS_FILE, EMBED_URL, _hist_loc
                        usage_add, usage_summary, usage_for, history_add, history_search,
                        load_tasks, save_tasks, add_task, update_task, _next_run,
                        _embed, sem_store, sem_search, load_memory, mem_store, mem_recall, with_tasks,
-                       turn_start, turn_end, turns_read, turn_trace, turns_prune)
+                       turn_start, turn_end, turns_read, turn_trace, turns_prune,
+                       sessions_refresh, sessions_query)
 _missions.sem_store = sem_store   # injection (mgr/missions)
 
 
@@ -1605,6 +1607,8 @@ AGENT_TOOLS_CATALOG = [
     {"name": "list_agents", "desc": "Available agents + capabilities (routing)"},
     {"name": "recall_tasks", "desc": "Query earlier tasks/results (institutional knowledge)"},
     {"name": "list_skills", "desc": "List available skills"},
+    {"name": "search_sessions", "desc": "Full-text search over earlier chats and task results"},
+    {"name": "propose_skill", "desc": "Propose a reusable procedure as a skill (waits for approval)"},
     {"name": "load_skill", "desc": "Load a skill into the context"},
     {"name": "memory_store", "desc": "Remember a value permanently"},
     {"name": "memory_recall", "desc": "Retrieve a remembered value"},
@@ -2751,6 +2755,99 @@ def upsert_skill(name, description, content):
 def delete_skill(name):
     save_skills([s for s in load_skills() if s.get("name") != name])
     return f"skill '{name}' deleted"
+
+
+# ---- skills from experience -------------------------------------------------
+# After a long, successful turn the agent distills the way it went into a
+# SKILL proposal (Hermes' learning loop, with our approval gate): it lands
+# here, the operator approves it in the Skills tab, only then it enters the
+# catalog every agent loads from. Nothing an agent writes becomes a skill by
+# itself.
+SKILL_PROPOSALS_FILE = os.path.join(BASE, "skill_proposals.json")
+PROPOSALS_MAX = 50
+_SECRETISH = re.compile(r"(sk-or-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9._-]{16,}|hf_[A-Za-z0-9]{16,})")
+
+
+def load_proposals():
+    try:
+        with open(SKILL_PROPOSALS_FILE) as fh:
+            d = json.load(fh)
+        return d if isinstance(d, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def save_proposals(items):
+    tmp = SKILL_PROPOSALS_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(items, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, SKILL_PROPOSALS_FILE)
+
+
+def skill_lint(name, description, content):
+    """'' when a proposal is acceptable, else why not. Advisory rules in the
+    spirit of Hermes' linter: a usable name, a one-line description, a body
+    that is a procedure and not a dump, nothing that looks like a credential."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,47}", name or ""):
+        return "name must be 2-48 chars of a-z 0-9 _ -"
+    if not (description or "").strip() or len(description) > 200:
+        return "description must be one line (1-200 chars)"
+    body = (content or "").strip()
+    if len(body) < 80:
+        return "content too short to be a procedure"
+    if len(body) > 12000:
+        return "content over 12 kB — a skill is a procedure, not a log"
+    if _SECRETISH.search(body):
+        return "content looks like it contains a credential"
+    return ""
+
+
+def proposal_add(instance, name, description, content, turn="", note=""):
+    name = re.sub(r"[^a-z0-9_-]", "", str(name or "").lower())[:48]
+    why = skill_lint(name, str(description or "").strip(), str(content or ""))
+    if why:
+        return None, why
+    items = [p for p in load_proposals() if not (p.get("name") == name and p.get("status") == "proposed")]
+    pid = uuid.uuid4().hex[:10]
+    items.append({"id": pid, "ts": int(time.time()), "instance": str(instance or "")[:80], "turn": str(turn or "")[:16],
+                  "name": name, "description": str(description).strip()[:200], "content": str(content).strip(),
+                  "note": str(note or "")[:200], "status": "proposed",
+                  "update": any(s.get("name") == name for s in load_skills())})
+    items = items[-PROPOSALS_MAX:]
+    save_proposals(items)
+    try:
+        notify_add(instance or "skills", f"Skill proposal: {name}",
+                   f"{str(description).strip()[:160]} — review in the Skills tab", link="")
+    except Exception:
+        pass
+    return pid, "ok"
+
+
+def proposal_decide(pid, approve):
+    items = load_proposals()
+    p = next((x for x in items if x.get("id") == pid), None)
+    if p is None:
+        return "unknown"
+    if approve:
+        msg = upsert_skill(p["name"], p.get("description", ""), p.get("content", ""))
+        p["status"] = "approved"
+    else:
+        msg = f"proposal '{p['name']}' discarded"
+        p["status"] = "discarded"
+    p["decided"] = int(time.time())
+    save_proposals(items)
+    return msg
+
+
+def sessions_search(query, instance=None, limit=10):
+    """Exact search over chats and task runs (FTS5), index refreshed from
+    chats.json when it changed."""
+    try:
+        mt = os.path.getmtime(CHATS_FILE)
+    except OSError:
+        mt = 0
+    sessions_refresh(load_chats(), mt)
+    return sessions_query(query, instance=instance, limit=limit)
 
 
 # ---- Playbooks + prompt templates: moved out to mgr/rules.py ---------------
@@ -5121,6 +5218,58 @@ def _rt_personas_delete(h):
 def _rt_skills_upsert(h):
     b = h._body()
     return upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""))
+
+
+@ROUTER.post("/api/skill-proposals")
+def _rt_skill_propose(h):
+    # A guest files a skill proposal (distilled after a long successful turn,
+    # or deliberately via propose_skill). Instance by IP, rate-limited,
+    # linted; it waits for approval in the Skills tab.
+    inst = h._guest()
+    if inst is None:
+        return h._forbid()
+    if not rate_ok(("skill-proposal", inst["name"]), 10, 300):
+        return h._json({"error": "rate limit"}, 429)
+    b = h._body()
+    pid, why = proposal_add(inst["name"], b.get("name", ""), b.get("description", ""), b.get("content", ""),
+                            turn=b.get("turn", ""), note=b.get("note", ""))
+    if pid is None:
+        return h._json({"error": why}, 400)
+    return h._json({"id": pid, "msg": "proposed — waiting for approval in the Skills tab"})
+
+
+@ROUTER.get("/api/skill-proposals", admin=True)
+def _rt_skill_proposals(h):
+    return h._json({"proposals": [p for p in load_proposals() if p.get("status") == "proposed"]})
+
+
+@_msg_route("POST", "/api/skill-proposals/", prefix=True)
+def _rt_skill_proposal_decide(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")
+    if len(parts) != 4 or parts[3] not in ("approve", "discard"):
+        return "unknown"
+    return proposal_decide(re.sub(r"[^a-f0-9]", "", parts[2]), parts[3] == "approve")
+
+
+@ROUTER.post("/api/sessions-search")
+def _rt_sessions_search(h):
+    # Guests search their own sessions; the orchestrator sees every
+    # instance's (it delegates across them); admins may pass instance.
+    b = h._body()
+    inst = h._guest()
+    if inst is not None:
+        if not rate_ok(("sessions-search", inst["name"]), 60, 300):
+            return h._json({"error": "rate limit"}, 429)
+        scope = None if inst["name"] == ORCH_INSTANCE else inst["name"]
+        if scope is None and b.get("instance"):
+            scope = str(b.get("instance"))[:80]
+    else:
+        scope = str(b.get("instance") or "")[:80] or None
+    try:
+        limit = max(1, min(int(b.get("limit", 10)), 50))
+    except (TypeError, ValueError):
+        limit = 10
+    return h._json({"hits": sessions_search(str(b.get("q") or b.get("query") or ""), instance=scope, limit=limit)})
 
 
 @_msg_route("POST", "/api/skills/", prefix=True)

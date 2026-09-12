@@ -522,7 +522,32 @@ function savePersona(){
 }
 async function delPersona(n){if(confirm('Delete persona '+n+'?')){await fetch('/api/personas/'+encodeURIComponent(n)+'/delete',{method:'POST'});location.reload()}}
 
+async function loadProposals(){
+  const el=document.getElementById('skprops'); if(!el)return;
+  let ps=[]; try{ps=(await (await fetch('/api/skill-proposals')).json()).proposals||[];}catch(e){ps=[];}
+  if(!ps.length){el.innerHTML='';return;}
+  // Skills the agents distilled from their own runs: nothing enters the
+  // catalog without a click here.
+  el.innerHTML=`<div class=text-muted style="font-size:12px;margin:0 0 6px">Proposed by agents — approve to add to the catalog</div>`+
+    `<div class=grid3 style="margin-bottom:14px">`+ps.map(p=>
+    `<div class="card blueprint">${CORNERS}`+
+    `<div style="display:flex;align-items:center;gap:8px">`+
+    `<span class=card-title style="font-size:15px;font-family:var(--font-mono);font-weight:500">${escT(p.name)}</span>`+
+    (p.update?`<span class="tag tag-neutral" style="font-size:10px">update</span>`:'')+
+    `<span class=text-muted style="font-size:11px;margin-left:auto">${escT(p.instance||'')}</span></div>`+
+    `<p class=card-body style="font-size:12.5px">${escT(p.description||'')}</p>`+
+    `<details style="font-size:12px;margin:4px 0 8px"><summary class=text-muted style="cursor:pointer">content</summary>`+
+    `<pre style="white-space:pre-wrap;font-size:11.5px;max-height:260px;overflow:auto;margin:6px 0 0">${escT(p.content||'')}</pre></details>`+
+    `<div style="display:flex;gap:6px"><button class="btn btn-primary btn-sm" onclick="decideProposal('${esc(p.id)}','approve')">Approve</button>`+
+    `<button class="btn btn-secondary btn-sm" onclick="decideProposal('${esc(p.id)}','discard')">Discard</button></div></div>`).join('')+`</div>`;
+}
+async function decideProposal(id,what){
+  const r=await (await fetch('/api/skill-proposals/'+encodeURIComponent(id)+'/'+what,{method:'POST'})).json();
+  if(what==='approve')location.reload(); else loadProposals();
+  if(r.msg&&/error|unknown/.test(r.msg))alert(r.msg);
+}
 function renderSkills(){
+  loadProposals();
   document.getElementById('skills').innerHTML=SKILLS.map(s=>
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:8px">`+

@@ -181,6 +181,85 @@ def turn_trace(instance, turn):
         return {"turn": None, "llm": []}
 
 
+# ---- sessions: full-text search over chats and task runs (FTS5) ------------
+# Exact search next to the semantic one: "where did we talk about the
+# Vaillant job?" The index is rebuilt from chats.json whenever that file
+# changed (it is small) and from task_runs in the same pass.
+_fts_state = {"mtime": None}
+
+
+def _fts_ok(c):
+    try:
+        c.execute("CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5("
+                  "instance UNINDEXED, kind UNINDEXED, ref UNINDEXED, ts UNINDEXED, title, text)")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def sessions_refresh(chats, chats_mtime):
+    """Rebuild the index when chats.json changed. `chats` is the loaded store
+    (a list of conversations), `chats_mtime` its file mtime (any hashable)."""
+    if _fts_state["mtime"] == chats_mtime:
+        return False
+    try:
+        with _hist_lock, _hist_conn() as c:
+            if not _fts_ok(c):
+                return False
+            c.execute("DELETE FROM sessions_fts")
+            rows = []
+            for conv in chats or []:
+                if not isinstance(conv, dict):
+                    continue
+                cid, title = str(conv.get("id", ""))[:80], str(conv.get("title", ""))[:120]
+                inst, ts = str(conv.get("instance", ""))[:80], int(conv.get("updatedAt", 0) or 0) // 1000
+                for i, m in enumerate(conv.get("messages", []) or []):
+                    txt = m.get("text") if isinstance(m, dict) else None
+                    if isinstance(txt, str) and txt.strip():
+                        rows.append((inst, "chat", f"{cid}#{i}", ts, title, txt[:8000]))
+            for rid, ts, target, task, result in c.execute(
+                    "SELECT id, ts, target, task, result FROM task_runs ORDER BY id DESC LIMIT 5000"):
+                rows.append((target or "", "task", str(rid), int(ts or 0), (task or "")[:120],
+                             f"{task or ''}\n{result or ''}"[:8000]))
+            c.executemany("INSERT INTO sessions_fts(instance,kind,ref,ts,title,text) VALUES(?,?,?,?,?,?)", rows)
+        _fts_state["mtime"] = chats_mtime
+        return True
+    except Exception as e:
+        print("sessions_refresh:", repr(e), flush=True)
+        return False
+
+
+def _fts_query(q):
+    """Every word becomes a quoted term (implicit AND): FTS5's own syntax
+    (quotes, NEAR, columns) would otherwise turn user input into errors."""
+    words = [w.replace('"', "") for w in str(q or "").split()]
+    return " ".join(f'"{w}"' for w in words if w)
+
+
+def sessions_query(query, instance=None, limit=10):
+    """Hits: instance, kind (chat|task), ref, ts, title, snippet. Best first."""
+    mq = _fts_query(query)
+    if not mq:
+        return []
+    try:
+        with _hist_lock, _hist_conn() as c:
+            if not _fts_ok(c):
+                return []
+            sql = ("SELECT instance, kind, ref, ts, title, "
+                   "snippet(sessions_fts, 5, '[', ']', ' … ', 28) FROM sessions_fts WHERE sessions_fts MATCH ?")
+            args = [mq]
+            if instance:
+                sql += " AND instance = ?"
+                args.append(str(instance))
+            sql += " ORDER BY bm25(sessions_fts) LIMIT ?"
+            args.append(int(limit))
+            return [dict(zip(("instance", "kind", "ref", "ts", "title", "snippet"), r))
+                    for r in c.execute(sql, args)]
+    except Exception as e:
+        print("sessions_query:", repr(e), flush=True)
+        return []
+
+
 def turns_prune(days=30):
     try:
         with _hist_lock, _hist_conn() as c:

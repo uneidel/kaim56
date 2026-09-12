@@ -727,6 +727,50 @@ class AgentLogic(unittest.TestCase):
             else:
                 a.BUILTIN.pop("web_search", None)
 
+    def test_skill_distilled_after_a_long_successful_turn(self):
+        """After a turn with enough model calls that ended well, one extra
+        model call distills a SKILL proposal and files it; NONE files
+        nothing; short turns, failed turns and slash commands never trigger."""
+        a = self.a
+        posts = []
+        old = a.or_chat, a._mgr, a.SKILL_LEARN, a.SKILL_LEARN_MIN_STEPS, a._turn_step[0], a.threading.Thread
+
+        class SyncThread:
+            def __init__(self, target=None, args=(), daemon=None): self.t, self.a = target, args
+            def start(self): self.t(*self.a)
+        try:
+            a._mgr = lambda base, path, payload=None, timeout=60: posts.append((path, payload)) or "ok"
+            a.threading.Thread = SyncThread
+            a.SKILL_LEARN, a.SKILL_LEARN_MIN_STEPS = True, 3
+            hist = [{"role": "system", "content": "s"}, {"role": "user", "content": "old"},
+                    {"role": "assistant", "content": "old answer"},
+                    {"role": "user", "content": "find jobs"},
+                    {"role": "assistant", "content": None, "tool_calls": [{"id": "1", "function": {"name": "web_search", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_call_id": "1", "content": "x" * 5000},
+                    {"role": "assistant", "content": "done"}]
+            sl = a._turn_slice(hist, "find jobs")
+            self.assertEqual(sl[0]["content"], "find jobs"); self.assertEqual(len(sl), 4)
+            self.assertEqual(len(sl[2]["content"]), 1500)                       # tool output trimmed
+            a.or_chat = lambda msgs, tools, model=None: {"role": "assistant", "content":
+                '```json\n{"name": "job-search", "description": "Daily search", "content": "# Purpose\\n..."}\n```'}
+            a._turn_step[0] = 4
+            self.assertTrue(a._maybe_learn(hist, "find jobs", "ok"))
+            self.assertEqual(posts[-1][0], "/api/skill-proposals")
+            self.assertEqual(posts[-1][1]["name"], "job-search")
+            self.assertIn("find jobs", posts[-1][1]["note"])
+            posts.clear()
+            a.or_chat = lambda msgs, tools, model=None: {"role": "assistant", "content": "NONE"}
+            self.assertTrue(a._maybe_learn(hist, "find jobs", "ok")); self.assertEqual(posts, [])
+            a._turn_step[0] = 2
+            self.assertFalse(a._maybe_learn(hist, "find jobs", "ok"))              # too short
+            a._turn_step[0] = 9
+            self.assertFalse(a._maybe_learn(hist, "find jobs", "max_steps"))       # did not end well
+            self.assertFalse(a._maybe_learn(hist, "/fresh x", "ok"))               # slash command
+            a.SKILL_LEARN = False
+            self.assertFalse(a._maybe_learn(hist, "find jobs", "ok"))
+        finally:
+            a.or_chat, a._mgr, a.SKILL_LEARN, a.SKILL_LEARN_MIN_STEPS, a._turn_step[0], a.threading.Thread = old
+
     # --- Tree-Chat: /branch + /back -------------------------------------------
     def test_branch_and_back(self):
         a = self.a
@@ -3065,6 +3109,89 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(b"queued", h.wfile.getvalue())
         finally:
             st.TASKS_FILE, m.instance_by_ip, m.PW = old
+
+    def test_skill_proposals_wait_for_approval(self):
+        """An agent's skill proposal is linted, stored, announced, and enters
+        the catalog only when approved in the Skills tab; a newer proposal
+        with the same name replaces the pending one; admins cannot file."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-skprop-")
+        old = m.SKILL_PROPOSALS_FILE, m.SKILLS_FILE, m.notify_add, m.instance_by_ip, m.PW
+        notes = []
+        try:
+            m.SKILL_PROPOSALS_FILE = os.path.join(tmp, "p.json"); m.SKILLS_FILE = os.path.join(tmp, "s.json")
+            m.notify_add = lambda *a, **k: notes.append(a)
+            vm = {"name": "vm1", "index": 3, "template": "openrouter", "config": {}}
+            m.instance_by_ip = lambda ip: vm if ip == "172.30.3.2" else None
+            good = {"name": "Job-Search-NRW", "description": "Daily job search for a region",
+                    "content": "# Purpose\nSearch job boards.\n\n## Steps\n1. web_search with the region\n2. http_fetch each hit\n3. notify a summary\n\n## Pitfalls\nIndeed blocks fetches.",
+                    "turn": "t1"}
+            h = self._post_handler("/api/skill-proposals", "172.30.3.2", json.dumps(good).encode()); h.do_POST()
+            self.assertEqual(self._status(h), 200)
+            self.assertEqual(len(notes), 1); self.assertIn("job-search-nrw", notes[0][1])
+            bad = dict(good, content="too short"); h = self._post_handler("/api/skill-proposals", "172.30.3.2", json.dumps(bad).encode()); h.do_POST()
+            self.assertEqual(self._status(h), 400)
+            leak = dict(good, content=good["content"] + "\nuse Bearer abcdefghijklmnopqrstuvwxyz1234"); h = self._post_handler("/api/skill-proposals", "172.30.3.2", json.dumps(leak).encode()); h.do_POST()
+            self.assertEqual(self._status(h), 400)
+            again = dict(good, description="Daily job search, second try"); h = self._post_handler("/api/skill-proposals", "172.30.3.2", json.dumps(again).encode()); h.do_POST()
+            self.assertEqual(self._status(h), 200)
+            pending = [p for p in m.load_proposals() if p["status"] == "proposed"]
+            self.assertEqual([p["description"] for p in pending], ["Daily job search, second try"])   # replaced, not doubled
+            self.assertFalse(pending[0]["update"])
+            h = self._post_handler("/api/skill-proposals", "10.0.0.5", json.dumps(good).encode()); h.do_POST()
+            self.assertEqual(self._status(h), 403)                                     # guests only
+            self.assertEqual([x["name"] for x in m.load_skills()], [])                 # nothing in the catalog yet
+            m.PW = ""
+            h = self._post_handler(f"/api/skill-proposals/{pending[0]['id']}/approve", "10.0.0.5", b"{}"); h.do_POST()
+            self.assertIn(b"saved", h.wfile.getvalue())
+            self.assertEqual([x["name"] for x in m.load_skills()], ["job-search-nrw"])
+            self.assertEqual(m.load_proposals()[0]["status"], "approved")
+            self.assertEqual(m.proposal_decide("nope", True), "unknown")
+            # a proposal for an existing skill is flagged as an update
+            pid, why = m.proposal_add("vm1", "job-search-nrw", "Better", good["content"])
+            self.assertTrue(pid); self.assertTrue(next(p for p in m.load_proposals() if p["id"] == pid)["update"])
+            self.assertIn("discarded", m.proposal_decide(pid, False))
+        finally:
+            m.SKILL_PROPOSALS_FILE, m.SKILLS_FILE, m.notify_add, m.instance_by_ip, m.PW = old
+
+    def test_sessions_fulltext_search_scoped_per_guest(self):
+        """FTS5 over chats and task runs: exact words find the session, guests
+        see their own instance only, the orchestrator everything, the index
+        follows chats.json by mtime."""
+        import mgr.store as st
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-fts-")
+        old = st.HISTORY_DB, m.load_chats, m.CHATS_FILE, m.instance_by_ip, dict(st._fts_state)
+        try:
+            st.HISTORY_DB = os.path.join(tmp, "history.db"); st._fts_state["mtime"] = None
+            m.CHATS_FILE = os.path.join(tmp, "chats.json"); open(m.CHATS_FILE, "w").write("[]")
+            chats = [{"id": "c1", "instance": "vm1", "title": "Jobs", "updatedAt": 1788000000000,
+                      "messages": [{"user": True, "text": "Was war mit Vaillant in Remscheid?"},
+                                   {"user": False, "text": "Vaillant sucht einen Senior Project Manager Security."}]},
+                     {"id": "c2", "instance": "vm2", "title": "Garten", "updatedAt": 1788000000000,
+                      "messages": [{"user": True, "text": "Gartenhaus Licht an"}]}]
+            m.load_chats = lambda: chats
+            st.history_add("vm2", "MSFT Kurs holen", "MSFT 512.30 — alert sent", True)
+            hits = m.sessions_search("Vaillant")
+            self.assertEqual({(h["instance"], h["kind"]) for h in hits}, {("vm1", "chat")})
+            self.assertIn("[Vaillant]", hits[0]["snippet"])
+            self.assertEqual([h["kind"] for h in m.sessions_search("MSFT alert")], ["task"])
+            self.assertEqual(m.sessions_search("Vaillant", instance="vm2"), [])
+            self.assertEqual(m.sessions_search('"; DROP TABLE x; --'), [])           # syntax cannot break it
+            # guest scoping through the route
+            vm1 = {"name": "vm1", "index": 3, "config": {}}; orch = {"name": m.ORCH_INSTANCE, "index": 1, "config": {}}
+            m.instance_by_ip = lambda ip: {"172.30.3.2": vm1, "172.30.1.2": orch}.get(ip)
+            h = self._post_handler("/api/sessions-search", "172.30.3.2", b'{"q": "Gartenhaus"}'); h.do_POST()
+            self.assertEqual(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["hits"], [])     # vm2's chat
+            h = self._post_handler("/api/sessions-search", "172.30.1.2", b'{"q": "Gartenhaus"}'); h.do_POST()
+            self.assertEqual(len(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["hits"]), 1)
+            # a changed chats.json is picked up
+            chats[1]["messages"].append({"user": False, "text": "Licht im Gartenhaus ist an."})
+            os.utime(m.CHATS_FILE, (1, 1))
+            self.assertEqual(len(m.sessions_search("Gartenhaus")), 2)
+        finally:
+            st.HISTORY_DB, m.load_chats, m.CHATS_FILE, m.instance_by_ip = old[:4]
+            st._fts_state.clear(); st._fts_state.update(old[4])
 
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST

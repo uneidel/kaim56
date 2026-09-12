@@ -135,6 +135,7 @@ HTML_TOP = """</head><body>
     <div><h6>Expert knowledge</h6><h3>Skills</h3></div>
     <span class="note text-muted">Loaded into context on demand via <code>load_skill("name")</code> · <code>list_skills</code> shows them · central, no rebuild</span>
   </div>
+  <div id=skprops></div>
   <div class=grid3 id=skills></div>
   <div class="panel blueprint" style="margin-top:32px">
     <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
