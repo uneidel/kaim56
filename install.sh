@@ -16,12 +16,16 @@
 #   --with-voice       also install the voice service (STT/TTS, ~2 GB Docker build)
 #   --with-agents      also build the pi/prime/claude rootfs (large)
 #   KAIM56_BASE=<dir>  target directory (default: $HOME)
-#   VMLINUX_URL=<url>  download source for the guest kernel (release asset)
+#   VMLINUX_URL=<url>  guest kernel to download (default: the Firecracker CI kernel 6.1.128)
 #   GUEST_DNS=<ip>     DNS for the microVMs (default: 1.1.1.1)
 #   REPO_URL=<url>     git source (default: github kaim56)
 set -eu
 
 FC_VERSION="v1.16.1"                       # same version as the reference installation
+# Guest kernel: the kernel Firecracker's own CI boots (public S3 bucket of the
+# project), so nothing has to be built or redistributed here. Override with
+# VMLINUX_URL=… or drop a vmlinux into $FC_DIR/bin/ beforehand.
+VMLINUX_URL="${VMLINUX_URL:-https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128}"
 REPO_URL="${REPO_URL:-https://github.com/uneidel/kaim56.git}"
 BASE="${KAIM56_BASE:-$HOME}"
 FC_DIR="$BASE/firecracker"
