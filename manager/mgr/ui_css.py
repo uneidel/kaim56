@@ -12,6 +12,7 @@ CSS = """<!doctype html><html lang=en><head><meta charset=utf-8>
 @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
 /* ── Industry — design-system tokens (claude.ai/design) ─────────────────── */
 :root{
+  color-scheme:light dark;   /* both themes are real: no browser auto-darkening on top */
   --color-bg:#f2f2f3; --color-surface:#e9e9ea; --color-text:#1d1f20;
   --color-accent:#5980a6; --color-accent-2:#728fab;
   --color-divider:color-mix(in srgb,#1d1f20 16%,transparent);
@@ -71,9 +72,18 @@ code{font-family:var(--font-mono);font-size:.88em;background:var(--color-neutral
   padding:var(--space-2) calc(var(--space-3)*1.2)}
 .btn svg{display:block}
 .btn:disabled{opacity:.45;cursor:not-allowed}
-.btn-primary{background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)}
-.btn-primary:hover{background:var(--color-accent-600);border-color:var(--color-accent-600)}
-.btn-primary:active{background:var(--color-accent-700)}
+/* Primary: a deep accent with white type in the light theme (6.7:1), the
+   light accent with dark type in the dark one — small condensed labels
+   need more contrast than the mid accent gives. */
+.btn-primary{background:var(--color-accent-700);color:#fff;border-color:var(--color-accent-700)}
+.btn-primary:hover{background:var(--color-accent-800);border-color:var(--color-accent-800)}
+.btn-primary:active{background:var(--color-accent-900)}
+@media(prefers-color-scheme:dark){
+  .btn-primary{background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)}
+  .btn-primary:hover{background:var(--color-accent-700);border-color:var(--color-accent-700)}
+  .btn-primary:active{background:var(--color-accent-800)}
+  .actwin button.on{color:var(--color-bg)}
+}
 .btn-secondary:hover{background:color-mix(in srgb,var(--color-text) 7%,transparent)}
 .btn-secondary:active{background:color-mix(in srgb,var(--color-text) 14%,transparent)}
 .btn-ghost{color:var(--color-accent);border-color:transparent;padding-inline:var(--space-1)}

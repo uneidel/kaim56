@@ -23,6 +23,7 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
    band). */
 @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
 :root{
+  color-scheme:light dark;
   --bg:#f2f2f3;--panel:#e9e9ea;--panel-2:#f5f5f8;
   --border:color-mix(in srgb,#1d1f20 16%,transparent);
   --text:#1d1f20;--muted:color-mix(in srgb,#1d1f20 55%,transparent);--heading:#1d1f20;
@@ -188,7 +189,7 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
   background:var(--accent-100);border:1px solid var(--accent-400)}
 .bb-label{flex:1;font-size:.8rem;color:var(--accent-700)}
 .bb-btn{font-family:var(--font-heading);font-weight:600;font-size:.8rem;cursor:pointer;
-  background:var(--accent);color:var(--accent-contrast);border:1px solid var(--accent);padding:4px 12px}
+  background:var(--accent-700);color:var(--accent-contrast);border:1px solid var(--accent-700);padding:4px 12px}
 details.ast{margin:0 0 22px;border-left:2px solid var(--accent-400);padding-left:14px}
 details.ast>summary{cursor:pointer;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-700);margin-bottom:12px;user-select:none;list-style-position:inside}
@@ -216,9 +217,9 @@ details.ast .row{margin-bottom:18px}
 #t{flex:1;border:none;background:none;color:var(--text);font:inherit;font-size:1rem;resize:none;
   max-height:180px;padding:.55rem 0;outline:none}
 #t::placeholder{color:var(--muted)}
-#send{flex:none;width:36px;height:36px;border:1px solid var(--accent);cursor:pointer;font-size:1rem;
-  background:var(--accent);color:var(--accent-contrast)}
-#send:hover{background:var(--accent-600);border-color:var(--accent-600)}
+#send{flex:none;width:36px;height:36px;border:1px solid var(--accent-700);cursor:pointer;font-size:1rem;
+  background:var(--accent-700);color:var(--accent-contrast)}
+#send:hover{background:var(--accent-800);border-color:var(--accent-800)}
 #send[disabled]{opacity:.35;cursor:default}
 #send.stop{background:var(--text);color:var(--panel);border-color:var(--text)}
 .foot{max-width:760px;margin:8px auto 0;text-align:center;color:var(--muted);font-size:.72rem}
@@ -228,8 +229,8 @@ details.ast .row{margin-bottom:18px}
 .home svg{flex:none}
 
 /* ---- Inline search (design "Agent chat — session panel + inline search") ---- */
-.icon.act{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent)}
-.icon.act:hover{color:var(--accent-contrast);background:var(--accent-600)}
+.icon.act{color:var(--accent-contrast);background:var(--accent-700);border-color:var(--accent-700)}
+.icon.act:hover{color:var(--accent-contrast);background:var(--accent-800)}
 #searchbar{display:none;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);
   background:var(--accent-100);flex:none}
 #searchbar.open{display:flex}
@@ -268,8 +269,8 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
 .pbtn{flex:1;font-family:var(--font-heading);font-weight:600;font-size:12px;padding:5px;cursor:pointer;
   background:transparent;color:var(--text);border:1px solid var(--border)}
 .pbtn:hover{background:color-mix(in srgb,var(--text) 7%,transparent);border-color:var(--accent)}
-.pbtn.pri{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);font-size:13px;padding:7px}
-.pbtn.pri:hover{background:var(--accent-600)}
+.pbtn.pri{background:var(--accent-700);color:var(--accent-contrast);border-color:var(--accent-700);font-size:13px;padding:7px}
+.pbtn.pri:hover{background:var(--accent-800)}
 .plist{display:grid}
 .plist>div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)}
 .plist .v{color:var(--accent-700);text-align:right}
