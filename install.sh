@@ -22,7 +22,7 @@
 set -eu
 
 FC_VERSION="v1.16.1"                       # same version as the reference installation
-REPO_URL="${REPO_URL:-https://github.com/ulrich-kat56/kaim56.git}"
+REPO_URL="${REPO_URL:-https://github.com/uneidel/kaim56.git}"
 BASE="${KAIM56_BASE:-$HOME}"
 FC_DIR="$BASE/firecracker"
 GUEST_DNS="${GUEST_DNS:-1.1.1.1}"
