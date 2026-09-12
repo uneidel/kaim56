@@ -12,6 +12,7 @@ const PERSONAS=__PERSONAS__;
 const SKILLS=__SKILLS__;
 const CORNERS='<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
 const I_EDIT='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>';
+const I_RUN='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>';
 const I_DEL='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}
 function escT(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -352,6 +353,8 @@ async function loadTasks(){
       `<td data-label=Result class=text-muted style="font-size:12px">${escT(res)}</td>`+
       `<td style="white-space:nowrap">`+
       `<button class="btn btn-icon btn-secondary" style="width:30px;height:30px;margin-right:4px" `+
+        `title="Run now" onclick="runTask('${esc(t.id)}')" ${t.status==='running'?'disabled':''}>${I_RUN}</button>`+
+      `<button class="btn btn-icon btn-secondary" style="width:30px;height:30px;margin-right:4px" `+
         `title="Edit (schedule / job)" onclick="editTask('${esc(t.id)}')">${I_EDIT}</button>`+
       `<button class="btn btn-icon btn-secondary" style="width:30px;height:30px" `+
         `title=Delete onclick="delTask('${esc(t.id)}')">${I_DEL}</button></td></tr>`;
@@ -403,6 +406,7 @@ function saveTask(){
     .then(r=>r.json()).then(d=>{document.getElementById('tkmsg').textContent=(d.msg||'created')+' ✓';
       document.getElementById('tk-msg').value='';loadTasks();});
 }
+async function runTask(id){const r=await (await fetch('/api/tasks/'+encodeURIComponent(id)+'/run',{method:'POST'})).json();if(!/queued/.test(r.msg||''))alert(r.msg||'?');loadTasks();}
 async function delTask(id){if(confirm('Delete task?')){await fetch('/api/tasks/'+encodeURIComponent(id)+'/delete',{method:'POST'});loadTasks();}}
 
 /* — Usage: the same numbers as server-side, just fetched afterwards — */

@@ -3031,6 +3031,41 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m.urllib.request.urlopen, m.load_instances, m.is_running, m.net_of, m.instance_by_ip, m.PW = old
 
+    def test_task_run_now(self):
+        """The Tasks tab's play button: a scheduled task runs at the next tick
+        and keeps its schedule, a finished one-off is pending again, a running
+        one is left alone, an unknown id says so."""
+        import mgr.store as st
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-runnow-")
+        old = st.TASKS_FILE, m.instance_by_ip, m.PW
+        try:
+            st.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            later = int(time.time()) + 86400
+            with open(st.TASKS_FILE, "w") as fh:
+                json.dump([{"id": "s1", "instance": "vm1", "message": "daily", "schedule": "daily 07:00",
+                            "status": "scheduled", "next_run": later, "target_warned": 5},
+                           {"id": "o1", "instance": "vm1", "message": "once", "schedule": "",
+                            "status": "error", "result": "error: x"},
+                           {"id": "r1", "instance": "vm1", "message": "busy", "schedule": "", "status": "running"}], fh)
+            self.assertIn("queued", m.run_task_now("s1"))
+            self.assertIn("queued", m.run_task_now("o1"))
+            self.assertIn("running already", m.run_task_now("r1"))
+            self.assertEqual(m.run_task_now("nope"), "unknown")
+            ts = {t["id"]: t for t in st.load_tasks()}
+            self.assertEqual(ts["s1"]["status"], "scheduled")
+            self.assertLessEqual(ts["s1"]["next_run"], int(time.time()))
+            self.assertEqual(ts["s1"]["schedule"], "daily 07:00")
+            self.assertNotIn("target_warned", ts["s1"])
+            self.assertEqual(ts["o1"]["status"], "pending")
+            self.assertEqual(ts["r1"]["status"], "running")
+            # the route
+            m.instance_by_ip = lambda ip: None; m.PW = ""
+            h = self._post_handler("/api/tasks/o1/run", "10.0.0.5", b"{}"); h.do_POST()
+            self.assertIn(b"queued", h.wfile.getvalue())
+        finally:
+            st.TASKS_FILE, m.instance_by_ip, m.PW = old
+
     def test_guest_get_denylist_covers_ui_proxy_and_terminal(self):
         """GET /i/<other>/term opened the shell of every other VM — only POST
         was gated. The denylist names the admin UI, chat, katfs and /i/."""

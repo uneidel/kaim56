@@ -5055,7 +5055,33 @@ def _rt_tasks_admin(h):
         b = h._body()
         inst_new, terr = (resolve_task_target(b.get("instance")) if b.get("instance") else (None, ""))
         return terr or update_task(tid, b.get("message"), b.get("schedule"), instance=inst_new)
+    if action == "run":
+        return run_task_now(tid)
     return "unknown"
+
+
+def run_task_now(tid):
+    """Queue a task for the worker's next tick: a scheduled one keeps its
+    schedule (only this run is pulled forward), a one-off is set pending
+    again, whatever its last outcome. A running one is left alone."""
+    out = {"msg": "unknown"}
+
+    def mut(tasks):
+        t = next((x for x in tasks if x["id"] == tid), None)
+        if t is None:
+            return False, None
+        if t.get("status") == "running":
+            out["msg"] = f"task {tid} is running already"
+            return False, None
+        if t.get("schedule"):
+            t["next_run"] = int(time.time())
+        else:
+            t["status"] = "pending"
+        t.pop("target_warned", None)
+        out["msg"] = f"task {tid} queued — runs within a minute"
+        return True, None
+    with_tasks(mut)
+    return out["msg"]
 
 
 @_msg_route("POST", "/api/secret-policy")
