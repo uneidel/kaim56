@@ -158,6 +158,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.apk.outputs.file }}
+      - name: release notes for this version
+        # The section "## <version>" of app/RELEASE_NOTES.md is the release body;
+        # no section = no release (release notes are mandatory).
+        if: needs.plan.outputs.app_release == 'true'
+        run: |
+          v="${{ needs.plan.outputs.version }}"
+          awk -v v="$v" '$0 == "## " v {on=1; next} /^## / {on=0} on' app/RELEASE_NOTES.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::app/RELEASE_NOTES.md has no section '## $v' — write the release notes, then release"; exit 1
+          fi
+          echo "--- release body ---"; cat notes.md
       - name: app release
         # Creates the app-v<version> tag on this commit when it does not exist
         # yet (push to main with a new versionName) and the release with the
@@ -167,5 +178,6 @@ jobs:
         with:
           tag_name: ${{ needs.plan.outputs.app_tag }}
           name: KatAgent ${{ needs.plan.outputs.version }}
+          body_path: notes.md
           generate_release_notes: true
           files: ${{ steps.apk.outputs.file }}
