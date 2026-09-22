@@ -5,6 +5,11 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.39
+
+- Skills tab: review the skills your agents propose right in the app. Tapping a
+  “Skill proposal” notification now jumps straight to it, with Approve / Discard.
+
 ## 5.38
 
 - Self-update: the app checks GitHub Releases at start (at most every 6 h),

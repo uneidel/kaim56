@@ -253,6 +253,28 @@ object ManagerSync {
             JSONObject().put("id", id).put("action", action)
                 .put("instance", instance).toString()) != null
 
+    /** A skill an agent distilled after a long successful turn, awaiting review. */
+    data class SkillProposal(val id: String, val name: String, val instance: String,
+                             val description: String, val content: String, val update: Boolean)
+
+    /** Pending skill proposals (admin view). null on error. */
+    fun listSkillProposals(baseUrl: String, user: String, pass: String): List<SkillProposal>? {
+        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/skill-proposals", user, pass, null) ?: return null
+        return try {
+            val arr = JSONObject(raw).optJSONArray("proposals") ?: return emptyList()
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                SkillProposal(o.optString("id"), o.optString("name"), o.optString("instance"),
+                    o.optString("description"), o.optString("content"), o.optBoolean("update"))
+            }
+        } catch (e: Exception) { null }
+    }
+
+    /** approve = add the skill to the library; false = discard the proposal. */
+    fun decideSkillProposal(baseUrl: String, user: String, pass: String, id: String, approve: Boolean): Boolean =
+        request("POST", "${baseUrl.trimEnd('/')}/api/skill-proposals/${Uri.encode(id)}/${if (approve) "approve" else "discard"}",
+            user, pass, "") != null
+
     /** Trace eines Turns: {turn:{…}, llm:[…], tools:[…]} vom Manager, null bei Fehler. */
     fun trace(baseUrl: String, user: String, pass: String, instance: String, turn: String): JSONObject? {
         val raw = request("GET", "${baseUrl.trimEnd('/')}/api/trace/${Uri.encode(instance)}?turn=${Uri.encode(turn)}",

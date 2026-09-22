@@ -121,7 +121,7 @@ def proposal_add(instance, name, description, content, turn="", note=""):
     save_proposals(items)
     try:
         _notify.notify_add(instance or "skills", f"Skill proposal: {name}",
-                   f"{str(description).strip()[:160]} — review in the Skills tab", link="")
+                   f"{str(description).strip()[:160]} — tap to review in the Skills tab", link="skills")
     except Exception:
         pass
     return pid, "ok"

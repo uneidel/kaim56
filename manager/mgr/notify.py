@@ -64,7 +64,7 @@ def _bump_notif_rev():
 
 def notify_add(instance, title, body, link=""):
     """link controls where a click on the notification leads:
-    'missions' | 'tasks' | 'chat:<instance>' | '' (nothing)."""
+    'missions' | 'tasks' | 'skills' | 'chat:<instance>' | '' (nothing)."""
     title, h1 = redact_secrets((title or "").strip()[:120])
     body, h2 = redact_secrets((body or "").strip()[:1000])
     if not title and not body:

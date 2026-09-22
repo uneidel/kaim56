@@ -1307,7 +1307,7 @@ function notifRender(list){
   if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">No notifications.</span>';return;}
   el.innerHTML=NOTIF_LIST.slice().reverse().map(n=>{
     const t=new Date((n.ts||0)*1000).toLocaleString();
-    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':'To chat'}"`:'';
+    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':n.link==='skills'?'To skills':'To chat'}"`:'';
     return `<div class="nitem ${n.read?'':'unread'}"${lk}><div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
       (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
       `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div></div>`;
@@ -1318,6 +1318,7 @@ function notifClick(link){
   document.getElementById('npanel').hidden=true;
   if(link==='missions'){location.hash='#missions';loadMissions();}
   else if(link==='tasks'){location.hash='#tasks';}
+  else if(link==='skills'){location.hash='#skills';loadProposals();}
   else if(link&&link.startsWith('chat:'))
     window.open('/chat?i='+encodeURIComponent(link.slice(5)),'_blank');
 }

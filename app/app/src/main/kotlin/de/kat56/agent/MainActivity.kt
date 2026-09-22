@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Shield
@@ -1159,6 +1160,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         when {
             notifNav == "missions" -> screen = "missions"
             notifNav == "tasks" -> screen = "tasks"
+            notifNav == "skills" -> screen = "skills"
             notifNav.startsWith("chat:") -> {
                 val inst = notifNav.removePrefix("chat:")
                 prefs.mode = "server"; prefs.instance = inst; screen = null
@@ -1212,6 +1214,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 onDelete = { deleteChat(it) },
                 onTasks = { screen = "tasks"; scope.launch { drawerState.close() } },
                 onMissions = { screen = "missions"; scope.launch { drawerState.close() } },
+                onSkills = { screen = "skills"; scope.launch { drawerState.close() } },
                 onSettings = { screen = "settings"; scope.launch { drawerState.close() } },
             )
         }
@@ -1613,6 +1616,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             }
 
             AnimatedVisibility(
+                screen == "skills",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                SkillsScreen(prefs, onClose = { screen = null }, onStatus = { status = it })
+            }
+
+            AnimatedVisibility(
                 screen == "tasks",
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
             ) {
@@ -2001,6 +2011,7 @@ fun KatDrawer(
     onDelete: (Conversation) -> Unit,
     onTasks: () -> Unit,
     onMissions: () -> Unit,
+    onSkills: () -> Unit,
     onSettings: () -> Unit,
 ) {
     // From the package rather than BuildConfig: this way it always shows the
@@ -2088,6 +2099,7 @@ fun KatDrawer(
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
             DrawerAction("Missions", Icons.Outlined.Flag, onMissions)
+            DrawerAction("Skills", Icons.Outlined.Lightbulb, onSkills)
             DrawerAction("Settings", Icons.Outlined.Settings, onSettings)
         }
     }
@@ -2135,6 +2147,81 @@ private fun ScreenHeader(title: String, onClose: () -> Unit) {
 }
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SkillsScreen(
+    prefs: Prefs,
+    onClose: () -> Unit,
+    onStatus: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var proposals by remember { mutableStateOf<List<ManagerSync.SkillProposal>>(emptyList()) }
+    var reload by remember { mutableStateOf(0) }
+    var expanded by remember { mutableStateOf("") }
+
+    LaunchedEffect(reload) {
+        withContext(Dispatchers.IO) { ManagerSync.listSkillProposals(prefs.serverUrl, prefs.user, prefs.pass) }
+            ?.let { proposals = it }
+            ?: onStatus("⚠️ Could not load proposals: ${ManagerSync.lastStatus}")
+    }
+    LaunchedEffect(Unit) { while (true) { delay(8000); reload++ } }
+
+    fun decide(p: ManagerSync.SkillProposal, approve: Boolean) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                ManagerSync.decideSkillProposal(prefs.serverUrl, prefs.user, prefs.pass, p.id, approve)
+            }
+            onStatus(if (ok) (if (approve) "Skill added: ${p.name}" else "Discarded: ${p.name}")
+                     else "⚠️ ${ManagerSync.lastStatus}")
+            reload++
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(Kat.bg)) {
+        ScreenHeader("Skills", onClose)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (proposals.isEmpty()) Text(
+                "No skill proposals. An agent proposes a skill after a long successful turn; " +
+                "approve one to add it to the shared library, or discard it.",
+                fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
+            )
+            proposals.forEach { p ->
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(Kat.surface).border(1.dp, Kat.hairlineStrong, RoundedCornerShape(14.dp))
+                        .tap { expanded = if (expanded == p.id) "" else p.id }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(p.name, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium,
+                            color = Kat.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f))
+                        if (p.update) Text("update", fontSize = 11.sp, fontFamily = Plex, color = Kat.accentText)
+                        if (p.instance.isNotBlank())
+                            Text(p.instance, fontSize = 11.sp, fontFamily = PlexMono, color = Kat.agent(p.instance))
+                    }
+                    if (p.description.isNotBlank())
+                        Text(p.description, fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textDim,
+                            maxLines = if (expanded == p.id) 20 else 2, overflow = TextOverflow.Ellipsis)
+                    if (expanded == p.id && p.content.isNotBlank())
+                        Text(p.content, fontSize = 11.5.sp, fontFamily = PlexMono, color = Kat.textFaint)
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Text("Approve", fontSize = 12.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium,
+                            color = Kat.accentText, modifier = Modifier.tap { decide(p, true) })
+                        Text("Discard", fontSize = 12.5.sp, fontFamily = Plex,
+                            color = Kat.textFaint, modifier = Modifier.tap { decide(p, false) })
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun MissionsScreen(

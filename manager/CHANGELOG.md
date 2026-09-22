@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-22
+- App 5.39 + manager: skill-proposal notifications carry a `skills` deep-link; tapping one opens the new in-app Skills screen (list proposals, Approve/Discard) or the web Skills tab
+
 Terse by design: one line per change, newest first. The narrative behind each
 entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
