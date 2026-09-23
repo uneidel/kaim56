@@ -38,10 +38,10 @@ def _msg_text(m):
     return c or ""
 
 
-def _summarize(msgs, prior=""):
+def _summarize(msgs, prior="", focus=""):
     """Condense a message list (conversation, without system blocks) into a short
     bullet-point summary. If the call fails -> '' (the caller then does
-    the old discard behavior)."""
+    the old discard behavior). `focus`: bias the summary to keep detail on it."""
     lines = []
     for m in msgs:
         role = m.get("role")
@@ -60,7 +60,10 @@ def _summarize(msgs, prior=""):
     joined = "\n".join(lines)
     if prior:
         joined = f"Prior summary:\n{prior}\n\nNew messages:\n{joined}"
-    msg = _llm.or_chat([{"role": "system", "content": SUMMARIZE_PROMPT},
+    sys_prompt = SUMMARIZE_PROMPT + (
+        f" Focus especially on: {focus.strip()}. Keep detail relevant to it and "
+        "compress everything else harder." if focus.strip() else "")
+    msg = _llm.or_chat([{"role": "system", "content": sys_prompt},
                    {"role": "user", "content": joined}], [])
     out = (msg.get("content") or "").strip()
     return "" if out.startswith("⚠") else out   # an error message does not count
@@ -145,7 +148,7 @@ def _inject_playbooks():
 # Expansion happens HERE in the agent — so it works in web, app and
 # Signal alike. "/daily please keep it short" -> template text + " please keep it short".
 _BUILTIN_SLASH = ("/reset", "/fresh", "/reasoning", "/goal", "/model", "/steps",
-                  "/aside", "/branch", "/back", "/tools")
+                  "/aside", "/branch", "/back", "/tools", "/compact")
 _prompts_cache = {"ts": 0.0, "map": {}}
 
 
@@ -315,6 +318,30 @@ def _trim_history():
         _history[:] = [head] + _prefix(prior) + recent
         return
     _history[:] = [head] + _prefix(new_summary) + recent
+
+
+def _compact(focus=""):
+    """On-demand /compact: summarize the WHOLE conversation into one [Summary]
+    block and replace the history with it (the system prompt stays). `focus`
+    biases which details survive. Returns a one-line status. Transient blocks
+    (playbooks/memory/now) are dropped — they are re-injected next turn."""
+    head = _history[0]
+    prior, convo = "", []
+    for m in _history[1:]:
+        if m.get("role") == "system":
+            c = str(m.get("content", ""))
+            if c.startswith(SUMMARY_TAG):
+                prior = c[len(SUMMARY_TAG):].strip()
+            continue
+        convo.append(m)
+    if not convo and not prior:
+        return "\U0001f5dc\ufe0f Nothing to compact \u2014 the context is already empty."
+    summary = _summarize(convo, prior, focus=focus) if convo else prior
+    if not summary:
+        return "\u26a0\ufe0f Compaction failed (summarizer unavailable) \u2014 context unchanged."
+    _history[:] = [head, {"role": "system", "content": SUMMARY_TAG + " " + summary}]
+    foc = f" (focus: {focus.strip()})" if focus.strip() else ""
+    return f"\U0001f5dc\ufe0f Context compacted{foc}: {len(convo)} message(s) \u2192 summary."
 
 
 

@@ -198,6 +198,8 @@ def run(user_message, deadline=0.0, kind="chat", turn=None):
         return _set_goal(user_message)
     if user_message.strip() == "/tools":
         return _tools._tools_report()
+    if user_message.startswith("/compact"):
+        return _context._compact(user_message[len("/compact"):].strip())
     if user_message.startswith("/model"):
         return _config._set_model(user_message)
     if user_message.startswith("/steps"):
@@ -263,6 +265,9 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
         return
     if user_message.strip() == "/tools":
         on_token(_tools._tools_report())
+        return
+    if user_message.startswith("/compact"):
+        on_token(_context._compact(user_message[len("/compact"):].strip()))
         return
     if user_message.startswith("/model"):
         on_token(_config._set_model(user_message))

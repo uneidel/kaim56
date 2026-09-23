@@ -927,6 +927,7 @@ const SLASH_BUILTIN=[
   ['/fresh','One-off request in a throwaway context (history untouched)'],
   ['/aside','Open an aside — a follow-up beside the main thread (folds back into a note)'],
   ['/back','Close the aside and summarise it as a note (/back drop = discard)'],
+  ['/compact','Compact the context into a summary \u2014 optional focus: /compact <what to keep>'],
 ];
 let SLASH_PROMPTS=[],_spTs=0;
 async function slashPrompts(){

@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-09-23
+- New agent slash command /compact <focus>: summarizes the whole conversation into one [Summary] block and replaces the history (optional focus biases what detail survives); in the app + web slash pickers
+- Web: notification desktop toasts are now clickable and the panel/toast navigate in the same tab (chat notifications no longer swallowed by popup blockers)
 - Web: a notification with a `chat:` link is now a real anchor (opens the agent's chat in a new tab) instead of a scripted window.open that popup blockers silently swallowed
 
 ## 2026-09-22

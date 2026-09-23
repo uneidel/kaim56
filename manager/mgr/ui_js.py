@@ -1307,16 +1307,10 @@ function notifRender(list){
   if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">No notifications.</span>';return;}
   el.innerHTML=NOTIF_LIST.slice().reverse().map(n=>{
     const t=new Date((n.ts||0)*1000).toLocaleString();
-    const inner=`<div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
-      (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
-      `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div>`;
-    if(n.link&&n.link.indexOf('chat:')===0){
-      // A REAL anchor, not a scripted window.open (popup blockers eat that and
-      // the click seems to do nothing): opens the agent's chat in a new tab.
-      return `<a class="nitem ${n.read?'':'unread'}" href="/chat?i=${encodeURIComponent(n.link.slice(5))}" target="_blank" rel="noopener noreferrer" style="display:block;cursor:pointer;text-decoration:none;color:inherit" title="To chat" onclick="document.getElementById('npanel').hidden=true">${inner}</a>`;
-    }
     const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':n.link==='skills'?'To skills':'To chat'}"`:'';
-    return `<div class="nitem ${n.read?'':'unread'}"${lk}>${inner}</div>`;
+    return `<div class="nitem ${n.read?'':'unread'}"${lk}><div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
+      (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
+      `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div></div>`;
   }).join('');
   el.querySelectorAll('[data-link]').forEach(x=>x.onclick=()=>notifClick(x.dataset.link));
 }
@@ -1326,13 +1320,13 @@ function notifClick(link){
   else if(link==='tasks'){location.hash='#tasks';}
   else if(link==='skills'){location.hash='#skills';loadProposals();}
   else if(link&&link.startsWith('chat:'))
-    window.open('/chat?i='+encodeURIComponent(link.slice(5)),'_blank');
+    location.href='/chat?i='+encodeURIComponent(link.slice(5));   // same tab: no popup blocker
 }
 function notifDesktop(list){
   if(!('Notification' in window)||Notification.permission!=='granted')return;
   for(const n of (list||[])){
     if(NOTIF_SEEN.has(n.id))continue;NOTIF_SEEN.add(n.id);
-    if((n.ts||0)>=NOTIF_START && !n.read){try{new Notification(n.title||'kAIm56',{body:n.body||'',tag:n.id});}catch(e){}}
+    if((n.ts||0)>=NOTIF_START && !n.read){try{const nt=new Notification(n.title||'kAIm56',{body:n.body||'',tag:n.id});if(n.link)nt.onclick=()=>{window.focus();notifClick(n.link);};}catch(e){}}
   }
 }
 async function notifPoll(){

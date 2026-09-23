@@ -5,6 +5,11 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.41
+
+- New slash command /compact <focus>: fold the conversation into a short
+  summary to save context; add a focus to keep detail on what matters.
+
 ## 5.40
 
 - Tapping a notification from an agent now always opens that agent's chat,

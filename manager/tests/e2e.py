@@ -590,6 +590,35 @@ class AgentLogic(unittest.TestCase):
             (a._config.OR_MODEL, a._config.OR_URL, a._config.LLM_NAME, a._config.LLM_KEY_SECRET, a._config.LLM_BACKEND, a._config.OR_KEY) = old
 
     # --- Steering -------------------------------------------------------------
+    def test_compact_summarizes_and_replaces_history(self):
+        """/compact folds the whole conversation into one [Summary] block, keeps
+        the system prompt, passes the focus to the summarizer, and reports empty."""
+        a = self.a
+        ctx = a._context
+        captured = {}
+        old = a._llm.or_chat
+        try:
+            def fake(msgs, tools, model=None):
+                captured["sys"] = msgs[0]["content"]
+                return {"content": "- did X\n- open: Y"}
+            a._llm.or_chat = fake
+            ctx._history[:] = [{"role": "system", "content": "SYS"},
+                               {"role": "user", "content": "find jobs in NRW"},
+                               {"role": "assistant", "content": "here are three"},
+                               {"role": "user", "content": "more detail please"}]
+            out = ctx._compact("job listings in Bonn")
+            self.assertIn("compacted", out.lower())
+            self.assertIn("job listings in Bonn", captured["sys"])
+            self.assertEqual(len(ctx._history), 2)
+            self.assertEqual(ctx._history[0]["content"], "SYS")
+            self.assertTrue(ctx._history[1]["content"].startswith(ctx.SUMMARY_TAG))
+            self.assertIn("did X", ctx._history[1]["content"])
+            ctx._history[:] = [{"role": "system", "content": "SYS"}]
+            self.assertIn("empty", ctx._compact("").lower())
+            self.assertEqual(len(ctx._history), 1)
+        finally:
+            a._llm.or_chat = old
+
     def test_steering_queue(self):
         a = self.a
         self.assertFalse(a._loop.steer_push("x"))               # idle -> reject

@@ -304,6 +304,7 @@ private val SLASH_CMDS = listOf(
     SlashCmd("/aside", "Open an aside — a follow-up beside the main thread"),
     SlashCmd("/back", "Close the aside and summarise it (/back drop = discard)"),
     SlashCmd("/reset", "Reset conversation context"),
+    SlashCmd("/compact", "Compact the context into a summary (optional focus: /compact <what to keep>)", arg = true),
     SlashCmd("/tools", "List the tools the agent can use right now"),
     SlashCmd("/agents", "Open agent management"),
     SlashCmd("/help", "Show commands"),
