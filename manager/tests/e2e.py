@@ -590,6 +590,88 @@ class AgentLogic(unittest.TestCase):
             (a._config.OR_MODEL, a._config.OR_URL, a._config.LLM_NAME, a._config.LLM_KEY_SECRET, a._config.LLM_BACKEND, a._config.OR_KEY) = old
 
     # --- Steering -------------------------------------------------------------
+    def test_history_persists_across_restart(self):
+        """The conversation is written to <MEMORY_DIR>/.state/history.json
+        between turns and read back at start: the per-turn injections and
+        image bytes are dropped, summaries/branches kept, the system prompt
+        is the current one, the saved timestamp feeds the auto-reset clock."""
+        import tempfile, shutil
+        a, ctx, ps = self.a, self.a._context, self.a._persist
+        tmp = tempfile.mkdtemp(prefix="e2e-hist-")
+        old = (ctx.MEMORY_DIR, list(ctx._history), ps._last[0], a._loop._last_turn[0], ps.PERSIST)
+        try:
+            ctx.MEMORY_DIR = tmp; ps.PERSIST = True; ps._last[0] = ""
+            ctx._history[:] = [
+                {"role": "system", "content": "OLD SYS"},
+                {"role": "system", "content": ctx.SUMMARY_TAG + " earlier: did X"},
+                {"role": "system", "content": ctx.PLAYBOOK_TAG + " rules"},
+                {"role": "user", "content": [{"type": "text", "text": "what is this"},
+                                             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}]},
+                {"role": "assistant", "content": None,
+                 "tool_calls": [{"id": "t1", "function": {"name": "shell", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "t1", "content": "out"},
+                {"role": "system", "content": ctx.NOW_TAG + " Monday"},
+                {"role": "system", "content": ctx.MEMINDEX_TAG + " idx"},
+                {"role": "system", "content": ctx.MISSION_TAG + " m"},
+                {"role": "system", "content": ctx.RECALL_TAG + " r"},
+                {"role": "assistant", "content": "a cat"},
+            ]
+            self.assertTrue(ps.save())
+            self.assertFalse(ps.save())                                   # unchanged: no rewrite
+            f = os.path.join(tmp, ".state", "history.json")
+            self.assertTrue(os.path.exists(f))
+            self.assertNotIn("AAAA", open(f).read())                      # image bytes not stored
+            # "restart": fresh history with a NEW system prompt, then restore
+            ctx._history[:] = [{"role": "system", "content": "NEW SYS"}]
+            ps._last[0] = ""; a._loop._last_turn[0] = 0.0
+            self.assertTrue(a._loop.restore())
+            roles = [(m["role"], str(m.get("content") or "")[:12]) for m in ctx._history]
+            self.assertEqual(roles[0], ("system", "NEW SYS"))
+            self.assertTrue(ctx._history[1]["content"].startswith(ctx.SUMMARY_TAG + " earlier"))
+            self.assertEqual([r for r, _ in roles], ["system", "system", "user", "assistant", "tool", "assistant"])
+            self.assertIn("what is this", ctx._history[2]["content"])
+            self.assertIn("image not kept", ctx._history[2]["content"])
+            self.assertEqual(ctx._history[3]["tool_calls"][0]["id"], "t1")   # tool_calls + result intact
+            self.assertGreater(a._loop._last_turn[0], 0)                     # idle time counts for AUTO_RESET_MIN
+            self.assertFalse(a._loop.restore())                              # already running: no second restore
+            # a broken file is ignored, the agent starts fresh
+            ctx._history[:] = [{"role": "system", "content": "S"}]
+            open(f, "w").write("{not json")
+            self.assertFalse(a._loop.restore())
+            self.assertEqual(len(ctx._history), 1)
+            # no memory folder / switched off: nothing written, nothing read
+            ctx.MEMORY_DIR = ""
+            self.assertFalse(ps.save()); self.assertFalse(ps.load())
+            ctx.MEMORY_DIR = tmp; ps.PERSIST = False
+            self.assertFalse(ps.save())
+        finally:
+            ctx.MEMORY_DIR, ps._last[0], a._loop._last_turn[0], ps.PERSIST = old[0], old[2], old[3], old[4]
+            ctx._history[:] = old[1]
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_turn_ends_with_history_on_disk(self):
+        """run() and the slash commands save after the turn (a /reset leaves
+        an empty list, so a restart does not bring the old context back)."""
+        import tempfile, shutil, json
+        a, ctx, ps = self.a, self.a._context, self.a._persist
+        tmp = tempfile.mkdtemp(prefix="e2e-hist-")
+        old = (ctx.MEMORY_DIR, list(ctx._history), ps._last[0], a._loop._tool_loop, ps.PERSIST)
+        try:
+            ctx.MEMORY_DIR = tmp; ps.PERSIST = True; ps._last[0] = ""
+            ctx._history[:] = [{"role": "system", "content": "S"}]
+            a._loop._tool_loop = lambda hist: (hist.append({"role": "assistant", "content": "hello back"}), "hello back")[1]
+            self.assertEqual(a._loop.run("hello"), "hello back")
+            f = os.path.join(tmp, ".state", "history.json")
+            saved = json.load(open(f))["messages"]
+            self.assertEqual([m["role"] for m in saved][-2:], ["user", "assistant"])
+            self.assertFalse(any(m["role"] == "system" and m["content"].startswith(ctx.NOW_TAG) for m in saved))
+            a._loop.run("/reset")
+            self.assertEqual(json.load(open(f))["messages"], [])
+        finally:
+            ctx.MEMORY_DIR, ps._last[0], a._loop._tool_loop, ps.PERSIST = old[0], old[2], old[3], old[4]
+            ctx._history[:] = old[1]
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_compact_summarizes_and_replaces_history(self):
         """/compact folds the whole conversation into one [Summary] block, keeps
         the system prompt, passes the focus to the summarizer, and reports empty."""
@@ -2358,6 +2440,12 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(sum(1 for f in files if "-W" not in f), 2)    # today + the trimmed day
             self.assertTrue(mf.commit("vc", "test"))
             self.assertEqual(mf.coarsen("vc", today=date.today()), {"trimmed": 0, "folded": 0})
+            # the agent's runtime state (persisted history) is never committed as a note
+            os.makedirs(os.path.join(d, ".state")); open(os.path.join(d, ".state", "history.json"), "w").write("[]")
+            open(os.path.join(d, "notes", "x.md"), "w").write("x")
+            self.assertTrue(mf.commit("vc", "state"))
+            tracked = mf._git(d, "ls-files").stdout
+            self.assertIn("notes/x.md", tracked); self.assertNotIn(".state", tracked)
         finally:
             mf.MEMORY_ROOT = old
 

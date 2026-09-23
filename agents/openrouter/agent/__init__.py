@@ -22,6 +22,7 @@ backend, running inside the microVM. Stdlib only. Transports: signal | web
   offload        large tool outputs to disk, previews, offload_read
   llm            chat completion and streaming, retries and timeouts
   context        history, per-turn injections, summarization, branches
+  persist        the history on disk between turns: survives a restart
   learn          skill proposals from successful turns
   loop           run / run_stream, the tool loop, steering, the goal loop
 
@@ -40,6 +41,7 @@ from . import mcp as _mcp                    # noqa: F401
 from . import mgrclient as _mgrclient        # noqa: F401
 from . import observe as _observe            # noqa: F401
 from . import offload as _offload            # noqa: F401
+from . import persist as _persist            # noqa: F401
 from . import tools as _tools                # noqa: F401
 from . import tools_local as _tools_local    # noqa: F401
 from . import tools_manager as _tools_manager  # noqa: F401

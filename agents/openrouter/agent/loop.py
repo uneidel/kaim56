@@ -20,6 +20,7 @@ from . import context as _context
 from . import learn as _learn
 from . import llm as _llm
 from . import observe as _observe
+from . import persist as _persist
 from . import tools as _tools
 
 
@@ -175,6 +176,27 @@ def _turn_steps(message):
     return n, m.group(2).strip()
 
 
+def restore():
+    """At start: the conversation from before the restart, if any. Its
+    timestamp counts as the last turn so AUTO_RESET_MIN sees the idle time."""
+    ts = _persist.load()
+    if ts:
+        _last_turn[0] = ts
+    return bool(ts)
+
+
+def _persisted(fn):
+    """A turn — slash commands included — ends with the history on disk."""
+    def wrapper(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        finally:
+            _persist.save()
+    wrapper.__name__, wrapper.__doc__ = fn.__name__, fn.__doc__
+    return wrapper
+
+
+@_persisted
 def run(user_message, deadline=0.0, kind="chat", turn=None):
     """`turn`: the bridge names the turn up front so it can hand the id to the
     client in a response header — the client then fetches the trace."""
@@ -245,6 +267,7 @@ def run(user_message, deadline=0.0, kind="chat", turn=None):
         _learn._maybe_learn(_context._history, user_message, _learn._outcome_of(out))
 
 
+@_persisted
 def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", turn=None):
     _context._deadline[0] = float(deadline or 0)
     _observe._turn_id[0] = turn or uuid.uuid4().hex[:8]

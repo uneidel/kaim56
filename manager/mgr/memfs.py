@@ -114,6 +114,11 @@ def folder(instance):
         _git(d, "config", "user.email", "kaim56@localhost")
     if not os.path.exists(os.path.join(d, "MEMORY.md")):
         _write_index(d, inst)
+    gi = os.path.join(d, ".gitignore")
+    if not os.path.exists(gi):      # the agent's runtime state (agent/persist.py) is not a note
+        with open(gi, "w") as fh:
+            fh.write(".state/\n")
+        _own(gi)
     _own_tree(d)
     return d
 

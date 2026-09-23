@@ -179,6 +179,7 @@ def main():
         log("FATAL: OPENROUTER_API_KEY fehlt — weder in der Umgebung noch vom "
             "Secret-Broker des Managers (Allowlist in secret-policy.json?)")
     agent.tools.init()
+    agent.loop.restore()          # the conversation from before the restart
     if TRANSPORT == "web":
         log(f"web-transport auf :{WEB_PORT}")
         ThreadingHTTPServer(("0.0.0.0", WEB_PORT), H).serve_forever()

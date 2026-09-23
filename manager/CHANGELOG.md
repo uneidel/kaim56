@@ -1,82 +1,16 @@
 # Changelog
 
-## 2026-09-23
-- New agent slash command /compact <focus>: summarizes the whole conversation into one [Summary] block and replaces the history (optional focus biases what detail survives); in the app + web slash pickers
-- Web: notification desktop toasts are now clickable and the panel/toast navigate in the same tab (chat notifications no longer swallowed by popup blockers)
-- Web: a notification with a `chat:` link is now a real anchor (opens the agent's chat in a new tab) instead of a scripted window.open that popup blockers silently swallowed
-
-## 2026-09-22
-- App 5.40: tapping an agent notification (link `chat:<inst>`) now opens/creates the instance's task chat instead of doing nothing when no local conversation existed yet
-- App 5.39 + manager: skill-proposal notifications carry a `skills` deep-link; tapping one opens the new in-app Skills screen (list proposals, Approve/Discard) or the web Skills tab
-
 Terse by design: one line per change, newest first. The narrative behind each
 entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
-## 2026-09-18
-- App 5.38: self-update — the app checks GitHub Releases at start (newest `app-v*` with an APK), downloads it and hands it to the package installer (switch + 'Check now' in Settings); the apk workflow releases every new versionName pushed to main (or an `app-v*` tag) as a GitHub release with the APK
-- Update check picks the newest PLATFORM release (tag v1.2.3) from GitHub's release list instead of 'latest' — the app's releases (app-v5.38) share the repo; install.sh describes the version with `--match 'v*'` for the same reason
-- App 5.37: barge-in — talking over the spoken reply cuts it off and becomes the next input; the mic stays open during playback with the assistant's own voice removed by an on-device echo canceller (vendored speexdsp, native libkatecho); TTS now plays through AudioTrack so the played audio is the canceller's reference; switch in Settings
+## 2026-09-23
 
-## 2026-09-17
-- Agent split for review: the openrouter agent becomes the package `agent/` (one concern per module); the harness drive ships the package directory, the rootfs COPY and the test loader follow
-- Split for review (no behaviour change): manager.py (6,078 lines) becomes a composition root; the code moves into mgr/ modules by concern, security boundaries as their own files, routes split by who may call them; siblings are used as modules (`_x.func`), tests patch the defining module
-- Security H-2: the browser-terminal WebSocket handshake now requires a present, allowed Origin (403 otherwise) — any page the admin visited could open a shell in a VM with the cached login
-- Security H-3: the terminal page is served by the manager from its own webterm.py (only the /ws frames are tunneled), and any other HTML relayed from a guest gets `Content-Security-Policy: sandbox` — guest-authored HTML can no longer run script on the manager origin with the admin's session
-- Security C-1 (critical): git in the guest-writable memory folder no longer runs as root — it runs as the guest user with hooks, fsmonitor and sshCommand disabled on the command line and no global/system config; older root-owned `.git` trees are chowned to the guest on first use; a planted `.git/hooks/pre-commit` can neither run as root nor run at all (test)
-- Repository moved back to `github.com/uneidel/kaim56` (remote, installer default, README, update check); the old octonion-ai path redirects
-- Office output for agents: tools `write_xlsx` (rows → spreadsheet, header bold, columns sized) and `write_docx` (Markdown subset → Word: headings, bullets, paragraphs, bold) write into the workspace; `python3-openpyxl` and `python3-docx` in the openrouter rootfs (rebuild); without the libs the tools say so; catalog/Policy entries
-- Claude instances become observable: the bridge logs one summary line per turn, reports usage to `/api/usage` (Resources tab) and emits a `/api/trace` start+end (trace view), and sets `X-Kaim-Turn` so the app can open the trace; the manager accepts a claude instance's own usage (it runs on the host subscription, not the key proxy). Content-Length in the bridge is now guarded
-
-## 2026-09-16
-- Fix (from the review of the persona work): a web persona save (name+prompt only) no longer wipes the persona's recommended tools/model — they are kept unless an explicit value replaces or clears them; and an explicit `spawn_subagent(model=…)` now wins over a persona's model
-- Personas & skills from ECC (MIT, attributed in NOTICE): 6 review/architecture personas (code-reviewer, code-architect, code-explorer, code-simplifier, silent-failure-hunter, security-reviewer) and 6 skills (ADR, error-handling, coding-standards, git-workflow, verification-loop, agent-architecture-audit)
-- Prompt-defense baseline prepended to every instance's system prompt (untrusted-content / no-secret-exfil rules; `DEFENSE_BASELINE=0` disables)
-- A persona may carry a recommended tool subset and model, pre-filled when an instance is created from it (`/api/personas` upsert keeps `tools`/`model`)
-- `spawn_subagent(persona=…)` bakes a named persona into the ephemeral VM (its tools/model apply unless overridden); narrowing-only rules unchanged
-- Chat delete: a chat with a bogus far-future `updatedAt` (a leaked sync-test fixture dated year 2286) could not be deleted — the tombstone was older than the chat, so it resurrected on every sync; timestamps past a year-2100 ceiling no longer beat a deletion
-- A-1: the second memory (Hindsight) keeps only the USER turn and explicit `memory_store` notes, never the agent's own reply (a wrong answer could otherwise feed back as a remembered fact); per-instance switch `HINDSIGHT_RETAIN` (1/0) turns retention off, e.g. for a high-volume voice agent
-- A-4: the after-turn skill-learning call logs when it fires (its extra model cost was invisible) and is now a per-instance template param `SKILL_LEARN` (1/0) — off it for high-volume voice agents
-- A-5: the local-model wire transform now guarantees strict user/assistant alternation (adjacent user messages merge too, not only assistant), asserted by an invariant test — tool_call/tool sequences stay intact
-- run-tests.sh refuses to run when tests/e2e.py has fewer than 150 test methods — an accidentally emptied test file had passed silently as „OK“ (0 tests) through several commits; the suite file is restored
-- A-3 context assembly: the per-turn [Memory] recall drops hits already present in the memory index or playbooks, drops duplicates, and is capped by RECALL_MAX_CHARS (default 1200) — less duplicated context and wasted tokens each turn
-- A-2 tool discipline: the per-instance AGENT_TOOLS allowlist is enforced at the host for the outward-reaching capability routes (send_signal, notify, web_search, ha_control, ha_learn_alias), not only inside the guest; empty allowlist = all (no change for most instances)
-- App 5.36: while a reply is still forming, the bubble shows pulsing dots and a live „working · Ns“ counter instead of a static „…“ — a local model is silent for 30+ s before the first token and looked dead
-- Notifications from agents are appended to the instance's task chat („🔔 title + text“) — the place a click on the notification opens; the Saddler weekly report existed only in the notification while the chat showed „(max tool steps reached)“
-
-## 2026-09-15
-- Tests for the sandbox: route + queue (cage object, refusal on named targets and widening, unknown skill refused at creation), the runner's call shape, the egress allowlist rules (resolved hosts accepted, unresolvable skipped, final REJECT) and internet-off as explicit REJECT
-- Security: „internet off“ for an instance is now an explicit REJECT chain on its tap — it relied on the FORWARD policy being DROP, and on this host (policy ACCEPT) an instance with internet off could still reach the internet; found by the first sandboxed sub-agent (`egress=none`) that fetched example.com
-- Sandboxed sub-agents: `spawn_subagent(tools=, egress=, skill=)` runs the ephemeral VM with a narrower policy than its caller — tool subset (spawn/secret tools never inherited), egress allowlist inside the caller's own or `none`, a skill baked into the system prompt with file/web tools only (`sandbox_config`, `/api/task` sandbox object, also for queued ephemeral tasks)
-- Web chat: while a reply has not produced a byte yet, the cursor says „waiting for the model · N s“ — a local 27B model spends 30+ s on prompt processing and a bare cursor read as dead (a `uncensored` turn was abandoned mid-way and stayed empty in the history)
-- Hindsight (vectorize.io) as an optional second memory: `mgr/hindsight.py`, container `kaim56-hindsight` (`install.sh --with-hindsight`, LLM through the key proxy from the docker bridge, booked as instance "hindsight"), on when `HINDSIGHT_URL` is set in Settings; chat turns and `memory_store` notes are retained per instance bank, recall hits merge into `/api/memory-search`, new tool `memory_reflect` → `POST /api/memory-reflect`; session panel shows it under Memory
-- Auto-reset per instance: `AUTO_RESET_MIN` (template param, 0 = never) drops the conversation when the last turn is older than that many minutes — `voicecommand` paid up to 20k tokens per "radio on" for the day's history; set to 30 there; the claude bridge does the same with its session
-- Claude instances: the bridge pulls the host's OAuth login before each turn when the host has a newer one and once by force on "Failed to authenticate" — the boot-time copy went stale as the host rotated its refresh token (`claudy`: "OAuth session expired and could not be refreshed"); the rootfs build no longer bakes a credential into the image; the session panel shows how long the host login is valid (needs a claude rootfs rebuild + instance restart)
-- Agent: an error reply of the non-streaming LLM call carried no `role`; appended to the history it made llama.cpp reject every following turn ("Missing 'role' in message") until a reset
-- Local models, streaming: a stream that ends with nothing (llama.cpp sent the headers, then died on the image) is reported as a dropped connection instead of „(empty reply)“; images leave the history, the failed call is booked
-- Local models: when llama.cpp drops the connection (it crashed on every image input on the `uncensored` model server, then reloaded the model), the agent answers with one line, strips the images from the history so the next turn does not repeat the crash, and does not retry; a 503 while the model loads is reported the same way
-- Local models: LLM call timeout 600 s instead of 120/180 s (`LLM_TIMEOUT`, `LLM_STREAM_TIMEOUT`) and no retry after a timeout — an image question to the CPU-hosted 27B model timed out at 180 s while the model was still processing the prompt, and the retries queued behind it
-- Local models: the agent's usage report counts again (calls, tokens, spans in the traces) — with the key proxy on, guest reports were ignored across the board, so a llama instance showed zero calls forever; accepted now when the report is flagged `direct` and the instance has `LLAMA_ENDPOINT`; the stream asks llama.cpp for token counts in the last chunk
-- Local models (llama backend): mid-conversation system notes ([Memory], [Playbooks], date line, deadline note) are folded into the first system message on the wire — Qwen3's chat template in llama.cpp answered HTTP 500 "System message must be at the beginning" to every turn of the `uncensored` instance since its start; `LLM_FOLD_SYSTEM=1/0` overrides; the misleading "FATAL: OPENROUTER_API_KEY fehlt" line no longer appears for a local model
-
-## 2026-09-14
-- install.sh reruns keep the operator's state: `mcp-catalog.json`, `personas.json`, `secret-policy.json` are seeded only when missing; unknown `Environment=` lines of an existing unit (fixed login, proxy flags) are carried over and no password is generated when the unit already sets one
-- Updates: install.sh writes `VERSION` and installs `kaim56-update.service` (root oneshot: `install.sh --release`, newest tag, same options); the manager compares with the newest GitHub release (`GET /api/version`, cached 6 h, `UPDATE_CHECK=0` disables, `UPDATE_REPO` in site.json), footer badge and a card in Settings with an Update button (`POST /api/update`) that streams `run/update.log`; the installer runs as root from the unit (sudo no-op, git as the operator)
-
-## 2026-09-13
-- Buttons: a stray declaration left behind by the corner-mark removal (2026-09-12) made the browser drop the whole `.btn` rule — link buttons (Terminal, Chat) rendered as underlined links and every button lost its base padding and font; fragment removed
-- GitHub Action `apk.yml`: native iroh module + KatAgent APK on every `v*` tag, attached to the release when the stable keystore secret is set; repo `app/` is now one buildable Gradle root (the flattened duplicate `app/src` is gone) mirrored from the live project
-- Manager tab row: no visible scrollbars any more (the thin horizontal one and a stray vertical one from the tab underline); the row still scrolls by wheel/touch and keeps the active tab in view
-- README: a detailed feature set before the licence (runtime, slash commands, tools, memory, autonomy, traces, security, clients)
-- `docs/proxmox.md`: running kAIm56 in a Proxmox VE VM (nested virtualization, CPU type host, sizing, cloud-image `qm` recipe, firewall, snapshots); linked from Getting started
-- Resources chart also loads when the page opens directly on `#resources` (only the tab switch loaded it); three unquoted SVG attributes (`rx=1/>`) quoted; README gets six screenshots (chat, resources, policy, MCP, skills, personas), anonymised like the first
-- Repository moved to the `octonion-ai` organisation: `github.com/octonion-ai/kaim56` (installer default, README links); the old path redirects
-- Resources tab: tokens in and out per instance (separate bars, each stacked by model on its own scale) plus cost and calls per instance (24h/7d/30d/all), legend with per-model totals; `GET /api/usage-by-model?since=`; one-shot task VMs are summed as „tasks“
-- Chat: choosing another instance in the dropdown opens that instance's newest chat (or an empty one) instead of re-pointing the open chat at it
-- Chat session panel drops the „Commands“ cell (the / picker already lists every command)
+- Agent: the conversation survives an instance restart — written to `<memory>/.state/history.json` between turns (`agent/persist.py`, off with `HISTORY_PERSIST=0`), restored at start; the manager gitignores `.state/` in the memory folder.
 
 ## 2026-09-12
+
 - Secrets tab manages the values too: add, replace and delete keys of the host store (`~/.config/kat56/secrets.env`, written 0600, never echoed back); LLM keys stay in Settings; store path derives from the tree
 - Voice: default TTS voice is `de-thorsten-high` (medium stays installed, switch in Settings); the Parakeet weights are baked into the voice image so a recreated container answers at once instead of downloading for a minute; `onnx-asr` pinned to 0.12.0
 - Registration corner marks removed from every card and box (chat, composer, manager tabs)
