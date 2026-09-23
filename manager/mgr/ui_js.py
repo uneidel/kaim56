@@ -1307,10 +1307,16 @@ function notifRender(list){
   if(!NOTIF_LIST.length){el.innerHTML='<span class=text-muted style="font-size:13px;padding:12px;display:block">No notifications.</span>';return;}
   el.innerHTML=NOTIF_LIST.slice().reverse().map(n=>{
     const t=new Date((n.ts||0)*1000).toLocaleString();
-    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':n.link==='skills'?'To skills':'To chat'}"`:'';
-    return `<div class="nitem ${n.read?'':'unread'}"${lk}><div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
+    const inner=`<div class=nt>${nEsc(n.title)}${n.link?' <span style="opacity:.5">\u2192</span>':''}</div>`+
       (n.body?`<div class=nb>${nEsc(n.body)}</div>`:'')+
-      `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div></div>`;
+      `<div class=nm>${nEsc(n.instance||'')} \u00b7 ${t}</div>`;
+    if(n.link&&n.link.indexOf('chat:')===0){
+      // A REAL anchor, not a scripted window.open (popup blockers eat that and
+      // the click seems to do nothing): opens the agent's chat in a new tab.
+      return `<a class="nitem ${n.read?'':'unread'}" href="/chat?i=${encodeURIComponent(n.link.slice(5))}" target="_blank" rel="noopener noreferrer" style="display:block;cursor:pointer;text-decoration:none;color:inherit" title="To chat" onclick="document.getElementById('npanel').hidden=true">${inner}</a>`;
+    }
+    const lk=n.link?` data-link="${nEsc(n.link)}" style="cursor:pointer" title="${n.link==='missions'?'To missions':n.link==='tasks'?'To tasks':n.link==='skills'?'To skills':'To chat'}"`:'';
+    return `<div class="nitem ${n.read?'':'unread'}"${lk}>${inner}</div>`;
   }).join('');
   el.querySelectorAll('[data-link]').forEach(x=>x.onclick=()=>notifClick(x.dataset.link));
 }
