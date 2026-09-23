@@ -1164,13 +1164,18 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             notifNav.startsWith("chat:") -> {
                 val inst = notifNav.removePrefix("chat:")
                 prefs.mode = "server"; prefs.instance = inst; screen = null
-                // Open an existing chat instead of an empty window: prefer the
-                // task chat (where task results land), otherwise the most recent
-                // chat with this instance.
-                val target = conversations.firstOrNull { it.id == "task-$inst" }
-                    ?: conversations.filter { it.instance == inst }
-                        .maxByOrNull { it.updatedAt }
-                if (target != null) currentId = target.id
+                // Prefer the task chat (where task results/briefings land), else the
+                // most recent chat with this instance. If none exists locally yet,
+                // CREATE the task chat so the tap ALWAYS lands there — chat sync then
+                // fills it from the server (task-<instance>). Without this, tapping a
+                // notification for an instance you had never opened did nothing.
+                val existing = conversations.firstOrNull { it.id == "task-$inst" }
+                    ?: conversations.filter { it.instance == inst }.maxByOrNull { it.updatedAt }
+                currentId = existing?.id ?: run {
+                    val c = Conversation(id = "task-$inst", title = "Tasks \u00b7 $inst",
+                        mode = "server", instance = inst, updatedAt = System.currentTimeMillis())
+                    conversations.add(0, c); store.save(conversations); c.id
+                }
             }
         }
     }

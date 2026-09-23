@@ -5,6 +5,11 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.40
+
+- Tapping a notification from an agent now always opens that agent's chat,
+  even if you had never opened it before (e.g. the daily job-search briefing).
+
 ## 5.39
 
 - Skills tab: review the skills your agents propose right in the app. Tapping a

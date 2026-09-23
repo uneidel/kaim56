@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- App 5.40: tapping an agent notification (link `chat:<inst>`) now opens/creates the instance's task chat instead of doing nothing when no local conversation existed yet
 - App 5.39 + manager: skill-proposal notifications carry a `skills` deep-link; tapping one opens the new in-app Skills screen (list proposals, Approve/Discard) or the web Skills tab
 
 Terse by design: one line per change, newest first. The narrative behind each
