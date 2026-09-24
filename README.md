@@ -101,7 +101,7 @@ On Proxmox VE: [`docs/proxmox.md`](docs/proxmox.md) (a VM with nested virtualiza
 | Path | Contents |
 |---|---|
 | `manager/` | The manager: `manager.py` (routes, VM lifecycle, networking, secrets), `mgr/` (store, missions, notify, rules, mcp, katfs, gateway, routes, …), `chatui.py`, `webterm.py`, `templates/`, tests |
-| `agents/` | Guest images: build scripts and the in-VM agent for `openrouter/` and `claude/` |
+| `agents/` | Guest images: build scripts and the in-VM agent for `openrouter/` and `claude/`; `skeleton/` is the minimal agent type to copy for your own (the manager lists every `agents/*/template.json` in Create instance) |
 | `app/` | KatAgent, the Android app (Kotlin/Compose, builds in Docker) |
 | `voice-client/` | Desktop voice client (Go, one static binary) |
 | `espclient/` | MrVoice, the ESP32-S3 client (ESP-IDF via PlatformIO) |

@@ -60,13 +60,42 @@ def load_instances():
 
 
 
+# Agent folders: every <AGENTS_DIR>/<name>/template.json is a template too
+# (agents/skeleton in the repo shows the layout). site.json AGENTS_DIR names
+# the folder; without it the repo layout (manager/../agents) and BASE/agents
+# are tried. A folder template wins over templates/<name>.json.
+def agents_dir():
+    d = _settings.SITE.get("AGENTS_DIR") or ""
+    if d:
+        return d
+    for cand in (os.path.join(os.path.dirname(_paths.BASE), "agents"), os.path.join(_paths.BASE, "agents")):
+        if os.path.isdir(cand):
+            return cand
+    return ""
+
+
 def load_templates():
-    out = []
+    by_name = {}
     for f in sorted(os.listdir(_paths.TEMPLATE_DIR)) if os.path.isdir(_paths.TEMPLATE_DIR) else []:
         if f.endswith(".json"):
             with open(os.path.join(_paths.TEMPLATE_DIR, f)) as fh:
-                out.append(json.load(fh))
-    return out
+                t = json.load(fh)
+            by_name[t.get("template", f[:-5])] = t
+    ad = agents_dir()
+    for f in sorted(os.listdir(ad)) if ad and os.path.isdir(ad) else []:
+        tf = os.path.join(ad, f, "template.json")
+        if not os.path.isfile(tf):
+            continue
+        try:
+            with open(tf) as fh:
+                t = json.load(fh)
+        except ValueError as e:
+            print(f"[templates] {tf}: {e}", flush=True)
+            continue
+        t.setdefault("template", f)
+        t["dir"] = os.path.join(ad, f)
+        by_name[t["template"]] = t
+    return list(by_name.values())
 
 
 def next_index():
@@ -147,6 +176,8 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
             "description": f"{tpl.get('description','')} ({cfg.get('TRANSPORT','signal')}"
                            + (f", {cfg.get('FABRIC_MODEL')}" if cfg.get("FABRIC_MODEL") else "") + ")",
             "template": template, "config": cfg}
+    if tpl.get("overlay"):          # folder templates say it; the built-in images are known to vm.py
+        inst["overlay"] = True
     clean = [{"host": str(m.get("host", "")).strip(),
               "guest": str(m.get("guest", "")).strip(),
               "readonly": bool(m.get("readonly"))}

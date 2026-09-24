@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-24
 
+- Own agent types: `agents/skeleton/` (template.json, Dockerfile, guest-init, a stdlib agent serving the `/api/chat` contract, build script, README of the VM contract); Create instance scans `<AGENTS_DIR>/*/template.json` (site.json `AGENTS_DIR`, default `agents/` next to `manager/`) besides `templates/*.json`; a template's `"overlay": true` gives a custom rootfs the per-instance write layer (`vm.is_overlay`).
 - Voice client 1.1.0: self-update from GitHub Releases (`voice-client/update.go`, start-up check every 6 h, `--update`, tray "Check for update", `auto_update` config key) + release pipeline `.github/workflows/voice.yml` (bump `version.go` + push = release `voice-v<v>`, notes from `voice-client/RELEASE_NOTES.md` mandatory).
 - Voice client (`voice-client/`): all source comments, CLI help, errors, tray labels, spoken acknowledgements and the README are English now; internal states renamed listening/thinking/speaking/off, no behaviour change.
 

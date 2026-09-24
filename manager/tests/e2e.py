@@ -2126,6 +2126,61 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(keyname, m._settings.SECRET_PARAMS)
         self.assertIn("LLM_KEY_PROXY", [s["key"] for s in m._settings.SETTINGS_SCHEMA])
 
+    def test_agent_folder_is_a_template(self):
+        """Create instance lists every <AGENTS_DIR>/<x>/template.json next to
+        templates/*.json: the folder name is the default template name, the
+        folder path is recorded, a folder wins over a json of the same name,
+        a broken file is skipped, and "overlay": true reaches the instance
+        record so vm.py attaches a write layer for a custom rootfs."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-agents-")
+        os.makedirs(os.path.join(tmp, "myagent")); os.makedirs(os.path.join(tmp, "broken")); os.makedirs(os.path.join(tmp, "nofile"))
+        json.dump({"description": "mine", "rootfs": "instances/myagent-rootfs.ext4", "overlay": True,
+                   "params": [{"key": "TRANSPORT", "default": "web"}]},
+                  open(os.path.join(tmp, "myagent", "template.json"), "w"))
+        os.makedirs(os.path.join(tmp, "openrouter"))
+        json.dump({"template": "openrouter", "description": "FOLDER WINS", "rootfs": "x"},
+                  open(os.path.join(tmp, "openrouter", "template.json"), "w"))
+        open(os.path.join(tmp, "broken", "template.json"), "w").write("{nope")
+        old = (m._settings.SITE.get("AGENTS_DIR"), m._paths.INST_DIR, m._instances.load_instances)
+        inst_dir = tempfile.mkdtemp(prefix="e2e-agents-inst-")
+        try:
+            m._settings.SITE["AGENTS_DIR"] = tmp
+            tpls = {t["template"]: t for t in m._instances.load_templates()}
+            self.assertEqual(tpls["myagent"]["dir"], os.path.join(tmp, "myagent"))
+            self.assertEqual(tpls["myagent"]["description"], "mine")
+            self.assertEqual(tpls["openrouter"]["description"], "FOLDER WINS")
+            self.assertNotIn("broken", tpls); self.assertNotIn("nofile", tpls)
+            self.assertIn("claude", tpls)                                   # templates/*.json still there
+            # the instance created from it carries the overlay flag -> upper drive + fc_upper
+            m._paths.INST_DIR = inst_dir
+            m._instances.load_instances = lambda: [_readj(os.path.join(inst_dir, f)) for f in sorted(os.listdir(inst_dir)) if f.endswith(".json")]
+            self.assertIn("created", m._instances.create_instance("skel-e2e", "myagent", {}, []))
+            inst = _readj(os.path.join(inst_dir, "skel-e2e.json"))
+            self.assertTrue(inst["overlay"]); self.assertEqual(inst["rootfs"], "instances/myagent-rootfs.ext4")
+            self.assertTrue(m._vm.is_overlay(inst))
+            self.assertFalse(m._vm.is_overlay({"rootfs": "instances/other.ext4"}))
+            old_mk = m._vm.make_upper
+            m._vm.make_upper = lambda i: "/tmp/e2e-upper.ext4"
+            try:
+                cfg = m._vm.gen_config(inst)
+            finally:
+                m._vm.make_upper = old_mk
+            ids = [d["drive_id"] for d in cfg["drives"]]
+            self.assertEqual(ids[0], "rootfs"); self.assertTrue(cfg["drives"][0]["is_read_only"])
+            self.assertEqual(ids[-1], "upper"); self.assertIn("fc_upper=/dev/vd", cfg["boot-source"]["boot_args"])
+            self.assertNotIn("harness", ids)                                # no agent drive for a foreign agent
+            # the select in the Instances tab offers it
+            self.assertIn("value='myagent'", m._ui.render())
+            m._settings.SITE["AGENTS_DIR"] = "/nonexistent"
+            self.assertNotIn("myagent", {t["template"] for t in m._instances.load_templates()})
+        finally:
+            if old[0] is None:
+                m._settings.SITE.pop("AGENTS_DIR", None)
+            else:
+                m._settings.SITE["AGENTS_DIR"] = old[0]
+            m._paths.INST_DIR, m._instances.load_instances = old[1], old[2]
+
     def test_overlay_upper_lifecycle(self):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-ov-")

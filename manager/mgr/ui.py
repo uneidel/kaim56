@@ -137,7 +137,7 @@ def render():
         ttag = (f"<span class='tag tag-neutral' title='{h(tools_cfg)}'>🔧 {len(tools_cfg.split(','))} Tools</span>"
                 if tools_cfg else "")
         ptag = ""
-        if inst.get("rootfs") in _vm.OVERLAY_ROOTFS:
+        if _vm.is_overlay(inst):
             pers = bool(inst.get("persist_disk"))
             ptag = (f"<button class='tag {'tag-accent' if pers else 'tag-neutral'}' "
                     f"style='border:none;cursor:pointer' "

@@ -59,6 +59,13 @@ def mkfs_image(path, size_mb, label=None, srcdir=None):
 # stop/start. Other images run unchanged via private_rootfs().
 OVERLAY_ROOTFS = {"instances/openrouter-rootfs.ext4", "instances/claude-rootfs.ext4"}
 
+
+def is_overlay(inst):
+    """Shared read-only base + per-instance upper: the built-in images, and
+    any instance whose template declared "overlay": true (agents/<x>/template.json —
+    its guest-init must assemble the overlay from fc_upper, see agents/skeleton)."""
+    return inst.get("rootfs") in OVERLAY_ROOTFS or bool(inst.get("overlay"))
+
 # ---- Harness disk: the agent code as a read-only drive, not baked in ---------
 # Pattern from Claude Code's sandbox (harness and skills are read-only shared
 # layers next to the rootfs): the openrouter agent (agent.py, run_agent.py,
@@ -169,7 +176,7 @@ def image_state(inst):
     was started before that image was last rebuilt — it still runs the old
     agent and will until stop/start. spawn_subagent was dead for three weeks
     and a tool fix missed the voice instance this way; nobody could see it."""
-    if inst.get("rootfs") not in OVERLAY_ROOTFS or not _instances.is_running(inst):
+    if not is_overlay(inst) or not _instances.is_running(inst):
         return False, 0, 0
     try:
         built = os.path.getmtime(os.path.join(_paths.BASE, inst["rootfs"]))
@@ -322,7 +329,7 @@ def set_persist_disk(name, on):
     inst = next((i for i in _instances.load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
-    if inst.get("rootfs") not in OVERLAY_ROOTFS:
+    if not is_overlay(inst):
         return "error: this template's rootfs has no overlay support (yet)"
     inst["persist_disk"] = bool(on)
     _instances.save_instance(inst)
@@ -361,7 +368,7 @@ def gen_config(inst):
     n = _instances.net_of(inst)
     boot = (f"console=ttyS0 reboot=k panic=1 pci=off "
             f"ip={n['guest']}::{n['host']}:{n['mask']}::eth0:off init=/init")
-    overlay = inst.get("rootfs") in OVERLAY_ROOTFS
+    overlay = is_overlay(inst)
     if overlay:
         drives = [{"drive_id": "rootfs", "path_on_host": os.path.join(_paths.BASE, inst["rootfs"]),
                    "is_root_device": True, "is_read_only": True}]

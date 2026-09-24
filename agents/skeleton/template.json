@@ -1,0 +1,27 @@
+{
+  "template": "skeleton",
+  "description": "Skeleton agent — copy this folder to build your own",
+  "rootfs": "instances/skeleton-rootfs.ext4",
+  "overlay": true,
+  "vcpus": 1,
+  "mem_mib": 512,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport (the skeleton speaks the web bridge only)",
+      "type": "select",
+      "options": ["web"],
+      "default": "web"
+    },
+    {
+      "key": "OPENROUTER_MODEL",
+      "label": "Model — answered through the manager's key proxy when LLM_KEY_PROXY is on; empty = echo",
+      "default": ""
+    },
+    {
+      "key": "GREETING",
+      "label": "Reply prefix (echo mode)",
+      "default": "skeleton heard:"
+    }
+  ]
+}
