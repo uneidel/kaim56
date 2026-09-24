@@ -57,6 +57,20 @@ the web UI (iroh tab), like for the phone. The key stays put in
 With `"iroh"` set, `base_url`, `user` and `pass` are unnecessary
 (`iroh_listen` changes the local port if needed, default 127.0.0.1:8701).
 
+## Updates
+
+The client updates itself: at start (at most every 6 hours) it asks GitHub
+Releases for the newest `voice-v*` release, downloads the binary over its own
+file and restarts with the same arguments. The directory of the binary must be
+writable by you for that (`~/.local/bin` is fine, `/usr/local/bin` is not
+without sudo). `"auto_update": false` in the config switches it off;
+`./kaim56-voice --update` checks right now; the top-bar menu has **Check for
+update**; `--version` prints the running version.
+
+Releasing a new version = bump `version.go`, write its section in
+`RELEASE_NOTES.md`, push to main: the pipeline builds, tests and publishes
+the release `voice-v<version>` with `kaim56-voice-linux-amd64` attached.
+
 ## Alternative: direct HTTP(S)
 
 Without `"iroh"`, `base_url` + `user`/`pass` apply — e.g. `http://<manager>:8700`

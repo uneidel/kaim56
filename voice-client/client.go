@@ -27,6 +27,7 @@ type Config struct {
 	WakeWord   string    `json:"wake_word"`                // empty = every utterance passes
 	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW gate BEFORE the upload
 	WakeThresh float64   `json:"wake_threshold,omitempty"` // override; 0 = from the enrollment
+	AutoUpdate bool      `json:"auto_update"`              // check GitHub Releases at start (update.go)
 	Vad        VadConfig `json:"vad"`
 }
 
@@ -39,7 +40,7 @@ func configPath() string {
 // struct is pre-filled with them, Unmarshal only overwrites what the file
 // contains).
 func loadConfig(path string) (Config, error) {
-	cfg := Config{Instance: "myassistant", Vad: defaultVadConfig()}
+	cfg := Config{Instance: "myassistant", AutoUpdate: true, Vad: defaultVadConfig()}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
@@ -76,7 +77,7 @@ func writeConfigTemplate(path string) error {
 		User: "admin", Pass: "secret", Instance: "myassistant",
 		Prompt: "You are being used through a voice client: answer briefly and " +
 			"in prose that reads aloud well, without lists, links or code.",
-		WakeWord: "Kati, Katharina", Vad: defaultVadConfig()}
+		WakeWord: "Kati, Katharina", AutoUpdate: true, Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

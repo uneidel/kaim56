@@ -67,6 +67,7 @@ app/iroh-android/.out/
 # Imported skill catalog (github.com/daedalus/skills — no license upstream)
 manager/skills.json
 voice-client/kaim56-voice
+voice-client/kaim56-voice-linux-*
 voice-client/kaim56-tunnel
 voice-client/embedded/
 

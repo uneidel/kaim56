@@ -34,7 +34,14 @@ func main() {
 	probe := flag.String("probe", "", "self-test without a microphone: synthesize the text via TTS, run it back through STT, send it to the instance, speak the reply")
 	enroll := flag.Bool("enroll", false, "record the local wake word (3 takes) and save the model")
 	wakeTest := flag.Bool("wake-test", false, "test the wake model: show the score per utterance, nothing is sent")
+	update := flag.Bool("update", false, "check GitHub Releases for a newer version now (otherwise at most every 6 h), install it and restart")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("kaim56-voice", version)
+		return
+	}
 
 	if _, err := os.Stat(*cfgPath); err != nil {
 		if werr := writeConfigTemplate(*cfgPath); werr != nil {
@@ -57,6 +64,19 @@ func main() {
 		cfg.Prompt = ""
 	} else if *prompt != "" {
 		cfg.Prompt = *prompt
+	}
+
+	// Self-update first, before the tunnel and the audio loop exist: a newer
+	// release replaces the binary and the process re-executes itself.
+	if cfg.AutoUpdate || *update {
+		if ok, msg := selfUpdate(*update); msg != "" {
+			fmt.Fprintln(os.Stderr, "[kaim56-voice]", msg)
+			if ok {
+				if err := relaunch(); err != nil {
+					fmt.Fprintln(os.Stderr, "[kaim56-voice] restart failed:", err)
+				}
+			}
+		}
 	}
 
 	// Enrollment and the wake test need neither the manager nor the tunnel.
@@ -84,6 +104,7 @@ func main() {
 			os.Exit(1)
 		}
 		defer stop()
+		tunnelStop = stop
 		cfg.BaseURL = base
 	}
 
@@ -134,6 +155,11 @@ func main() {
 	}()
 	runTray(client, done)
 }
+
+// tunnelStop ends the tunnel child process; set when the iroh route is in
+// use. An update from the tray menu calls it before re-executing, so the new
+// process can bind the same local port.
+var tunnelStop = func() {}
 
 // runEnroll: record the wake word 3 times, build the model, save it.
 func runEnroll(cfg Config) error {

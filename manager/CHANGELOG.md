@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-24
 
+- Voice client 1.1.0: self-update from GitHub Releases (`voice-client/update.go`, start-up check every 6 h, `--update`, tray "Check for update", `auto_update` config key) + release pipeline `.github/workflows/voice.yml` (bump `version.go` + push = release `voice-v<v>`, notes from `voice-client/RELEASE_NOTES.md` mandatory).
 - Voice client (`voice-client/`): all source comments, CLI help, errors, tray labels, spoken acknowledgements and the README are English now; internal states renamed listening/thinking/speaking/off, no behaviour change.
 
 ## 2026-09-23

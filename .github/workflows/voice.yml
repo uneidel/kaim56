@@ -1,0 +1,120 @@
+# kAIm56 Voice release pipeline. Builds the Linux desktop voice client from
+# the repo (tunnel embedded) and publishes it:
+#
+#   * voice-v<version> tag -> GitHub release "kAIm56 Voice <version>" with
+#                             kaim56-voice-linux-amd64 attached
+#   * push to main         -> when voice-client/version.go carries a version
+#                             that has no voice-v<version> release yet, the
+#                             tag and the release are created (so bumping the
+#                             version and pushing IS the release)
+#   * v* tag               -> the binary is attached to that platform release
+#   * workflow_dispatch    -> build only (artifact), no release
+#
+# The client updates itself from these releases (voice-client/update.go:
+# newest voice-v* tag with the asset for its OS/arch). Release notes are
+# mandatory: the section "## <version>" of voice-client/RELEASE_NOTES.md is
+# the release body; no section = no release.
+name: voice
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*', 'voice-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: what to build
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: |
+          v=$(sed -n 's/^const version = "\([^"]*\)".*/\1/p' voice-client/version.go | head -1)
+          [ -n "$v" ] || { echo "::error::no version in voice-client/version.go"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF" in
+            refs/tags/voice-v*)
+              t="${GITHUB_REF#refs/tags/voice-v}"
+              if [ "$t" != "$v" ]; then
+                echo "::error::tag voice-v$t but version.go says $v"; exit 1
+              fi
+              echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            refs/tags/v*)
+              echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            refs/heads/main)
+              if git ls-remote --tags origin "refs/tags/voice-v$v" | grep -q .; then
+                echo "voice-v$v already released — nothing to do"
+                echo "build=false" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT"
+              fi ;;
+            *)
+              echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          cat "$GITHUB_OUTPUT"
+
+  voice:
+    name: kaim56-voice (linux-amd64)
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iroh-gw
+      - name: tunnel (Rust, embedded into the client)
+        run: |
+          cd iroh-gw && cargo build --release --bin tunnel
+          mkdir -p ../voice-client/embedded
+          cp target/release/tunnel ../voice-client/embedded/kaim56-tunnel
+          ../voice-client/embedded/kaim56-tunnel --help >/dev/null 2>&1 || true
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: voice-client/go.mod
+      - name: vet, test, build
+        id: build
+        run: |
+          cd voice-client
+          go vet ./... && go test ./...
+          v="${{ needs.plan.outputs.version }}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -tags embedtunnel \
+            -o kaim56-voice-linux-amd64 .
+          ./kaim56-voice-linux-amd64 --version | grep -q " $v\$"
+          ls -la kaim56-voice-linux-amd64
+          echo "file=voice-client/kaim56-voice-linux-amd64" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kaim56-voice-${{ needs.plan.outputs.version }}
+          path: ${{ steps.build.outputs.file }}
+      - name: attach to the platform release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build.outputs.file }}
+      - name: release notes for this version
+        if: needs.plan.outputs.release == 'true'
+        run: |
+          v="${{ needs.plan.outputs.version }}"
+          awk -v v="$v" '$0 == "## " v {on=1; next} /^## / {on=0} on' voice-client/RELEASE_NOTES.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::voice-client/RELEASE_NOTES.md has no section '## $v' — write the release notes, then release"; exit 1
+          fi
+          echo "--- release body ---"; cat notes.md
+      - name: voice release
+        if: needs.plan.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: voice-v${{ needs.plan.outputs.version }}
+          name: kAIm56 Voice ${{ needs.plan.outputs.version }}
+          body_path: notes.md
+          files: ${{ steps.build.outputs.file }}

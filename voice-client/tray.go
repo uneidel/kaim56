@@ -66,6 +66,7 @@ func trayReady(c *VoiceClient, done <-chan struct{}) {
 	fresh := systray.AddMenuItem("New conversation (/reset)", "Sends /reset to the agent")
 	instRoot := systray.AddMenuItem("Instance", "Choose the target instance")
 	systray.AddSeparator()
+	upd := systray.AddMenuItem("Check for update", "Version "+version+" — look for a newer release on GitHub")
 	quit := systray.AddMenuItem("Quit", "")
 
 	refresh := func() {
@@ -127,6 +128,18 @@ func trayReady(c *VoiceClient, done <-chan struct{}) {
 				c.StopSpeaking()
 			case <-fresh.ClickedCh:
 				c.NewConversation()
+			case <-upd.ClickedCh:
+				go func() {
+					ok, msg := selfUpdate(true)
+					c.notify("Update", msg)
+					if ok { // the binary on disk is new: same arguments, fresh process
+						c.Quit()
+						tunnelStop()
+						if err := relaunch(); err != nil {
+							c.notify("Restart failed", err.Error())
+						}
+					}
+				}()
 			case <-quit.ClickedCh:
 				systray.Quit()
 				return
