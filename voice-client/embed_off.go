@@ -4,6 +4,6 @@
 
 package main
 
-// Ohne -tags embedtunnel (Dev/Gate): kein eingebetteter Tunnel, findTunnel
-// sucht ihn neben dem Binary bzw. im PATH.
+// Without -tags embedtunnel (dev/gate): no embedded tunnel, findTunnel looks
+// for it next to the binary or in the PATH.
 var embeddedTunnel []byte

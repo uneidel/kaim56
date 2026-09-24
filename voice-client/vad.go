@@ -14,7 +14,7 @@ const (
 	frameBytes = sampleRate * frameMs / 1000 * 2 // s16le mono
 )
 
-// frameRMS ist der RMS eines s16le-Frames.
+// frameRMS is the RMS of an s16le frame.
 func frameRMS(frame []byte) int {
 	n := len(frame) / 2
 	if n == 0 {
@@ -28,7 +28,7 @@ func frameRMS(frame []byte) int {
 	return int(math.Sqrt(sum / float64(n)))
 }
 
-// VadConfig sind die einstellbaren Parameter (Config-Schluessel "vad").
+// VadConfig holds the tunable parameters (config key "vad").
 type VadConfig struct {
 	StartFrames     int     `json:"start_frames"`
 	EndMs           int     `json:"end_ms"`
@@ -43,16 +43,16 @@ func defaultVadConfig() VadConfig {
 		ThresholdFactor: 3.0, ThresholdMin: 350}
 }
 
-// Vad: Energie-VAD ueber 30-ms-Frames mit adaptivem Rauschteppich.
+// Vad: energy VAD over 30 ms frames with an adaptive noise floor.
 //
-// Feed(frame) liefert nil oder — am Ende einer Aeusserung — die kompletten
-// PCM-Bytes inklusive Vorlauf. Zustandsautomat: IDLE (Ring von 8 Frames
-// Vorlauf) -> TALK (sammeln) -> zurueck zu IDLE nach EndMs Stille. Der
-// Teppich lernt NUR aus unstimmhaften Frames: sonst zieht lauteres Sprechen
-// den eigenen Schwellwert in Sekunden ueber den Sprach-RMS und alles gilt
-// als Stille (stimmhaft lernt nur homoeopathisch, als Ventil fuer dauerhaft
-// lautere Umgebungen). Zu kurze Segmente (< MinMs) sind Tuerknallen, kein
-// Satz — verworfen.
+// Feed(frame) returns nil or — at the end of an utterance — the complete PCM
+// bytes including the pre-roll. State machine: IDLE (ring of 8 frames of
+// pre-roll) -> TALK (collect) -> back to IDLE after EndMs of silence. The
+// floor learns ONLY from unvoiced frames: otherwise louder speech pulls its
+// own threshold above the speech RMS within seconds and everything counts as
+// silence (voiced frames teach it only homeopathically, as a valve for
+// permanently louder surroundings). Segments that are too short (< MinMs) are
+// a door slamming, not a sentence — dropped.
 type Vad struct {
 	cfg          VadConfig
 	endFrames    int
@@ -131,8 +131,8 @@ func (v *Vad) Reset() {
 	v.talk, v.ring, v.voicedRecent, v.silent = nil, nil, nil, 0
 }
 
-// wavWrap packt s16le-mono-PCM in einen WAV-Container — /api/stt nimmt zwar
-// jedes Format, aber mit Header muss ffmpeg drueben nichts raten.
+// wavWrap packs s16le mono PCM into a WAV container — /api/stt accepts any
+// format, but with a header ffmpeg over there has nothing to guess.
 func wavWrap(pcm []byte) []byte {
 	out := make([]byte, 44+len(pcm))
 	le := binary.LittleEndian

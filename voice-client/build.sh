@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Release-Build des Sprachclients: EIN Binary, kaim56-tunnel eingebettet.
-# Baut den Tunnel bei Bedarf zuerst (Docker, siehe iroh-gw/build.sh).
+# Release build of the voice client: ONE binary, kaim56-tunnel embedded.
+# Builds the tunnel first if needed (Docker, see iroh-gw/build.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GO="${GO:-$(command -v go || echo "$HOME/.local/go-toolchain/bin/go")}"

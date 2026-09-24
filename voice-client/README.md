@@ -1,158 +1,156 @@
-# kAIm56 Sprachclient (Linux-Desktop, Go)
+# kAIm56 voice client (Linux desktop, Go)
 
-Freihändig mit einer Plattform-Instanz sprechen — standardmäßig `myassistant`,
-umschaltbar im Menü. Ein Icon in der Topbar zeigt den Zustand (grün hört /
-bernstein denkt / blau spricht / grau aus); ein Energie-VAD erkennt Äußerungen
-von selbst, Push-to-talk gibt es nicht.
+Talk hands-free to a platform instance — `myassistant` by default, switchable
+in the menu. An icon in the top bar shows the state (green listening / amber
+thinking / blue speaking / grey off); an energy VAD detects utterances on its
+own, there is no push-to-talk.
 
-Der Client ist bewusst dumm: Aufnahme → `/api/stt` → `/api/chat/<instanz>` →
-`/api/tts` → Wiedergabe. STT, LLM und Piper-TTS laufen alle auf dem Server;
-der Verlauf lebt im Agenten selbst, „Neues Gespräch" schickt schlicht `/reset`.
+The client is deliberately dumb: recording → `/api/stt` → `/api/chat/<instance>` →
+`/api/tts` → playback. STT, LLM and Piper TTS all run on the server; the
+history lives in the agent itself, "New conversation" simply sends `/reset`.
 
-Ein einziges statisches Binary (pures Go, kein cgo, keine Python-Umgebung).
-Audio läuft über PipeWire-Werkzeuge als Subprozess (parec/pw-record/arecord
-bzw. paplay/pw-play/aplay — das erste, das da ist; mit PipeWire schon an Bord).
+One static binary (pure Go, no cgo, no Python environment). Audio runs through
+PipeWire tools as subprocesses (parec/pw-record/arecord and paplay/pw-play/aplay
+— the first one available; with PipeWire they are already on board).
 
-## Bauen
+## Building
 
 ```bash
-./build.sh          # Release: EIN Binary, kaim56-tunnel eingebettet
-                    # (baut den Tunnel bei Bedarf zuerst, Docker)
-go build .          # Dev-Build ohne eingebetteten Tunnel — sucht ihn
-                    # neben dem Binary bzw. im PATH
+./build.sh          # release: ONE binary, kaim56-tunnel embedded
+                    # (builds the tunnel first if needed, Docker)
+go build .          # dev build without the embedded tunnel — looks for it
+                    # next to the binary or in the PATH
 ```
 
-## Topbar-Icon (StatusNotifier)
+## Top-bar icon (StatusNotifier)
 
-KDE kann es nativ. GNOME braucht die AppIndicator-Extension:
+KDE does it natively. GNOME needs the AppIndicator extension:
 
 ```bash
 sudo dnf install gnome-shell-extension-appindicator
-gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com   # dann ab-/anmelden
+gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com   # then log out and in
 ```
 
-## Einrichten (iroh — der normale Weg)
+## Setup (iroh — the normal route)
 
-Wie die App erreicht der Client den Manager über iroh (P2P, E2E-verschlüsselt,
-kein offener HTTPS-Port, kein VPN). Der Tunnel steckt im Binary: beim Start
-wird er nach `~/.cache/kaim56-voice/` ausgepackt und als Kindprozess gefahren —
-eine Datei kopieren genügt.
+Like the app, the client reaches the manager over iroh (P2P, end-to-end
+encrypted, no open HTTPS port, no VPN). The tunnel is inside the binary: at
+start it is unpacked to `~/.cache/kaim56-voice/` and run as a child process —
+copying one file is enough.
 
 ```bash
-./kaim56-voice                      # erster Lauf schreibt ~/.config/kaim56-voice.json
-$EDITOR ~/.config/kaim56-voice.json # "iroh": "<Manager-NodeId>" eintragen
-                                    # (steht im Web-UI im iroh-Tab)
-./kaim56-voice --probe "Wie spät ist es?"
+./kaim56-voice                      # the first run writes ~/.config/kaim56-voice.json
+$EDITOR ~/.config/kaim56-voice.json # set "iroh": "<manager NodeId>"
+                                    # (shown in the web UI, iroh tab)
+./kaim56-voice --probe "What time is it?"
 ```
 
-Der erste Start zeigt die eigene iroh-Identität an — die einmalig im Web-UI
-(iroh-Tab) zur Allowlist hinzufügen, wie beim Telefon. Der Schlüssel liegt
-stabil in `~/.config/kaim56-tunnel.key`. Danach:
+The first start prints its own iroh identity — add it once to the allowlist in
+the web UI (iroh tab), like for the phone. The key stays put in
+`~/.config/kaim56-tunnel.key`. After that:
 
 ```bash
-./kaim56-voice                      # Icon in der Topbar; Tunnel läuft als
-                                    # Kindprozess und stirbt mit dem Client
+./kaim56-voice                      # icon in the top bar; the tunnel runs as a
+                                    # child process and dies with the client
 ```
 
-Mit `"iroh"` gesetzt sind `base_url`, `user` und `pass` überflüssig
-(`iroh_listen` ändert bei Bedarf den lokalen Port, Default 127.0.0.1:8701).
+With `"iroh"` set, `base_url`, `user` and `pass` are unnecessary
+(`iroh_listen` changes the local port if needed, default 127.0.0.1:8701).
 
-## Alternative: direktes HTTP(S)
+## Alternative: direct HTTP(S)
 
-Ohne `"iroh"` gilt `base_url` + `user`/`pass` — z. B. `http://<manager>:8700`
-im LAN oder die öffentliche HTTPS-Adresse mit den Web-UI-Zugangsdaten. Der
-Template-Platzhalter `manager.example` wird beim Start abgewiesen, nicht erst
-beim ersten Satz.
+Without `"iroh"`, `base_url` + `user`/`pass` apply — e.g. `http://<manager>:8700`
+in the LAN or the public HTTPS address with the web UI credentials. The
+template placeholder `manager.example` is rejected at start, not at the first
+sentence.
 
-Autostart: `kaim56-voice.desktop` nach `~/.config/autostart/` kopieren und
-darin den Pfad zum Binary anpassen.
+Autostart: copy `kaim56-voice.desktop` to `~/.config/autostart/` and adjust
+the path to the binary in it.
 
-## Bedienung
+## Usage
 
-Alles hängt am Topbar-Menü: **Hören an/aus**, **Sprechen stoppen**,
-**Neues Gespräch** (`/reset` an den Agenten), **Instanz** (Liste kommt live
-vom Manager). Während der Client denkt oder spricht, ist das Mikrofon stumm —
-er hört sich sonst selbst zu.
+Everything hangs off the top-bar menu: **Listening on/off**, **Stop speaking**,
+**New conversation** (`/reset` to the agent), **Instance** (the list comes live
+from the manager). While the client thinks or speaks, the microphone is muted —
+otherwise it listens to itself.
 
-Ohne Topbar (SSH, Test): `--headless` loggt Zustände und Transkripte auf
-stdout (auch verworfene Äußerungen, als `(ignoriert: …)`), `--once`
-verarbeitet genau eine Äußerung und beendet sich, `--instance <name>`
-überstimmt die Config.
+Without a top bar (SSH, testing): `--headless` logs states and transcripts to
+stdout (dropped utterances too, as `(ignored: …)`), `--once` processes exactly
+one utterance and exits, `--instance <name>` overrides the config.
 
-## Custom-Prompt
+## Custom prompt
 
-`"prompt": "…"` in der Config wird jeder gesprochenen Nachricht vorangestellt
-(gekennzeichnet als `[Voice-Client] …`, der Agent sieht Anweisung und Satz
-getrennt). Template-Default: kurz und vorlesbar antworten, ohne Listen/Links.
-`--prompt "…"` überstimmt die Config für einen Lauf, `--prompt -` schaltet
-ihn ab. Leer = Nachricht geht unverändert raus.
+`"prompt": "…"` in the config is prepended to every spoken message (marked as
+`[Voice client] …`, the agent sees instruction and sentence separately). The
+template default: answer briefly and readably, without lists/links.
+`--prompt "…"` overrides the config for one run, `--prompt -` switches it off.
+Empty = the message goes out unchanged.
 
-## Hotword — zwei Stufen
+## Hotword — two stages
 
-**Stufe 1, Text-Gate** (Default): `"wake_word": "Kati, Katharina"` — eine
-Komma-Liste von Varianten; leer = jede Äußerung geht durch. Nur Transkripte,
-die mit einer Variante beginnen, erreichen den Agenten. Pro Variante ab
-4 Buchstaben ist ein Tippfehler erlaubt (Levenshtein 1; bei 3 nicht — sonst
-weckt „hat“ das Wort „Kat“), Wortgrenze bleibt Pflicht. Wortwahl an STT
-messen, nicht am Gefühl: Parakeet verstümmelt kurze Wörter („Kat“ → „Tat“,
-„Kaim“ → „Kein“); robust getestet sind **Kati, Katharina, Computer**.
-Audio geht dabei zur Transkription an den eigenen Server; Verworfenes wird
-nirgendwohin weitergeleitet.
+**Stage 1, text gate** (default): `"wake_word": "Kati, Katharina"` — a comma
+list of variants; empty = every utterance passes. Only transcripts that start
+with a variant reach the agent. Per variant of 4+ letters one typo is allowed
+(Levenshtein 1; not at 3 — otherwise "hat" wakes the word "Kat"), the word
+boundary stays mandatory. Measure the choice of word against STT, not by
+feel: Parakeet garbles short words ("Kat" → "Tat", "Kaim" → "Kein"); tested
+robust are **Kati, Katharina, Computer**. The audio goes to your own server
+for transcription; what is dropped is forwarded nowhere.
 
-**Stufe 2, lokales Modell** (`"wake_mode": "local"`): Audio verlässt den
-Desktop erst NACH dem Wort — für Telefonkonferenzen die richtige Stufe.
-Kein vortrainiertes Netz, sondern die eigene Stimme als Referenz
-(MFCC-Templates + Subsequenz-DTW, pures Go):
+**Stage 2, local model** (`"wake_mode": "local"`): audio leaves the desktop
+only AFTER the word — the right stage for conference calls. No pre-trained
+network, but your own voice as the reference (MFCC templates + subsequence
+DTW, pure Go):
 
 ```bash
-./kaim56-voice --enroll      # Wake-Word dreimal einsprechen -> Modell
-./kaim56-voice --wake-test   # Scores live ansehen, nichts wird gesendet
-# dann in der Config: "wake_mode": "local"
+./kaim56-voice --enroll      # say the wake word three times -> model
+./kaim56-voice --wake-test   # watch the scores live, nothing is sent
+# then in the config: "wake_mode": "local"
 ```
 
-Bei einem Treffer wird das Wort im Audio abgeschnitten (das DTW kennt das
-Alignment-Ende) und nur die Nachricht dahinter geht zu STT — das Wort kann
-also beliebig heißen, auch „Kaim“; STT sieht es nie. Sprecherabhängig:
-fremde Stimmen in der Telko matchen schlecht, genau richtig. Die Schwelle
-kommt aus dem Enrollment; `"wake_threshold"` überstimmt sie (kleiner =
-strenger), `--wake-test` zeigt, wo eigene Sätze landen. Ähnlich klingende
-Wörter („Kein …“ vs. „Kaim“) bleiben die Grenze des Verfahrens — im
-Zweifel ein markanteres Wort einsprechen. Das Wort allein quittiert ein
-gesprochenes „Ja?“; Modell liegt in `~/.config/kaim56-voice-wake.json`.
+On a hit the word is cut out of the audio (the DTW knows where the alignment
+ends) and only the message after it goes to STT — so the word can be
+anything, "Kaim" included; STT never sees it. Speaker-dependent: other voices
+in the call match poorly, exactly right. The threshold comes from the
+enrollment; `"wake_threshold"` overrides it (smaller = stricter), `--wake-test`
+shows where your own sentences land. Similar-sounding words ("Kein …" vs.
+"Kaim") remain the limit of the method — when in doubt, enroll a more
+distinctive word. The word alone is acknowledged with a spoken "Yes?"; the
+model lives in `~/.config/kaim56-voice-wake.json`.
 
-Verworfene Äußerungen sind sichtbar: Topbar-Status als ✕ (mit Score bzw.
-Transkript), `--headless` druckt sie als `(ignoriert/lokal verworfen: …)`.
+Dropped utterances are visible: the top-bar status shows ✕ (with the score or
+the transcript), `--headless` prints them as `(ignored/dropped locally: …)`.
 
-## Tunnel von Hand (curl, Browser, andere Clients)
+## The tunnel by hand (curl, browser, other clients)
 
-`kaim56-tunnel` ist nicht an den Sprachclient gebunden — von Hand gestartet
-legt er den Manager fuer JEDEN lokalen HTTP-Client auf einen Port:
+`kaim56-tunnel` is not tied to the voice client — started by hand it puts the
+manager on a local port for ANY HTTP client:
 
 ```bash
-./kaim56-tunnel --id                 # NodeId anzeigen -> Allowlist
-./kaim56-tunnel <manager-node-id> &  # lauscht auf 127.0.0.1:8701
+./kaim56-tunnel --id                 # show the NodeId -> allowlist
+./kaim56-tunnel <manager-node-id> &  # listens on 127.0.0.1:8701
 curl http://127.0.0.1:8701/api/instances
 ```
 
-## VAD einstellen
+## Tuning the VAD
 
-In der Config unter `vad`:
+In the config under `vad`:
 
-| Schlüssel          | Default | Bedeutung                                    |
-|--------------------|---------|----------------------------------------------|
-| `start_frames`     | 5       | stimmhafte 30-ms-Frames (von 8) bis Start    |
-| `end_ms`           | 800     | Stille, die eine Äußerung beendet            |
-| `min_ms`           | 400     | kürzere Segmente werden verworfen            |
-| `max_s`            | 30      | Zwangsschnitt bei Dauersprechen              |
-| `threshold_factor` | 3.0     | Schwelle = Rauschteppich × Faktor            |
-| `threshold_min`    | 350     | Untergrenze der Schwelle (RMS, s16)          |
+| Key                | Default | Meaning                                       |
+|--------------------|---------|-----------------------------------------------|
+| `start_frames`     | 5       | voiced 30 ms frames (out of 8) until start    |
+| `end_ms`           | 800     | silence that ends an utterance                |
+| `min_ms`           | 400     | shorter segments are dropped                  |
+| `max_s`            | 30      | forced cut during continuous speech           |
+| `threshold_factor` | 3.0     | threshold = noise floor × factor              |
+| `threshold_min`    | 350     | lower bound of the threshold (RMS, s16)       |
 
-Zu empfindlich (reagiert auf Tastatur): `threshold_factor` oder
-`threshold_min` erhöhen. Schneidet Satzenden ab: `end_ms` erhöhen.
+Too sensitive (reacts to the keyboard): raise `threshold_factor` or
+`threshold_min`. Cuts off sentence ends: raise `end_ms`.
 
 ## Tests
 
 ```bash
-go vet ./... && go test ./...   # VAD an synthetischem PCM, WAV-Header,
-                                # Vorlese-Filter, Config — ohne Mikrofon/Manager
+go vet ./... && go test ./...   # VAD on synthetic PCM, WAV header,
+                                # read-aloud filter, config — no microphone/manager
 ```

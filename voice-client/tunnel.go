@@ -14,18 +14,18 @@ import (
 	"time"
 )
 
-// Iroh-Transport: steht in der Config eine Gateway-NodeId ("iroh"), startet
-// der Client kaim56-tunnel selbst als Kindprozess und redet mit dessen
-// lokalem Port — derselbe Weg, den die App nimmt, nur dass die App den
-// Rust-Stack eingebettet hat und wir ihn als Nachbarprozess fahren (der
-// Go-Client bleibt cgo-frei). Stirbt der Client, stirbt der Tunnel mit
-// (Pdeathsig); die Tunnel-Identitaet liegt in ~/.config/kaim56-tunnel.key
-// und muss einmalig in die Gateway-Allowlist (Web-UI, iroh-Tab).
+// iroh transport: when the config holds a gateway NodeId ("iroh"), the client
+// starts kaim56-tunnel itself as a child process and talks to its local port
+// — the same route the app takes, except that the app embeds the Rust stack
+// and we run it as a neighbouring process (the Go client stays cgo-free). If
+// the client dies, the tunnel dies with it (Pdeathsig); the tunnel identity
+// lives in ~/.config/kaim56-tunnel.key and must be added once to the gateway
+// allowlist (web UI, iroh tab).
 
-// materializeTunnel legt eingebettete Tunnel-Bytes als ausfuehrbare Datei in
-// den Cache — Dateiname traegt den Hash, ein neues Release ersetzt sich also
-// selbst und alte Versionen kollidieren nicht. Schreiben via Tempfile+Rename,
-// damit ein paralleler Start keine halbe Datei ausfuehrt.
+// materializeTunnel writes the embedded tunnel bytes as an executable file
+// into the cache — the file name carries the hash, so a new release replaces
+// itself and old versions do not collide. Written via temp file + rename so a
+// parallel start never executes a half-written file.
 func materializeTunnel(data []byte, dir string) (string, error) {
 	sum := sha256.Sum256(data)
 	path := filepath.Join(dir, fmt.Sprintf("kaim56-tunnel-%x", sum[:6]))
@@ -54,8 +54,8 @@ func materializeTunnel(data []byte, dir string) (string, error) {
 	return path, nil
 }
 
-// findTunnel: erst der eingebettete Tunnel (Release-Build, versionsgleich),
-// sonst neben dem eigenen Binary, dann im PATH.
+// findTunnel: the embedded tunnel first (release build, same version),
+// otherwise next to our own binary, then in the PATH.
 func findTunnel() string {
 	if len(embeddedTunnel) > 0 {
 		cache, err := os.UserCacheDir()
@@ -65,7 +65,7 @@ func findTunnel() string {
 		if p, err := materializeTunnel(embeddedTunnel, filepath.Join(cache, "kaim56-voice")); err == nil {
 			return p
 		}
-		fmt.Fprintln(os.Stderr, "[kaim56-voice] eingebetteter Tunnel nicht auspackbar, suche extern")
+		fmt.Fprintln(os.Stderr, "[kaim56-voice] embedded tunnel could not be unpacked, looking for an external one")
 	}
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), "kaim56-tunnel")
@@ -79,25 +79,25 @@ func findTunnel() string {
 	return ""
 }
 
-// startTunnel startet den Tunnel und wartet, bis der lokale Port annimmt.
-// Liefert die base_url und eine Aufraeum-Funktion.
+// startTunnel starts the tunnel and waits until the local port accepts.
+// Returns the base_url and a cleanup function.
 func startTunnel(nodeID, listen string) (string, func(), error) {
 	exe := findTunnel()
 	if exe == "" {
-		return "", nil, fmt.Errorf("kaim56-tunnel nicht gefunden — neben " +
-			"kaim56-voice legen oder in den PATH (Binary aus iroh-gw/, siehe README)")
+		return "", nil, fmt.Errorf("kaim56-tunnel not found — put it next to " +
+			"kaim56-voice or into the PATH (binary from iroh-gw/, see README)")
 	}
-	// Identitaet zeigen: ohne Allowlist-Eintrag kommt sonst nur "unreachable".
+	// Show the identity: without an allowlist entry all you get is "unreachable".
 	if out, err := exec.Command(exe, "--id").Output(); err == nil {
-		fmt.Fprintf(os.Stderr, "[kaim56-voice] iroh-Identität: %s "+
-			"(muss in der Gateway-Allowlist stehen — Web-UI, iroh-Tab)\n",
+		fmt.Fprintf(os.Stderr, "[kaim56-voice] iroh identity: %s "+
+			"(must be in the gateway allowlist — web UI, iroh tab)\n",
 			strings.TrimSpace(string(out)))
 	}
 	cmd := exec.Command(exe, nodeID, listen)
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	if err := cmd.Start(); err != nil {
-		return "", nil, fmt.Errorf("tunnel starten: %w", err)
+		return "", nil, fmt.Errorf("starting the tunnel: %w", err)
 	}
 	stop := func() {
 		if cmd.Process != nil {
@@ -105,7 +105,7 @@ func startTunnel(nodeID, listen string) (string, func(), error) {
 			cmd.Wait()
 		}
 	}
-	for i := 0; i < 75; i++ { // iroh-Endpoint braucht ein paar Sekunden
+	for i := 0; i < 75; i++ { // the iroh endpoint needs a few seconds
 		if c, err := net.DialTimeout("tcp", listen, time.Second); err == nil {
 			c.Close()
 			return "http://" + listen, stop, nil
@@ -113,5 +113,5 @@ func startTunnel(nodeID, listen string) (string, func(), error) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	stop()
-	return "", nil, fmt.Errorf("tunnel kam auf %s nicht hoch", listen)
+	return "", nil, fmt.Errorf("tunnel did not come up on %s", listen)
 }

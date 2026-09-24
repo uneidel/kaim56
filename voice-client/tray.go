@@ -12,18 +12,18 @@ import (
 	"fyne.io/systray"
 )
 
-// Topbar-Icon ueber StatusNotifierItem (DBus, pures Go — kein GTK/cgo).
-// GNOME braucht dafuer die AppIndicator-Extension, KDE kann es nativ; genau
-// wie bei jedem anderen Tray-Programm.
+// Top-bar icon via StatusNotifierItem (DBus, pure Go — no GTK/cgo).
+// GNOME needs the AppIndicator extension for it, KDE does it natively; exactly
+// like any other tray program.
 
-// stateIcon malt ein 22x22-PNG: gefuellter Kreis in der Zustandsfarbe mit
-// dunklem Rand. Kein Asset noetig, und der Zustand ist auf einen Blick da.
+// stateIcon draws a 22x22 PNG: a filled circle in the state colour with a
+// dark rim. No asset needed, and the state is visible at a glance.
 func stateIcon(state string) []byte {
 	fill := map[string]color.RGBA{
-		"hört":    {0x4c, 0xaf, 0x50, 0xff}, // gruen
-		"denkt":   {0xff, 0xb3, 0x00, 0xff}, // bernstein
-		"spricht": {0x42, 0xa5, 0xf5, 0xff}, // blau
-		"aus":     {0x9e, 0x9e, 0x9e, 0xff}, // grau
+		stateListening: {0x4c, 0xaf, 0x50, 0xff}, // green
+		stateThinking:  {0xff, 0xb3, 0x00, 0xff}, // amber
+		stateSpeaking:  {0x42, 0xa5, 0xf5, 0xff}, // blue
+		stateOff:       {0x9e, 0x9e, 0x9e, 0xff}, // grey
 	}[state]
 	if fill.A == 0 {
 		fill = color.RGBA{0x9e, 0x9e, 0x9e, 0xff}
@@ -47,26 +47,26 @@ func stateIcon(state string) []byte {
 	return buf.Bytes()
 }
 
-// runTray blockiert bis "Beenden". done wird geschlossen, wenn die
-// Audioschleife stirbt, damit das Icon nicht als Leiche haengenbleibt.
+// runTray blocks until "Quit". done is closed when the audio loop dies, so
+// the icon does not linger as a corpse.
 func runTray(c *VoiceClient, done <-chan struct{}) {
 	systray.Run(func() { trayReady(c, done) }, func() { c.Quit() })
 }
 
 func trayReady(c *VoiceClient, done <-chan struct{}) {
-	systray.SetIcon(stateIcon("hört"))
+	systray.SetIcon(stateIcon(stateListening))
 	systray.SetTitle("")
 	systray.SetTooltip("kAIm56 Voice")
 
 	status := systray.AddMenuItem("…", "")
 	status.Disable()
 	systray.AddSeparator()
-	toggle := systray.AddMenuItem("Hören aus", "")
-	stop := systray.AddMenuItem("Sprechen stoppen", "")
-	fresh := systray.AddMenuItem("Neues Gespräch (/reset)", "Schickt /reset an den Agenten")
-	instRoot := systray.AddMenuItem("Instanz", "Zielinstanz waehlen")
+	toggle := systray.AddMenuItem("Listening off", "")
+	stop := systray.AddMenuItem("Stop speaking", "")
+	fresh := systray.AddMenuItem("New conversation (/reset)", "Sends /reset to the agent")
+	instRoot := systray.AddMenuItem("Instance", "Choose the target instance")
 	systray.AddSeparator()
-	quit := systray.AddMenuItem("Beenden", "")
+	quit := systray.AddMenuItem("Quit", "")
 
 	refresh := func() {
 		state, inst, heard, listening := c.State()
@@ -76,24 +76,24 @@ func trayReady(c *VoiceClient, done <-chan struct{}) {
 			if len(r) > 40 {
 				r = r[:40]
 			}
-			label += fmt.Sprintf("  „%s“", string(r))
+			label += fmt.Sprintf("  “%s”", string(r))
 		}
 		status.SetTitle(label)
-		instRoot.SetTitle("Instanz: " + inst)
+		instRoot.SetTitle("Instance: " + inst)
 		if listening {
-			toggle.SetTitle("Hören aus")
+			toggle.SetTitle("Listening off")
 		} else {
-			toggle.SetTitle("Hören an")
+			toggle.SetTitle("Listening on")
 		}
 		systray.SetIcon(stateIcon(state))
 		systray.SetTooltip("kAIm56 Voice — " + label)
 	}
 	c.OnState = refresh
 
-	// Instanzliste einmal beim Start; Radio-Verhalten von Hand.
+	// The instance list once at start; radio behaviour by hand.
 	names, err := c.mgr.Instances()
 	if err != nil {
-		c.notify("Instanzliste fehlgeschlagen", err.Error())
+		c.notify("Instance list failed", err.Error())
 	}
 	if len(names) == 0 {
 		_, inst, _, _ := c.State()

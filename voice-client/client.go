@@ -15,18 +15,18 @@ import (
 )
 
 // ---- Config ----------------------------------------------------------------
-// Dieselbe Datei wie die fruehere Python-Fassung: ~/.config/kaim56-voice.json.
+// The same file as the earlier Python version: ~/.config/kaim56-voice.json.
 type Config struct {
-	Iroh       string    `json:"iroh"`     // Gateway-NodeId: Client startet kaim56-tunnel selbst
-	IrohListen string    `json:"iroh_listen,omitempty"` // lokaler Tunnel-Port
-	BaseURL    string    `json:"base_url"` // Alternative: direkter HTTP(S)-Weg
+	Iroh       string    `json:"iroh"`                  // gateway NodeId: the client starts kaim56-tunnel itself
+	IrohListen string    `json:"iroh_listen,omitempty"` // local tunnel port
+	BaseURL    string    `json:"base_url"`              // alternative: direct HTTP(S) route
 	User       string    `json:"user"`
 	Pass       string    `json:"pass"`
 	Instance   string    `json:"instance"`
-	Prompt     string    `json:"prompt,omitempty"`         // wird jeder gesprochenen Nachricht vorangestellt
-	WakeWord   string    `json:"wake_word"`                // leer = jede Aeusserung geht durch
-	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW-Gate VOR dem Upload
-	WakeThresh float64   `json:"wake_threshold,omitempty"` // Override; 0 = aus dem Enrollment
+	Prompt     string    `json:"prompt,omitempty"`         // prepended to every spoken message
+	WakeWord   string    `json:"wake_word"`                // empty = every utterance passes
+	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW gate BEFORE the upload
+	WakeThresh float64   `json:"wake_threshold,omitempty"` // override; 0 = from the enrollment
 	Vad        VadConfig `json:"vad"`
 }
 
@@ -35,9 +35,9 @@ func configPath() string {
 	return filepath.Join(home, ".config", "kaim56-voice.json")
 }
 
-// loadConfig liest die Config; fehlende VAD-Schluessel behalten die Defaults
-// (die Struktur ist mit ihnen vorbelegt, Unmarshal ueberschreibt nur, was in
-// der Datei steht).
+// loadConfig reads the config; missing VAD keys keep their defaults (the
+// struct is pre-filled with them, Unmarshal only overwrites what the file
+// contains).
 func loadConfig(path string) (Config, error) {
 	cfg := Config{Instance: "myassistant", Vad: defaultVadConfig()}
 	b, err := os.ReadFile(path)
@@ -47,19 +47,19 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}
-	// Ein Transport muss echt konfiguriert sein: entweder iroh (Gateway-
-	// NodeId) oder eine base_url, die nicht mehr der Template-Platzhalter
-	// ist. Mit dem Platzhalter loszulaufen hiesse "manager.example" waehlen
-	// und den Fehler erst beim ersten Satz zeigen.
+	// One transport must really be configured: either iroh (gateway NodeId)
+	// or a base_url that is no longer the template placeholder. Starting with
+	// the placeholder would mean resolving "manager.example" and showing the
+	// error only at the first sentence.
 	if cfg.Iroh == "" {
 		if cfg.BaseURL == "" || strings.Contains(cfg.BaseURL, "manager.example") {
-			return cfg, fmt.Errorf("config %s: bitte 'iroh' (Manager-NodeId aus dem "+
-				"Web-UI, iroh-Tab) ODER eine echte 'base_url' eintragen — "+
-				"'%s' ist noch der Platzhalter", path, cfg.BaseURL)
+			return cfg, fmt.Errorf("config %s: please set 'iroh' (the manager NodeId from the "+
+				"web UI, iroh tab) OR a real 'base_url' — "+
+				"'%s' is still the placeholder", path, cfg.BaseURL)
 		}
 		if cfg.User == "" || cfg.Pass == "" {
-			return cfg, fmt.Errorf("config %s: 'user'/'pass' fehlen (noetig fuer "+
-				"den HTTP(S)-Weg; der iroh-Weg braucht sie nicht)", path)
+			return cfg, fmt.Errorf("config %s: 'user'/'pass' are missing (required for "+
+				"the HTTP(S) route; the iroh route does not need them)", path)
 		}
 	}
 	if cfg.IrohListen == "" {
@@ -73,18 +73,18 @@ func loadConfig(path string) (Config, error) {
 
 func writeConfigTemplate(path string) error {
 	tpl := Config{Iroh: "", BaseURL: "http://manager.example:8700",
-		User: "admin", Pass: "geheim", Instance: "myassistant",
-		Prompt: "Du wirst über einen Sprachclient bedient: antworte kurz und " +
-			"in vorlesbarer Prosa, ohne Listen, Links oder Code.",
+		User: "admin", Pass: "secret", Instance: "myassistant",
+		Prompt: "You are being used through a voice client: answer briefly and " +
+			"in prose that reads aloud well, without lists, links or code.",
 		WakeWord: "Kati, Katharina", Vad: defaultVadConfig()}
 	b, _ := json.MarshalIndent(tpl, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600) // da steht ein Passwort drin
+	return os.WriteFile(path, b, 0o600) // it contains a password
 }
 
-// ---- Audio-Subprozesse -----------------------------------------------------
+// ---- Audio subprocesses ----------------------------------------------------
 var recorders = [][]string{
 	{"parec", "--rate=16000", "--channels=1", "--format=s16le", "--latency-msec=30"},
 	{"pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", "-"},
@@ -101,17 +101,27 @@ func pickCmd(candidates [][]string) []string {
 	return nil
 }
 
-// ---- Der Client ------------------------------------------------------------
-// Zustaende: aus | hört | denkt | spricht. Der Audioleser laeuft immer;
-// ausserhalb von "hört" werden Frames nur verworfen (kein Nachlauf alter
-// Sprache, und der Client hoert sich beim Sprechen nicht selbst zu).
+// ---- The client ------------------------------------------------------------
+// States: off | listening | thinking | speaking. The audio reader always
+// runs; outside "listening" frames are just discarded (no tail of old speech,
+// and the client does not listen to itself while speaking).
+const (
+	stateListening = "listening"
+	stateThinking  = "thinking"
+	stateSpeaking  = "speaking"
+	stateOff       = "off"
+)
+
+// ackWord is spoken when only the wake word was heard, without a message.
+const ackWord = "Yes?"
+
 type VoiceClient struct {
 	mu        sync.Mutex
 	mgr       *Manager
 	vad       *Vad
 	wakeWord  string
-	wakeModel *WakeModel // nil = kein lokales Gate
-	prompt    string     // Praefix fuer jede gesprochene Nachricht
+	wakeModel *WakeModel // nil = no local gate
+	prompt    string     // prefix for every spoken message
 	instance  string
 	chatID    string
 	listening bool
@@ -121,7 +131,7 @@ type VoiceClient struct {
 	stopped   chan struct{}
 	stopOnce  sync.Once
 	playCmd   *exec.Cmd
-	OnState   func() // Tray haengt sich hier ein
+	OnState   func() // the tray hooks in here
 }
 
 func NewVoiceClient(cfg Config, headless bool) *VoiceClient {
@@ -133,7 +143,7 @@ func NewVoiceClient(cfg Config, headless bool) *VoiceClient {
 		instance:  cfg.Instance,
 		chatID:    fmt.Sprintf("voice-%d", time.Now().Unix()),
 		listening: true,
-		state:     "hört",
+		state:     stateListening,
 		headless:  headless,
 		stopped:   make(chan struct{}),
 		OnState:   func() {},
@@ -163,11 +173,11 @@ func (c *VoiceClient) notify(title, msg string) {
 	fmt.Fprintf(os.Stderr, "[kaim56-voice] %s: %s\n", title, msg)
 }
 
-// Run ist die Hauptschleife: Frames lesen, VAD fuettern, Segmente verarbeiten.
+// Run is the main loop: read frames, feed the VAD, process segments.
 func (c *VoiceClient) Run(once bool) error {
 	cmd := pickCmd(recorders)
 	if cmd == nil {
-		return fmt.Errorf("kein Aufnahmewerkzeug: parec, pw-record oder arecord installieren")
+		return fmt.Errorf("no recording tool: install parec, pw-record or arecord")
 	}
 	rec := exec.Command(cmd[0], cmd[1:]...)
 	out, err := rec.StdoutPipe()
@@ -191,11 +201,11 @@ func (c *VoiceClient) Run(once bool) error {
 			case <-c.stopped:
 				return nil
 			default:
-				return fmt.Errorf("Aufnahme abgerissen (%s): %w", cmd[0], err)
+				return fmt.Errorf("recording broke off (%s): %w", cmd[0], err)
 			}
 		}
 		c.mu.Lock()
-		active := c.listening && c.state == "hört"
+		active := c.listening && c.state == stateListening
 		c.mu.Unlock()
 		if !active {
 			c.vad.Reset()
@@ -213,41 +223,40 @@ func (c *VoiceClient) Run(once bool) error {
 }
 
 func (c *VoiceClient) handleUtterance(pcm []byte) {
-	c.setState("denkt")
+	c.setState(stateThinking)
 	defer func() {
 		c.mu.Lock()
 		listening := c.listening
 		c.mu.Unlock()
 		if listening {
-			c.setState("hört")
+			c.setState(stateListening)
 		} else {
-			c.setState("aus")
+			c.setState(stateOff)
 		}
 	}()
-	// Lokales Wake-Gate zuerst: KEIN Byte verlaesst den Desktop, wenn der
-	// Aeusserungsanfang nicht wie das eingesprochene Wort klingt. Bei einem
-	// Treffer wird das Wort im AUDIO abgeschnitten (DTW kennt das Alignment-
-	// Ende) — STT bekommt nur die Nachricht und kann das Wort nicht mehr
-	// verstuemmeln oder verschlucken.
+	// Local wake gate first: NOT a single byte leaves the desktop when the
+	// start of the utterance does not sound like the enrolled word. On a hit
+	// the word is cut out of the AUDIO (DTW knows where the alignment ends) —
+	// STT gets only the message and can no longer garble or swallow the word.
 	if c.wakeModel != nil {
 		score, cut, hit := c.wakeModel.Match(pcm)
 		if !hit {
 			c.mu.Lock()
-			c.lastHeard = fmt.Sprintf("✕ wake %.2f (Schwelle %.2f)", score, c.wakeModel.Threshold)
+			c.lastHeard = fmt.Sprintf("✕ wake %.2f (threshold %.2f)", score, c.wakeModel.Threshold)
 			c.mu.Unlock()
 			if c.headless {
-				fmt.Printf("  (lokal verworfen: Score %.3f, Schwelle %.3f)\n",
+				fmt.Printf("  (dropped locally: score %.3f, threshold %.3f)\n",
 					score, c.wakeModel.Threshold)
 			}
 			return
 		}
 		if c.headless {
-			fmt.Printf("  (wake: Score %.3f)\n", score)
+			fmt.Printf("  (wake: score %.3f)\n", score)
 		}
 		pcm = pcm[cut:]
-		if len(pcm) < sampleRate/5*2 { // < 200 ms Rest: nur das Wort -> "Ja?"
-			if err := c.Speak("Ja?"); err != nil {
-				c.notify("Wiedergabe fehlgeschlagen", err.Error())
+		if len(pcm) < sampleRate/5*2 { // < 200 ms left: only the word -> "Yes?"
+			if err := c.Speak(ackWord); err != nil {
+				c.notify("Playback failed", err.Error())
 			}
 			return
 		}
@@ -255,41 +264,41 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	tSTT := time.Now()
 	text, err := c.mgr.STT(wavWrap(pcm))
 	if err != nil {
-		c.notify("STT fehlgeschlagen", err.Error())
+		c.notify("STT failed", err.Error())
 		return
 	}
 	if c.headless {
 		fmt.Printf("  (stt: %.1f s)\n", time.Since(tSTT).Seconds())
 	}
 	if len([]rune(text)) < 2 {
-		if c.wakeModel != nil { // geweckt, aber kein verwertbarer Satz
-			if err := c.Speak("Ja?"); err != nil {
-				c.notify("Wiedergabe fehlgeschlagen", err.Error())
+		if c.wakeModel != nil { // woken, but no usable sentence
+			if err := c.Speak(ackWord); err != nil {
+				c.notify("Playback failed", err.Error())
 			}
 		}
 		return
 	}
-	// Text-Gate (nur ohne lokales Modell): in Telefonkonferenzen hoert das
-	// Mikro dauernd Sprache — nur was den Agenten anspricht, erreicht ihn
-	// auch. Das Wort allein ("Kati?") bekommt ein kurzes "Ja?".
+	// Text gate (only without a local model): in conference calls the
+	// microphone hears speech all the time — only what addresses the agent
+	// reaches it. The word alone ("Kati?") gets a short "Yes?".
 	msg, ok := text, true
 	if c.wakeModel == nil {
 		msg, ok = wakeMatch(text, c.wakeWord)
 	}
 	if !ok {
-		// Sichtbar verwerfen: sonst ist "hoert, aber reagiert nicht" vom
-		// Kalibrierproblem nicht zu unterscheiden (Tray zeigt es als ✕).
+		// Drop visibly: otherwise "hears but does not react" cannot be told
+		// apart from a calibration problem (the tray shows it as ✕).
 		c.mu.Lock()
 		c.lastHeard = "✕ " + text
 		c.mu.Unlock()
 		if c.headless {
-			fmt.Printf("  (ignoriert: %s)\n", text)
+			fmt.Printf("  (ignored: %s)\n", text)
 		}
 		return
 	}
 	if msg == "" {
-		if err := c.Speak("Ja?"); err != nil {
-			c.notify("Wiedergabe fehlgeschlagen", err.Error())
+		if err := c.Speak(ackWord); err != nil {
+			c.notify("Playback failed", err.Error())
 		}
 		return
 	}
@@ -301,35 +310,36 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	if c.headless {
 		fmt.Printf("  > %s\n", text)
 	}
-	// Satzweises Streaming: der erste fertige Satz wird gesprochen, waehrend
-	// das Modell noch schreibt — die gefuehlte Latenz haengt am ERSTEN Satz,
-	// nicht an der Gesamtlaenge der Antwort (gemini-pro denkt gern lange).
+	// Sentence-wise streaming: the first complete sentence is spoken while
+	// the model is still writing — the perceived latency depends on the FIRST
+	// sentence, not on the total length of the reply (gemini-pro likes to
+	// think for a long time).
 	tChat := time.Now()
 	var speakErr error
 	spoke := false
 	ss := newSentenceStreamer(func(chunk string) {
 		if c.headless {
 			if !spoke {
-				fmt.Printf("  (erster Satz: %.1f s)\n", time.Since(tChat).Seconds())
+				fmt.Printf("  (first sentence: %.1f s)\n", time.Since(tChat).Seconds())
 			}
 			fmt.Printf("  < %s\n", chunk)
 		}
 		spoke = true
 		if err := c.Speak(chunk); err != nil && speakErr == nil {
 			speakErr = err
-			c.notify("Wiedergabe fehlgeschlagen", err.Error())
+			c.notify("Playback failed", err.Error())
 		}
 	})
 	_, err = c.mgr.ChatStream(inst, withPrompt(c.prompt, text), chatID, ss.Feed)
 	ss.Close()
 	if err != nil {
-		c.notify("Chat fehlgeschlagen", err.Error())
+		c.notify("Chat failed", err.Error())
 	}
 }
 
-// Speak synthetisiert und spielt ab. Ueber Tempfile statt stdin: paplay und
-// aplay lesen WAV-Header aus Dateien zuverlaessig, und "Stopp" ist ein
-// schlichtes Kill des Players.
+// Speak synthesizes and plays. Via a temp file instead of stdin: paplay and
+// aplay read WAV headers from files reliably, and "stop" is a plain kill of
+// the player.
 func (c *VoiceClient) Speak(text string) error {
 	if text == "" {
 		return nil
@@ -340,7 +350,7 @@ func (c *VoiceClient) Speak(text string) error {
 	}
 	cmd := pickCmd(players)
 	if cmd == nil {
-		return fmt.Errorf("kein Abspielwerkzeug: paplay, pw-play oder aplay installieren")
+		return fmt.Errorf("no playback tool: install paplay, pw-play or aplay")
 	}
 	f, err := os.CreateTemp("", "kaim56-voice-*.wav")
 	if err != nil {
@@ -349,7 +359,7 @@ func (c *VoiceClient) Speak(text string) error {
 	defer os.Remove(f.Name())
 	f.Write(wav)
 	f.Close()
-	c.setState("spricht")
+	c.setState(stateSpeaking)
 	play := exec.Command(cmd[0], append(cmd[1:], f.Name())...)
 	c.mu.Lock()
 	c.playCmd = play
@@ -361,13 +371,13 @@ func (c *VoiceClient) Speak(text string) error {
 	return err
 }
 
-// captureSegments nimmt n VAD-Aeusserungen auf (fuer Enrollment und
-// Wake-Test) — eigene VAD-Instanz mit kurzer Mindestdauer, ein einzelnes
-// Wort ist ja kuerzer als ein Satz.
+// captureSegments records n VAD utterances (for enrollment and the wake
+// test) — its own VAD instance with a short minimum duration, a single word
+// is shorter than a sentence after all.
 func captureSegments(vadCfg VadConfig, n int, prompt func(i int), got func(i int, pcm []byte)) error {
 	cmd := pickCmd(recorders)
 	if cmd == nil {
-		return fmt.Errorf("kein Aufnahmewerkzeug: parec, pw-record oder arecord installieren")
+		return fmt.Errorf("no recording tool: install parec, pw-record or arecord")
 	}
 	vadCfg.MinMs = 250
 	vadCfg.EndMs = 600
@@ -387,7 +397,7 @@ func captureSegments(vadCfg VadConfig, n int, prompt func(i int), got func(i int
 		vad.Reset()
 		for {
 			if _, err := io.ReadFull(out, frame); err != nil {
-				return fmt.Errorf("Aufnahme abgerissen: %w", err)
+				return fmt.Errorf("recording broke off: %w", err)
 			}
 			if seg := vad.Feed(frame); seg != nil {
 				got(i, seg)
@@ -399,7 +409,7 @@ func captureSegments(vadCfg VadConfig, n int, prompt func(i int), got func(i int
 	return nil
 }
 
-// ---- Menue-Aktionen --------------------------------------------------------
+// ---- Menu actions ----------------------------------------------------------
 func (c *VoiceClient) ToggleListening() {
 	c.mu.Lock()
 	c.listening = !c.listening
@@ -407,9 +417,9 @@ func (c *VoiceClient) ToggleListening() {
 	c.mu.Unlock()
 	c.vad.Reset()
 	if on {
-		c.setState("hört")
+		c.setState(stateListening)
 	} else {
-		c.setState("aus")
+		c.setState(stateOff)
 	}
 }
 
@@ -422,8 +432,8 @@ func (c *VoiceClient) StopSpeaking() {
 	}
 }
 
-// NewConversation vergibt eine frische Chat-ID und schickt /reset — der
-// Verlauf lebt im Agenten, nicht hier.
+// NewConversation assigns a fresh chat ID and sends /reset — the history
+// lives in the agent, not here.
 func (c *VoiceClient) NewConversation() {
 	c.mu.Lock()
 	c.chatID = fmt.Sprintf("voice-%d", time.Now().Unix())
@@ -431,7 +441,7 @@ func (c *VoiceClient) NewConversation() {
 	c.mu.Unlock()
 	go func() {
 		if _, err := c.mgr.Chat(inst, "/reset", chatID); err != nil {
-			c.notify("/reset fehlgeschlagen", err.Error())
+			c.notify("/reset failed", err.Error())
 		}
 	}()
 }

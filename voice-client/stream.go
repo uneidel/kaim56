@@ -4,12 +4,12 @@ package main
 
 import "strings"
 
-// sentenceStreamer zerlegt einen Token-Strom in sprechfertige Stuecke: sobald
-// ein Satzende vorliegt, wird der Satz emittiert — die TTS beginnt also beim
-// ersten Satz, waehrend das Modell noch schreibt. Denk-Bloecke und Codefences
-// werden erst emittiert, wenn sie geschlossen sind (speakable() wirft sie dann
-// weg bzw. ersetzt sie); ein offener Block haelt nur zurueck, nie fuer immer —
-// Close() spuelt den Rest.
+// sentenceStreamer splits a token stream into speakable pieces: as soon as a
+// sentence end is present, the sentence is emitted — so TTS starts at the
+// first sentence while the model is still writing. Thinking blocks and code
+// fences are emitted only once they are closed (speakable() then drops or
+// replaces them); an open block only holds back, never forever — Close()
+// flushes the rest.
 type sentenceStreamer struct {
 	acc     []rune
 	emitted int
@@ -40,7 +40,7 @@ func (s *sentenceStreamer) tryEmit(final bool) {
 			return
 		}
 		if !final {
-			// Offene Denk-/Codebloecke: zurueckhalten, bis sie zu sind.
+			// Open thinking/code blocks: hold back until they are closed.
 			if countOccur(tail, "⟦think⟧") > countOccur(tail, "⟦/think⟧") {
 				return
 			}
@@ -53,7 +53,7 @@ func (s *sentenceStreamer) tryEmit(final bool) {
 			cut = len([]rune(tail))
 		} else {
 			r := []rune(tail)
-			for i := 0; i < len(r)-1; i++ { // letztes Zeichen: Satz evtl. unfertig
+			for i := 0; i < len(r)-1; i++ { // last rune: the sentence may be unfinished
 				if strings.ContainsRune(".!?…:", r[i]) &&
 					(r[i+1] == ' ' || r[i+1] == '\n') {
 					cut = i + 1

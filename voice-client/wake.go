@@ -7,22 +7,22 @@ import (
 	"unicode"
 )
 
-// Wake-Word-Gate. Kein Modell auf dem Desktop: STT laeuft ohnehin fuer jede
-// Aeusserung auf dem eigenen Server, das Gate ist ein Textvergleich danach.
+// Wake-word gate. No model on the desktop: STT runs on our own server for
+// every utterance anyway, the gate is a text comparison afterwards.
 //
-// Die Realitaet dahinter (gemessen mit Piper->Parakeet): kurze Wake-Woerter
-// werden von STT verstuemmelt — "Kat" kam als "Tat", "Card" oder GAR NICHT
-// zurueck; "Kati"/"Katharina"/"Computer" dagegen fehlerfrei. Deshalb:
-//   - wake_word darf eine KOMMA-LISTE von Varianten sein ("Kati, Kat"),
-//   - pro Variante ab 4 Buchstaben ist EIN Tippfehler erlaubt (Levenshtein 1;
-//     bei 3 Buchstaben nicht — sonst weckt "hat" das Wort "Kat"),
-//   - Wortgrenze bleibt Pflicht: "Katalog" weckt "Kat" nicht.
+// The reality behind it (measured with Piper -> Parakeet): short wake words
+// get garbled by STT — "Kat" came back as "Tat", "Card" or NOT AT ALL;
+// "Kati"/"Katharina"/"Computer" on the other hand flawlessly. Therefore:
+//   - wake_word may be a COMMA LIST of variants ("Kati, Kat"),
+//   - per variant of 4+ letters ONE typo is allowed (Levenshtein 1; not at
+//     3 letters — otherwise "hat" wakes the word "Kat"),
+//   - the word boundary stays mandatory: "Katalog" does not wake "Kat".
 
 func notWordRune(r rune) bool {
 	return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 }
 
-// levenshtein fuer kurze Woerter (Wake-Word vs. erstes Transkriptwort).
+// levenshtein for short words (wake word vs. the first transcript word).
 func levenshtein(a, b []rune) int {
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)
@@ -43,15 +43,15 @@ func levenshtein(a, b []rune) int {
 	return prev[len(b)]
 }
 
-// wakeMatch prueft, ob das Transkript mit einer der Wake-Word-Varianten
-// beginnt, und liefert den Rest (die eigentliche Nachricht) ohne das Wort
-// und ohne Trennzeichen.
+// wakeMatch checks whether the transcript starts with one of the wake-word
+// variants and returns the rest (the actual message) without the word and
+// without separators.
 func wakeMatch(text, word string) (string, bool) {
 	if strings.TrimSpace(word) == "" {
-		return text, true // kein Wake-Word konfiguriert -> alles geht durch
+		return text, true // no wake word configured -> everything passes
 	}
 	t := []rune(strings.TrimLeftFunc(text, notWordRune))
-	// Erstes Wort des Transkripts abtrennen.
+	// Split off the first word of the transcript.
 	end := len(t)
 	for i, r := range t {
 		if notWordRune(r) {
@@ -65,14 +65,14 @@ func wakeMatch(text, word string) (string, bool) {
 		if len(w) == 0 {
 			continue
 		}
-		// Exakter Praefix mit Wortgrenze (auch mehrteilige Varianten).
+		// Exact prefix with a word boundary (multi-part variants too).
 		if len(t) >= len(w) && strings.EqualFold(string(t[:len(w)]), string(w)) {
 			rest := t[len(w):]
 			if len(rest) == 0 || notWordRune(rest[0]) {
 				return strings.TrimLeftFunc(string(rest), notWordRune), true
 			}
 		}
-		// Fuzzy nur gegen das erste Wort und nur ab 4 Buchstaben.
+		// Fuzzy only against the first word and only from 4 letters on.
 		if len(w) >= 4 && first != "" &&
 			levenshtein([]rune(first), []rune(strings.ToLower(string(w)))) <= 1 {
 			return strings.TrimLeftFunc(string(t[end:]), notWordRune), true
@@ -81,13 +81,12 @@ func wakeMatch(text, word string) (string, bool) {
 	return "", false
 }
 
-// withPrompt stellt den konfigurierten Prompt vor die gesprochene Nachricht —
-// gekennzeichnet, damit der Agent Anweisung und Nutzersatz auseinanderhaelt.
+// withPrompt puts the configured prompt in front of the spoken message —
+// marked, so the agent keeps instruction and user sentence apart.
 func withPrompt(prompt, text string) string {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return text
 	}
-	return "[Voice-Client] " + prompt + "\n\n" + text
+	return "[Voice client] " + prompt + "\n\n" + text
 }
-

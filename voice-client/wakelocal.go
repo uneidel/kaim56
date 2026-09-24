@@ -2,21 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package main
 
-// Lokales Wake-Word-Modell — Audio verlaesst den Desktop erst NACH dem Wort.
+// Local wake-word model — audio leaves the desktop only AFTER the word.
 //
-// Kein vortrainiertes Netz (openWakeWord kennt kein "Kaim", Porcupine ist
-// kommerziell), sondern klassisches Query-by-Example-Keyword-Spotting:
-// beim Enrollment spricht der Nutzer das Wort ein paar Mal ein, gespeichert
-// werden MFCC-Templates. Zur Laufzeit wird der ANFANG jeder VAD-Aeusserung
-// per Open-End-DTW gegen die Templates gehalten; erst ein Treffer schickt
-// das Audio zu STT. Sprecherabhaengig — in der Telefonkonferenz genau
-// richtig: fremde Stimmen matchen schlecht.
+// No pre-trained network (openWakeWord does not know "Kaim", Porcupine is
+// commercial), but classic query-by-example keyword spotting: during
+// enrollment the user says the word a few times, MFCC templates are stored.
+// At runtime the START of every VAD utterance is held against the templates
+// with open-end DTW; only a hit sends the audio to STT. Speaker-dependent —
+// exactly right in a conference call: other voices match poorly.
 //
-// Pipeline: 16 kHz s16 -> Frames 25 ms / Hop 10 ms -> Hamming -> FFT 512 ->
-// 26 Mel-Filter (100..7600 Hz) -> log -> DCT-II -> 13 Koeffizienten, Kanal-
-// Mittel aus dem Enrollment abgezogen. Takes werden auf den stimmhaften Kern
-// getrimmt; Subsequenz-DTW (Start UND Ende auf der Aeusserungsachse frei),
-// normalisiert auf die Templatelaenge. Alles stdlib.
+// Pipeline: 16 kHz s16 -> frames 25 ms / hop 10 ms -> Hamming -> FFT 512 ->
+// 26 mel filters (100..7600 Hz) -> log -> DCT-II -> 13 coefficients, channel
+// mean from the enrollment subtracted. Takes are trimmed to the voiced core;
+// subsequence DTW (start AND end free on the utterance axis), normalized by
+// the template length. All stdlib.
 
 import (
 	"encoding/binary"
@@ -37,7 +36,7 @@ const (
 	melHiHz      = 7600.0
 )
 
-// ---- FFT (radix-2, iterativ) ------------------------------------------------
+// ---- FFT (radix-2, iterative) -----------------------------------------------
 func fft(re, im []float64) {
 	n := len(re)
 	for i, j := 1, 0; i < n; i++ { // bit reversal
@@ -68,7 +67,7 @@ func fft(re, im []float64) {
 	}
 }
 
-// ---- Mel-Filterbank (einmalig gebaut) ---------------------------------------
+// ---- Mel filter bank (built once) -------------------------------------------
 func hzToMel(hz float64) float64 { return 2595 * math.Log10(1+hz/700) }
 func melToHz(m float64) float64  { return 700 * (math.Pow(10, m/2595) - 1) }
 
@@ -98,7 +97,7 @@ func init() {
 	}
 }
 
-// mfccFrames rechnet die MFCC-Sequenz eines s16le-PCM-Stuecks, CMN-normiert.
+// mfccFrames computes the MFCC sequence of an s16le PCM chunk.
 func mfccFrames(pcm []byte) [][]float64 {
 	n := len(pcm) / 2
 	samples := make([]float64, n)
@@ -144,11 +143,11 @@ func mfccFrames(pcm []byte) [][]float64 {
 		}
 		out = append(out, coeffs)
 	}
-	// KEINE per-Sequenz-CMN: Template (nur das Wort) und Aeusserung (Wort +
-	// Satz dahinter) wuerden ueber verschiedenen Inhalt normalisiert und
-	// verschoeben sich gegeneinander. Kanal-Normalisierung macht stattdessen
-	// das Modell: ein Mittelwert aus dem Enrollment, auf BEIDE Seiten
-	// angewandt (siehe buildWakeModel/Match).
+	// NO per-sequence CMN: the template (only the word) and the utterance
+	// (word + sentence after it) would be normalized over different content
+	// and shift against each other. The model does the channel normalization
+	// instead: one mean from the enrollment, applied to BOTH sides (see
+	// buildWakeModel/Match).
 	return out
 }
 
@@ -163,26 +162,26 @@ func subMean(seq [][]float64, mean []float64) {
 	}
 }
 
-// dtwSubseq: Distanz des kompletten Templates gegen die BESTE Teilstrecke der
-// Aeusserung — Start und Ende auf der Aeusserungsachse sind frei (Stille oder
-// ein Atmer vor dem Wort kosten nichts). Normalisiert auf die Templatelaenge.
-// Liefert zusaetzlich den End-Frame des Alignments: dort endet das Wort in
-// der Aeusserung, dahinter beginnt die eigentliche Nachricht.
+// dtwSubseq: distance of the complete template against the BEST stretch of
+// the utterance — start and end on the utterance axis are free (silence or a
+// breath before the word costs nothing). Normalized by the template length.
+// Also returns the end frame of the alignment: that is where the word ends
+// in the utterance, after it the actual message begins.
 func dtwSubseq(tpl, utt [][]float64) (float64, int) {
 	n, m := len(tpl), len(utt)
 	if n == 0 || m == 0 {
 		return math.Inf(1), 0
 	}
 	const big = math.MaxFloat64 / 4
-	prev := make([]float64, m+1) // freier Start: Zeile 0 kostet nichts
+	prev := make([]float64, m+1) // free start: row 0 costs nothing
 	cur := make([]float64, m+1)
 	for i := 1; i <= n; i++ {
 		cur[0] = big
 		for j := 1; j <= m; j++ {
 			d := 0.0
-			// c0 (Energie) bleibt draussen: isoliert gesprochen vs. im Satz
-			// unterscheidet sich vor allem die Lautstaerke-Kontur, nicht der
-			// Klang — und nur der Klang soll entscheiden.
+			// c0 (energy) stays out: spoken in isolation vs. inside a sentence
+			// differs mainly in the loudness contour, not in the timbre — and
+			// only the timbre should decide.
 			for c := 1; c < mfccCoeffs; c++ {
 				diff := tpl[i-1][c] - utt[j-1][c]
 				d += diff * diff
@@ -208,9 +207,9 @@ func dtwSubseq(tpl, utt [][]float64) (float64, int) {
 	return best / float64(n), bestEnd
 }
 
-// trimSilence schneidet Stille an beiden Enden eines Takes ab (Piper wie
-// VAD liefern Vor-/Nachlauf): behalten wird vom ersten bis zum letzten
-// 30-ms-Frame ueber einem Zehntel des Spitzen-RMS, plus zwei Frames Rand.
+// trimSilence cuts silence off both ends of a take (Piper and the VAD both
+// deliver lead-in/lead-out): kept is everything from the first to the last
+// 30 ms frame above a tenth of the peak RMS, plus two frames of margin.
 func trimSilence(pcm []byte) []byte {
 	nf := len(pcm) / frameBytes
 	if nf == 0 {
@@ -240,7 +239,7 @@ func trimSilence(pcm []byte) []byte {
 // ---- Templates --------------------------------------------------------------
 type WakeModel struct {
 	Threshold float64       `json:"threshold"`
-	Mean      []float64     `json:"mean"` // Kanal-Mittel aus dem Enrollment
+	Mean      []float64     `json:"mean"` // channel mean from the enrollment
 	Templates [][][]float64 `json:"templates"`
 }
 
@@ -259,29 +258,29 @@ func loadWakeModel(path string) (*WakeModel, error) {
 		return nil, err
 	}
 	if len(m.Templates) == 0 || m.Threshold <= 0 {
-		return nil, fmt.Errorf("wake model %s ist leer — bitte neu einsprechen (--enroll)", path)
+		return nil, fmt.Errorf("wake model %s is empty — please record it again (--enroll)", path)
 	}
 	return &m, nil
 }
 
-// buildWakeModel macht aus eingesprochenen Takes ein Modell. Der Schwellwert
-// kommt aus den Kreuzdistanzen der Takes untereinander: so streng, wie die
-// eigene Stimme wiederholbar ist, plus Luft.
+// buildWakeModel turns recorded takes into a model. The threshold comes from
+// the cross distances of the takes among each other: as strict as the own
+// voice is repeatable, plus headroom.
 func buildWakeModel(takes [][]byte) (*WakeModel, error) {
 	if len(takes) < 2 {
-		return nil, fmt.Errorf("mindestens 2 Aufnahmen noetig")
+		return nil, fmt.Errorf("at least 2 takes are needed")
 	}
 	m := &WakeModel{}
 	var seqs [][][]float64
 	for _, t := range takes {
 		s := mfccFrames(trimSilence(t))
-		if len(s) < 20 { // < 200 ms Sprache ist kein Wort
-			return nil, fmt.Errorf("eine Aufnahme ist zu kurz (%d Frames)", len(s))
+		if len(s) < 20 { // < 200 ms of speech is not a word
+			return nil, fmt.Errorf("one take is too short (%d frames)", len(s))
 		}
 		seqs = append(seqs, s)
 	}
-	// Kanal-Mittel ueber alle Enrollment-Frames — dieselbe Verschiebung
-	// bekommt zur Laufzeit auch die Aeusserung.
+	// Channel mean over all enrollment frames — the utterance gets the same
+	// shift at runtime.
 	m.Mean = make([]float64, mfccCoeffs)
 	total := 0
 	for _, s := range seqs {
@@ -322,19 +321,19 @@ func (m *WakeModel) save(path string) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// Match haelt den Anfang einer Aeusserung gegen alle Templates.
-// Liefert (bester Score, Byte-Offset hinter dem Wort, getroffen).
-// Score < Threshold = Wake; ab dem Offset beginnt die eigentliche Nachricht.
+// Match holds the start of an utterance against all templates.
+// Returns (best score, byte offset after the word, hit).
+// Score < Threshold = wake; the actual message begins at the offset.
 func (m *WakeModel) Match(pcm []byte) (float64, int, bool) {
-	// Nur den Kopf rechnen: laengstes Template mal 2 reicht fuer ein
-	// Wort am Satzanfang, und DTW bleibt billig.
+	// Compute only the head: the longest template times 2 is enough for a
+	// word at the start of a sentence, and DTW stays cheap.
 	maxTpl := 0
 	for _, t := range m.Templates {
 		if len(t) > maxTpl {
 			maxTpl = len(t)
 		}
 	}
-	headFrames := maxTpl*2 + 50 // Luft fuer Vorlauf-Stille und zoegerlichen Start
+	headFrames := maxTpl*2 + 50 // headroom for lead-in silence and a hesitant start
 	headBytes := (headFrames*mfccHop + mfccFrameLen) * 2
 	if headBytes < len(pcm) {
 		pcm = pcm[:headBytes]

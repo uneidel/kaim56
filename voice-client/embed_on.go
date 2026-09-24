@@ -6,9 +6,9 @@ package main
 
 import _ "embed"
 
-// Release-Build (build.sh, -tags embedtunnel): kaim56-tunnel steckt IM
-// Binary — eine Datei zum Kopieren. Der Gate-/Dev-Build kommt ohne die
-// Datei aus (embed_off.go), damit go test in einem frischen Checkout laeuft.
+// Release build (build.sh, -tags embedtunnel): kaim56-tunnel is INSIDE the
+// binary — one file to copy. The gate/dev build does without the file
+// (embed_off.go), so go test runs in a fresh checkout.
 //
 //go:embed embedded/kaim56-tunnel
 var embeddedTunnel []byte

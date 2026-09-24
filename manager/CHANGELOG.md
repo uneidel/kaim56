@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-24
+
+- Voice client (`voice-client/`): all source comments, CLI help, errors, tray labels, spoken acknowledgements and the README are English now; internal states renamed listening/thinking/speaking/off, no behaviour change.
+
 ## 2026-09-23
 
 - Agent: the conversation survives an instance restart — written to `<memory>/.state/history.json` between turns (`agent/persist.py`, off with `HISTORY_PERSIST=0`), restored at start; the manager gitignores `.state/` in the memory folder.

@@ -1,9 +1,9 @@
 // kAIm56 — self-hosted Firecracker AI-agent platform
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Unit-Tests fuer den Sprachclient — alles, was ohne Mikrofon und Manager
-// testbar ist: VAD-Segmentierung an synthetischem PCM, WAV-Header,
-// Vorlese-Filter, Config-Handling.
+// Unit tests for the voice client — everything testable without a
+// microphone and a manager: VAD segmentation on synthetic PCM, the WAV
+// header, the read-aloud filter, config handling.
 package main
 
 import (
@@ -62,25 +62,25 @@ func TestUtteranceIsSegmentedWithPreroll(t *testing.T) {
 	v := testVad(600, 300, 0)
 	segs := feedAll(v, append(append(silence(1500), tone(900)...), silence(1200)...))
 	if len(segs) != 1 {
-		t.Fatalf("segs = %d, will 1", len(segs))
+		t.Fatalf("segs = %d, want 1", len(segs))
 	}
 	if min := 900 * sampleRate * 2 / 1000; len(segs[0]) < min {
-		t.Fatalf("Segment %dB < Sprachdauer %dB", len(segs[0]), min)
+		t.Fatalf("segment %dB < speech duration %dB", len(segs[0]), min)
 	}
 }
 
 func TestShortBurstIsDropped(t *testing.T) {
 	v := testVad(600, 400, 0)
-	segs := feedAll(v, append(append(silence(1500), tone(200)...), silence(1200)...)) // Tuerknallen
+	segs := feedAll(v, append(append(silence(1500), tone(200)...), silence(1200)...)) // a door slamming
 	if len(segs) != 0 {
-		t.Fatalf("segs = %d, will 0", len(segs))
+		t.Fatalf("segs = %d, want 0", len(segs))
 	}
 }
 
 func TestSilenceAloneNeverTriggers(t *testing.T) {
 	v := NewVad(defaultVadConfig())
 	if segs := feedAll(v, silence(4000)); len(segs) != 0 || v.talk != nil {
-		t.Fatalf("Stille loest aus: segs=%d talk=%v", len(segs), v.talk != nil)
+		t.Fatalf("silence triggers: segs=%d talk=%v", len(segs), v.talk != nil)
 	}
 }
 
@@ -89,30 +89,30 @@ func TestTwoUtterancesTwoSegments(t *testing.T) {
 	pcm := append(append(append(append(silence(1200), tone(800)...),
 		silence(1200)...), tone(800)...), silence(1200)...)
 	if segs := feedAll(v, pcm); len(segs) != 2 {
-		t.Fatalf("segs = %d, will 2", len(segs))
+		t.Fatalf("segs = %d, want 2", len(segs))
 	}
 }
 
 func TestSpeechCannotRaiseThresholdAboveItself(t *testing.T) {
-	// Der Teppich darf aus Sprache nicht lernen: nach einem langen Satz muss
-	// derselbe Pegel immer noch klar als stimmhaft gelten.
+	// The floor must not learn from speech: after a long sentence the same
+	// level must still clearly count as voiced.
 	v := testVad(600, 300, 0)
 	feedAll(v, append(silence(900), tone(3000)...))
 	if limit := float64(frameRMS(tone(30))) * 0.5; v.Threshold() >= limit {
-		t.Fatalf("Threshold %.0f >= %.0f — Teppich hat Sprache gelernt", v.Threshold(), limit)
+		t.Fatalf("threshold %.0f >= %.0f — the floor learned from speech", v.Threshold(), limit)
 	}
 }
 
 func TestMaxLengthChunksContinuousSpeech(t *testing.T) {
-	// Dauersprechen wird in Max-Laengen-Stuecke zerteilt, keins darueber.
+	// Continuous speech is split into max-length pieces, none above it.
 	v := testVad(600, 300, 2)
 	segs := feedAll(v, append(silence(900), tone(4000)...))
 	if len(segs) != 2 {
-		t.Fatalf("segs = %d, will 2", len(segs))
+		t.Fatalf("segs = %d, want 2", len(segs))
 	}
 	for _, s := range segs {
 		if maxB := (2000/frameMs + 1) * frameBytes; len(s) > maxB {
-			t.Fatalf("Segment %dB > max %dB", len(s), maxB)
+			t.Fatalf("segment %dB > max %dB", len(s), maxB)
 		}
 	}
 }
@@ -121,47 +121,47 @@ func TestWavHeaderFields(t *testing.T) {
 	pcm := tone(100)
 	wav := wavWrap(pcm)
 	if string(wav[:4]) != "RIFF" || string(wav[8:12]) != "WAVE" {
-		t.Fatal("kein RIFF/WAVE-Header")
+		t.Fatal("no RIFF/WAVE header")
 	}
 	if r := binary.LittleEndian.Uint32(wav[24:]); r != sampleRate {
-		t.Fatalf("Rate %d", r)
+		t.Fatalf("rate %d", r)
 	}
 	if n := binary.LittleEndian.Uint32(wav[40:]); int(n) != len(pcm) {
-		t.Fatalf("data-Laenge %d != %d", n, len(pcm))
+		t.Fatalf("data length %d != %d", n, len(pcm))
 	}
 	if string(wav[44:]) != string(pcm) {
-		t.Fatal("PCM veraendert")
+		t.Fatal("PCM altered")
 	}
 }
 
 func TestThinkBlocksAreStripped(t *testing.T) {
-	if got := speakable("⟦think⟧inneres Gemurmel⟦/think⟧Hallo **Ulrich**!"); got != "Hallo Ulrich!" {
+	if got := speakable("⟦think⟧inner mumbling⟦/think⟧Hello **Ulrich**!"); got != "Hello Ulrich!" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestOpenThinkBlockIsStripped(t *testing.T) {
-	if got := speakable("Antwort.⟦think⟧noch offen"); got != "Antwort." {
+	if got := speakable("Answer.⟦think⟧still open"); got != "Answer." {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestToolStatusLinesAreDropped(t *testing.T) {
-	if got := speakable("🔧 listagents …\nEs laufen 5 Instanzen."); got != "Es laufen 5 Instanzen." {
+	if got := speakable("🔧 listagents …\n5 instances are running."); got != "5 instances are running." {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestCodeAndLinks(t *testing.T) {
-	got := speakable("Nimm [die Doku](https://x.example/a) und:\n```py\nprint(1)\n```\nfertig")
-	for _, want := range []string{"die Doku", "Codeblock übersprungen"} {
+	got := speakable("Take [the docs](https://x.example/a) and:\n```py\nprint(1)\n```\ndone")
+	for _, want := range []string{"the docs", "Code block skipped"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("%q fehlt in %q", want, got)
+			t.Fatalf("%q missing in %q", want, got)
 		}
 	}
 	for _, bad := range []string{"https://", "print(1)"} {
 		if strings.Contains(got, bad) {
-			t.Fatalf("%q steht noch in %q", bad, got)
+			t.Fatalf("%q still in %q", bad, got)
 		}
 	}
 }
@@ -171,27 +171,27 @@ func TestWakeWordGate(t *testing.T) {
 		text, word, rest string
 		ok               bool
 	}{
-		{"Kat, wie spät ist es", "Kat", "wie spät ist es", true},
-		{"kat wie spät ist es", "Kat", "wie spät ist es", true},
-		{"...Kat: mach das Licht an", "Kat", "mach das Licht an", true}, // STT-Interpunktion
-		{"Kat?", "Kat", "", true},                                      // Wort allein -> "Ja?"
-		{"Katalog öffnen", "Kat", "", false},                           // Wortgrenze
-		{"wie spät ist es", "Kat", "", false},                          // Telko-Gemurmel
-		{"Übernimm das mal bitte jemand", "Kat", "", false},
-		{"Kat, 5 mal 3?", "Kat", "5 mal 3?", true},
-		{"wie spät ist es", "", "wie spät ist es", true}, // kein Wake-Word -> alles durch
-		// Varianten-Liste + Fuzzy (gemessene STT-Verstuemmelungen):
-		{"Kati, wie spät ist es?", "Kati, Kat", "wie spät ist es?", true},
-		{"Katie, wie spät ist es?", "Kati", "wie spät ist es?", true},  // Levenshtein 1
-		{"Keim fasst das Dokument zusammen.", "Kati, Keim", "fasst das Dokument zusammen.", true},
-		{"hat jemand noch Fragen", "Kat", "", false},  // 3 Buchstaben: KEIN Fuzzy ("hat"!)
-		{"hat jemand noch Fragen", "Kati", "", false}, // Distanz 2 -> kein Treffer
-		{"Tat, fass mir das zusammen", "Kati, Kat", "", false}, // ehrlich: Kat bleibt exakt
+		{"Kat, what time is it", "Kat", "what time is it", true},
+		{"kat what time is it", "Kat", "what time is it", true},
+		{"...Kat: turn the light on", "Kat", "turn the light on", true}, // STT punctuation
+		{"Kat?", "Kat", "", true},                                       // the word alone -> "Yes?"
+		{"Katalog open", "Kat", "", false},                              // word boundary
+		{"what time is it", "Kat", "", false},                           // conference-call mumbling
+		{"Could someone take that over please", "Kat", "", false},
+		{"Kat, 5 times 3?", "Kat", "5 times 3?", true},
+		{"what time is it", "", "what time is it", true}, // no wake word -> everything passes
+		// variant list + fuzzy (measured STT garblings):
+		{"Kati, what time is it?", "Kati, Kat", "what time is it?", true},
+		{"Katie, what time is it?", "Kati", "what time is it?", true}, // Levenshtein 1
+		{"Keim summarizes the document.", "Kati, Keim", "summarizes the document.", true},
+		{"hat anyone got questions", "Kat", "", false},         // 3 letters: NO fuzzy ("hat"!)
+		{"hat anyone got questions", "Kati", "", false},        // distance 2 -> no hit
+		{"Tat, summarize that for me", "Kati, Kat", "", false}, // honest: Kat stays exact
 	}
 	for _, c := range cases {
 		rest, ok := wakeMatch(c.text, c.word)
 		if ok != c.ok || rest != c.rest {
-			t.Errorf("wakeMatch(%q, %q) = (%q, %v), will (%q, %v)",
+			t.Errorf("wakeMatch(%q, %q) = (%q, %v), want (%q, %v)",
 				c.text, c.word, rest, ok, c.rest, c.ok)
 		}
 	}
@@ -200,52 +200,52 @@ func TestWakeWordGate(t *testing.T) {
 func TestSentenceStreamer(t *testing.T) {
 	var got []string
 	ss := newSentenceStreamer(func(s string) { got = append(got, s) })
-	for _, tok := range []string{"Hal", "lo. Wie geht", " es dir? Und", " nun"} {
+	for _, tok := range []string{"Hel", "lo. How are", " you? And", " now"} {
 		ss.Feed(tok)
 	}
 	ss.Close()
-	want := []string{"Hallo.", "Wie geht es dir?", "Und nun"}
+	want := []string{"Hello.", "How are you?", "And now"}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
-		t.Fatalf("chunks = %q, will %q", got, want)
+		t.Fatalf("chunks = %q, want %q", got, want)
 	}
 }
 
 func TestSentenceStreamerHoldsThinkAndFences(t *testing.T) {
 	var got []string
 	ss := newSentenceStreamer(func(s string) { got = append(got, s) })
-	ss.Feed("⟦think⟧Erst. Denken. ")
+	ss.Feed("⟦think⟧First. Thinking. ")
 	if len(got) != 0 {
-		t.Fatalf("offener Denk-Block darf nicht emittieren: %q", got)
+		t.Fatalf("an open thinking block must not emit: %q", got)
 	}
-	ss.Feed("⟦/think⟧Klar. ")
-	if len(got) != 1 || got[0] != "Klar." {
+	ss.Feed("⟦/think⟧Sure. ")
+	if len(got) != 1 || got[0] != "Sure." {
 		t.Fatalf("got %q", got)
 	}
 	ss.Feed("```py\nprint(1)\n")
-	ss.Feed("``` Fertig. ")
+	ss.Feed("``` Done. ")
 	ss.Close()
 	all := strings.Join(got, " | ")
-	if !strings.Contains(all, "Codeblock übersprungen") || !strings.Contains(all, "Fertig.") {
-		t.Fatalf("Fence-Handling kaputt: %q", got)
+	if !strings.Contains(all, "Code block skipped") || !strings.Contains(all, "Done.") {
+		t.Fatalf("fence handling broken: %q", got)
 	}
-	if strings.Contains(all, "print(1)") || strings.Contains(all, "Denken") {
-		t.Fatalf("Inhalt haette wegfallen muessen: %q", got)
+	if strings.Contains(all, "print(1)") || strings.Contains(all, "Thinking") {
+		t.Fatalf("content should have been dropped: %q", got)
 	}
 }
 
 func TestWithPrompt(t *testing.T) {
-	if got := withPrompt("", "Wie spät ist es?"); got != "Wie spät ist es?" {
-		t.Fatalf("leerer Prompt darf nichts aendern: %q", got)
+	if got := withPrompt("", "What time is it?"); got != "What time is it?" {
+		t.Fatalf("an empty prompt must not change anything: %q", got)
 	}
-	got := withPrompt("Antworte kurz.", "Wie spät ist es?")
-	if got != "[Voice-Client] Antworte kurz.\n\nWie spät ist es?" {
+	got := withPrompt("Answer briefly.", "What time is it?")
+	if got != "[Voice client] Answer briefly.\n\nWhat time is it?" {
 		t.Fatalf("got %q", got)
 	}
 }
 
-// Ein "Pseudo-Wort" fuer Wake-Tests: eine charakteristische Tonfolge.
-// Verschiedene Folgen unterscheiden sich in MFCC deutlich staerker als
-// Wiederholungen derselben Folge — genau die Eigenschaft, die das Gate traegt.
+// A "pseudo word" for wake tests: a characteristic tone sequence. Different
+// sequences differ far more in MFCC than repetitions of the same sequence —
+// exactly the property the gate relies on.
 func toneWord(freqs []float64, msEach int) []byte {
 	var out []byte
 	n := sampleRate * msEach / 1000
@@ -263,18 +263,18 @@ func toneWord(freqs []float64, msEach int) []byte {
 func TestMfccBasics(t *testing.T) {
 	a := mfccFrames(toneWord([]float64{440, 880}, 200))
 	if len(a) < 30 {
-		t.Fatalf("zu wenige Frames: %d", len(a))
+		t.Fatalf("too few frames: %d", len(a))
 	}
 	if len(a[0]) != mfccCoeffs {
-		t.Fatalf("Koeffizienten: %d", len(a[0]))
+		t.Fatalf("coefficients: %d", len(a[0]))
 	}
-	// Zwei Toene muessen unterscheidbare Frames liefern.
+	// Two tones must yield distinguishable frames.
 	same, _ := dtwSubseq(mfccFrames(toneWord([]float64{440}, 200)),
 		mfccFrames(toneWord([]float64{440}, 200)))
 	diff, _ := dtwSubseq(mfccFrames(toneWord([]float64{440}, 200)),
 		mfccFrames(toneWord([]float64{2600}, 200)))
 	if same > diff/2 {
-		t.Fatal("MFCC trennt Frequenzen nicht")
+		t.Fatal("MFCC does not separate frequencies")
 	}
 }
 
@@ -284,12 +284,12 @@ func TestDtwSeparatesWords(t *testing.T) {
 	same, _ := dtwSubseq(wordA(), wordA())
 	diff, _ := dtwSubseq(wordA(), wordB)
 	if same >= diff/3 {
-		t.Fatalf("DTW trennt nicht: gleich=%f verschieden=%f", same, diff)
+		t.Fatalf("DTW does not separate: same=%f different=%f", same, diff)
 	}
 }
 
 func TestWakeModelGate(t *testing.T) {
-	// Drei "Takes" desselben Pseudo-Worts, leicht gestaucht/gedehnt.
+	// Three "takes" of the same pseudo word, slightly compressed/stretched.
 	takes := [][]byte{
 		toneWord([]float64{300, 1200, 500}, 150),
 		toneWord([]float64{300, 1200, 500}, 165),
@@ -299,21 +299,21 @@ func TestWakeModelGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Aeusserung, die mit dem Wort beginnt (plus "Satz" dahinter) -> Wake.
+	// An utterance that starts with the word (plus a "sentence" after it) -> wake.
 	utt := append(toneWord([]float64{300, 1200, 500}, 155),
 		toneWord([]float64{700, 900, 400, 1100}, 120)...)
 	score, cut, hit := m.Match(utt)
 	if !hit {
-		t.Fatalf("Wort am Anfang nicht erkannt (Score %.3f, Schwelle %.3f)", score, m.Threshold)
+		t.Fatalf("word at the start not recognized (score %.3f, threshold %.3f)", score, m.Threshold)
 	}
-	// Der Schnitt muss ungefaehr am Wortende liegen (450 ms +- 150 ms).
+	// The cut must sit roughly at the end of the word (450 ms +- 150 ms).
 	if sec := float64(cut) / 2 / sampleRate; sec < 0.3 || sec > 0.6 {
-		t.Fatalf("Schnitt bei %.2f s, erwartet ~0.45 s", sec)
+		t.Fatalf("cut at %.2f s, expected ~0.45 s", sec)
 	}
-	// Fremde Aeusserung -> kein Wake.
+	// A foreign utterance -> no wake.
 	other := toneWord([]float64{2000, 600, 3000, 800}, 150)
 	if score, _, hit := m.Match(other); hit {
-		t.Fatalf("Fremdes Wort weckte (Score %.3f, Schwelle %.3f)", score, m.Threshold)
+		t.Fatalf("a foreign word woke (score %.3f, threshold %.3f)", score, m.Threshold)
 	}
 }
 
@@ -330,10 +330,10 @@ func TestWakeModelRoundtripAndValidation(t *testing.T) {
 	}
 	m2, err := loadWakeModel(p)
 	if err != nil || len(m2.Templates) != 2 || m2.Threshold != m.Threshold {
-		t.Fatalf("Roundtrip kaputt: %v", err)
+		t.Fatalf("round trip broken: %v", err)
 	}
 	if _, err := buildWakeModel([][]byte{toneWord([]float64{300}, 30)}); err == nil {
-		t.Fatal("zu kurze/wenige Takes muessen scheitern")
+		t.Fatal("too short/too few takes must fail")
 	}
 }
 
@@ -345,36 +345,36 @@ func TestMaterializeTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(p1); st.Mode().Perm()&0o111 == 0 {
-		t.Fatal("nicht ausfuehrbar")
+		t.Fatal("not executable")
 	}
-	p2, err := materializeTunnel(data, dir) // zweiter Lauf: Cache-Treffer
+	p2, err := materializeTunnel(data, dir) // second run: cache hit
 	if err != nil || p2 != p1 {
-		t.Fatalf("Cache-Treffer erwartet: %v %v", p2, err)
+		t.Fatalf("cache hit expected: %v %v", p2, err)
 	}
-	p3, _ := materializeTunnel([]byte("andere version"), dir)
+	p3, _ := materializeTunnel([]byte("another version"), dir)
 	if p3 == p1 {
-		t.Fatal("neue Version muss neuen Pfad bekommen")
+		t.Fatal("a new version must get a new path")
 	}
 }
 
 func TestTemplateIsWrittenButRefusedUnedited(t *testing.T) {
-	// Der Platzhalter darf NICHT lauffaehig sein: mit "manager.example"
-	// loszulaufen zeigt den Fehler erst beim ersten Satz (DNS-Fehler statt
-	// "Config ausfuellen").
+	// The placeholder must NOT be runnable: starting with "manager.example"
+	// shows the error only at the first sentence (a DNS error instead of
+	// "fill in the config").
 	p := filepath.Join(t.TempDir(), "cfg.json")
 	if err := writeConfigTemplate(p); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %o, will 600 — da steht ein Passwort drin", st.Mode().Perm())
+		t.Fatalf("mode %o, want 600 — it contains a password", st.Mode().Perm())
 	}
 	if _, err := loadConfig(p); err == nil || !strings.Contains(err.Error(), "iroh") {
-		t.Fatalf("unbearbeitetes Template muss mit Hinweis scheitern, err=%v", err)
+		t.Fatalf("an unedited template must fail with a hint, err=%v", err)
 	}
 }
 
 func TestIrohOnlyConfigIsValid(t *testing.T) {
-	// Der iroh-Weg braucht weder base_url noch user/pass (kein Traefik im Spiel).
+	// The iroh route needs neither base_url nor user/pass (no Traefik involved).
 	p := filepath.Join(t.TempDir(), "cfg.json")
 	os.WriteFile(p, []byte(`{"iroh":"9954327fe3926b1e430a3b75e21a860666dab6de"}`), 0o600)
 	cfg, err := loadConfig(p)
@@ -383,7 +383,7 @@ func TestIrohOnlyConfigIsValid(t *testing.T) {
 	}
 	if cfg.IrohListen != "127.0.0.1:8701" || cfg.Instance != "myassistant" ||
 		cfg.Vad.StartFrames != 5 {
-		t.Fatalf("iroh-Defaults kaputt: %+v", cfg)
+		t.Fatalf("iroh defaults broken: %+v", cfg)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestMissingCredentialsFailLoud(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cfg.json")
 	os.WriteFile(p, []byte(`{"base_url":"http://x"}`), 0o600)
 	if _, err := loadConfig(p); err == nil {
-		t.Fatal("fehlende Zugangsdaten muessen laut scheitern")
+		t.Fatal("missing credentials must fail loudly")
 	}
 }
 
@@ -405,9 +405,9 @@ func TestPartialVadConfigIsFilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Vad.EndMs != 500 || cfg.Vad.MinMs != 400 {
-		t.Fatalf("Teil-VAD-Config nicht aufgefuellt: %+v", cfg.Vad)
+		t.Fatalf("partial VAD config not filled in: %+v", cfg.Vad)
 	}
 	if cfg.WakeWord != "" {
-		t.Fatalf("Bestands-Config ohne wake_word muss beim Alt-Verhalten bleiben, hat %q", cfg.WakeWord)
+		t.Fatalf("an existing config without wake_word must keep the old behaviour, has %q", cfg.WakeWord)
 	}
 }

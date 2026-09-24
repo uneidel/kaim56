@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// Manager spricht die Plattform-APIs: /api/stt, /api/chat/<inst>, /api/tts,
-// /api/instances. Alles laeuft mit Basic-Auth; schwer ist hier nichts, das
-// Schwere (Parakeet, LLM, Piper) wohnt auf dem Server.
+// Manager talks to the platform APIs: /api/stt, /api/chat/<inst>, /api/tts,
+// /api/instances. Everything runs with Basic auth; nothing here is heavy,
+// the heavy parts (Parakeet, LLM, Piper) live on the server.
 type Manager struct {
 	base string
 	user string
@@ -45,12 +45,12 @@ func (m *Manager) req(method, path, ctype string, body []byte) (*http.Response, 
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d von %s: %s", resp.StatusCode, path, b)
+		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, path, b)
 	}
 	return resp, nil
 }
 
-// Instances liefert die Namen aller Web-Instanzen (mit denen laesst sich chatten).
+// Instances returns the names of all web instances (the ones you can chat with).
 func (m *Manager) Instances() ([]string, error) {
 	resp, err := m.req("GET", "/api/instances", "", nil)
 	if err != nil {
@@ -90,9 +90,9 @@ func (m *Manager) STT(wav []byte) (string, error) {
 	return strings.TrimSpace(out.Text), nil
 }
 
-// ChatStream schickt einen Turn und reicht Tokens durch, sobald sie kommen —
-// die Latenz bis zum ersten gesprochenen Satz haengt daran, nicht an der
-// Gesamtlaenge der Antwort.
+// ChatStream sends a turn and passes tokens through as they arrive — the
+// latency to the first spoken sentence depends on that, not on the total
+// length of the reply.
 func (m *Manager) ChatStream(instance, message, chatID string, onTok func(string)) (string, error) {
 	body, _ := json.Marshal(map[string]string{"message": message, "chat": chatID})
 	resp, err := m.req("POST", "/api/chat/"+url.PathEscape(instance),
@@ -120,7 +120,7 @@ func (m *Manager) ChatStream(instance, message, chatID string, onTok func(string
 	}
 }
 
-// Chat wartet die komplette Antwort ab (Probe, /reset).
+// Chat waits for the complete reply (probe, /reset).
 func (m *Manager) Chat(instance, message, chatID string) (string, error) {
 	return m.ChatStream(instance, message, chatID, nil)
 }
@@ -135,7 +135,7 @@ func (m *Manager) TTS(text string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// ---- Text fuers Vorlesen ---------------------------------------------------
+// ---- Text for reading aloud ------------------------------------------------
 var (
 	reThink = regexp.MustCompile(`(?s)⟦think⟧.*?(⟦/think⟧|$)`)
 	reTool  = regexp.MustCompile(`(?m)^[ \t]*🔧.*$`)
@@ -147,13 +147,16 @@ var (
 	reNL    = regexp.MustCompile(`\n{2,}`)
 )
 
-// speakable macht aus dem Antworttext vorlesbaren Text: Denk-Bloecke (auch
-// unvollstaendige), Tool-Statuszeilen, Codebloecke und Markdown-Dekor raus.
-// Links behalten den Linktext, die URL faellt weg.
+// codeSkipped replaces a code block in the spoken text.
+const codeSkipped = " Code block skipped. "
+
+// speakable turns the reply text into text that reads aloud well: thinking
+// blocks (incomplete ones too), tool status lines, code blocks and Markdown
+// decoration are removed. Links keep their link text, the URL goes.
 func speakable(text string) string {
 	text = reThink.ReplaceAllString(text, "")
 	text = reTool.ReplaceAllString(text, "")
-	text = reFence.ReplaceAllString(text, " Codeblock übersprungen. ")
+	text = reFence.ReplaceAllString(text, codeSkipped)
 	text = reLink.ReplaceAllString(text, "$1")
 	text = reURL.ReplaceAllString(text, "")
 	text = reDecor.ReplaceAllString(text, "")
