@@ -63,6 +63,12 @@ class Prefs(context: Context) {
         get() = sp.getString("updateRepo", AppUpdate.DEFAULT_REPO) ?: AppUpdate.DEFAULT_REPO
         set(v) = sp.edit().putString("updateRepo", v).apply()
 
+    // Newest manager notification already shown on this phone (epoch s); the
+    // app loop and the background worker share it (NotifSync).
+    var notifLastTs: Long
+        get() = sp.getLong("notifLastTs", 0L)
+        set(v) = sp.edit().putLong("notifLastTs", v).apply()
+
     var lastUpdateCheck: Long
         get() = sp.getLong("lastUpdateCheck", 0L)
         set(v) = sp.edit().putLong("lastUpdateCheck", v).apply()

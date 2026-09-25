@@ -5,6 +5,13 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.42
+
+- Notifications now reach the phone while the app is closed: a background
+  check every 15 minutes (Android WorkManager, no permanent icon), and what
+  arrived in between is shown right when the app opens. Before, only
+  notifications created while the app was open were ever shown.
+
 ## 5.41
 
 - New slash command /compact <focus>: fold the conversation into a short

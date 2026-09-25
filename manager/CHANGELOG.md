@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-25
+
+- App 5.42: notifications while the app is closed — WorkManager check every 15 min + catch-up at start over a shared watermark (`NotifSync.kt`, `Prefs.notifLastTs`); root cause: the poll lived in the chat screen and skipped everything older than the app start.
+
 ## 2026-09-24
 
 - Own agent types: `agents/skeleton/` (template.json, Dockerfile, guest-init, a stdlib agent serving the `/api/chat` contract, build script, README of the VM contract); Create instance scans `<AGENTS_DIR>/*/template.json` (site.json `AGENTS_DIR`, default `agents/` next to `manager/`) besides `templates/*.json`; a template's `"overlay": true` gives a custom rootfs the per-instance write layer (`vm.is_overlay`).

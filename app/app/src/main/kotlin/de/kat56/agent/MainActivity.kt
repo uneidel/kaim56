@@ -162,6 +162,7 @@ class MainActivity : ComponentActivity() {
         }
         val prefs = Prefs(this)
         IrohNet.register(this)   // install the iroh:// transport to the manager
+        NotifSync.schedule(this) // notifications every 15 min while the app is closed
         val gemma = LocalGemma(this)
         val store = ChatStore(this)
         store.migrate(prefs)   // migrate the v1.0 model, if present
@@ -265,7 +266,7 @@ private fun splitThink(s: String): Thought {
 // arg=true -> takes arguments (insert command + space); arg=false ->
 // send directly. Order = display; filtered by prefix.
 // Show a push notification from the agent as an Android system notification.
-private fun showAgentNotification(ctx: Context, id: String, title: String, body: String,
+internal fun showAgentNotification(ctx: Context, id: String, title: String, body: String,
                                   link: String = "") {
     val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (Build.VERSION.SDK_INT >= 26) {
@@ -470,10 +471,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // Notifications: polls /api/notifications and raises an Android system
     // notification for new, unread entries (since app start). Its own loop, so a
     // slow chat poll doesn't block the notifications.
+    // What arrived while the app was closed is shown at once (NotifSync keeps
+    // the watermark in the prefs; the 15-min worker uses the same one).
     LaunchedEffect(Unit) {
-        val startTs = System.currentTimeMillis() / 1000
         var nrev = 0L
-        val seen = HashSet<String>()
         while (prefs.serverUrl.isBlank()) delay(3000)
         while (true) {
             val res = withContext(Dispatchers.IO) {
@@ -481,11 +482,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             }
             if (res == null) { delay(5000); continue }
             nrev = res.rev
-            res.items?.forEach { n ->
-                if (seen.add(n.id) && !n.read && n.ts >= startTs) {
-                    showAgentNotification(context, n.id, n.title, n.body, n.link)
-                }
-            }
+            NotifSync.handle(context, prefs, res.items)
         }
     }
 
