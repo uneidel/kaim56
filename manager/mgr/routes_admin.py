@@ -17,6 +17,7 @@ import re
 import urllib.request
 
 from mgr import about as _about
+from mgr import aicheck as _aicheck
 from mgr import audit as _audit
 from mgr import browse as _browse
 from mgr import chats as _chats
@@ -187,6 +188,21 @@ def _rt_katfs_redirect(h):
     h.send_response(301)
     h.send_header("Location", "/katfs/")
     h.end_headers()
+
+
+@_routes.ROUTER.get("/aic/", prefix=True, admin=True)
+def _rt_aicheck_asset(h):
+    # The chat page's "written by AI?" gauge: classifier assets, cached from
+    # the author's site (mgr/aicheck.py) — same-origin, the text stays local.
+    data, ct = _aicheck.asset(h.path[len("/aic/"):].split("?", 1)[0])
+    if data is None:
+        return h._json({"error": ct}, 404 if "not an" in ct else 502)
+    h.send_response(200)
+    h.send_header("Content-Type", ct)
+    h.send_header("Content-Length", str(len(data)))
+    h.send_header("Cache-Control", "public, max-age=86400")
+    h.end_headers()
+    h.wfile.write(data)
 
 
 @_routes.ROUTER.get("/katfs/", prefix=True, admin=True)

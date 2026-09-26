@@ -106,6 +106,14 @@ header{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1p
    border, not just a different icon. */
 .icon.on{color:var(--ok);border-color:var(--ok);background:var(--accent-100)}
 .gwcount{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
+/* "written by AI?" gauge (xkqr.org/aicomment, runs in the browser): the
+   verdict's probability, robot blue / human amber, for the draft or the
+   last reply. A probability of the verdict, not a share of the text. */
+.aibadge{font-size:.72rem;font-variant-numeric:tabular-nums;border:1px solid var(--border);
+  padding:4px 8px;display:inline-flex;align-items:center;gap:5px;color:var(--muted);cursor:help;white-space:nowrap}
+.aibadge b{font-weight:600}
+.aibadge.robot b{color:#006CD1}.aibadge.human b{color:#b8860b}
+.aibadge[hidden]{display:none}
 #agent{font-family:var(--font-heading);font-weight:600;font-size:15.5px;letter-spacing:.01em;
   color:var(--text);background:transparent;
   border:1px solid var(--border);border-radius:0;padding:6px 10px;max-width:15rem;min-height:34px}
@@ -302,6 +310,7 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
     <select id=agent onchange=pickAgent()></select>
     <span id=state><span class="dot"></span><span id=stateTxt>…</span></span>
     <span class=grow></span>
+    <span id=aiBadge class=aibadge hidden></span>
     <button class=icon id=searchBtn title="Search in this chat" onclick=searchToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
     <button class=icon id=gwBtn title="Security Gateway" onclick=gwToggle()><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 stroke-linecap=round stroke-linejoin=round><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg></button>
     <span id=gwCount class=gwcount></span>
@@ -962,7 +971,56 @@ async function slashHint(){
 }
 function pickSlash(c){$('t').value=c+' ';$('t').focus();slClose();autogrow()}
 function autogrow(){const t=$('t');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,180)+'px'}
-$('t').addEventListener('input',()=>{autogrow();slashHint();});
+$('t').addEventListener('input',()=>{autogrow();slashHint();aiSchedule();});
+
+/* ---- "written by AI?" gauge --------------------------------------------
+   The classifier of xkqr.org/aicomment (assets via /aic/, cached by the
+   manager; the POS tagger from esm.sh) scores the draft in the box while
+   you type, otherwise the last reply of the open chat. Everything runs in
+   this browser; the text is sent nowhere. The number is the probability
+   that the verdict (human/robot) is right — the author trained it on code
+   comments, so on chat prose it is a hint, not a measurement. */
+const AI={M:null,TOK:null,pre:null,cls:null,fail:false,loading:null,timer:0};
+async function aiLoad(){
+  if(AI.M||AI.fail)return;
+  if(AI.loading)return AI.loading;
+  AI.loading=(async()=>{
+    try{
+      const [wink,model,cls,pre,mj]=await Promise.all([
+        import('https://esm.sh/wink-nlp@2.4.0'),import('https://esm.sh/wink-eng-lite-web-model@1.8.1'),
+        import('/aic/classifier.mjs'),import('/aic/preprocess.mjs'),fetch('/aic/model.json').then(r=>r.json())]);
+      const nlp=wink.default(model.default),its=nlp.its;
+      AI.cls=cls;AI.pre=pre.preprocess;AI.M=cls.prepareModel(mj);
+      AI.TOK=cls.tokenizersFor(AI.M,run=>nlp.readDoc(run).tokens().out(its.pos));
+    }catch(e){AI.fail=true;}
+  })();
+  return AI.loading;
+}
+function aiText(){
+  const d=$('t').value.trim();
+  if(d.split(/\s+/).length>=15)return {text:d,what:'your draft'};
+  const last=(cur&&cur.msgs||[]).filter(m=>m.role!=='user'&&!m.busy&&m.content).pop();
+  return last?{text:String(last.content),what:'the last reply'}:null;
+}
+function aiSchedule(){clearTimeout(AI.timer);AI.timer=setTimeout(aiRun,500);}
+async function aiRun(){
+  const el=$('aiBadge'),src=aiText();
+  if(!src){el.hidden=true;return;}
+  await aiLoad();
+  if(AI.fail||!AI.M){el.hidden=true;return;}
+  try{
+    const probs=AI.cls.classify(AI.M,AI.TOK,AI.pre(src.text,'')).probs;
+    const human=(AI.cls.collapseProbs(AI.cls.perClass(AI.M,probs),AI.cls.HUMAN_VS_ROBOT).find(([l])=>l==='human')||[,0])[1];
+    const robot=1-human,win=robot>=0.5?'robot':'human',p=Math.round(100*Math.max(robot,human));
+    el.className='aibadge '+win;
+    el.innerHTML=(win==='robot'?'🤖':'👤')+' <b>'+p+'%</b>';
+    el.title=`Verdict "${win}", ${p}% — the probability that the verdict is right, for ${src.what}. `+
+      `Classifier: xkqr.org/aicomment (trained on code comments; runs in this browser, nothing is sent).`;
+    el.hidden=false;
+  }catch(e){el.hidden=true;}
+}
+new MutationObserver(()=>aiSchedule()).observe($('msgs'),{childList:true,subtree:true});
+aiSchedule();
 $('t').addEventListener('keydown',e=>{
   // Esc ALWAYS closes the picker (even if SL_HITS should be empty) and keeps
   // it closed while typing continues on the same /-command.

@@ -3323,6 +3323,43 @@ class ManagerFunctions(unittest.TestCase):
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
 
+    def test_aicheck_assets_are_allowlisted_cached_and_served(self):
+        """/aic/<name>: only the classifier's files, fetched once from the
+        author's site into run/aicheck and served same-origin with the right
+        type; anything else is 404, an unreachable upstream 502; the chat page
+        carries the gauge and loads from /aic/."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-aic-")
+        fetched = []
+        old = m._paths.RUN_DIR, m._aicheck.fetch
+        try:
+            m._paths.RUN_DIR = tmp
+            m._aicheck.fetch = lambda name: (fetched.append(name), b"export const x=1;" if name.endswith(".mjs") else b'{"k":1}')[1]
+            data, ct = m._aicheck.asset("classifier.mjs")
+            self.assertEqual((data, ct), (b"export const x=1;", "text/javascript; charset=utf-8"))
+            self.assertEqual(m._aicheck.asset("classifier.mjs")[0], data); self.assertEqual(fetched, ["classifier.mjs"])   # cached
+            self.assertTrue(os.path.exists(os.path.join(tmp, "aicheck", "classifier.mjs")))
+            self.assertEqual(m._aicheck.asset("langs/c_family.mjs")[1], "text/javascript; charset=utf-8")
+            self.assertEqual(m._aicheck.asset("model.json")[1], "application/json")
+            for bad in ("../secret.json", "langs/../../x.mjs", "index.html", "model.js", "langs/x.json"):
+                self.assertIsNone(m._aicheck.asset(bad)[0], bad)
+            self.assertEqual(fetched, ["classifier.mjs", "langs/c_family.mjs", "model.json"])
+            h = self._handler("/aic/preprocess.mjs", "10.0.0.9"); h._do_GET()
+            raw = h.wfile.getvalue()
+            self.assertEqual(self._status(h), 200); self.assertIn(b"text/javascript", raw); self.assertTrue(raw.endswith(b"export const x=1;"))
+            h = self._handler("/aic/evil.mjs", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 404)
+            m._aicheck.fetch = lambda name: (_ for _ in ()).throw(OSError("down"))
+            h = self._handler("/aic/extract.mjs", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 502)
+            h = self._handler("/aic/model.json", "172.30.1.2"); h._do_GET()      # a guest may not pull it
+            self.assertNotEqual(self._status(h), 200)
+        finally:
+            m._paths.RUN_DIR, m._aicheck.fetch = old
+        import chatui
+        page = chatui.render([{"name": "a", "running": True}], "a", "")
+        self.assertIn("id=aiBadge", page); self.assertIn("/aic/classifier.mjs", page); self.assertIn("aiSchedule", page)
+
     def test_mail_route_is_guest_and_policy_gated(self):
         """POST /api/mail: a guest sends from its own plus address through the
         manager; an instance without the send_mail tool is refused; a stranger
