@@ -20,6 +20,7 @@ import urllib.request
 from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
+from mgr import repos as _repos
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
 from mgr import browse as _browse
@@ -191,6 +192,28 @@ def _rt_katfs_redirect(h):
     h.send_response(301)
     h.send_header("Location", "/katfs/")
     h.end_headers()
+
+
+@_routes.ROUTER.get("/api/repos", admin=True)
+def _rt_repos(h):
+    # Code flow app: the repo instances with clone/analysis state (mgr/repos.py).
+    return h._json({"repos": _repos.list_repos(), "token": bool(_repos.token())})
+
+
+@_routes.ROUTER.post("/api/repos", admin=True)
+def _rt_repos_open(h):
+    b = h._body()
+    ok, name, note = _repos.open_repo(str(b.get("repo") or b.get("url") or ""), str(b.get("model") or ""))
+    return h._json({"ok": ok, "name": name, "note": note}, 200 if ok else 400)
+
+
+@_routes.ROUTER.post("/api/repos/", prefix=True, admin=True)
+def _rt_repos_action(h):
+    parts = h.path.split("?", 1)[0].strip("/").split("/")      # api/repos/<name>/refresh
+    if len(parts) != 4 or parts[3] != "refresh":
+        return h._json({"ok": False, "note": "unknown action"}, 404)
+    ok, note = _repos.refresh(parts[2])
+    return h._json({"ok": ok, "note": note}, 200 if ok else 400)
 
 
 @_routes.ROUTER.get("/api/workspace/", prefix=True, admin=True)

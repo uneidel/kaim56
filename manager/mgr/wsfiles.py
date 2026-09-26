@@ -20,7 +20,9 @@ import re
 from mgr import instances as _instances
 from mgr import mounts as _mounts
 
-_SEG = re.compile(r"^[A-Za-z0-9 ._()+-]+$")
+# Any segment a repo path may hold ([id].tsx, @types, a,b) — but no control
+# characters or separators; dot-leading segments ('..', dotfiles) are refused below.
+_SEG = re.compile(r"^[^\x00-\x1f\x7f/\\]+$")
 MAX_FILE = 16 * 1024 * 1024
 LIST_MAX = 500
 

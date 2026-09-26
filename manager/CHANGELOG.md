@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-26
 
+- Code flow app (`apps/codeflow`): open a GitHub repo as its own instance (`mgr/repos.py`: guest-user clone via /var/tmp staging, no .git in the VM, token only as env header, no internet with the key proxy, code-explorer persona, stack skills as playbook rule) that draws its data flow as React Flow graphs; `mgr/flowcheck.py` validates graphs incl. a symbol-in-range grounding check, the manager supervises up to 3 rounds (`tasks.idle_hooks`); routes `/api/repos`; Settings `REPO_MODEL`; `/api/workspace` accepts repo-style path names.
 - App 5.43: Notifications screen in the drawer (the manager's list, newest first, unread highlighted, tap follows the link, opening marks all read); notification navigation refactored into one function used by system notifications and the list.
 - Job board: ⋯ / right-click menu on a card excludes the company or the role — written as a rule into the jobresearcher's playbook (`/api/playbook-add`), so the daily search stops listing them; the board hides matching cards and lists the rules with remove.
 - Job board lists one card per JOB merged across runs (first seen, runs seen, gone since, verdict), from the structured `runs/<date>.json` the daily task now writes; new read-only route `GET /api/workspace/<instance>/<path>` (`mgr/wsfiles.py`: listing or file, fenced, admin only) for apps.

@@ -25,6 +25,7 @@ SETTINGS_SCHEMA = [
     {"key": "OPENAI_API_KEY", "label": "OpenAI API key"},
     {"key": "ORCAROUTER_API_KEY", "label": "OrcaRouter API key (sk-orca-…)"},
     {"key": "ORCAROUTER_URL", "label": "OrcaRouter base URL (blank = https://api.orcarouter.ai/v1; set only when self-hosting OrcaRouter-Lite)"},
+    {"key": "REPO_MODEL", "label": "Code flow: model for new repo instances (tool-capable, large context; blank = google/gemini-2.5-pro)"},
     {"key": "MAIL_ADDRESS", "label": "Mail: the agents' address (one mailbox; each instance is <local>+<name>@<domain> via plus-addressing)"},
     {"key": "MAIL_IMAP_HOST", "label": "Mail: IMAP host (receiving; port in MAIL_IMAP_PORT, default 993 TLS)"},
     {"key": "MAIL_SMTP_HOST", "label": "Mail: SMTP host (sending; blank = IMAP host; port in MAIL_SMTP_PORT, 465 TLS or 587 STARTTLS)"},

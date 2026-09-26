@@ -1,0 +1,5 @@
+{
+  "title": "Code flow",
+  "description": "Open a GitHub repo as its own agent; it analyses the code and draws how the data flows, with the real code in every node",
+  "icon": "🔀"
+}

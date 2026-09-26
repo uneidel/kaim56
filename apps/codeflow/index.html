@@ -1,0 +1,397 @@
+<!doctype html>
+<!-- kAIm56 — self-hosted Firecracker AI-agent platform
+     SPDX-License-Identifier: AGPL-3.0-or-later
+     Code flow: open a GitHub repository as its own agent instance (manager:
+     mgr/repos.py), let it analyse the code, and browse how the data flows —
+     overview, drill-down per component, the real code in every node (cut
+     from the checkout via /api/workspace, never the model's paraphrase), and
+     a chat with the repo's agent. React + React Flow from esm.sh, no build. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code flow · kAIm56</title>
+<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.12.0/dist/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<style>
+:root{--bg:#f6f5f2;--panel:#fff;--text:#1b1b1b;--muted:#6b6b6b;--border:#d9d6cf;--accent:#0b5cad;--me:#e8f0fb;--warn:#8a5a00;--bad:#a4262c;
+  --k-entry:#1b7f4b;--k-process:#0b5cad;--k-store:#9a6700;--k-external:#6b6b6b;--k-output:#7b3fb3;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#141414;--panel:#1d1d1d;--text:#ececec;--muted:#9a9a9a;--border:#333;--accent:#6fa8e8;--me:#22303f;--warn:#e0b050;--bad:#f08080;
+  --k-entry:#4fbf85;--k-process:#6fa8e8;--k-store:#e0b050;--k-external:#9a9a9a;--k-output:#b98be0}}
+*{box-sizing:border-box}html,body,#root{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif}
+.app{height:100%;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:16px;margin:0;white-space:nowrap}header .grow{flex:1}
+header a{color:var(--muted);text-decoration:none;font-size:13px}
+button,select,input{font:inherit;color:var(--text)}
+button{border:1px solid var(--border);background:var(--panel);padding:5px 10px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.primary:hover:not(:disabled){color:#fff;filter:brightness(1.08)}
+select,input{border:1px solid var(--border);background:var(--bg);padding:5px 8px}
+select{max-width:18rem}
+.chip{font-size:11px;border:1px solid var(--border);padding:1px 6px;color:var(--muted);white-space:nowrap}
+.chip.ok{color:var(--k-entry);border-color:currentColor}.chip.run{color:var(--accent);border-color:currentColor}
+.chip.bad{color:var(--bad);border-color:currentColor}.chip.warn{color:var(--warn);border-color:currentColor}
+.muted{color:var(--muted)}.small{font-size:12px}
+main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 420px;min-height:0}
+@media(max-width:960px){main{grid-template-columns:1fr;grid-template-rows:1fr 45%}}
+.canvas{position:relative;min-height:0;display:flex;flex-direction:column}
+.crumbs{display:flex;gap:6px;align-items:center;padding:6px 12px;font-size:13px;border-bottom:1px solid var(--border);background:var(--panel)}
+.crumbs button{border:0;padding:0;background:none;color:var(--accent)}.crumbs .sep{color:var(--muted)}
+.crumbs .sum{margin-left:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.flow{flex:1;min-height:0}
+.banner{padding:8px 12px;font-size:12.5px;border-bottom:1px solid var(--border);background:var(--panel)}
+.banner.warn{color:var(--warn)}.banner.bad{color:var(--bad)}
+.banner ul{margin:4px 0 0;padding-left:18px}
+.empty{margin:auto;max-width:34rem;padding:24px;text-align:center}
+.empty h2{font-size:18px;margin:0 0 8px}
+.side{border-left:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;border-bottom:1px solid var(--border)}
+.tabs button{flex:1;border:0;border-bottom:2px solid transparent;background:none;padding:8px}
+.tabs button.on{border-bottom-color:var(--accent);color:var(--accent)}
+.pane{flex:1;overflow:auto;padding:12px 14px;min-height:0}
+.pane h3{margin:0 0 4px;font-size:15px}
+.refhead{font:12px var(--mono);color:var(--muted);margin:12px 0 4px;display:flex;gap:8px;align-items:baseline}
+.code{display:flex;border:1px solid var(--border);overflow:auto;max-height:26rem;font:12px/1.5 var(--mono);background:var(--bg)}
+.code pre{margin:0;padding:6px 8px}.code .gut{color:var(--muted);text-align:right;user-select:none;border-right:1px solid var(--border)}
+.code .src{flex:1}.code code.hljs{background:none;padding:0}
+.row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+/* nodes */
+.cn{width:360px;background:var(--panel);border:1px solid var(--border);font-size:12.5px;cursor:pointer}
+.cn.sel{outline:2px solid var(--accent);outline-offset:1px}
+.cn-head{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--border)}
+.cn-head b{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kind{font:10.5px var(--mono);text-transform:uppercase;letter-spacing:.04em;padding:1px 5px;border:1px solid currentColor}
+.k-entry{color:var(--k-entry)}.k-process{color:var(--k-process)}.k-store{color:var(--k-store)}.k-external{color:var(--k-external)}.k-output{color:var(--k-output)}
+.drill{font-size:11px;color:var(--accent)}
+.cn-sum{padding:5px 8px 0;color:var(--muted)}
+.cn-ref{padding:4px 8px 0;font:11px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cn-code{margin:4px 8px 8px;padding:5px 6px;font:11px/1.45 var(--mono);background:var(--bg);border:1px solid var(--border);overflow:hidden;white-space:pre}
+.cn-code code.hljs{background:none;padding:0}
+.react-flow__edge-textbg{fill:var(--panel)}.react-flow__edge-text{fill:var(--text);font-size:11px}
+/* chat */
+.chat{display:flex;flex-direction:column;min-height:0;flex:1}
+.msgs{flex:1;overflow:auto;padding:12px 14px}
+.msg{margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);white-space:pre-wrap;word-break:break-word;font-size:13px}
+.msg.me{margin-left:12%;background:var(--me)}
+.compose{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border)}
+.compose textarea{flex:1;resize:none;min-height:40px;max-height:160px;border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;padding:6px 8px}
+/* dialog */
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;z-index:20}
+.dlg form{background:var(--panel);border:1px solid var(--border);padding:18px;width:min(34rem,92vw);display:flex;flex-direction:column;gap:10px}
+.dlg h2{margin:0;font-size:16px}.dlg input{width:100%}
+</style></head><body><div id="root"></div>
+<script type="module">
+import React from 'https://esm.sh/react@18.3.1';
+import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1';
+import { ReactFlow, Background, Controls, MiniMap, MarkerType, Handle, Position }
+  from 'https://esm.sh/@xyflow/react@12.12.0?deps=react@18.3.1,react-dom@18.3.1';
+import dagre from 'https://esm.sh/@dagrejs/dagre@1.1.4';
+import htm from 'https://esm.sh/htm@3.1.1';
+import hljs from 'https://esm.sh/highlight.js@11.10.0/lib/common';
+
+const html = htm.bind(React.createElement);
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+const enc = encodeURIComponent;
+const NODE_W = 360, NODE_LINES = 12;
+
+/* ---- manager API ------------------------------------------------------------- */
+const api = {
+  repos: () => fetch('/api/repos', { cache: 'no-store' }).then(r => r.json()),
+  open: (repo, model) => fetch('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo, model }) }).then(r => r.json()),
+  refresh: name => fetch(`/api/repos/${enc(name)}/refresh`, { method: 'POST' }).then(r => r.json()),
+  flow: (name, id) => fetch(`/api/workspace/${enc(name)}/flow/${enc(id)}.json`, { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null).catch(() => null),
+};
+const FILES = new Map();          // `${instance}/${path}` -> Promise<string[] | null>
+function fileLines(name, path) {
+  const k = name + '/' + path;
+  if (!FILES.has(k)) FILES.set(k, fetch(`/api/workspace/${enc(name)}/src/${path.split('/').map(enc).join('/')}`)
+    .then(r => r.ok ? r.text() : null).then(t => t == null ? null : t.split('\n')).catch(() => null));
+  return FILES.get(k);
+}
+const LANG = { py: 'python', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript',
+  tsx: 'typescript', go: 'go', rs: 'rust', java: 'java', kt: 'kotlin', kts: 'kotlin', rb: 'ruby', php: 'php', cs: 'csharp',
+  c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', sh: 'bash', bash: 'bash', yml: 'yaml', yaml: 'yaml', json: 'json',
+  sql: 'sql', swift: 'swift', scala: 'scala', lua: 'lua', r: 'r', md: 'markdown', xml: 'xml', html: 'xml', css: 'css', scss: 'scss' };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function hi(code, file) {
+  const lang = LANG[(file.split('.').pop() || '').toLowerCase()];
+  try { if (lang) return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value; } catch (e) {}
+  return esc(code);
+}
+const fmtAgo = ts => { if (!ts) return ''; const m = Math.round((Date.now() / 1000 - ts) / 60);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+
+/* ---- layout: dagre, left to right = the direction the data travels -------------- */
+function nodeHeight(n, lines) {
+  return 40 + (n.summary ? 38 : 0) + ((n.code || []).length ? 18 : 0) + (lines ? Math.min(lines, NODE_LINES) * 16 + 18 : 0);
+}
+function buildFlow(graph, snippets, dir = 'LR') {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: dir, nodesep: dir === 'LR' ? 36 : 48, ranksep: dir === 'LR' ? 120 : 70, marginx: 20, marginy: 20 });
+  g.setDefaultEdgeLabel(() => ({}));
+  const ids = new Set((graph.nodes || []).map(n => n.id));
+  for (const n of graph.nodes || []) g.setNode(n.id, { width: NODE_W, height: nodeHeight(n, snippets[n.id]?.count) });
+  const edges = (graph.edges || []).filter(e => ids.has(e.source) && ids.has(e.target) && e.source !== e.target);
+  edges.forEach(e => g.setEdge(e.source, e.target));
+  dagre.layout(g);
+  const nodes = (graph.nodes || []).map(n => {
+    const p = g.node(n.id), h = nodeHeight(n, snippets[n.id]?.count);
+    return { id: n.id, type: 'code', position: { x: p.x - NODE_W / 2, y: p.y - h / 2 }, data: { n, snip: snippets[n.id], dir } };
+  });
+  const redges = edges.map((e, i) => ({ id: `e${i}`, source: e.source, target: e.target, label: e.data, type: 'smoothstep',
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 }, labelBgPadding: [4, 2], labelBgBorderRadius: 0 }));
+  return { nodes, edges: redges };
+}
+async function loadSnippets(name, graph) {
+  const out = {};
+  await Promise.all((graph.nodes || []).map(async n => {
+    const r = (n.code || [])[0];
+    if (!r || !r.file) return;
+    const lines = await fileLines(name, r.file);
+    if (!lines) return;
+    const part = lines.slice(Math.max(0, r.start - 1), r.end);
+    const shown = part.slice(0, NODE_LINES);
+    out[n.id] = { count: shown.length, more: part.length - shown.length, html: hi(shown.join('\n'), r.file) };
+  }));
+  return out;
+}
+
+/* ---- the node --------------------------------------------------------------------- */
+function CodeNode({ data, selected }) {
+  const n = data.n, r = (n.code || [])[0], s = data.snip;
+  return html`<div className=${'cn' + (selected ? ' sel' : '')}>
+    <${Handle} type="target" position=${data.dir === 'TB' ? Position.Top : Position.Left} />
+    <div className="cn-head"><span className=${'kind k-' + n.kind}>${n.kind}</span><b title=${n.label}>${n.label}</b>
+      ${n.detail && html`<span className="drill" title="double-click for the detail flow">⤵ detail</span>`}</div>
+    ${n.summary && html`<div className="cn-sum">${n.summary}</div>`}
+    ${r && html`<div className="cn-ref" title=${r.file}>${r.file}:${r.start}–${r.end}${r.symbol ? ' · ' + r.symbol : ''}${(n.code || []).length > 1 ? ` · +${n.code.length - 1}` : ''}</div>`}
+    ${s && html`<pre className="cn-code"><code className="hljs" dangerouslySetInnerHTML=${{ __html: s.html + (s.more ? `\n<span class="muted">… ${s.more} more lines</span>` : '') }} /></pre>`}
+    <${Handle} type="source" position=${data.dir === 'TB' ? Position.Bottom : Position.Right} />
+  </div>`;
+}
+const nodeTypes = { code: CodeNode };
+const kindColor = n => getComputedStyle(document.documentElement).getPropertyValue('--k-' + (n.data?.n?.kind || 'external')).trim() || '#888';
+
+/* ---- side panel: the selected node ------------------------------------------------ */
+function CodeRef({ name, r }) {
+  const [lines, setLines] = useState(undefined);
+  useEffect(() => { let on = true; fileLines(name, r.file).then(l => on && setLines(l)); return () => { on = false }; }, [name, r.file]);
+  if (lines === undefined) return html`<div className="muted small">loading ${r.file}…</div>`;
+  if (!lines) return html`<div className="muted small">${r.file} could not be read</div>`;
+  const part = lines.slice(Math.max(0, r.start - 1), r.end);
+  const nums = part.map((_, i) => r.start + i).join('\n');
+  return html`<div className="code"><pre className="gut">${nums}</pre>
+    <pre className="src"><code className="hljs" dangerouslySetInnerHTML=${{ __html: hi(part.join('\n'), r.file) }} /></pre></div>`;
+}
+function NodePanel({ name, node, onDrill, onAsk }) {
+  if (!node) return html`<div className="pane muted">Click a node to see its code. Double-click a node marked
+    “⤵ detail” to open the flow inside that component.</div>`;
+  return html`<div className="pane">
+    <div><span className=${'kind k-' + node.kind}>${node.kind}</span></div>
+    <h3 style=${{ marginTop: '6px' }}>${node.label}</h3>
+    ${node.summary && html`<div className="muted">${node.summary}</div>`}
+    ${(node.code || []).map((r, i) => html`<div key=${i}>
+      <div className="refhead"><span>${r.file}:${r.start}–${r.end}</span>${r.symbol && html`<span>· ${r.symbol}</span>`}</div>
+      <${CodeRef} name=${name} r=${r} /></div>`)}
+    ${!(node.code || []).length && html`<div className="muted small" style=${{ marginTop: '10px' }}>Outside the repository — no code.</div>`}
+    <div className="row">
+      ${node.detail && html`<button className="primary" onClick=${() => onDrill(node.detail)}>Open detail flow ⤵</button>`}
+      <button onClick=${() => onAsk(node)}>Ask the agent about this</button>
+    </div></div>`;
+}
+
+/* ---- chat with the repo's agent (the same streaming route as the chat page) -------- */
+function Chat({ name, draft, setDraft }) {
+  const [msgs, setMsgs] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const box = useRef(null);
+  useEffect(() => { setMsgs([]); }, [name]);
+  useEffect(() => { if (box.current) box.current.scrollTop = 1e9; }, [msgs]);
+  async function send() {
+    const text = draft.trim(); if (!text || busy) return;
+    setDraft(''); setBusy(true);
+    setMsgs(m => [...m, { me: true, text }, { me: false, text: '…' }]);
+    try {
+      const r = await fetch('/api/chat/' + enc(name), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, chat: 'app-codeflow-' + name }) });
+      const rd = r.body.getReader(), dec = new TextDecoder(); let acc = '';
+      for (;;) { const { value, done } = await rd.read(); if (done) break; acc += dec.decode(value, { stream: true });
+        setMsgs(m => [...m.slice(0, -1), { me: false, text: acc }]); }
+      setMsgs(m => [...m.slice(0, -1), { me: false, text: acc.trim() || '(empty answer)' }]);
+    } catch (e) { setMsgs(m => [...m.slice(0, -1), { me: false, text: '⚠️ ' + e }]); }
+    setBusy(false);
+  }
+  return html`<div className="chat">
+    <div className="msgs" ref=${box}>
+      ${!msgs.length && html`<div className="muted small">Ask ${name} about the code — it has read the repository and
+        keeps notes about it. The VM starts on the first question if it is stopped (about 10 s).</div>`}
+      ${msgs.map((m, i) => html`<div key=${i} className=${'msg' + (m.me ? ' me' : '')}>${m.text}</div>`)}
+    </div>
+    <div className="compose"><textarea value=${draft} placeholder="Ask about the code… (Enter sends, Shift+Enter newline)"
+      onInput=${e => setDraft(e.target.value)}
+      onKeyDown=${e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+      <button className="primary" disabled=${busy} onClick=${send}>Send</button></div>
+  </div>`;
+}
+
+/* ---- open-repo dialog ----------------------------------------------------------------- */
+function OpenDialog({ token, onClose, onOpened }) {
+  const [repo, setRepo] = useState(''), [model, setModel] = useState(''), [note, setNote] = useState(''), [busy, setBusy] = useState(false);
+  const [models, setModels] = useState([]);
+  useEffect(() => { fetch('/api/openrouter-models?tools=1&relevant=1').then(r => r.json())
+    .then(d => setModels((Array.isArray(d) ? d : d.models || []).filter(m => m.id))).catch(() => {}); }, []);
+  async function submit(e) {
+    e.preventDefault(); if (!repo.trim()) return;
+    setBusy(true); setNote('Checking the repository…');
+    const r = await api.open(repo.trim(), model.trim()).catch(err => ({ ok: false, note: String(err) }));
+    setBusy(false);
+    if (r.ok) onOpened(r.name); else setNote('⚠️ ' + (r.note || 'failed'));
+  }
+  return html`<div className="dlg" onClick=${e => { if (e.target.className === 'dlg') onClose(); }}>
+    <form onSubmit=${submit}>
+      <h2>Open a GitHub repository</h2>
+      <input autoFocus value=${repo} onInput=${e => setRepo(e.target.value)} placeholder="owner/repo or https://github.com/owner/repo" />
+      <select value=${model} onChange=${e => setModel(e.target.value)} aria-label="Model">
+        <option value="">Default model (Settings → REPO_MODEL, else google/gemini-2.5-pro)</option>
+        ${models.map(m => html`<option key=${m.id} value=${m.id}>${m.id}${m.pricing ? '  ·  ' + m.pricing : ''}</option>`)}
+      </select>
+      <div className="small muted">Pick a strong tool-calling model: a weak one tends to describe what it would do instead of
+        doing it, and the checker then sends it back for another round.</div>
+      <div className="small muted">${token
+        ? 'A GitHub token is configured: private repositories it can read work too.'
+        : html`No GitHub token configured — public repositories only. For private ones add a fine-grained token
+          (read-only “Contents” and “Metadata”) as <b>GITHUB_TOKEN</b> in the manager's Secrets tab.`}</div>
+      <div className="small muted">A new agent instance is created for the repo (no internet, code tools only). It clones
+        the default branch, analyses the code and draws the data flow — usually 5 to 20 minutes.</div>
+      ${note && html`<div className="small">${note}</div>`}
+      <div className="row" style=${{ justifyContent: 'flex-end' }}>
+        <button type="button" onClick=${onClose}>Cancel</button>
+        <button type="submit" className="primary" disabled=${busy || !repo.trim()}>Open and analyse</button>
+      </div></form></div>`;
+}
+
+/* ---- the app ----------------------------------------------------------------------------- */
+const STATUS = { cloning: ['run', 'cloning'], analysing: ['run', 'analysing'], ready: ['ok', 'ready'],
+  incomplete: ['warn', 'incomplete'], failed: ['bad', 'failed'] };
+function App() {
+  const [repos, setRepos] = useState(null), [token, setToken] = useState(false);
+  const [sel, setSel] = useState(() => new URLSearchParams(location.hash.slice(1)).get('r') || '');
+  const [path, setPath] = useState(['overview']);               // breadcrumb: overview, then a detail id
+  const [graph, setGraph] = useState(null), [flow, setFlow] = useState(null), [loading, setLoading] = useState(false);
+  const [node, setNode] = useState(null), [tab, setTab] = useState('node'), [draft, setDraft] = useState('');
+  const [openDlg, setOpenDlg] = useState(false);
+  const [overview, setOverview] = useState(null);
+  const [dir, setDir] = useState(() => { try { return localStorage.getItem('codeflow.dir') || 'LR'; } catch (e) { return 'LR'; } });
+  const flipDir = () => setDir(d => { const n = d === 'LR' ? 'TB' : 'LR'; try { localStorage.setItem('codeflow.dir', n); } catch (e) {} return n; });
+
+  const poll = useCallback(() => api.repos().then(d => { setRepos(d.repos || []); setToken(!!d.token); }).catch(() => setRepos(r => r || [])), []);
+  useEffect(() => { poll(); const t = setInterval(poll, 8000); return () => clearInterval(t); }, [poll]);
+  useEffect(() => { if (repos && repos.length && !repos.some(r => r.name === sel)) setSel(repos[0].name); }, [repos]);
+  useEffect(() => { if (sel) history.replaceState(null, '', '#r=' + enc(sel)); setPath(['overview']); setNode(null); }, [sel]);
+  const repo = (repos || []).find(r => r.name === sel);
+  const cur = path[path.length - 1];
+  const stamp = repo ? `${repo.commit}|${repo.flow?.graphs}|${repo.flow?.nodes}|${repo.status}` : '';
+
+  useEffect(() => {                                            // load the graph shown
+    if (!repo || !repo.flow || !repo.flow.graphs) { setGraph(null); setFlow(null); return; }
+    let on = true; setLoading(true);
+    (async () => {
+      const g = await api.flow(sel, cur);
+      if (!on) return;
+      if (!g || !Array.isArray(g.nodes)) { setGraph(null); setFlow(null); setLoading(false); return; }
+      if (cur === 'overview') setOverview(g);
+      const snips = await loadSnippets(sel, g);
+      if (!on) return;
+      // A fresh id per loaded flow: React Flow takes defaultNodes only when it
+      // mounts, so it must remount exactly when a NEW flow is ready — keying
+      // on the path alone remounted it with the previous graph's nodes.
+      setGraph(g); setFlow({ ...buildFlow(g, snips, dir), id: `${sel}/${cur}/${stamp}/${dir}/${Date.now()}` }); setLoading(false);
+    })();
+    return () => { on = false; };
+  }, [sel, cur, stamp, dir]);
+
+  const drill = id => { setPath(p => [...p.filter(x => x !== id), id]); setNode(null); };
+  const ask = n => { const r = (n.code || [])[0];
+    setDraft(`Explain "${n.label}"${r ? ` (${r.file}:${r.start}-${r.end})` : ''}: what data comes in, what happens to it, and what goes out? `);
+    setTab('chat'); };
+  async function reanalyse() {
+    if (!repo || !confirm(`Pull the latest ${repo.full_name} and analyse it again? The current graph is replaced.`)) return;
+    const r = await api.refresh(repo.name); if (!r.ok) alert(r.note || 'failed'); FILES.clear(); poll();
+  }
+  const [cls, label] = STATUS[repo?.status] || ['', repo?.status || ''];
+  const detailTitle = id => (overview?.nodes || []).find(n => n.detail === id)?.label || id;
+
+  let body;
+  if (repos === null) body = html`<div className="empty muted">Loading…</div>`;
+  else if (!repos.length) body = html`<div className="empty"><h2>No repositories yet</h2>
+    <p className="muted">Open a GitHub repository: it becomes its own agent, which reads the code and draws how the data
+      flows through it — with the real code in every node.</p>
+    <button className="primary" onClick=${() => setOpenDlg(true)}>Open a repository</button></div>`;
+  else if (!flow) body = html`<div className="empty">
+    ${repo?.status === 'cloning' && html`<h2>Cloning ${repo.full_name}…</h2><p className="muted">The analysis starts right after.</p>`}
+    ${repo?.status === 'analysing' && html`<h2>The agent is reading the code</h2>
+      <p className="muted">Round ${repo.rounds || 1} of ${repo.max_rounds || 3} · task ${repo.task?.status || 'queued'} ${fmtAgo(repo.task?.updated)}.
+        ${(repo.rounds || 1) > 1 ? 'The checker found problems in the previous round; the agent is fixing them. ' : ''}
+        The graph appears here once the checker accepts it — usually 5 to 20 minutes.</p>`}
+    ${repo?.status === 'failed' && html`<h2>The analysis failed</h2><p className="muted">${repo.error}</p>
+      <button onClick=${reanalyse}>Try again</button>`}
+    ${repo && ['ready', 'incomplete'].includes(repo.status) && html`<h2>${loading ? 'Loading the graph…' : 'No graph'}</h2>
+      ${!loading && html`<p className="muted">${(repo.flow?.errors || []).join(' · ')}</p><button onClick=${reanalyse}>Analyse again</button>`}`}
+  </div>`;
+  else body = html`<div className="canvas">
+    <div className="crumbs">
+      ${path.map((p, i) => html`<span key=${p}>${i > 0 && html`<span className="sep">›  </span>`}${i < path.length - 1
+        ? html`<button onClick=${() => { setPath(path.slice(0, i + 1)); setNode(null); }}>${p === 'overview' ? 'Overview' : detailTitle(p)}</button>`
+        : html`<b>${p === 'overview' ? 'Overview' : (graph?.title || detailTitle(p))}</b>`}</span>`)}
+      <span className="sum" title=${graph?.summary || ''}>${graph?.summary || ''}</span>
+      <button onClick=${flipDir} title="Lay the flow out left to right or top to bottom">${dir === 'LR' ? '→ left to right' : '↓ top to bottom'}</button>
+    </div>
+    ${repo?.status === 'analysing' && html`<div className="banner">Analysis still running (round ${repo.rounds || 1} of ${repo.max_rounds || 3}) — this graph may change.</div>`}
+    ${repo?.status === 'incomplete' && html`<div className="banner warn">The agent finished, but the graph has problems:
+      <ul>${(repo.flow?.errors || []).map((e, i) => html`<li key=${i}>${e}</li>`)}</ul></div>`}
+    <div className="flow"><${ReactFlow} key=${flow.id} defaultNodes=${flow.nodes} defaultEdges=${flow.edges}
+      nodeTypes=${nodeTypes} colorMode="system" fitView=${true} fitViewOptions=${{ padding: 0.08, minZoom: 0.7, maxZoom: 1 }} minZoom=${0.1}
+      nodesConnectable=${false} onlyRenderVisibleElements=${false} proOptions=${{ hideAttribution: true }}
+      onNodeClick=${(_, n) => { setNode(n.data.n); setTab('node'); }}
+      onNodeDoubleClick=${(_, n) => { if (n.data.n.detail) drill(n.data.n.detail); }}
+      onPaneClick=${() => setNode(null)}>
+      <${Background} gap=${20} size=${1} />
+      <${Controls} showInteractive=${false} />
+      <${MiniMap} pannable=${true} zoomable=${true} nodeColor=${kindColor} />
+    <//></div>
+  </div>`;
+
+  return html`<div className="app">
+    <header>
+      <h1>🔀 Code flow</h1>
+      ${repos && repos.length > 0 && html`<select value=${sel} onChange=${e => setSel(e.target.value)} aria-label="Repository">
+        ${repos.map(r => html`<option key=${r.name} value=${r.name}>${r.full_name}</option>`)}</select>`}
+      ${repo && html`<span className=${'chip ' + cls}>${label}</span>`}
+      ${repo?.private && html`<span className="chip" title="private repository">private</span>`}
+      ${repo?.commit && html`<span className="chip" title=${'commit ' + repo.commit}>${repo.branch || ''} @ ${repo.commit.slice(0, 7)}</span>`}
+      ${(repo?.stack || []).slice(0, 5).map(t => html`<span key=${t} className="chip">${t}</span>`)}
+      ${repo?.model && html`<span className="chip" title="model of this repo's agent">${repo.model}</span>`}
+      <span className="grow"></span>
+      ${repo && html`<button onClick=${reanalyse} disabled=${['cloning', 'analysing'].includes(repo.status)} title="Pull the latest commit and analyse again">Re-analyse</button>`}
+      ${repo && html`<a href=${repo.url} target="_blank" rel="noopener">GitHub</a>`}
+      <button className="primary" onClick=${() => setOpenDlg(true)}>+ Open repo</button>
+      <a href="/chat">Chat</a> · <a href="/">Manager</a>
+    </header>
+    <main>
+      ${body}
+      <aside className="side">
+        <div className="tabs"><button className=${tab === 'node' ? 'on' : ''} onClick=${() => setTab('node')}>Code</button>
+          <button className=${tab === 'chat' ? 'on' : ''} onClick=${() => setTab('chat')} disabled=${!repo}>Ask ${repo ? repo.name : 'the agent'}</button></div>
+        ${tab === 'node' ? html`<${NodePanel} name=${sel} node=${node} onDrill=${drill} onAsk=${ask} />`
+          : repo && html`<${Chat} name=${repo.name} draft=${draft} setDraft=${setDraft} />`}
+      </aside>
+    </main>
+    ${openDlg && html`<${OpenDialog} token=${token} onClose=${() => setOpenDlg(false)}
+      onOpened=${name => { setOpenDlg(false); setSel(name); poll(); }} />`}
+  </div>`;
+}
+createRoot(document.getElementById('root')).render(html`<${App} />`);
+</script></body></html>

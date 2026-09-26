@@ -51,6 +51,8 @@ from http.server import ThreadingHTTPServer
 from mgr import about as _about              # noqa: F401
 from mgr import aicheck as _aicheck          # noqa: F401
 from mgr import apps as _apps                # noqa: F401
+from mgr import flowcheck as _flowcheck      # noqa: F401
+from mgr import repos as _repos              # noqa: F401
 from mgr import audit as _audit
 from mgr import auth as _auth
 from mgr import browse as _browse            # noqa: F401
@@ -106,6 +108,7 @@ _memfs.configure(_paths.BASE)
 _hindsight.configure(lambda: _settings.load_settings(), log=print)
 _signal_mod.configure(_paths.BASE)
 _mail.configure(_paths.BASE)
+_tasks.idle_hooks.append(_repos.supervise)   # Code flow: validate a finished analysis, follow up
 _mcp.HUB_TZ = _host.HOST_TZ          # hub processes (caldav-mcp …) format dates in this zone
 os.makedirs(_paths.RUN_DIR, exist_ok=True)
 _gateway.configure(_paths.BASE)
