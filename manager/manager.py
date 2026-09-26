@@ -50,6 +50,7 @@ from http.server import ThreadingHTTPServer
 
 from mgr import about as _about              # noqa: F401
 from mgr import aicheck as _aicheck          # noqa: F401
+from mgr import apps as _apps                # noqa: F401
 from mgr import audit as _audit
 from mgr import auth as _auth
 from mgr import browse as _browse            # noqa: F401

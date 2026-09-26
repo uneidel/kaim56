@@ -108,6 +108,7 @@ On Proxmox VE: [`docs/proxmox.md`](docs/proxmox.md) (a VM with nested virtualiza
 | `katfs/` | Browser-to-agent folder sharing over iroh (Rust, WASM) |
 | `iroh-gw/` | The iroh transport: host gateway and desktop tunnel (Rust); prebuilt in `dist/` |
 | `voice/`, `embed/`, `mcp-hub/` | Host containers: speech (Parakeet + Piper), embeddings, MCP server processes |
+| `apps/` | Browser front-ends on top of the platform, one folder each (`app.json` + `index.html`), served by the manager under `/apps/<name>/`; `jobboard/` is the first |
 | `examples/` | Templates for the files kept out of the repo (settings, site, MCP catalog) |
 | `docs/` | Screenshots, project page |
 

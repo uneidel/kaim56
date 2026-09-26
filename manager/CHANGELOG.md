@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-26
 
+- Apps: browser front-ends next to the chat page — one folder `apps/<name>/` (app.json + index.html), scanned from `APPS_DIR` (site.json, default `apps/` next to `manager/`), listed by `/api/apps` and in the chat sidebar, served under `/apps/<name>/` behind the login (`mgr/apps.py`); first app `apps/jobboard` (the jobresearcher's runs + a chat with it).
 - Chat page: a "written by AI?" gauge top right of every reply (`mgr/aicheck.py`, route `/aic/`): the xkqr.org/aicomment classifier runs in the browser, results cached per text; assets cached from the author's site under `run/aicheck` (no license published, so not vendored), the text never leaves the browser.
 - Mail channel (`mgr/mail.py`): one external IMAP/SMTP mailbox, an address per instance via plus-addressing (`<account>+<name>@<domain>`, `MAIL_TAG` overrides), host-side poller delivers allowed senders' mails as a turn and mails the reply back in-thread; `send_mail` tool / `POST /api/mail` (allowlist, redaction, throttle); Settings `MAIL_*`; chat kind `mail`.
 - JobSpy as a hub MCP server (`mcp-hub/jobspy_mcp.py`, catalog entry `jobspy`): the tool `jobspy__search_jobs` scrapes Indeed/LinkedIn/Glassdoor/ZipRecruiter/Google for an instance that lists `jobspy` in MCP_SERVERS; hub image installs `python-jobspy` (pandas + tls client — hub only, never in a VM).

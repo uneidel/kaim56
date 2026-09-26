@@ -93,6 +93,8 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 .side-foot{padding:11px 13px;border-top:1px solid var(--border);font-size:.82rem}
 .side-foot a{color:var(--muted);text-decoration:none}
 .side-foot a:hover{color:var(--accent)}
+.side-apps{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.side-apps a{display:flex;gap:6px;align-items:center}
 
 /* ---- Main ---- */
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -302,7 +304,7 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
   <div class=side-top><button id=new onclick=newChat()>＋ New chat</button></div>
   <div class=side-label>Chats</div>
   <div id=convs></div>
-  <div class=side-foot><a href="/" class=home>__LOGO__<span>kAIm56</span></a></div>
+  <div class=side-foot>__APPS__<a href="/" class=home>__LOGO__<span>kAIm56</span></a></div>
 </aside>
 
 <div id=main>
@@ -1117,9 +1119,15 @@ panelPaint();refreshState();gwLoad();setInterval(refreshState,15000);
 </script></body></html>"""
 
 
-def render(agents, current="", logo=""):
-    """agents: list of {name, running, description} (instances with TRANSPORT=web)."""
+def render(agents, current="", logo="", apps=None):
+    """agents: list of {name, running, description} (instances with TRANSPORT=web);
+    apps: [{name,title,icon,description}] from mgr.apps.load_apps() — links in the sidebar foot."""
     import json
+    from html import escape as _h
+    apps_html = ("<div class=side-apps>" + "".join(
+        f"<a href='/apps/{_h(a['name'])}/' title='{_h(a.get('description', ''))}'>{_h(a.get('icon', '▦'))} {_h(a['title'])}</a>"
+        for a in (apps or [])) + "</div>") if apps else ""
     return (PAGE.replace("__LOGO__", logo)
+                .replace("__APPS__", apps_html)
                 .replace("__AGENTS__", json.dumps(agents, ensure_ascii=False))
                 .replace("__CURRENT__", json.dumps(current)))

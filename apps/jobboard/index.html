@@ -1,0 +1,102 @@
+<!doctype html>
+<!-- kAIm56 — self-hosted Firecracker AI-agent platform
+     SPDX-License-Identifier: AGPL-3.0-or-later
+     Job board: the smallest app on the platform. Left the runs of the daily
+     job-search task (from /api/tasks and the task chat), right a chat with
+     the jobresearcher instance (/api/chat/<instance>, streamed). No backend
+     of its own: the agent is the backend. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job board · kAIm56</title>
+<style>
+:root{--bg:#f6f5f2;--panel:#fff;--text:#1b1b1b;--muted:#6b6b6b;--border:#d9d6cf;--accent:#0b5cad;--me:#e8f0fb}
+@media(prefers-color-scheme:dark){:root{--bg:#141414;--panel:#1d1d1d;--text:#ececec;--muted:#9a9a9a;--border:#333;--accent:#6fa8e8;--me:#22303f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel)}
+header h1{font-size:16px;margin:0}header a{color:var(--muted);text-decoration:none;font-size:13px}header .grow{flex:1}
+button{font:inherit;border:1px solid var(--border);background:var(--panel);color:var(--text);padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}button:disabled{opacity:.5;cursor:default}
+main{flex:1;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);min-height:0}
+@media(max-width:800px){main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}
+section{min-height:0;display:flex;flex-direction:column}
+#runs{overflow:auto;padding:14px 16px;border-right:1px solid var(--border)}
+.run{background:var(--panel);border:1px solid var(--border);padding:12px 14px;margin-bottom:12px}
+.run .when{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
+.run p{margin:.4em 0}.run ul{padding-left:1.2em;margin:.3em 0}.run a{color:var(--accent);word-break:break-all}
+.run code{font-size:12px;background:var(--bg);padding:1px 4px}
+.run .ask{font-size:12px;padding:3px 8px;margin-top:6px}
+#chat{display:flex;flex-direction:column}
+#log{flex:1;overflow:auto;padding:14px 16px}
+.msg{max-width:92%;margin:0 0 10px;padding:8px 11px;border:1px solid var(--border);background:var(--panel);white-space:pre-wrap;word-break:break-word}
+.msg.me{margin-left:auto;background:var(--me)}
+#compose{display:flex;gap:8px;padding:10px 16px;border-top:1px solid var(--border);background:var(--panel)}
+#compose textarea{flex:1;font:inherit;resize:none;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-height:40px;max-height:160px}
+.muted{color:var(--muted);font-size:12px}
+</style></head><body>
+<header><h1>💼 Job board</h1><span class=muted id=status>…</span><span class=grow></span>
+  <button id=runNow title="Queue the daily task now">Run search now</button>
+  <a href="/chat?i=jobresearcher">Open chat</a> · <a href="/">Manager</a></header>
+<main>
+  <section><div id=runs><p class=muted>Loading runs…</p></div></section>
+  <section id=chat><div id=log><p class=muted>Ask the jobresearcher about a posting, or click “Ask about this” on a run.</p></div>
+    <div id=compose><textarea id=t placeholder="Ask jobresearcher… (Enter sends, Shift+Enter newline)"></textarea><button id=send>Send</button></div></section>
+</main>
+<script>
+const INSTANCE='jobresearcher', $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* a tiny Markdown subset: the task results use bold, bullets, links, code, headings */
+function md(s){
+  s=esc(s).replace(/`([^`\n]+)`/g,'<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>')
+    .replace(/(^|[^"'>])(https?:\/\/[^\s<]+[^\s<.,;:)])/g,'$1<a href="$2" target=_blank rel=noopener>$2</a>')
+    .replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>');
+  const out=[];let list=null;
+  for(const line of s.split('\n')){
+    const li=line.match(/^\s*[-*•]\s+(.*)$/);
+    if(li){if(!list){list=[];}list.push('<li>'+li[1]+'</li>');continue}
+    if(list){out.push('<ul>'+list.join('')+'</ul>');list=null}
+    const h=line.match(/^#{1,3}\s+(.*)$/);
+    if(h)out.push('<p><b>'+h[1]+'</b></p>');else if(line.trim())out.push('<p>'+line+'</p>');
+  }
+  if(list)out.push('<ul>'+list.join('')+'</ul>');
+  return out.join('');
+}
+const fmt=ts=>new Date(ts*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
+let TASK=null;
+async function loadRuns(){
+  const [tasks,chats]=await Promise.all([fetch('/api/tasks').then(r=>r.json()),fetch('/api/chats').then(r=>r.json())]);
+  const list=Array.isArray(tasks)?tasks:(tasks.tasks||[]);
+  TASK=list.find(t=>t.instance===INSTANCE&&t.schedule)||list.find(t=>t.instance===INSTANCE)||null;
+  $('status').textContent=TASK?`daily task · ${TASK.status}${TASK.next_run?' · next '+fmt(TASK.next_run):''}`:'no task for '+INSTANCE;
+  $('runNow').disabled=!TASK;
+  const convs=Array.isArray(chats)?chats:(chats.chats||[]);
+  const tc=convs.find(c=>c.id==='task-'+INSTANCE);
+  const runs=[];
+  if(tc)for(const m of tc.messages||[])if(!m.user&&m.text&&m.text.length>80)runs.push(m.text);
+  if(!runs.length&&TASK&&TASK.result)runs.push(TASK.result);
+  $('runs').innerHTML=runs.length?runs.slice().reverse().map((r,i)=>`<div class=run><div class=when><span>${i===0?'latest run':'earlier run'}</span>`+
+    (i===0&&TASK&&TASK.updated?`<span>${fmt(TASK.updated)}</span>`:'')+`</div>${md(r)}`+
+    `<button class=ask onclick="askAbout(${runs.length-1-i})">Ask about this</button></div>`).join(''):'<p class=muted>No runs yet — press “Run search now”.</p>';
+  window._runs=runs;
+}
+function askAbout(i){$('t').value='About this run of the job search:\n\n'+window._runs[i].slice(0,1500)+'\n\nMy question: ';$('t').focus();$('t').setSelectionRange($('t').value.length,$('t').value.length)}
+$('runNow').onclick=async()=>{if(!TASK)return;$('runNow').disabled=true;
+  const r=await fetch(`/api/tasks/${TASK.id}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:'run'})}).then(r=>r.json()).catch(()=>({msg:'failed'}));
+  $('status').textContent=r.msg||'queued';setTimeout(loadRuns,60000);setTimeout(()=>{$('runNow').disabled=false},5000)};
+/* chat: the same streaming route the chat page uses */
+function add(text,me){const d=document.createElement('div');d.className='msg'+(me?' me':'');d.textContent=text;$('log').appendChild(d);$('log').scrollTop=1e9;return d}
+async function send(){
+  const text=$('t').value.trim();if(!text)return;$('t').value='';add(text,true);$('send').disabled=true;
+  const bot=add('…',false);
+  try{
+    const r=await fetch('/api/chat/'+encodeURIComponent(INSTANCE),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,chat:'app-jobboard'})});
+    const rd=r.body.getReader(),dec=new TextDecoder();let acc='';
+    for(;;){const {value,done}=await rd.read();if(done)break;acc+=dec.decode(value,{stream:true});bot.textContent=acc;$('log').scrollTop=1e9}
+    bot.textContent=acc.trim()||'(empty answer)';
+  }catch(e){bot.textContent='⚠️ '+e}
+  $('send').disabled=false;
+}
+$('send').onclick=send;
+$('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+loadRuns().catch(e=>{$('runs').innerHTML='<p class=muted>⚠️ '+esc(e)+'</p>'});
+setInterval(loadRuns,120000);
+</script></body></html>

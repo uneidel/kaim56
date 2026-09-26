@@ -1,0 +1,6 @@
+{
+  "title": "Job board",
+  "description": "The daily findings of the jobresearcher agent, and a direct line to ask it about a posting",
+  "icon": "💼",
+  "instance": "jobresearcher"
+}

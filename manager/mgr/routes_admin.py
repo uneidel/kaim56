@@ -18,6 +18,7 @@ import urllib.request
 
 from mgr import about as _about
 from mgr import aicheck as _aicheck
+from mgr import apps as _apps
 from mgr import audit as _audit
 from mgr import browse as _browse
 from mgr import chats as _chats
@@ -172,7 +173,7 @@ def _rt_resources(h):
 @_routes.ROUTER.get("/chat", admin=True)
 def _rt_chat_page(h):
     want = _routes._qs(h).get("i", [""])[0]
-    body = chatui.render(_guestchat.web_instances(), want, _ui.LOGO_INLINE).encode()
+    body = chatui.render(_guestchat.web_instances(), want, _ui.LOGO_INLINE, apps=_apps.load_apps()).encode()
     h.send_response(200)
     h.send_header("Content-Type", "text/html; charset=utf-8")
     # Don't cache: otherwise the browser holds on to an old version (that
@@ -188,6 +189,25 @@ def _rt_katfs_redirect(h):
     h.send_response(301)
     h.send_header("Location", "/katfs/")
     h.end_headers()
+
+
+@_routes.ROUTER.get("/api/apps", admin=True)
+def _rt_apps(h):
+    return h._json({"apps": _apps.load_apps()})
+
+
+@_routes.ROUTER.get("/apps/", prefix=True, admin=True)
+def _rt_app_file(h):
+    # /apps/<name>/<file> — the operator's own front-ends (mgr/apps.py).
+    # /apps/<name> without the slash redirects, so the app's relative URLs resolve.
+    path = h.path.split("?", 1)[0]
+    name, slash, rel = path[len("/apps/"):].partition("/")
+    if name and not slash:
+        h.send_response(302); h.send_header("Location", f"/apps/{name}/"); h.end_headers(); return
+    data, ct = _apps.file_of(name, rel)
+    if data is None:
+        return h._json({"error": ct}, 404)
+    return data, ct
 
 
 @_routes.ROUTER.get("/aic/", prefix=True, admin=True)

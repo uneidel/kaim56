@@ -3323,6 +3323,54 @@ class ManagerFunctions(unittest.TestCase):
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
 
+    def test_apps_are_folders_served_behind_the_login(self):
+        """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
+        by /api/apps and linked in the chat sidebar, served under /apps/<name>/
+        with a bare /apps/<name> redirecting; traversal, dotfiles, symlink
+        escapes, missing manifests and bad names are refused; guests get nothing."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-apps-")
+        os.makedirs(os.path.join(tmp, "board", "js")); os.makedirs(os.path.join(tmp, "nomanifest")); os.makedirs(os.path.join(tmp, "Bad Name"))
+        json.dump({"title": "Job board", "icon": "\U0001f4bc", "description": "d", "instance": "jobresearcher"}, open(os.path.join(tmp, "board", "app.json"), "w"))
+        open(os.path.join(tmp, "board", "index.html"), "w").write("<h1>board</h1>")
+        open(os.path.join(tmp, "board", "js", "a.js"), "w").write("x=1")
+        open(os.path.join(tmp, "board", ".env"), "w").write("SECRET=1")
+        open(os.path.join(tmp, "nomanifest", "index.html"), "w").write("x")
+        open(os.path.join(tmp, "outside.txt"), "w").write("host file")
+        os.symlink(os.path.join(tmp, "outside.txt"), os.path.join(tmp, "board", "link.txt"))
+        old = m._settings.SITE.get("APPS_DIR")
+        try:
+            m._settings.SITE["APPS_DIR"] = tmp
+            apps = m._apps.load_apps()
+            self.assertEqual([a["name"] for a in apps], ["board"])
+            self.assertEqual(apps[0]["title"], "Job board"); self.assertEqual(apps[0]["instance"], "jobresearcher")
+            self.assertEqual(m._apps.file_of("board", "")[0], b"<h1>board</h1>")
+            self.assertEqual(m._apps.file_of("board", "js/a.js")[1], "text/javascript; charset=utf-8")
+            for bad in ("../outside.txt", "js/../../outside.txt", ".env", "link.txt", "js/", "nope.html"):
+                self.assertIsNone(m._apps.file_of("board", bad)[0], bad)
+            self.assertIsNone(m._apps.file_of("nomanifest", "")[0]); self.assertIsNone(m._apps.file_of("../board", "")[0])
+            h = self._handler("/apps/board/", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 200); self.assertTrue(h.wfile.getvalue().endswith(b"<h1>board</h1>"))
+            self.assertIn(b"text/html", h.wfile.getvalue())
+            h = self._handler("/apps/board", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 302); self.assertIn(b"Location: /apps/board/", h.wfile.getvalue())
+            h = self._handler("/apps/board/../outside.txt", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 404)
+            h = self._handler("/apps/board/", "172.30.1.2"); h._do_GET()            # a VM is not the operator
+            self.assertNotEqual(self._status(h), 200)
+            h = self._handler("/api/apps", "10.0.0.9"); h._do_GET()
+            self.assertIn(b'"name": "board"', h.wfile.getvalue())
+            import chatui
+            page = chatui.render([{"name": "a", "running": True}], "a", "", apps=m._apps.load_apps())
+            self.assertIn("href='/apps/board/'", page); self.assertIn("Job board", page)
+            m._settings.SITE["APPS_DIR"] = "/nonexistent"
+            self.assertEqual(m._apps.load_apps(), [])
+        finally:
+            if old is None:
+                m._settings.SITE.pop("APPS_DIR", None)
+            else:
+                m._settings.SITE["APPS_DIR"] = old
+
     def test_aicheck_assets_are_allowlisted_cached_and_served(self):
         """/aic/<name>: only the classifier's files, fetched once from the
         author's site into run/aicheck and served same-origin with the right
