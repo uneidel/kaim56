@@ -26,7 +26,14 @@ section{min-height:0;display:flex;flex-direction:column}
 .job .row2{font-size:13px;margin-top:2px}.job .row3{font-size:12px;color:var(--muted);margin-top:4px}
 .job .note{font-size:12.5px;margin-top:6px;border-left:2px solid var(--border);padding-left:8px;white-space:pre-wrap}
 .tag{font-size:11px;border:1px solid var(--border);padding:1px 6px;color:var(--muted)}
-.job .ask{position:absolute;top:8px;right:8px;font-size:12px;padding:3px 8px}
+.job .more{position:absolute;top:8px;right:8px;font-size:14px;padding:2px 8px;line-height:1}
+.menu{position:fixed;z-index:9;background:var(--panel);border:1px solid var(--border);box-shadow:0 6px 20px rgba(0,0,0,.18);min-width:220px;padding:4px 0}
+.menu button{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 12px;font-size:13px}
+.menu button:hover{background:var(--me);color:var(--text)}
+.menu .sep{border-top:1px solid var(--border);margin:4px 0}
+#rules{margin:0 0 10px}#rules summary{cursor:pointer;font-size:12px;color:var(--muted)}
+#rules .rule{display:flex;gap:8px;align-items:center;font-size:12.5px;padding:3px 0}
+#rules .rule span{flex:1}#rules .rule button{font-size:11px;padding:1px 6px}
 #chat{display:flex;flex-direction:column}
 #log{flex:1;overflow:auto;padding:14px 16px}
 .msg{max-width:92%;margin:0 0 10px;padding:8px 11px;border:1px solid var(--border);background:var(--panel);white-space:pre-wrap;word-break:break-word}
@@ -42,8 +49,10 @@ section{min-height:0;display:flex;flex-direction:column}
   <section><div id=runs>
     <div class=bar><span id=count class=muted>…</span><span class=grow></span>
       <label class=muted><input type=checkbox id=showGone> show gone</label></div>
+    <details id=rules><summary>Exclusions (playbook of jobresearcher)</summary><div id=ruleList></div></details>
     <div id=jobs><p class=muted>Loading jobs…</p></div></div></section>
-  <section id=chat><div id=log><p class=muted>Ask the jobresearcher about a posting, or click “Ask” on a job.</p></div>
+<div id=menu class=menu hidden></div>
+  <section id=chat><div id=log><p class=muted>Ask the jobresearcher about a posting — ⋯ or right-click on a job.</p></div>
     <div id=compose><textarea id=t placeholder="Ask jobresearcher… (Enter sends, Shift+Enter newline)"></textarea><button id=send>Send</button></div></section>
 </main>
 <script>
@@ -57,7 +66,41 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const fmt=ts=>new Date(ts*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
 const days=d=>{const n=Math.round((Date.now()-new Date(d+'T12:00:00').getTime())/864e5);return n<=0?'today':n===1?'1 day':n+' days'};
 const norm=u=>String(u||'').trim().replace(/^http:/,'https:').replace(/[?#].*$/,'').replace(/\/+$/,'').toLowerCase();
-let TASK=null,JOBS=[],LATEST='';
+let TASK=null,JOBS=[],LATEST='',RULES=[];
+/* Exclusions live in the instance's PLAYBOOK — the fixed rules the agent
+   gets every turn — so the daily search stops listing them too. The board
+   writes them in one recognisable shape and reads them back to hide cards. */
+const RULE_RE=/^Job search: never list (company|role) "([^"]+)"/i;
+const ruleText=(kind,val)=>`Job search: never list ${kind} "${val}" — Ulrich excluded it on the job board; do not report or count such postings again, not even as "known".`;
+async function loadRules(){
+  try{RULES=((await (await fetch('/api/playbooks?instance='+encodeURIComponent(INSTANCE))).json()).playbooks||[])
+    .map(p=>{const m=RULE_RE.exec(p.text||'');return m?{id:p.id,kind:m[1].toLowerCase(),val:m[2],text:p.text}:null}).filter(Boolean)}catch(e){RULES=[]}
+  $('ruleList').innerHTML=RULES.length?RULES.map(r=>`<div class=rule><span>${r.kind==='company'?'🏢':'🎯'} ${esc(r.kind)}: <b>${esc(r.val)}</b></span>`+
+    `<button onclick="removeRule('${esc(r.id)}')">remove</button></div>`).join(''):'<div class=muted style="font-size:12px">none — use ⋯ on a card</div>';
+  $('rules').querySelector('summary').textContent=`Exclusions (${RULES.length}) — playbook of ${INSTANCE}`;
+}
+const excluded=j=>RULES.some(r=>r.kind==='company'?String(j.company||'').trim().toLowerCase()===r.val.trim().toLowerCase()
+  :String(j.title||'').toLowerCase().includes(r.val.trim().toLowerCase()));
+async function addRule(kind,val){
+  if(!val)return;
+  const r=await fetch('/api/playbook-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:INSTANCE,text:ruleText(kind,val)})}).then(r=>r.json()).catch(()=>({}));
+  await loadRules();draw();
+}
+async function removeRule(id){
+  await fetch('/api/playbook-remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:INSTANCE,id})});
+  await loadRules();draw();
+}
+function openMenu(i,x,y){
+  const j=JOBS[i],m=$('menu');
+  m.innerHTML=`<button onclick="askAbout(${i});closeMenu()">💬 Ask about this posting</button><div class=sep></div>`+
+    (j.company?`<button onclick="addRule('company',${JSON.stringify(j.company)});closeMenu()">🏢 Exclude company “${esc(j.company)}”</button>`:'')+
+    (j.title?`<button onclick="addRule('role',${JSON.stringify(j.title)});closeMenu()">🎯 Exclude role “${esc(j.title)}”</button>`:'');
+  m.hidden=false;const w=m.offsetWidth||240,h=m.offsetHeight||120;
+  m.style.left=Math.min(x,innerWidth-w-8)+'px';m.style.top=Math.min(y,innerHeight-h-8)+'px';
+}
+function closeMenu(){$('menu').hidden=true}
+document.addEventListener('click',e=>{if(!e.target.closest('#menu'))closeMenu()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu()});
 async function loadTask(){
   const tasks=await fetch('/api/tasks').then(r=>r.json());
   const list=Array.isArray(tasks)?tasks:(tasks.tasks||[]);
@@ -87,16 +130,16 @@ async function loadJobs(){
   draw();
 }
 function draw(){
-  const showGone=$('showGone').checked,list=JOBS.filter(j=>showGone||!j.gone);
-  $('count').textContent=JOBS.length?`${JOBS.filter(j=>!j.gone).length} open · ${JOBS.filter(j=>j.gone).length} gone · latest run ${LATEST}`:'';
+  const showGone=$('showGone').checked,vis=JOBS.filter(j=>!excluded(j)),list=vis.filter(j=>showGone||!j.gone),nx=JOBS.length-vis.length;
+  $('count').textContent=JOBS.length?`${vis.filter(j=>!j.gone).length} open · ${vis.filter(j=>j.gone).length} gone${nx?` · ${nx} excluded`:''} · latest run ${LATEST}`:'';
   if(!JOBS.length){$('jobs').innerHTML='<p class=muted>No structured runs yet (workspace/runs/&lt;date&gt;.json). The next search writes the first one — press “Run search now”.</p>';return}
-  $('jobs').innerHTML=list.map((j,i)=>`<div class="job${j.gone?' gone':''}">
+  $('jobs').innerHTML=list.map((j,i)=>`<div class="job${j.gone?' gone':''}" oncontextmenu="event.preventDefault();openMenu(${JOBS.indexOf(j)},event.clientX,event.clientY)">
     <div class=row1><a href="${esc(j.url)}" target=_blank rel=noopener><b>${esc(j.title||'(untitled)')}</b></a>
       ${j.verdict?`<span class=tag>${esc(j.verdict)}</span>`:''}${j.remote===true||/remote|hybrid/i.test(String(j.remote||''))?`<span class=tag>${esc(j.remote===true?'remote':j.remote)}</span>`:''}</div>
     <div class=row2>${esc(j.company||'')}${j.location?' · '+esc(j.location):''}${j.source?' · '+esc(j.source):''}</div>
     <div class=row3>first seen <b>${esc(j.first)}</b> (${days(j.first)}) · seen in ${j.runs} run${j.runs>1?'s':''}${j.gone?` · <b>gone</b> since ${esc(j.last)}`:''}${j.posted?' · posted '+esc(j.posted):''}</div>
     ${j.note?`<div class=note>${esc(j.note)}</div>`:''}
-    <button class=ask onclick="askAbout(${JOBS.indexOf(j)})">Ask</button></div>`).join('')||'<p class=muted>Nothing open. Tick “show gone”.</p>';
+    <button class=more title="Ask · exclude company/role" onclick="event.stopPropagation();openMenu(${JOBS.indexOf(j)},event.clientX,event.clientY)">⋯</button></div>`).join('')||'<p class=muted>Nothing open. Tick “show gone”.</p>';
 }
 function askAbout(i){const j=JOBS[i];$('t').value=`About this posting: ${j.title||''} at ${j.company||''} (${j.url||''})\n\nMy question: `;$('t').focus();$('t').setSelectionRange($('t').value.length,$('t').value.length)}
 $('showGone').onchange=draw;
@@ -117,6 +160,6 @@ async function send(){
 }
 $('send').onclick=send;
 $('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
-async function refresh(){try{await loadTask();await loadJobs()}catch(e){$('jobs').innerHTML='<p class=muted>⚠️ '+esc(e)+'</p>'}}
+async function refresh(){try{await loadTask();await loadRules();await loadJobs()}catch(e){$('jobs').innerHTML='<p class=muted>⚠️ '+esc(e)+'</p>'}}
 refresh();setInterval(refresh,120000);
 </script></body></html>
