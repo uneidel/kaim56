@@ -3,19 +3,24 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""The data-flow graph contract of the Code flow app, and its validator.
+"""The data-flow graph contract of the Code flow app, and its checker.
 
-A repo instance's workspace holds the checkout in src/ and the graphs the
-agent writes in flow/: flow/overview.json (how data moves between the
-components) and flow/<id>.json for every overview node with "detail": "<id>"
-(the same shape, one level down, at function level). Nodes carry no code
-themselves — only references (file relative to src/, 1-based inclusive
-lines); the app cuts the snippets from the checkout, so what is shown is the
-real code, never the model's paraphrase of it.
+The Code flow app (apps/codeflow) hands this file to the repo's agent with the
+analysis task; the agent writes it into its workspace and runs it. The app
+applies the same rules in the browser (flowcheck.js) to decide whether a round
+is done — keep both in step (tests/ runs them on the same fixtures).
+
+The workspace holds the checkout in src/ and the graphs the agent writes in
+flow/: flow/overview.json (how data moves between the components) and
+flow/<id>.json for every overview node with "detail": "<id>" (the same shape,
+one level down, at function level). Nodes carry no code themselves — only
+references (file relative to src/, 1-based inclusive lines); the app cuts the
+snippets from the checkout, so what is shown is the real code, never the
+model's paraphrase of it.
 
     {"version": 1, "title": str, "summary": str,
      "nodes": [{"id", "label", "kind": entry|process|store|external|output,
-                "summary", "code": [{"file", "start", "end", "symbol"?}],
+                "summary", "code": [{"file", "start", "end", "symbol"}],
                 "detail"?: id}],                 # detail only in overview.json
      "edges": [{"source", "target", "data"}]}    # data = WHAT flows, not "calls"
 
@@ -25,11 +30,12 @@ That is the grounding check: a model that knows a famous repository draws a
 plausible graph from memory with line ranges that exist but hold something
 else — the first real run did exactly that. The symbol rule forces it to read.
 
-Stdlib only and standalone: the manager imports it for the repo status, and
-copies this file into the workspace as validate_flow.py, which the agent runs:
     python3 validate_flow.py                    check flow/ (exit 0 = OK)
+    python3 validate_flow.py map                the files in src/ with line counts
     python3 validate_flow.py find NAME          where NAME is defined/used in src/, with line numbers
     python3 validate_flow.py show FILE A B      lines A..B of src/FILE, numbered
+
+Stdlib only.
 """
 import json
 import os
@@ -207,6 +213,30 @@ def find(root, name, limit=60):
     return sorted(hits)[:limit]
 
 
+def repo_map(root, limit=500):
+    """The files in src/ with line counts (binaries and vendored folders skipped)."""
+    src, rows, total = os.path.join(root, "src"), [], 0
+    for d, dirs, files in os.walk(src):
+        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS and not x.startswith("."))
+        for f in sorted(files):
+            p = os.path.join(d, f)
+            total += 1
+            try:
+                if os.path.getsize(p) > 2_000_000:
+                    continue
+                with open(p, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                continue
+            if b"\0" in data[:4096] or len(rows) >= limit:
+                continue
+            n = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+            rows.append(f"{os.path.relpath(p, src)}  ({n})")
+    if total > len(rows):
+        rows.append(f"… {total - len(rows)} more (binaries, large files or over the limit)")
+    return rows
+
+
 def show(root, f, a, b):
     lines = _lines(os.path.join(root, "src", f), {})
     return [(i, lines[i - 1]) for i in range(max(1, a), min(len(lines), b) + 1)]
@@ -217,6 +247,9 @@ if __name__ == "__main__":
     if args[:1] == ["find"] and len(args) >= 2:
         for _k, f, i, line in find(os.getcwd(), args[1]):
             print(f"{f}:{i}: {line}")
+        sys.exit(0)
+    if args[:1] == ["map"]:
+        print("\n".join(repo_map(os.getcwd())))
         sys.exit(0)
     if args[:1] == ["show"] and len(args) >= 4:
         for i, line in show(os.getcwd(), args[1], int(args[2]), int(args[3])):

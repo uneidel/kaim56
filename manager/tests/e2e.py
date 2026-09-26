@@ -3323,327 +3323,139 @@ class ManagerFunctions(unittest.TestCase):
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
 
-    # ---- Code flow: repos + the graph contract ------------------------------------
-    def _flow_ws(self):
-        """A workspace with src/ (two files) and a valid overview + one detail graph."""
-        tmp = tempfile.mkdtemp(prefix="e2e-flow-")
-        os.makedirs(os.path.join(tmp, "src", "app")); os.makedirs(os.path.join(tmp, "flow"))
-        api = [f"line {i}" for i in range(1, 41)]
-        api[2], api[8] = "def create_order(req):", "    save_order(order)"
-        db = [f"sql {i}" for i in range(1, 11)]
-        db[0] = "def save_order(order):"
-        open(os.path.join(tmp, "src", "app", "api.py"), "w").write("\n".join(api))
-        open(os.path.join(tmp, "src", "db.py"), "w").write("\n".join(db))
-        ov = {"version": 1, "title": "Shop", "summary": "s",
-              "nodes": [{"id": "http", "label": "HTTP client", "kind": "external"},
-                        {"id": "api", "label": "Order API", "kind": "entry", "summary": "parses the order",
-                         "code": [{"file": "app/api.py", "start": 3, "end": 20, "symbol": "create_order"}], "detail": "api"},
-                        {"id": "db", "label": "Orders table", "kind": "store", "code": [{"file": "db.py", "start": 1, "end": 10, "symbol": "db.save_order"}]}],
-              "edges": [{"source": "http", "target": "api", "data": "order JSON"},
-                        {"source": "api", "target": "db", "data": "validated order row"}]}
-        det = {"version": 1, "title": "Order API", "summary": "s",
-               "nodes": [{"id": "parse", "label": "parse", "kind": "process", "code": [{"file": "app/api.py", "start": 3, "end": 8, "symbol": "create_order()"}]},
-                         {"id": "save", "label": "save", "kind": "process", "code": [{"file": "app/api.py", "start": 9, "end": 20, "symbol": "save_order"}]}],
-               "edges": [{"source": "parse", "target": "save", "data": "Order"}]}
-        json.dump(ov, open(os.path.join(tmp, "flow", "overview.json"), "w"))
-        json.dump(det, open(os.path.join(tmp, "flow", "api.json"), "w"))
-        return tmp, ov, det
-
-    def test_flowcheck_contract(self):
-        """mgr/flowcheck: a valid overview + detail passes; every rule the agent
-        must follow is enforced with a message it can act on; the file runs
-        standalone as validate_flow.py (exit 0 OK, 1 problems)."""
-        import copy, subprocess, sys as _sys
-        fc = self.m._flowcheck
-        tmp, ov, det = self._flow_ws()
-        res = fc.validate_tree(tmp)
-        self.assertEqual((res["ok"], res["graphs"], res["nodes"]), (True, 2, 5), res["errors"])
-        def errs(mut, level="overview", base=ov):
-            g = copy.deepcopy(base); mut(g)
-            return " | ".join(fc.validate_graph(g, tmp, level))
-        cases = [
-            (lambda g: g["nodes"][1].update(id="Bad Id"), "id must match"),
-            (lambda g: g["nodes"][2].update(id="api"), "duplicate id"),
-            (lambda g: g["nodes"][1].update(kind="thing"), "'kind' must be one of"),
-            (lambda g: g["nodes"][2].update(code=[]), "needs at least one code reference"),
-            (lambda g: g["nodes"][2].update(code=[{"file": "../secret.py", "start": 1, "end": 2}]), "relative to src/"),
-            (lambda g: g["nodes"][2].update(code=[{"file": "nope.py", "start": 1, "end": 2}]), "does not exist in src/"),
-            (lambda g: g["nodes"][2].update(code=[{"file": "src/db.py", "start": 1, "end": 2}]), "drop the 'src/' prefix"),
-            (lambda g: g["nodes"][2].update(code=[{"file": "db.py", "start": 5, "end": 99}]), "outside the file (1-10)"),
-            (lambda g: g["nodes"][1].update(code=[{"file": "app/api.py", "start": True, "end": 3}]), "must be integers"),
-            (lambda g: g["edges"].pop(), "'db': not connected"),
-            (lambda g: g["edges"].append({"source": "api", "target": "ghost", "data": "x"}), "must be node ids"),
-            (lambda g: g["edges"][0].update(data=""), "must name what flows"),
-            (lambda g: g["edges"].append(dict(g["edges"][0])), "duplicate"),
-            (lambda g: g["nodes"][1].update(detail="missing"), "flow/missing.json does not exist"),
-            (lambda g: g.update(nodes=[]), "non-empty list"),
-            (lambda g: g["nodes"][2]["code"][0].pop("symbol"), "needs a 'symbol'"),
-            (lambda g: g["nodes"][2]["code"][0].update(symbol="User_model_definition"), "does not occur in db.py:1-10"),
-            (lambda g: g["nodes"][1]["code"][0].update(symbol="create_ord"), "does not occur"),          # whole word only
-        ]
-        for mut, want in cases:
-            self.assertIn(want, errs(mut), want)
-        self.assertIn("'detail' only on overview", errs(lambda g: g["nodes"][0].update(detail="api"), "detail", det))
-        long_ = copy.deepcopy(det); open(os.path.join(tmp, "src", "big.py"), "w").write("x\n" * 200)
-        long_["nodes"][0]["code"] = [{"file": "big.py", "start": 1, "end": 150, "symbol": "x"}]
-        self.assertIn("spans 150 lines", " ".join(fc.validate_graph(long_, tmp, "detail")))
-        self.assertIsNone(errs(lambda g: None) or None)                                     # the fixture itself is clean
-        # standalone: the copy the agent runs
-        ok = subprocess.run([_sys.executable, fc.__file__, tmp], capture_output=True, text=True)
-        self.assertEqual(ok.returncode, 0, ok.stdout); self.assertIn("OK: 2 graph(s)", ok.stdout)
-        open(os.path.join(tmp, "flow", "api.json"), "w").write("{broken")
-        bad = subprocess.run([_sys.executable, fc.__file__, tmp], capture_output=True, text=True)
-        self.assertEqual(bad.returncode, 1); self.assertIn("not valid JSON", bad.stdout)
-        self.assertIn("does not exist yet", fc.validate_tree(tempfile.mkdtemp())["errors"][0])
-        # the agent's helpers: find (definitions first) and show (numbered lines)
-        self.assertEqual(fc.find(tmp, "save_order")[:2], [(0, "db.py", 1, "def save_order(order):"), (1, "app/api.py", 9, "save_order(order)")])
-        self.assertEqual(fc.show(tmp, "app/api.py", 3, 4), [(3, "def create_order(req):"), (4, "line 4")])
-        out = subprocess.run([_sys.executable, fc.__file__, "find", "create_order"], cwd=tmp, capture_output=True, text=True).stdout
-        self.assertIn("app/api.py:3: def create_order(req):", out)
-
-    def test_repos_parse_name_stack_and_map(self):
-        """parse_repo takes every GitHub spelling and nothing else; the instance
-        name is stable per repo and dodges foreign owners; the stack comes from
-        marker files (vendored folders ignored); skills match by name word; the
-        repo map lists files with line counts and skips binaries."""
-        rp = self.m._repos
+    # ---- checkout: a GitHub repo into an instance's workspace ------------------------
+    def test_checkout_parse_repo(self):
+        """Every GitHub spelling is accepted, nothing else."""
+        co = self.m._checkout
         for text, want in (("acme/shop", ("acme", "shop", "")), ("https://github.com/acme/shop.git", ("acme", "shop", "")),
                            ("github.com/Acme/Shop/tree/feature/x", ("Acme", "Shop", "feature/x")),
                            ("git@github.com:acme/shop.git", ("acme", "shop", "")), ("https://www.github.com/acme/shop/", ("acme", "shop", ""))):
-            self.assertEqual(rp.parse_repo(text), want, text)
+            self.assertEqual(co.parse_repo(text), want, text)
         for bad in ("shop", "https://gitlab.com/acme/shop", "https://evil.com/github.com/acme/shop", "acme/..",
                     "acme/shop/tree/../../x", "acme/shop/tree/-rf", "-x/shop", "file:///etc/passwd", ""):
             with self.assertRaises(ValueError, msg=bad):
-                rp.parse_repo(bad)
-        old = self.m._instances.load_instances
-        try:
-            self.m._instances.load_instances = lambda: [{"name": "repo-shop", "repo": {"full_name": "other/shop"}}]
-            self.assertEqual(rp.instance_name("acme", "shop"), "repo-acme-shop")
-            self.m._instances.load_instances = lambda: [{"name": "repo-shop", "repo": {"full_name": "Acme/Shop"}}]
-            self.assertEqual(rp.instance_name("acme", "shop"), "repo-shop")                  # same repo: reuse
-            self.m._instances.load_instances = lambda: []
-            self.assertEqual(rp.instance_name("acme", "My_Shop.js"), "repo-my-shop-js")
-        finally:
-            self.m._instances.load_instances = old
-        src = tempfile.mkdtemp(prefix="e2e-stack-")
-        for f, body in (("pyproject.toml", "[project]\ndependencies = ['fastapi', 'psycopg2']\n"),
-                        ("web/package.json", '{"dependencies": {"react": "18"}}'), ("web/src/App.tsx", "x\n"),
-                        ("Dockerfile", "FROM x\n"), (".github/workflows/ci.yml", "on: push\n"), ("app/main.py", "a\nb\nc\n"),
-                        ("node_modules/lib/index.js", "ignored\n"), ("img/logo.png", "\x89PNG\x00\x00")):
-            os.makedirs(os.path.dirname(os.path.join(src, f)) or src, exist_ok=True)
-            open(os.path.join(src, f), "w").write(body)
-        tags = rp.detect_stack(src)
-        for t in ("python", "fastapi", "javascript", "typescript", "react", "docker", "postgres", "github-actions"):
-            self.assertIn(t, tags)
-        self.assertNotIn("kubernetes", tags); self.assertNotIn("django", tags)
-        cat = [{"name": "python-perf-optimization"}, {"name": "docker"}, {"name": "github-actions-security"},
-               {"name": "github"}, {"name": "pythonic-poetry"}, {"name": "postgres-expert"}]
-        self.assertEqual(rp.pick_skills(tags, cat), ["python-perf-optimization", "docker", "postgres-expert", "github-actions-security"])
-        mp = rp.repo_map(src)
-        self.assertIn("app/main.py  (3)", mp); self.assertNotIn("node_modules", mp); self.assertNotIn("logo.png  (", mp)
-        self.assertIn("- .py: 3", mp)
+                co.parse_repo(bad)
 
-    def test_repos_github_meta_messages(self):
+    def test_checkout_github_meta_messages(self):
         """The GitHub API pre-check: size/private/default branch mapped; a 404
         tells whether a token is missing or lacks access; the token goes as a
         Bearer header, never in the URL."""
         import urllib.error, io
-        rp = self.m._repos
+        co = self.m._checkout
         seen = []
-        old = rp._http_get_json
+        old = co._http_get_json
         try:
-            rp._http_get_json = lambda url, h: (seen.append((url, dict(h))), {"full_name": "acme/shop", "private": True, "size": 2048, "default_branch": "main"})[1]
-            meta, err = rp.github_meta("acme", "shop", "tok123")
-            self.assertEqual((meta, err), ({"full_name": "acme/shop", "private": True, "size_kb": 2048, "default_branch": "main"}, ""))
+            co._http_get_json = lambda url, h: (seen.append((url, dict(h))), {"full_name": "acme/shop", "private": True, "size": 2048, "default_branch": "main"})[1]
+            self.assertEqual(co.github_meta("acme", "shop", "tok123"),
+                             ({"full_name": "acme/shop", "private": True, "size_kb": 2048, "default_branch": "main"}, ""))
             self.assertEqual(seen[0][0], "https://api.github.com/repos/acme/shop"); self.assertEqual(seen[0][1]["Authorization"], "Bearer tok123")
             def raise_(code):
                 def f(url, h):
                     raise urllib.error.HTTPError(url, code, "x", {}, io.BytesIO(b""))
                 return f
-            rp._http_get_json = raise_(404)
-            self.assertIn("GITHUB_TOKEN in the Secrets tab", rp.github_meta("acme", "shop", "")[1])
-            self.assertIn("token has no read access", rp.github_meta("acme", "shop", "t")[1])
-            rp._http_get_json = raise_(401)
-            self.assertIn("refused the token", rp.github_meta("acme", "shop", "t")[1])
+            co._http_get_json = raise_(404)
+            self.assertIn("GITHUB_TOKEN in the Secrets tab", co.github_meta("acme", "shop", "")[1])
+            self.assertIn("token has no read access", co.github_meta("acme", "shop", "t")[1])
+            co._http_get_json = raise_(401)
+            self.assertIn("refused the token", co.github_meta("acme", "shop", "t")[1])
         finally:
-            rp._http_get_json = old
+            co._http_get_json = old
 
-    def test_repos_open_analyse_refresh(self):
-        """open_repo end to end against fakes: the instance (code persona, narrow
-        tools, NO internet with the key proxy, web transport), the checkout via
-        git as a hardened subprocess with the token only in its environment,
-        REPO_MAP + validate_flow.py + flow/ in the workspace, the stack rule in
-        the playbook, one analysis task; list_repos walks analysing -> ready /
-        incomplete / failed; refresh fetches, clears flow/, replaces the rule;
-        a git failure is reported without the token."""
-        import subprocess as _sp, copy
-        m, rp = self.m, self.m._repos
-        tmp = tempfile.mkdtemp(prefix="e2e-repos-")
-        inst_dir, agent_root, run_dir = (os.path.join(tmp, d) for d in ("inst", "agent", "run"))
-        for d in (inst_dir, agent_root, run_dir):
-            os.makedirs(d)
-        calls, tasks, pbs, notes = [], {}, [], []
+    def test_checkout_clones_hardened_into_the_workspace(self):
+        """start(): pre-check, then git as a hardened subprocess in a private
+        staging folder with the token only in its environment; only the files
+        (no .git) land in <workspace>/src; status walks running -> done; a new
+        checkout replaces src; a failure is reported without the token; bad
+        repos, unknown instances and oversized repos are refused up front."""
+        import subprocess as _sp, base64 as _b64
+        m, co = self.m, self.m._checkout
+        tmp = tempfile.mkdtemp(prefix="e2e-co-")
+        agent_root, stage = os.path.join(tmp, "agent"), os.path.join(tmp, "stage")
+        os.makedirs(agent_root); os.makedirs(stage)
         TOK = "ghp_" + "S3CR3T" * 6
+        calls, fail, files = [], [False], [["app/api.py", "print(1)\n"]]
         def fake_run(argv, cwd=None, env=None, **kw):
             calls.append((list(argv), dict(env or {}), cwd))
-            cmd = [a for a in argv[1:] if not a.startswith(("core.", "protocol.", "submodule.")) and a != "-c"]
-            if cmd[0] == "clone":
+            verb = [a for a in argv[1:] if a != "-c" and not a.startswith(("core.", "protocol.", "submodule."))][0]
+            if verb == "clone":
                 if fail[0]:
-                    return _sp.CompletedProcess(argv, 128, "", f"fatal: could not read from https://x-access-token:{TOK}@github.com")
-                dst = os.path.join(cwd, cmd[-1]); os.makedirs(os.path.join(dst, ".git")); os.makedirs(os.path.join(dst, "app"))
-                open(os.path.join(dst, "pyproject.toml"), "w").write("fastapi\n")
-                open(os.path.join(dst, "app", "api.py"), "w").write("\n".join(f"l{i}" for i in range(40)))
+                    return _sp.CompletedProcess(argv, 128, "", f"fatal: could not read https://x-access-token:{TOK}@github.com")
+                dst = os.path.join(cwd, argv[-1]); os.makedirs(os.path.join(dst, ".git"))
+                for f, body in files:
+                    os.makedirs(os.path.dirname(os.path.join(dst, f)), exist_ok=True); open(os.path.join(dst, f), "w").write(body)
                 return _sp.CompletedProcess(argv, 0, "", "")
-            if cmd[0] == "rev-parse":
-                return _sp.CompletedProcess(argv, 0, "abc123def4567890\n", "")
-            return _sp.CompletedProcess(argv, 0, "", "")
-        fail = [False]
-        saved_stage, saved_mem, saved_run2, saved_stop = rp.STAGE_ROOT, m._memfs.MEMORY_ROOT, m._instances.is_running, m._vm.stop
-        m._memfs.MEMORY_ROOT = os.path.join(tmp, "memory")
-        rp.STAGE_ROOT = os.path.join(tmp, "stage"); os.makedirs(rp.STAGE_ROOT)
-        saved = (m._paths.INST_DIR, m._paths.RUN_DIR, m._mounts.AGENT_ROOT, rp.github_meta, rp.token, rp._spawn,
-                 _sp.run, m._store.add_task, m._store.load_tasks, m._rules.pb_add, m._rules.pb_list, m._rules.pb_remove,
-                 m._settings.load_settings, m._skills.load_skills, m._notify.notify_add)
+            return _sp.CompletedProcess(argv, 0, "abc123def4567890\n" if verb == "rev-parse" else "", "")
+        saved = (co.STAGE_ROOT, co.github_meta, co.token, co._spawn, _sp.run, m._mounts.AGENT_ROOT, m._instances.load_instances)
         try:
-            m._paths.INST_DIR, m._paths.RUN_DIR, m._mounts.AGENT_ROOT = inst_dir, run_dir, agent_root
-            rp.github_meta = lambda o, r, t: ({"full_name": "acme/shop", "private": True, "size_kb": 900, "default_branch": "main"}, "")
-            rp.token = lambda: TOK
-            rp._spawn = lambda fn, *a: fn(*a)
+            co.STAGE_ROOT, m._mounts.AGENT_ROOT = stage, agent_root
+            co.github_meta = lambda o, r, t: ({"full_name": f"{o}/{r}", "private": True, "size_kb": 900, "default_branch": "main"}, "")
+            co.token = lambda: TOK
+            co._spawn = lambda fn, *a: fn(*a)
             _sp.run = fake_run
-            m._store.add_task = lambda inst, msg, schedule="", **k: tasks.setdefault(f"t{len(tasks) + 1}", {"id": f"t{len(tasks) + 1}", "instance": inst, "message": msg, "status": "pending"})
-            m._notify.notify_add = lambda inst, title, body, link="": notes.append((inst, title, link)) or ("n1", "")
-            m._store.load_tasks = lambda: list(tasks.values())
-            m._rules.pb_add = lambda inst, text: (pbs.append({"id": str(len(pbs)), "inst": inst, "text": text}), "id")[1]
-            m._rules.pb_list = lambda inst: [p for p in pbs if p["inst"] == inst]
-            m._rules.pb_remove = lambda inst, pid: pbs.remove(next(p for p in pbs if p["id"] == pid)) or 1
-            m._settings.load_settings = lambda: {"LLM_KEY_PROXY": "1"}
-            m._skills.load_skills = lambda: [{"name": "python-perf-optimization"}, {"name": "docker"}]
-            ok, name, note = rp.open_repo("https://github.com/acme/shop", "google/gemini-2.5-pro")
-            self.assertTrue(ok, note); self.assertEqual(name, "repo-shop")
-            inst = _readj(os.path.join(inst_dir, "repo-shop.json"))
-            cfg = inst["config"]
-            self.assertFalse(inst["internet"]); self.assertEqual(inst["template"], "openrouter")
-            self.assertEqual(cfg["TRANSPORT"], "web"); self.assertEqual(cfg["AGENT_TOOLS"], ",".join(rp.TOOLS))
-            self.assertNotIn("web_search", cfg["AGENT_TOOLS"]); self.assertNotIn("http_fetch", cfg["AGENT_TOOLS"])
-            self.assertIn("acme/shop", cfg["AGENT_SYSTEM"]); self.assertIn("never modify", cfg["AGENT_SYSTEM"])
-            self.assertEqual(cfg["OPENROUTER_MODEL"], "google/gemini-2.5-pro"); self.assertEqual(inst["description"], "Code flow: acme/shop")
-            self.assertEqual(inst["repo"]["rounds"], 1)
-            r = inst["repo"]
-            self.assertEqual((r["status"], r["commit"], r["stack"], r["skills"], r["task_id"]),
-                             ("analysing", "abc123def4567890", ["python", "fastapi"], ["python-perf-optimization"], "t1"))
-            # git: hardened, token only in the environment
-            repo_calls = [c for c in calls if (c[2] or "").startswith(rp.STAGE_ROOT)]            # memfs' own git init is not ours
-            clone = next(c[0] for c in repo_calls if "clone" in c[0])
-            self.assertEqual(clone[:1], ["git"]); self.assertIn("core.hooksPath=/dev/null", clone); self.assertIn("protocol.file.allow=never", clone)
-            self.assertIn("core.symlinks=false", clone); self.assertIn("https://github.com/acme/shop.git", clone)
-            self.assertTrue(all(TOK not in a for c in calls for a in c[0]), "token in argv")
-            env = next(c[1] for c in repo_calls if "clone" in c[0])
-            import base64 as _b64
-            self.assertEqual(env["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: basic " + _b64.b64encode(f"x-access-token:{TOK}".encode()).decode())
-            self.assertEqual(env["GIT_CONFIG_GLOBAL"], "/dev/null"); self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+            m._instances.load_instances = lambda: [{"name": "repo-shop", "index": 5}]
+            ok, st = co.start("repo-shop", "https://github.com/acme/shop")
+            self.assertTrue(ok, st); self.assertEqual(st["status"], "running"); self.assertEqual(st["repo"], "acme/shop")
+            st = co.status("repo-shop")
+            self.assertEqual((st["status"], st["commit"], st["private"], st["branch"]), ("done", "abc123def4567890", True, "main"))
             ws = os.path.join(agent_root, "repo-shop")
-            self.assertFalse(os.path.exists(os.path.join(ws, "src", ".git")))                 # no .git reaches the VM
             self.assertTrue(os.path.isfile(os.path.join(ws, "src", "app", "api.py")))
-            self.assertEqual(os.listdir(rp.STAGE_ROOT), [])                                  # staging cleaned up
-            self.assertTrue(repo_calls and all(c[2].startswith(rp.STAGE_ROOT) for c in repo_calls if "clone" in c[0] or "rev-parse" in c[0]))
-            self.assertIn("app/api.py  (40)", open(os.path.join(ws, "REPO_MAP.md")).read())
-            self.assertEqual(open(os.path.join(ws, "validate_flow.py")).read(), open(m._flowcheck.__file__).read())
-            self.assertTrue(os.path.isdir(os.path.join(ws, "flow")))
-            self.assertEqual([p["text"][:40] for p in pbs], ["Repository stack: python, fastapi. Relev"])
-            msg = tasks["t1"]["message"]
-            self.assertTrue(msg.startswith(f"/steps {rp.ANALYSIS_STEPS} ")); self.assertIn("flow/overview.json", msg)
-            self.assertIn("python3 validate_flow.py", msg); self.assertIn("load_skill): python-perf-optimization", msg)
-            self.assertIn("do not draw from memory", msg); self.assertIn("validate_flow.py find NAME", msg)
-            self.assertIn("memory_store", msg)
-            self.assertEqual(cfg["OPENROUTER_MODEL"], "google/gemini-2.5-pro")
-            # supervision: the checker, not the model, decides when the analysis is done
-            rec = lambda: _readj(os.path.join(inst_dir, "repo-shop.json"))["repo"]
-            tasks["t1"]["status"] = "running"; rp.supervise()
-            self.assertEqual((rec()["status"], rec()["task_id"], len(tasks)), ("analysing", "t1", 1))   # still running: nothing
-            tasks["t1"]["status"] = "done"; rp.supervise()                                              # done, but no graph
-            r2 = rec()
-            self.assertEqual((r2["status"], r2["rounds"], r2["task_id"]), ("analysing", 2, "t2"))
-            fu = tasks["t2"]["message"]
-            self.assertTrue(fu.startswith(f"/steps {rp.ANALYSIS_STEPS} CONTINUE (round 2 of {rp.MAX_ROUNDS})"))
-            self.assertIn("flow/overview.json does not exist yet", fu); self.assertIn("READ THE CODE", fu)
-            self.assertEqual(fu.count("/steps"), 1)                                                 # the spec is embedded without its own prefix
-            self.assertEqual(rp.list_repos()[0]["status"], "analysing"); self.assertEqual(rp.list_repos()[0]["rounds"], 2)
-            tasks["t2"]["status"] = "error"; rp.supervise()                                             # a timed-out round counts too
-            self.assertEqual((rec()["rounds"], rec()["task_id"]), (3, "t3"))
-            tasks["t3"]["status"] = "done"; rp.supervise()                                              # rounds exhausted
-            self.assertEqual(rec()["status"], "incomplete"); self.assertEqual(len(tasks), 3)
-            self.assertEqual(notes, [("repo-shop", "Code flow incomplete: acme/shop", "chat:repo-shop")])
-            self.assertEqual(rp.list_repos()[0]["status"], "incomplete")
-            # a valid graph -> ready
-            fws, ov, det = self._flow_ws()
-            shutil.copytree(os.path.join(fws, "flow"), os.path.join(ws, "flow"), dirs_exist_ok=True)
-            os.makedirs(os.path.join(ws, "src", "app"), exist_ok=True)
-            shutil.copy(os.path.join(fws, "src", "db.py"), os.path.join(ws, "src", "db.py"))
-            shutil.copy(os.path.join(fws, "src", "app", "api.py"), os.path.join(ws, "src", "app", "api.py"))
-            rp._set_repo("repo-shop", status="analysing"); rp.supervise()
-            st = rp.list_repos()[0]
-            self.assertEqual(st["status"], "ready", st["flow"]); self.assertEqual(st["flow"]["graphs"], 2)
-            # refresh: a fresh clone (git never touches the VM-writable workspace), flow cleared, one stack rule,
-            # and a clean conversation: the running VM is stopped, its saved history dropped
-            calls.clear(); tasks.clear()
-            stopped = []
-            mdir = m._memfs.folder("repo-shop"); os.makedirs(os.path.join(mdir, ".state"), exist_ok=True)
-            open(os.path.join(mdir, ".state", "history.json"), "w").write('{"messages": []}')
-            m._instances.is_running = lambda i: True
-            m._vm.stop = lambda i: stopped.append(i["name"]) or "stopped"
-            ok, note = rp.refresh("repo-shop")
-            self.assertEqual(stopped, ["repo-shop"])
-            self.assertFalse(os.path.exists(os.path.join(mdir, ".state", "history.json")))
-            m._instances.is_running = lambda i: False
-            self.assertTrue(ok, note)
-            staged = [c for c in calls if (c[2] or "").startswith(rp.STAGE_ROOT)]
-            verbs = [[a for a in c[0][1:] if a != "-c" and not a.startswith(("core.", "protocol.", "submodule."))][0] for c in staged]
-            self.assertEqual(verbs, ["clone", "rev-parse"])
-            self.assertFalse([c for c in calls if (c[2] or "").startswith(ws)])                     # git never ran in the workspace
-            self.assertEqual(os.listdir(os.path.join(ws, "flow")), [])
-            self.assertEqual(len([p for p in pbs if p["text"].startswith("Repository stack:")]), 1)
-            self.assertFalse(rp.refresh("nope")[0])
-            # a failed clone: status failed, the token nowhere in the error
-            fail[0] = True; tasks.clear()
-            shutil.rmtree(os.path.join(ws, "src"))
-            ok, name, note = rp.open_repo("acme/shop")
-            st = _readj(os.path.join(inst_dir, "repo-shop.json"))["repo"]
+            self.assertFalse(os.path.exists(os.path.join(ws, "src", ".git")))                     # no .git reaches the VM
+            self.assertEqual(os.listdir(stage), [])                                               # staging cleaned up
+            clone = next(c for c in calls if "clone" in c[0])
+            argv, env, cwd = clone
+            self.assertTrue(cwd.startswith(stage)); self.assertIn("https://github.com/acme/shop.git", argv)
+            for flag in ("core.hooksPath=/dev/null", "protocol.file.allow=never", "core.symlinks=false", "--no-recurse-submodules"):
+                self.assertIn(flag, argv)
+            self.assertTrue(all(TOK not in a for c in calls for a in c[0]), "token in argv")
+            self.assertEqual(env["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: basic " + _b64.b64encode(f"x-access-token:{TOK}".encode()).decode())
+            self.assertEqual((env["GIT_CONFIG_GLOBAL"], env["GIT_TERMINAL_PROMPT"]), ("/dev/null", "0"))
+            self.assertFalse([c for c in calls if (c[2] or "").startswith(ws)])                    # git never ran in the workspace
+            # a new checkout replaces src (a file of the old one is gone)
+            files[:] = [["README.md", "x\n"]]
+            self.assertTrue(co.start("repo-shop", "acme/shop")[0])
+            self.assertEqual(os.listdir(os.path.join(ws, "src")), ["README.md"])
+            # a failed clone: failed, token nowhere in the error, old src kept
+            fail[0] = True
+            co.start("repo-shop", "acme/shop")
+            st = co.status("repo-shop")
             self.assertEqual(st["status"], "failed"); self.assertNotIn(TOK, st["error"]); self.assertIn("git:", st["error"])
-            # refusals before anything is created
-            rp.github_meta = lambda o, r, t: ({"full_name": "acme/huge", "private": False, "size_kb": rp.REPO_MAX_KB + 1, "default_branch": "main"}, "")
-            self.assertIn("over the", rp.open_repo("acme/huge")[2])
-            self.assertIn("not a valid model", rp.open_repo("acme/shop", "rm -rf /")[2])
-            self.assertIn("only GitHub", rp.open_repo("https://gitlab.com/a/b")[2])
-            self.assertFalse(os.path.exists(os.path.join(inst_dir, "repo-huge.json")))
+            self.assertEqual(os.listdir(os.path.join(ws, "src")), ["README.md"])
+            # refusals before anything runs
+            n = len(calls)
+            self.assertIn("unknown instance", co.start("nope", "acme/shop")[1]["error"])
+            self.assertIn("only GitHub", co.start("repo-shop", "https://gitlab.com/a/b")[1]["error"])
+            co.github_meta = lambda o, r, t: ({"full_name": "acme/huge", "private": False, "size_kb": co.REPO_MAX_KB + 1, "default_branch": "main"}, "")
+            self.assertIn("over the", co.start("repo-shop", "acme/huge")[1]["error"])
+            self.assertEqual(len(calls), n)
+            co._jobs["repo-shop"] = {"status": "running"}
+            co.github_meta = lambda o, r, t: ({"full_name": "acme/shop", "private": False, "size_kb": 1, "default_branch": "main"}, "")
+            self.assertIn("already running", co.start("repo-shop", "acme/shop")[1]["error"])
+            self.assertEqual(co.status("never-checked-out"), {"status": "none"})
         finally:
-            (m._paths.INST_DIR, m._paths.RUN_DIR, m._mounts.AGENT_ROOT, rp.github_meta, rp.token, rp._spawn,
-             _sp.run, m._store.add_task, m._store.load_tasks, m._rules.pb_add, m._rules.pb_list, m._rules.pb_remove,
-             m._settings.load_settings, m._skills.load_skills, m._notify.notify_add) = saved
-            rp.STAGE_ROOT = saved_stage
-            m._memfs.MEMORY_ROOT, m._instances.is_running, m._vm.stop = saved_mem, saved_run2, saved_stop
+            (co.STAGE_ROOT, co.github_meta, co.token, co._spawn, _sp.run, m._mounts.AGENT_ROOT, m._instances.load_instances) = saved
+            co._jobs.pop("repo-shop", None)
 
-    def test_repos_routes_are_admin_only(self):
-        """GET/POST /api/repos and /api/repos/<name>/refresh: the admin gets JSON,
-        a bad repo is a 400 with the reason, a VM gets nothing."""
+    def test_checkout_routes_are_admin_only(self):
+        """GET/POST /api/checkout/<instance>: the admin gets JSON (with whether a
+        GitHub token is configured), a refusal is a 400 with the reason, a VM
+        gets nothing."""
         m = self.m
-        old = m._repos.list_repos, m._repos.token, m._repos.open_repo, m._guests.instance_by_ip
+        old = m._checkout.status, m._checkout.token, m._checkout.start, m._guests.instance_by_ip
         try:
-            m._repos.list_repos = lambda: [{"name": "repo-shop", "status": "ready"}]
-            m._repos.token = lambda: ""
-            m._repos.open_repo = lambda text, model="": (False, "", "only GitHub repositories (github.com/owner/repo)")
+            m._checkout.status = lambda n: {"status": "done", "repo": "acme/shop"}
+            m._checkout.token = lambda: ""
+            m._checkout.start = lambda n, text: (False, {"status": "failed", "error": "only GitHub repositories (github.com/owner/repo)"})
             m._guests.instance_by_ip = lambda ip: {"name": "vm"} if ip == "172.30.1.2" else None
-            h = self._handler("/api/repos", "10.0.0.9"); h._do_GET()
-            self.assertEqual(self._status(h), 200); self.assertIn(b'"token": false', h.wfile.getvalue())
-            h = self._post_handler("/api/repos", "10.0.0.9", json.dumps({"repo": "gitlab.com/a/b"}).encode()); h._do_POST()
+            h = self._handler("/api/checkout/repo-shop", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 200); self.assertIn(b'"token": false', h.wfile.getvalue()); self.assertIn(b'"status": "done"', h.wfile.getvalue())
+            h = self._post_handler("/api/checkout/repo-shop", "10.0.0.9", json.dumps({"repo": "gitlab.com/a/b"}).encode()); h._do_POST()
             self.assertEqual(self._status(h), 400); self.assertIn(b"only GitHub", h.wfile.getvalue())
-            h = self._post_handler("/api/repos/nope/delete", "10.0.0.9", b"{}"); h._do_POST()
-            self.assertEqual(self._status(h), 404)
-            h = self._handler("/api/repos", "172.30.1.2"); h._do_GET()
+            h = self._handler("/api/checkout/repo-shop", "172.30.1.2"); h._do_GET()
             self.assertNotEqual(self._status(h), 200)
-            h = self._post_handler("/api/repos", "172.30.1.2", json.dumps({"repo": "a/b"}).encode()); h._do_POST()
+            h = self._post_handler("/api/checkout/repo-shop", "172.30.1.2", json.dumps({"repo": "a/b"}).encode()); h._do_POST()
             self.assertNotEqual(self._status(h), 200)
         finally:
-            m._repos.list_repos, m._repos.token, m._repos.open_repo, m._guests.instance_by_ip = old
+            m._checkout.status, m._checkout.token, m._checkout.start, m._guests.instance_by_ip = old
 
     def test_workspace_read_route_is_read_only_and_fenced(self):
         """/api/workspace/<inst>/<path>: a folder lists, a file streams with its

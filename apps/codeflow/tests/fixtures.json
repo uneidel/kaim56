@@ -1,0 +1,374 @@
+{
+ "files": {
+  "app/api.py": "line 1\nline 2\ndef create_order(req):\nline 4\nline 5\nline 6\nline 7\nline 8\n    save_order(order)\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\nline 40",
+  "db.py": "def save_order(order):\nsql 2\nsql 3\nsql 4\nsql 5\nsql 6\nsql 7\nsql 8\nsql 9\nsql 10",
+  "big.py": "x\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\n"
+ },
+ "overview": {
+  "version": 1,
+  "title": "Shop",
+  "summary": "s",
+  "nodes": [
+   {
+    "id": "http",
+    "label": "HTTP client",
+    "kind": "external"
+   },
+   {
+    "id": "api",
+    "label": "Order API",
+    "kind": "entry",
+    "summary": "parses the order",
+    "code": [
+     {
+      "file": "app/api.py",
+      "start": 3,
+      "end": 20,
+      "symbol": "create_order"
+     }
+    ],
+    "detail": "api"
+   },
+   {
+    "id": "db",
+    "label": "Orders table",
+    "kind": "store",
+    "code": [
+     {
+      "file": "db.py",
+      "start": 1,
+      "end": 10,
+      "symbol": "db.save_order"
+     }
+    ]
+   }
+  ],
+  "edges": [
+   {
+    "source": "http",
+    "target": "api",
+    "data": "order JSON"
+   },
+   {
+    "source": "api",
+    "target": "db",
+    "data": "validated order row"
+   }
+  ]
+ },
+ "details": {
+  "api": {
+   "version": 1,
+   "title": "Order API",
+   "summary": "s",
+   "nodes": [
+    {
+     "id": "parse",
+     "label": "parse",
+     "kind": "process",
+     "code": [
+      {
+       "file": "app/api.py",
+       "start": 3,
+       "end": 8,
+       "symbol": "create_order()"
+      }
+     ]
+    },
+    {
+     "id": "save",
+     "label": "save",
+     "kind": "process",
+     "code": [
+      {
+       "file": "app/api.py",
+       "start": 9,
+       "end": 20,
+       "symbol": "save_order"
+      }
+     ]
+    }
+   ],
+   "edges": [
+    {
+     "source": "parse",
+     "target": "save",
+     "data": "Order"
+    }
+   ]
+  }
+ },
+ "cases": [
+  {
+   "name": "clean",
+   "target": "overview",
+   "ops": [],
+   "expect": ""
+  },
+  {
+   "name": "bad id",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.1.id",
+     "Bad Id"
+    ]
+   ],
+   "expect": "id must match"
+  },
+  {
+   "name": "duplicate id",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.id",
+     "api"
+    ]
+   ],
+   "expect": "duplicate id"
+  },
+  {
+   "name": "kind",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.1.kind",
+     "thing"
+    ]
+   ],
+   "expect": "'kind' must be one of"
+  },
+  {
+   "name": "no code",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code",
+     []
+    ]
+   ],
+   "expect": "needs at least one code reference"
+  },
+  {
+   "name": "outside src",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code.0.file",
+     "../secret.py"
+    ]
+   ],
+   "expect": "relative to src/"
+  },
+  {
+   "name": "missing file",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code.0.file",
+     "nope.py"
+    ]
+   ],
+   "expect": "does not exist in src/"
+  },
+  {
+   "name": "src prefix",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code.0.file",
+     "src/db.py"
+    ]
+   ],
+   "expect": "drop the 'src/' prefix"
+  },
+  {
+   "name": "range",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code.0.end",
+     99
+    ]
+   ],
+   "expect": "outside the file (1-10)"
+  },
+  {
+   "name": "bool line",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.1.code.0.start",
+     true
+    ]
+   ],
+   "expect": "must be integers"
+  },
+  {
+   "name": "span",
+   "target": "api",
+   "ops": [
+    [
+     "set",
+     "nodes.0.code",
+     [
+      {
+       "file": "big.py",
+       "start": 1,
+       "end": 150,
+       "symbol": "x"
+      }
+     ]
+    ]
+   ],
+   "expect": "spans 150 lines"
+  },
+  {
+   "name": "no symbol",
+   "target": "overview",
+   "ops": [
+    [
+     "del",
+     "nodes.2.code.0.symbol"
+    ]
+   ],
+   "expect": "needs a 'symbol'"
+  },
+  {
+   "name": "invented symbol",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.2.code.0.symbol",
+     "User_model_definition"
+    ]
+   ],
+   "expect": "does not occur in db.py:1-10"
+  },
+  {
+   "name": "partial word",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.1.code.0.symbol",
+     "create_ord"
+    ]
+   ],
+   "expect": "does not occur"
+  },
+  {
+   "name": "isolated",
+   "target": "overview",
+   "ops": [
+    [
+     "pop",
+     "edges"
+    ]
+   ],
+   "expect": "'db': not connected"
+  },
+  {
+   "name": "edge to ghost",
+   "target": "overview",
+   "ops": [
+    [
+     "append",
+     "edges",
+     {
+      "source": "api",
+      "target": "ghost",
+      "data": "x"
+     }
+    ]
+   ],
+   "expect": "must be node ids"
+  },
+  {
+   "name": "edge without data",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "edges.0.data",
+     ""
+    ]
+   ],
+   "expect": "must name what flows"
+  },
+  {
+   "name": "duplicate edge",
+   "target": "overview",
+   "ops": [
+    [
+     "append",
+     "edges",
+     {
+      "source": "http",
+      "target": "api",
+      "data": "order JSON"
+     }
+    ]
+   ],
+   "expect": "duplicate"
+  },
+  {
+   "name": "missing detail",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes.1.detail",
+     "missing"
+    ]
+   ],
+   "expect": "flow/missing.json does not exist"
+  },
+  {
+   "name": "detail in detail",
+   "target": "api",
+   "ops": [
+    [
+     "set",
+     "nodes.0.detail",
+     "api"
+    ]
+   ],
+   "expect": "'detail' only on overview"
+  },
+  {
+   "name": "no nodes",
+   "target": "overview",
+   "ops": [
+    [
+     "set",
+     "nodes",
+     []
+    ]
+   ],
+   "expect": "non-empty list"
+  },
+  {
+   "name": "broken detail json",
+   "target": "api",
+   "raw": "{broken",
+   "expect": "not valid JSON"
+  },
+  {
+   "name": "no overview",
+   "target": "overview",
+   "absent": true,
+   "expect": "does not exist yet"
+  }
+ ]
+}

@@ -1,11 +1,15 @@
 <!doctype html>
 <!-- kAIm56 — self-hosted Firecracker AI-agent platform
      SPDX-License-Identifier: AGPL-3.0-or-later
-     Code flow: open a GitHub repository as its own agent instance (manager:
-     mgr/repos.py), let it analyse the code, and browse how the data flows —
-     overview, drill-down per component, the real code in every node (cut
-     from the checkout via /api/workspace, never the model's paraphrase), and
-     a chat with the repo's agent. React + React Flow from esm.sh, no build. -->
+     Code flow: open a GitHub repository as its own agent instance, let it
+     analyse the code, and browse how the data flows — overview, drill-down per
+     component, the real code in every node (cut from the checkout via
+     /api/workspace, never the model's paraphrase), and a chat with the repo's
+     agent. The app runs on the manager's EXISTING API; the only manager piece
+     is the generic checkout (/api/checkout/<instance>). Its state lives in the
+     instance config as CODEFLOW_* keys; the analysis rounds are judged here
+     with flowcheck.js (the agent runs the Python twin, validate_flow.py).
+     React + React Flow from esm.sh, no build. -->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Code flow · kAIm56</title>
 <link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.12.0/dist/style.css">
@@ -84,33 +88,152 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 420px;min-height:0}
 <script type="module">
 import React from 'https://esm.sh/react@18.3.1';
 import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1';
-import { ReactFlow, Background, Controls, MiniMap, MarkerType, Handle, Position }
+import { ReactFlow, Background, Controls, MiniMap, MarkerType, Handle, Position, useNodesInitialized, useReactFlow }
   from 'https://esm.sh/@xyflow/react@12.12.0?deps=react@18.3.1,react-dom@18.3.1';
 import dagre from 'https://esm.sh/@dagrejs/dagre@1.1.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import hljs from 'https://esm.sh/highlight.js@11.10.0/lib/common';
+import { validateTree } from './flowcheck.js';
+import * as L from './lib.js';
 
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 const enc = encodeURIComponent;
 const NODE_W = 360, NODE_LINES = 12;
 
-/* ---- manager API ------------------------------------------------------------- */
+/* ---- manager API (all existing routes; /api/checkout is the one generic addition) ---- */
+const J = (url, opt) => fetch(url, { cache: 'no-store', ...opt }).then(r => r.json());
+const post = (url, body) => J(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+const wsPath = (name, path) => `/api/workspace/${enc(name)}/${path.split('/').map(enc).join('/')}`;
 const api = {
-  repos: () => fetch('/api/repos', { cache: 'no-store' }).then(r => r.json()),
-  open: (repo, model) => fetch('/api/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repo, model }) }).then(r => r.json()),
-  refresh: name => fetch(`/api/repos/${enc(name)}/refresh`, { method: 'POST' }).then(r => r.json()),
-  flow: (name, id) => fetch(`/api/workspace/${enc(name)}/flow/${enc(id)}.json`, { cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null).catch(() => null),
+  instances: () => J('/api/instances'),
+  tasks: () => J('/api/tasks'),
+  settings: () => J('/api/settings'),
+  personas: () => J('/api/personas').then(d => Array.isArray(d) ? d : d.personas || []),
+  skills: () => J('/api/skills').then(d => Array.isArray(d) ? d : d.skills || []),
+  create: body => post('/api/create', body),
+  setCfg: (n, key, value) => post(`/api/instances/${enc(n)}/config`, { key, value }),
+  restart: n => post(`/api/instances/${enc(n)}/restart`, {}),
+  checkout: (n, repo) => post(`/api/checkout/${enc(n)}`, { repo }),
+  checkoutState: n => J(`/api/checkout/${enc(n)}`),
+  addTask: (n, message) => post('/api/tasks', { instance: n, message }),
+  playbooks: n => J(`/api/playbooks?instance=${enc(n)}`).then(d => d.playbooks || []),
+  pbAdd: (n, text) => post('/api/playbook-add', { instance: n, text }),
+  pbRemove: (n, id) => post('/api/playbook-remove', { instance: n, id }),
+  say: (n, message) => fetch('/api/chat/' + enc(n), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, chat: 'app-codeflow-' + n }) }).then(r => r.text()),
+  ls: (n, path) => fetch(wsPath(n, path), { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => d && d.entries).catch(() => null),
+  text: (n, path) => fetch(wsPath(n, path), { cache: 'no-store' }).then(r => r.ok ? r.text() : null).catch(() => null),
+  flow: (n, id) => api.text(n, `flow/${id}.json`).then(t => { if (t == null) return null; try { return JSON.parse(t); } catch (e) { return { __invalid: String(e.message || e) }; } }),
 };
-const FILES = new Map();          // `${instance}/${path}` -> Promise<string[] | null>
-function fileLines(name, path) {
-  const k = name + '/' + path;
-  if (!FILES.has(k)) FILES.set(k, fetch(`/api/workspace/${enc(name)}/src/${path.split('/').map(enc).join('/')}`)
-    .then(r => r.ok ? r.text() : null).then(t => t == null ? null : t.split('\n')).catch(() => null));
+const FILES = new Map();          // `${instance}@${commit}/${path}` -> Promise<string[] | null>
+function fileLines(name, path, commit = '') {
+  const k = `${name}@${commit}/${path}`;
+  if (!FILES.has(k)) FILES.set(k, api.text(name, 'src/' + path).then(t => t == null ? null : t.split('\n')));
   return FILES.get(k);
 }
+let CHECKER = null;               // the Python checker the agent gets, fetched once from this app
+const checkerSource = () => CHECKER || (CHECKER = fetch('./validate_flow.py', { cache: 'no-store' }).then(r => r.text()).then(t => t.trimEnd()));
+
+async function setCfgs(name, kv) { for (const [k, v] of Object.entries(kv)) await api.setCfg(name, k, L.oneLine(v)); }
+const taskIdOf = r => ((r && r.msg) || '').match(/task (\w+) created/)?.[1] || '';
+function reposFrom(instances) {
+  return (instances || []).filter(i => i.config?.CODEFLOW_REPO).map(i => {
+    const c = i.config;
+    return { name: i.name, full: c.CODEFLOW_REPO, url: `https://github.com/${c.CODEFLOW_REPO}`, state: c.CODEFLOW_STATE || 'failed',
+      task: c.CODEFLOW_TASK || '', round: +c.CODEFLOW_ROUND || 0, commit: c.CODEFLOW_COMMIT || '', error: c.CODEFLOW_ERROR || '',
+      stack: (c.CODEFLOW_STACK || '').split(',').filter(Boolean), skills: (c.CODEFLOW_SKILLS || '').split(',').filter(Boolean),
+      model: c.OPENROUTER_MODEL || '', running: !!i.running };
+  }).sort((a, b) => a.full.toLowerCase().localeCompare(b.full.toLowerCase()));
+}
+
+/** The app's judgement of a round: the JS twin of validate_flow.py on the workspace. */
+async function checkFlow(name, commit) {
+  return validateTree(f => api.flow(name, f.replace(/\.json$/, '')), f => fileLines(name, f, commit));
+}
+
+/** Open (or re-open) a repo: instance through /api/create, files through the checkout. */
+async function openRepo(text, model) {
+  const { owner, repo, full } = L.parseRepo(text);
+  const [insts, settings, personas] = await Promise.all([api.instances(), api.settings(), api.personas()]);
+  const name = L.instanceName(owner, repo, insts);
+  if (!insts.some(i => i.name === name)) {
+    const persona = personas.find(p => p.name === L.PERSONA)?.prompt || '';
+    const r = await api.create({ name, template: 'openrouter', mounts: [], mcps: [],
+      internet: settings.LLM_KEY_PROXY !== '1',            // with the key proxy the agent needs no internet at all
+      config: { TRANSPORT: 'web', AGENT_SYSTEM: L.frame(persona, full), AGENT_TOOLS: L.TOOLS.join(','),
+        OPENROUTER_MODEL: model || L.DEFAULT_MODEL, SKILL_LEARN: '0', AUTO_RESET_MIN: '0',
+        CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning' } });
+    if (!/created/.test(r.msg || '')) throw new Error(r.msg || 'could not create the instance');
+  } else {
+    if (model) await api.setCfg(name, 'OPENROUTER_MODEL', model);
+    await setCfgs(name, { CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning', CODEFLOW_ERROR: '' });
+  }
+  await startCheckout(name, full);
+  return name;
+}
+async function startCheckout(name, full) {
+  const co = await api.checkout(name, full);
+  if (!co.ok) { await setCfgs(name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: co.error || 'checkout failed' }); throw new Error(co.error || 'checkout failed'); }
+}
+
+/** After the checkout: stack, skills as a playbook rule, a clean conversation, the first round. */
+async function prepare(repo, commit) {
+  const n = repo.name;
+  const files = await L.listFiles(p => api.ls(n, 'src' + (p ? '/' + p : '')));
+  const stack = await L.detectStack(files, f => api.text(n, 'src/' + f));
+  const skills = L.pickSkills(stack, await api.skills());
+  for (const p of await api.playbooks(n)) if (String(p.text || '').startsWith('Repository stack:')) await api.pbRemove(n, p.id);
+  if (stack.length) await api.pbAdd(n, `Repository stack: ${stack.join(', ')}.` + (skills.length
+    ? ` Relevant skills in the library: ${skills.join(', ')} — load one with load_skill when a question touches its area.` : ''));
+  if (repo.running) await api.restart(n);        // a changed model applies on start
+  await api.say(n, '/reset');                    // no reading back its own earlier analysis
+  const id = taskIdOf(await api.addTask(n, L.analysisPrompt(repo.full, commit, stack, skills, await checkerSource())));
+  if (!id) throw new Error('could not queue the analysis task');
+  await setCfgs(n, { CODEFLOW_STATE: 'analysing', CODEFLOW_TASK: id, CODEFLOW_ROUND: '1', CODEFLOW_COMMIT: commit,
+    CODEFLOW_STACK: stack.join(','), CODEFLOW_SKILLS: skills.join(','), CODEFLOW_ERROR: '' });
+}
+
+/** One step of a repo's state machine; runs on every poll while the app is open.
+ *  cloning -> (checkout done) prepare -> analysing -> (task over) check -> ready |
+ *  follow-up round | incomplete. The checker decides, not the model's claim. */
+const INFLIGHT = new Set();
+async function tick(repo, tasks) {
+  if (INFLIGHT.has(repo.name) || !['cloning', 'analysing'].includes(repo.state)) return false;
+  INFLIGHT.add(repo.name);
+  try {
+    if (repo.state === 'cloning') {
+      const co = await api.checkoutState(repo.name);
+      if (co.status === 'running') return false;
+      if (co.status !== 'done') {
+        await setCfgs(repo.name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: co.error || 'the checkout was interrupted (manager restart?) — re-analyse' });
+        return true;
+      }
+      await prepare(repo, co.commit);
+      return true;
+    }
+    const t = tasks.find(x => x.id === repo.task);
+    if (t && ['pending', 'running'].includes(t.status)) return false;
+    const res = await checkFlow(repo.name, repo.commit);
+    if (res.ok) { await setCfgs(repo.name, { CODEFLOW_STATE: 'ready', CODEFLOW_ERROR: '' }); return true; }
+    if (repo.round >= L.MAX_ROUNDS) {
+      await setCfgs(repo.name, { CODEFLOW_STATE: 'incomplete', CODEFLOW_ERROR: `${res.errors.length} problem(s) left after ${repo.round} rounds` });
+      return true;
+    }
+    const checker = await checkerSource();
+    const local = await api.text(repo.name, 'validate_flow.py');
+    const errors = [...res.errors];
+    if (local != null && local.trimEnd() !== checker) errors.unshift('validate_flow.py in the workspace differs from the original — write it again, exactly as given below');
+    const id = taskIdOf(await api.addTask(repo.name, L.followupPrompt(repo.full, repo.commit, repo.stack, repo.skills, checker, errors, repo.round + 1)));
+    if (id) await setCfgs(repo.name, { CODEFLOW_TASK: id, CODEFLOW_ROUND: String(repo.round + 1) });
+    return true;
+  } catch (e) {
+    await setCfgs(repo.name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: String(e.message || e) }).catch(() => {});
+    return true;
+  } finally { INFLIGHT.delete(repo.name); }
+}
+const fmtAgo = ts => { if (!ts) return ''; const m = Math.round((Date.now() / 1000 - ts) / 60);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const LANG = { py: 'python', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript',
   tsx: 'typescript', go: 'go', rs: 'rust', java: 'java', kt: 'kotlin', kts: 'kotlin', rb: 'ruby', php: 'php', cs: 'csharp',
   c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', sh: 'bash', bash: 'bash', yml: 'yaml', yaml: 'yaml', json: 'json',
@@ -121,8 +244,6 @@ function hi(code, file) {
   try { if (lang) return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value; } catch (e) {}
   return esc(code);
 }
-const fmtAgo = ts => { if (!ts) return ''; const m = Math.round((Date.now() / 1000 - ts) / 60);
-  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 
 /* ---- layout: dagre, left to right = the direction the data travels -------------- */
 function nodeHeight(n, lines) {
@@ -145,12 +266,33 @@ function buildFlow(graph, snippets, dir = 'LR') {
     markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 }, labelBgPadding: [4, 2], labelBgBorderRadius: 0 }));
   return { nodes, edges: redges };
 }
-async function loadSnippets(name, graph) {
+/* The first layout uses estimated node heights (summaries wrap, snippets vary);
+   once React Flow has measured the nodes, lay them out again with the real
+   sizes — otherwise tall nodes overlap their neighbours. Once per mount. */
+function Relayout({ dir }) {
+  const ready = useNodesInitialized(), rf = useReactFlow(), done = useRef(false);
+  useEffect(() => {
+    if (!ready || done.current) return;
+    done.current = true;
+    const nodes = rf.getNodes(), edges = rf.getEdges();
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: dir, nodesep: dir === 'LR' ? 36 : 48, ranksep: dir === 'LR' ? 120 : 70, marginx: 20, marginy: 20 });
+    g.setDefaultEdgeLabel(() => ({}));
+    const size = n => ({ width: n.measured?.width || NODE_W, height: n.measured?.height || 120 });
+    nodes.forEach(n => g.setNode(n.id, size(n)));
+    edges.forEach(e => g.setEdge(e.source, e.target));
+    dagre.layout(g);
+    rf.setNodes(nodes.map(n => { const p = g.node(n.id), sz = size(n); return { ...n, position: { x: p.x - sz.width / 2, y: p.y - sz.height / 2 } }; }));
+    requestAnimationFrame(() => rf.fitView({ padding: 0.08, minZoom: 0.7, maxZoom: 1 }));
+  }, [ready]);
+  return null;
+}
+async function loadSnippets(name, graph, commit) {
   const out = {};
   await Promise.all((graph.nodes || []).map(async n => {
     const r = (n.code || [])[0];
     if (!r || !r.file) return;
-    const lines = await fileLines(name, r.file);
+    const lines = await fileLines(name, r.file, commit);
     if (!lines) return;
     const part = lines.slice(Math.max(0, r.start - 1), r.end);
     const shown = part.slice(0, NODE_LINES);
@@ -176,9 +318,9 @@ const nodeTypes = { code: CodeNode };
 const kindColor = n => getComputedStyle(document.documentElement).getPropertyValue('--k-' + (n.data?.n?.kind || 'external')).trim() || '#888';
 
 /* ---- side panel: the selected node ------------------------------------------------ */
-function CodeRef({ name, r }) {
+function CodeRef({ name, r, commit }) {
   const [lines, setLines] = useState(undefined);
-  useEffect(() => { let on = true; fileLines(name, r.file).then(l => on && setLines(l)); return () => { on = false }; }, [name, r.file]);
+  useEffect(() => { let on = true; fileLines(name, r.file, commit).then(l => on && setLines(l)); return () => { on = false }; }, [name, r.file, commit]);
   if (lines === undefined) return html`<div className="muted small">loading ${r.file}…</div>`;
   if (!lines) return html`<div className="muted small">${r.file} could not be read</div>`;
   const part = lines.slice(Math.max(0, r.start - 1), r.end);
@@ -186,7 +328,7 @@ function CodeRef({ name, r }) {
   return html`<div className="code"><pre className="gut">${nums}</pre>
     <pre className="src"><code className="hljs" dangerouslySetInnerHTML=${{ __html: hi(part.join('\n'), r.file) }} /></pre></div>`;
 }
-function NodePanel({ name, node, onDrill, onAsk }) {
+function NodePanel({ name, commit, node, onDrill, onAsk }) {
   if (!node) return html`<div className="pane muted">Click a node to see its code. Double-click a node marked
     “⤵ detail” to open the flow inside that component.</div>`;
   return html`<div className="pane">
@@ -195,7 +337,7 @@ function NodePanel({ name, node, onDrill, onAsk }) {
     ${node.summary && html`<div className="muted">${node.summary}</div>`}
     ${(node.code || []).map((r, i) => html`<div key=${i}>
       <div className="refhead"><span>${r.file}:${r.start}–${r.end}</span>${r.symbol && html`<span>· ${r.symbol}</span>`}</div>
-      <${CodeRef} name=${name} r=${r} /></div>`)}
+      <${CodeRef} name=${name} r=${r} commit=${commit} /></div>`)}
     ${!(node.code || []).length && html`<div className="muted small" style=${{ marginTop: '10px' }}>Outside the repository — no code.</div>`}
     <div className="row">
       ${node.detail && html`<button className="primary" onClick=${() => onDrill(node.detail)}>Open detail flow ⤵</button>`}
@@ -238,34 +380,31 @@ function Chat({ name, draft, setDraft }) {
 }
 
 /* ---- open-repo dialog ----------------------------------------------------------------- */
-function OpenDialog({ token, onClose, onOpened }) {
+function OpenDialog({ onClose, onOpened }) {
   const [repo, setRepo] = useState(''), [model, setModel] = useState(''), [note, setNote] = useState(''), [busy, setBusy] = useState(false);
   const [models, setModels] = useState([]);
   useEffect(() => { fetch('/api/openrouter-models?tools=1&relevant=1').then(r => r.json())
     .then(d => setModels((Array.isArray(d) ? d : d.models || []).filter(m => m.id))).catch(() => {}); }, []);
   async function submit(e) {
     e.preventDefault(); if (!repo.trim()) return;
-    setBusy(true); setNote('Checking the repository…');
-    const r = await api.open(repo.trim(), model.trim()).catch(err => ({ ok: false, note: String(err) }));
-    setBusy(false);
-    if (r.ok) onOpened(r.name); else setNote('⚠️ ' + (r.note || 'failed'));
+    setBusy(true); setNote('Checking the repository and creating its agent…');
+    try { onOpened(await openRepo(repo.trim(), model)); }
+    catch (err) { setNote('⚠️ ' + (err.message || err)); setBusy(false); }
   }
   return html`<div className="dlg" onClick=${e => { if (e.target.className === 'dlg') onClose(); }}>
     <form onSubmit=${submit}>
       <h2>Open a GitHub repository</h2>
       <input autoFocus value=${repo} onInput=${e => setRepo(e.target.value)} placeholder="owner/repo or https://github.com/owner/repo" />
       <select value=${model} onChange=${e => setModel(e.target.value)} aria-label="Model">
-        <option value="">Default model (Settings → REPO_MODEL, else google/gemini-2.5-pro)</option>
+        <option value="">Default model (${L.DEFAULT_MODEL})</option>
         ${models.map(m => html`<option key=${m.id} value=${m.id}>${m.id}${m.pricing ? '  ·  ' + m.pricing : ''}</option>`)}
       </select>
       <div className="small muted">Pick a strong tool-calling model: a weak one tends to describe what it would do instead of
         doing it, and the checker then sends it back for another round.</div>
-      <div className="small muted">${token
-        ? 'A GitHub token is configured: private repositories it can read work too.'
-        : html`No GitHub token configured — public repositories only. For private ones add a fine-grained token
-          (read-only “Contents” and “Metadata”) as <b>GITHUB_TOKEN</b> in the manager's Secrets tab.`}</div>
-      <div className="small muted">A new agent instance is created for the repo (no internet, code tools only). It clones
-        the default branch, analyses the code and draws the data flow — usually 5 to 20 minutes.</div>
+      <div className="small muted">Private repositories need a fine-grained GitHub token (read-only “Contents” and “Metadata”)
+        as <b>GITHUB_TOKEN</b> in the manager's Secrets tab. A new agent instance is created for the repo (no internet, code
+        tools only); it analyses the code and draws the data flow — usually 5 to 20 minutes. Keep this page open meanwhile:
+        the app judges each round and sends the agent back when the graph still has problems.</div>
       ${note && html`<div className="small">${note}</div>`}
       <div className="row" style=${{ justifyContent: 'flex-end' }}>
         <button type="button" onClick=${onClose}>Cancel</button>
@@ -277,33 +416,43 @@ function OpenDialog({ token, onClose, onOpened }) {
 const STATUS = { cloning: ['run', 'cloning'], analysing: ['run', 'analysing'], ready: ['ok', 'ready'],
   incomplete: ['warn', 'incomplete'], failed: ['bad', 'failed'] };
 function App() {
-  const [repos, setRepos] = useState(null), [token, setToken] = useState(false);
+  const [repos, setRepos] = useState(null), [tasks, setTasks] = useState([]);
   const [sel, setSel] = useState(() => new URLSearchParams(location.hash.slice(1)).get('r') || '');
   const [path, setPath] = useState(['overview']);               // breadcrumb: overview, then a detail id
   const [graph, setGraph] = useState(null), [flow, setFlow] = useState(null), [loading, setLoading] = useState(false);
   const [node, setNode] = useState(null), [tab, setTab] = useState('node'), [draft, setDraft] = useState('');
-  const [openDlg, setOpenDlg] = useState(false);
+  const [openDlg, setOpenDlg] = useState(false), [problems, setProblems] = useState([]);
   const [overview, setOverview] = useState(null);
   const [dir, setDir] = useState(() => { try { return localStorage.getItem('codeflow.dir') || 'LR'; } catch (e) { return 'LR'; } });
   const flipDir = () => setDir(d => { const n = d === 'LR' ? 'TB' : 'LR'; try { localStorage.setItem('codeflow.dir', n); } catch (e) {} return n; });
 
-  const poll = useCallback(() => api.repos().then(d => { setRepos(d.repos || []); setToken(!!d.token); }).catch(() => setRepos(r => r || [])), []);
+  const poll = useCallback(async () => {
+    try {
+      const [insts, ts] = await Promise.all([api.instances(), api.tasks()]);
+      const list = reposFrom(insts), tlist = Array.isArray(ts) ? ts : ts.tasks || [];
+      setRepos(list); setTasks(tlist);
+      let moved = false;
+      for (const r of list) moved = (await tick(r, tlist)) || moved;     // the state machine runs here
+      if (moved) setRepos(reposFrom(await api.instances()));
+    } catch (e) { setRepos(r => r || []); }
+  }, []);
   useEffect(() => { poll(); const t = setInterval(poll, 8000); return () => clearInterval(t); }, [poll]);
   useEffect(() => { if (repos && repos.length && !repos.some(r => r.name === sel)) setSel(repos[0].name); }, [repos]);
   useEffect(() => { if (sel) history.replaceState(null, '', '#r=' + enc(sel)); setPath(['overview']); setNode(null); }, [sel]);
   const repo = (repos || []).find(r => r.name === sel);
+  const task = repo ? tasks.find(t => t.id === repo.task) : null;
   const cur = path[path.length - 1];
-  const stamp = repo ? `${repo.commit}|${repo.flow?.graphs}|${repo.flow?.nodes}|${repo.status}` : '';
+  const stamp = repo ? `${repo.commit}|${repo.state}|${repo.round}|${repo.task}` : '';
 
   useEffect(() => {                                            // load the graph shown
-    if (!repo || !repo.flow || !repo.flow.graphs) { setGraph(null); setFlow(null); return; }
+    if (!repo || !['analysing', 'ready', 'incomplete'].includes(repo.state)) { setGraph(null); setFlow(null); return; }
     let on = true; setLoading(true);
     (async () => {
       const g = await api.flow(sel, cur);
       if (!on) return;
-      if (!g || !Array.isArray(g.nodes)) { setGraph(null); setFlow(null); setLoading(false); return; }
+      if (!g || g.__invalid || !Array.isArray(g.nodes)) { setGraph(null); setFlow(null); setLoading(false); return; }
       if (cur === 'overview') setOverview(g);
-      const snips = await loadSnippets(sel, g);
+      const snips = await loadSnippets(sel, g, repo.commit);
       if (!on) return;
       // A fresh id per loaded flow: React Flow takes defaultNodes only when it
       // mounts, so it must remount exactly when a NEW flow is ready — keying
@@ -312,16 +461,22 @@ function App() {
     })();
     return () => { on = false; };
   }, [sel, cur, stamp, dir]);
+  useEffect(() => {                                            // what the checker still finds, for the banner
+    if (!repo || repo.state !== 'incomplete') { setProblems([]); return; }
+    let on = true; checkFlow(repo.name, repo.commit).then(r => on && setProblems(r.errors)); return () => { on = false; };
+  }, [sel, stamp]);
 
   const drill = id => { setPath(p => [...p.filter(x => x !== id), id]); setNode(null); };
   const ask = n => { const r = (n.code || [])[0];
     setDraft(`Explain "${n.label}"${r ? ` (${r.file}:${r.start}-${r.end})` : ''}: what data comes in, what happens to it, and what goes out? `);
     setTab('chat'); };
   async function reanalyse() {
-    if (!repo || !confirm(`Pull the latest ${repo.full_name} and analyse it again? The current graph is replaced.`)) return;
-    const r = await api.refresh(repo.name); if (!r.ok) alert(r.note || 'failed'); FILES.clear(); poll();
+    if (!repo || !confirm(`Pull the latest ${repo.full} and analyse it again? The current graph is replaced.`)) return;
+    try { await setCfgs(repo.name, { CODEFLOW_STATE: 'cloning', CODEFLOW_ERROR: '' }); await startCheckout(repo.name, repo.full); }
+    catch (e) { alert(e.message || e); }
+    poll();
   }
-  const [cls, label] = STATUS[repo?.status] || ['', repo?.status || ''];
+  const [cls, label] = STATUS[repo?.state] || ['', repo?.state || ''];
   const detailTitle = id => (overview?.nodes || []).find(n => n.detail === id)?.label || id;
 
   let body;
@@ -331,15 +486,15 @@ function App() {
       flows through it — with the real code in every node.</p>
     <button className="primary" onClick=${() => setOpenDlg(true)}>Open a repository</button></div>`;
   else if (!flow) body = html`<div className="empty">
-    ${repo?.status === 'cloning' && html`<h2>Cloning ${repo.full_name}…</h2><p className="muted">The analysis starts right after.</p>`}
-    ${repo?.status === 'analysing' && html`<h2>The agent is reading the code</h2>
-      <p className="muted">Round ${repo.rounds || 1} of ${repo.max_rounds || 3} · task ${repo.task?.status || 'queued'} ${fmtAgo(repo.task?.updated)}.
-        ${(repo.rounds || 1) > 1 ? 'The checker found problems in the previous round; the agent is fixing them. ' : ''}
-        The graph appears here once the checker accepts it — usually 5 to 20 minutes.</p>`}
-    ${repo?.status === 'failed' && html`<h2>The analysis failed</h2><p className="muted">${repo.error}</p>
+    ${repo?.state === 'cloning' && html`<h2>Cloning ${repo.full}…</h2><p className="muted">The analysis starts right after.</p>`}
+    ${repo?.state === 'analysing' && html`<h2>The agent is reading the code</h2>
+      <p className="muted">Round ${repo.round || 1} of ${L.MAX_ROUNDS} · task ${task?.status || 'queued'} ${fmtAgo(task?.updated)}.
+        ${(repo.round || 1) > 1 ? 'The checker found problems in the previous round; the agent is fixing them. ' : ''}
+        The graph appears here once the checker accepts it — usually 5 to 20 minutes. Keep this page open: it judges each round.</p>`}
+    ${repo?.state === 'failed' && html`<h2>That did not work</h2><p className="muted">${repo.error}</p>
       <button onClick=${reanalyse}>Try again</button>`}
-    ${repo && ['ready', 'incomplete'].includes(repo.status) && html`<h2>${loading ? 'Loading the graph…' : 'No graph'}</h2>
-      ${!loading && html`<p className="muted">${(repo.flow?.errors || []).join(' · ')}</p><button onClick=${reanalyse}>Analyse again</button>`}`}
+    ${repo && ['ready', 'incomplete'].includes(repo.state) && html`<h2>${loading ? 'Loading the graph…' : 'No graph'}</h2>
+      ${!loading && html`<p className="muted">${problems.join(' · ')}</p><button onClick=${reanalyse}>Analyse again</button>`}`}
   </div>`;
   else body = html`<div className="canvas">
     <div className="crumbs">
@@ -349,15 +504,16 @@ function App() {
       <span className="sum" title=${graph?.summary || ''}>${graph?.summary || ''}</span>
       <button onClick=${flipDir} title="Lay the flow out left to right or top to bottom">${dir === 'LR' ? '→ left to right' : '↓ top to bottom'}</button>
     </div>
-    ${repo?.status === 'analysing' && html`<div className="banner">Analysis still running (round ${repo.rounds || 1} of ${repo.max_rounds || 3}) — this graph may change.</div>`}
-    ${repo?.status === 'incomplete' && html`<div className="banner warn">The agent finished, but the graph has problems:
-      <ul>${(repo.flow?.errors || []).map((e, i) => html`<li key=${i}>${e}</li>`)}</ul></div>`}
+    ${repo?.state === 'analysing' && html`<div className="banner">Analysis still running (round ${repo.round || 1} of ${L.MAX_ROUNDS}) — this graph may change.</div>`}
+    ${repo?.state === 'incomplete' && html`<div className="banner warn">The agent stopped after ${repo.round} rounds, but the graph still has problems:
+      <ul>${problems.slice(0, 8).map((e, i) => html`<li key=${i}>${e}</li>`)}</ul></div>`}
     <div className="flow"><${ReactFlow} key=${flow.id} defaultNodes=${flow.nodes} defaultEdges=${flow.edges}
       nodeTypes=${nodeTypes} colorMode="system" fitView=${true} fitViewOptions=${{ padding: 0.08, minZoom: 0.7, maxZoom: 1 }} minZoom=${0.1}
       nodesConnectable=${false} onlyRenderVisibleElements=${false} proOptions=${{ hideAttribution: true }}
       onNodeClick=${(_, n) => { setNode(n.data.n); setTab('node'); }}
       onNodeDoubleClick=${(_, n) => { if (n.data.n.detail) drill(n.data.n.detail); }}
       onPaneClick=${() => setNode(null)}>
+      <${Relayout} dir=${dir} />
       <${Background} gap=${20} size=${1} />
       <${Controls} showInteractive=${false} />
       <${MiniMap} pannable=${true} zoomable=${true} nodeColor=${kindColor} />
@@ -368,14 +524,13 @@ function App() {
     <header>
       <h1>🔀 Code flow</h1>
       ${repos && repos.length > 0 && html`<select value=${sel} onChange=${e => setSel(e.target.value)} aria-label="Repository">
-        ${repos.map(r => html`<option key=${r.name} value=${r.name}>${r.full_name}</option>`)}</select>`}
+        ${repos.map(r => html`<option key=${r.name} value=${r.name}>${r.full}</option>`)}</select>`}
       ${repo && html`<span className=${'chip ' + cls}>${label}</span>`}
-      ${repo?.private && html`<span className="chip" title="private repository">private</span>`}
-      ${repo?.commit && html`<span className="chip" title=${'commit ' + repo.commit}>${repo.branch || ''} @ ${repo.commit.slice(0, 7)}</span>`}
+      ${repo?.commit && html`<span className="chip" title=${'commit ' + repo.commit}>@ ${repo.commit.slice(0, 7)}</span>`}
       ${(repo?.stack || []).slice(0, 5).map(t => html`<span key=${t} className="chip">${t}</span>`)}
       ${repo?.model && html`<span className="chip" title="model of this repo's agent">${repo.model}</span>`}
       <span className="grow"></span>
-      ${repo && html`<button onClick=${reanalyse} disabled=${['cloning', 'analysing'].includes(repo.status)} title="Pull the latest commit and analyse again">Re-analyse</button>`}
+      ${repo && html`<button onClick=${reanalyse} disabled=${['cloning', 'analysing'].includes(repo.state)} title="Pull the latest commit and analyse again">Re-analyse</button>`}
       ${repo && html`<a href=${repo.url} target="_blank" rel="noopener">GitHub</a>`}
       <button className="primary" onClick=${() => setOpenDlg(true)}>+ Open repo</button>
       <a href="/chat">Chat</a> · <a href="/">Manager</a>
@@ -385,11 +540,11 @@ function App() {
       <aside className="side">
         <div className="tabs"><button className=${tab === 'node' ? 'on' : ''} onClick=${() => setTab('node')}>Code</button>
           <button className=${tab === 'chat' ? 'on' : ''} onClick=${() => setTab('chat')} disabled=${!repo}>Ask ${repo ? repo.name : 'the agent'}</button></div>
-        ${tab === 'node' ? html`<${NodePanel} name=${sel} node=${node} onDrill=${drill} onAsk=${ask} />`
+        ${tab === 'node' ? html`<${NodePanel} name=${sel} commit=${repo?.commit || ''} node=${node} onDrill=${drill} onAsk=${ask} />`
           : repo && html`<${Chat} name=${repo.name} draft=${draft} setDraft=${setDraft} />`}
       </aside>
     </main>
-    ${openDlg && html`<${OpenDialog} token=${token} onClose=${() => setOpenDlg(false)}
+    ${openDlg && html`<${OpenDialog} onClose=${() => setOpenDlg(false)}
       onOpened=${name => { setOpenDlg(false); setSel(name); poll(); }} />`}
   </div>`;
 }

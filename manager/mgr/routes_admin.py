@@ -20,9 +20,9 @@ import urllib.request
 from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
-from mgr import repos as _repos
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
+from mgr import checkout as _checkout
 from mgr import browse as _browse
 from mgr import chats as _chats
 from mgr import gateway as _gateway
@@ -194,26 +194,19 @@ def _rt_katfs_redirect(h):
     h.end_headers()
 
 
-@_routes.ROUTER.get("/api/repos", admin=True)
-def _rt_repos(h):
-    # Code flow app: the repo instances with clone/analysis state (mgr/repos.py).
-    return h._json({"repos": _repos.list_repos(), "token": bool(_repos.token())})
+@_routes.ROUTER.get("/api/checkout/", prefix=True, admin=True)
+def _rt_checkout_status(h):
+    # The last GitHub checkout into an instance's workspace (mgr/checkout.py).
+    name = h.path.split("?", 1)[0][len("/api/checkout/"):].strip("/")
+    return h._json({**_checkout.status(name), "token": bool(_checkout.token())})
 
 
-@_routes.ROUTER.post("/api/repos", admin=True)
-def _rt_repos_open(h):
-    b = h._body()
-    ok, name, note = _repos.open_repo(str(b.get("repo") or b.get("url") or ""), str(b.get("model") or ""))
-    return h._json({"ok": ok, "name": name, "note": note}, 200 if ok else 400)
-
-
-@_routes.ROUTER.post("/api/repos/", prefix=True, admin=True)
-def _rt_repos_action(h):
-    parts = h.path.split("?", 1)[0].strip("/").split("/")      # api/repos/<name>/refresh
-    if len(parts) != 4 or parts[3] != "refresh":
-        return h._json({"ok": False, "note": "unknown action"}, 404)
-    ok, note = _repos.refresh(parts[2])
-    return h._json({"ok": ok, "note": note}, 200 if ok else 400)
+@_routes.ROUTER.post("/api/checkout/", prefix=True, admin=True)
+def _rt_checkout_start(h):
+    # {"repo": "owner/repo | GitHub URL"} -> clone into <workspace>/src in the background.
+    name = h.path.split("?", 1)[0][len("/api/checkout/"):].strip("/")
+    ok, state = _checkout.start(name, str(h._body().get("repo") or ""))
+    return h._json({"ok": ok, **state}, 200 if ok else 400)
 
 
 @_routes.ROUTER.get("/api/workspace/", prefix=True, admin=True)

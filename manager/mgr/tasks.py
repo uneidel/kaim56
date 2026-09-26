@@ -31,10 +31,6 @@ from mgr import vm as _vm
 
 
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", "1800"))    # worker-run tasks: 30 min
-# Functions the worker calls every idle cycle (~5 s without a task). Filled by
-# manager.py, so a domain module (repos) can react to finished tasks without
-# the worker importing it.
-idle_hooks = []
 
 
 def _chat_post(inst, message, timeout=600):
@@ -507,11 +503,6 @@ def _task_worker():
                 _vm.image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
                 _util._wlog(f"image-sweep failed: {e!r}")
-            for hook in list(idle_hooks):  # wired by manager.py (repos.supervise …)
-                try:
-                    hook()
-                except Exception as e:
-                    _util._wlog(f"idle hook {getattr(hook, '__name__', hook)} failed: {e!r}")
 
 
 
