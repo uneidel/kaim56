@@ -1,6 +1,6 @@
-# MCP hub: the MCP server processes (mcp-remote for Home Assistant,
-# mcp-portainer, caldav-mcp) run HERE instead of in every microVM. Same dependencies
-# as previously in the guest image, but once on the host.
+# MCP-Hub: die MCP-Serverprozesse (mcp-remote fuer Home Assistant,
+# mcp-portainer, caldav-mcp) laufen HIER statt in jeder microVM. Gleiche Abhaengigkeiten
+# wie vorher im Gast-Image, aber einmal am Host.
 FROM node:24-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates python3 python3-pip \
@@ -12,6 +12,10 @@ RUN npm install -g mcp-remote caldav-mcp && npm cache clean --force
 COPY patch-caldav.js /app/patch-caldav.js
 RUN node /app/patch-caldav.js
 RUN pip install --no-cache-dir --break-system-packages mcp-portainer
+# JobSpy (job-board scraping: Indeed, LinkedIn, Glassdoor, …) needs pandas +
+# a TLS-fingerprinting client — hub only, never in a VM. See jobspy_mcp.py.
+RUN pip install --no-cache-dir --break-system-packages python-jobspy
 COPY hub.py /app/hub.py
+COPY jobspy_mcp.py /app/jobspy_mcp.py
 EXPOSE 8771
 CMD ["python3", "-u", "/app/hub.py"]

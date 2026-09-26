@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-26
+
+- JobSpy as a hub MCP server (`mcp-hub/jobspy_mcp.py`, catalog entry `jobspy`): the tool `jobspy__search_jobs` scrapes Indeed/LinkedIn/Glassdoor/ZipRecruiter/Google for an instance that lists `jobspy` in MCP_SERVERS; hub image installs `python-jobspy` (pandas + tls client — hub only, never in a VM).
+
 ## 2026-09-25
 
 - App 5.42: notifications while the app is closed — WorkManager check every 15 min + catch-up at start over a shared watermark (`NotifSync.kt`, `Prefs.notifLastTs`); root cause: the poll lived in the chat screen and skipped everything older than the app start.

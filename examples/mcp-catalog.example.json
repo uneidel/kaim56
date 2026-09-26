@@ -35,5 +35,17 @@
       "CALDAV_USERNAME": "todo-username",
       "CALDAV_PASSWORD": "${CALDAV_PASSWORD}"
     }
+  },
+  {
+    "name": "jobspy",
+    "description": "JobSpy (job boards: Indeed, LinkedIn, Glassdoor, ZipRecruiter, Google)",
+    "command": "python3",
+    "args": [
+      "/app/jobspy_mcp.py"
+    ],
+    "env": {
+      "JOBSPY_COUNTRY": "germany",
+      "JOBSPY_SITES": "indeed,linkedin"
+    }
   }
 ]

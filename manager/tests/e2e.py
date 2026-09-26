@@ -2330,6 +2330,72 @@ class ManagerFunctions(unittest.TestCase):
             mcpmod.HUB_TZ = old
         self.assertEqual(self.m._mcp.HUB_TZ, self.m._host.HOST_TZ)
 
+    def test_jobspy_mcp_server_protocol(self):
+        """mcp-hub/jobspy_mcp.py speaks the MCP subset the agent uses (initialize,
+        tools/list, tools/call, ping, notifications) and turns JobSpy's DataFrame
+        into compact postings; the catalog example carries the entry."""
+        import importlib.util, sys, types
+        hub = os.path.join(os.path.dirname(FC_DIR), "mcp-hub", "jobspy_mcp.py")
+        if not os.path.exists(hub):
+            self.skipTest("mcp-hub not next to the manager tree")
+        spec = importlib.util.spec_from_file_location("jobspy_mcp_e2e", hub)
+        js = importlib.util.module_from_spec(spec); spec.loader.exec_module(js)
+        nan = float("nan")
+        class Df(list):
+            def to_dict(self, kind): return list(self)
+        calls = []
+        fake = types.ModuleType("jobspy")
+        fake.scrape_jobs = lambda **kw: (calls.append(kw), Df([
+            {"title": "Data Engineer", "company": "ACME", "location": "Köln, NW, DE", "site": "indeed",
+             "date_posted": "2026-09-25", "job_url": "https://x/1", "job_url_direct": nan,
+             "min_amount": 60000.0, "max_amount": nan, "currency": "EUR", "interval": "yearly",
+             "is_remote": False, "job_type": "fulltime", "description": "x" * 700},
+            {"title": "Dev", "company": "B", "location": nan, "site": "linkedin", "date_posted": None,
+             "job_url": "https://x/2", "job_url_direct": "https://direct/2", "min_amount": nan, "max_amount": nan,
+             "description": nan}]))[1]
+        old = sys.modules.get("jobspy"); sys.modules["jobspy"] = fake
+        try:
+            self.assertIsNone(js.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            r = js.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}})
+            self.assertEqual(r["result"]["serverInfo"]["name"], "jobspy")
+            self.assertEqual(js.handle({"jsonrpc": "2.0", "id": 2, "method": "ping"})["result"], {})
+            tl = js.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})["result"]["tools"]
+            self.assertEqual([t["name"] for t in tl], ["search_jobs"])
+            self.assertIn("search_term", tl[0]["inputSchema"]["required"])
+            r = js.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "search_jobs",
+                  "arguments": {"search_term": "data engineer", "location": "Köln", "hours_old": 72,
+                                "site_name": ["indeed", "bogus"], "results_wanted": 500, "is_remote": False}}})
+            self.assertFalse(r["result"]["isError"])
+            out = json.loads(r["result"]["content"][0]["text"])
+            self.assertEqual(out["count"], 2)
+            j0, j1 = out["jobs"]
+            self.assertEqual(j0["salary"], {"min": 60000.0, "max": None, "currency": "EUR", "interval": "yearly"})
+            self.assertEqual(j0["job_url"], "https://x/1"); self.assertTrue(j0["description"].endswith("…"))
+            self.assertEqual(len(j0["description"]), js.DESC_CHARS + 1)
+            self.assertEqual(j1["job_url"], "https://direct/2"); self.assertNotIn("location", j1); self.assertNotIn("salary", j1)
+            kw = calls[-1]
+            self.assertEqual(kw["site_name"], ["indeed"]); self.assertEqual(kw["results_wanted"], js.MAX_RESULTS)
+            self.assertEqual(kw["hours_old"], 72); self.assertEqual(kw["country_indeed"], js.DEFAULT_COUNTRY)
+            self.assertNotIn("Authorization", json.dumps(kw))
+            e = js.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "nope"}})
+            self.assertEqual(e["error"]["code"], -32602)
+            e = js.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "search_jobs", "arguments": {}}})
+            self.assertTrue(e["result"]["isError"])
+            fake.scrape_jobs = lambda **kw: (_ for _ in ()).throw(RuntimeError("blocked"))
+            e = js.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "search_jobs", "arguments": {"search_term": "x"}}})
+            self.assertTrue(e["result"]["isError"]); self.assertIn("blocked", e["result"]["content"][0]["text"])
+            self.assertEqual(js.handle({"jsonrpc": "2.0", "id": 8, "method": "resources/list"})["error"]["code"], -32601)
+        finally:
+            if old is None:
+                sys.modules.pop("jobspy", None)
+            else:
+                sys.modules["jobspy"] = old
+        cat = json.load(open(os.path.join(os.path.dirname(FC_DIR), "kaim56", "examples", "mcp-catalog.example.json"))) \
+            if os.path.exists(os.path.join(os.path.dirname(FC_DIR), "kaim56", "examples", "mcp-catalog.example.json")) else []
+        if cat:
+            js_entry = next(e for e in cat if e["name"] == "jobspy")
+            self.assertEqual(js_entry["args"], ["/app/jobspy_mcp.py"])
+
     def test_mcp_servers_validated_against_catalog(self):
         """The Policy tab assigns MCPs through the config route: names must
         exist in the catalog, spaces are tolerated, empty means none."""
