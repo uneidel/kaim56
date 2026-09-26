@@ -3358,7 +3358,7 @@ class ManagerFunctions(unittest.TestCase):
             m._paths.RUN_DIR, m._aicheck.fetch = old
         import chatui
         page = chatui.render([{"name": "a", "running": True}], "a", "")
-        self.assertIn("id=aiBadge", page); self.assertIn("/aic/classifier.mjs", page); self.assertIn("aiSchedule", page)
+        self.assertIn('class=aib data-ai=', page); self.assertIn("/aic/classifier.mjs", page); self.assertIn("aiSchedule", page)
 
     def test_mail_route_is_guest_and_policy_gated(self):
         """POST /api/mail: a guest sends from its own plus address through the
