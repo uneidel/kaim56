@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Shield
@@ -1152,15 +1153,15 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (!recording && !busy) micToggle()
         }
     }
-    // Tap on a system notification: navigate to the target.
-    LaunchedEffect(notifNavCalls) {
-        if (notifNavCalls <= 0) return@LaunchedEffect
+    // Follow a notification link: from a tapped system notification and from
+    // the Notifications screen alike.
+    fun navTo(link: String) {
         when {
-            notifNav == "missions" -> screen = "missions"
-            notifNav == "tasks" -> screen = "tasks"
-            notifNav == "skills" -> screen = "skills"
-            notifNav.startsWith("chat:") -> {
-                val inst = notifNav.removePrefix("chat:")
+            link == "missions" -> screen = "missions"
+            link == "tasks" -> screen = "tasks"
+            link == "skills" -> screen = "skills"
+            link.startsWith("chat:") -> {
+                val inst = link.removePrefix("chat:")
                 prefs.mode = "server"; prefs.instance = inst; screen = null
                 // Prefer the task chat (where task results/briefings land), else the
                 // most recent chat with this instance. If none exists locally yet,
@@ -1177,6 +1178,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             }
         }
     }
+    LaunchedEffect(notifNavCalls) { if (notifNavCalls > 0) navTo(notifNav) }
 
     // Fetch the gateway state: at startup, on server change and after every
     // finished reply (by then the counter has moved).
@@ -1218,6 +1220,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 onTasks = { screen = "tasks"; scope.launch { drawerState.close() } },
                 onMissions = { screen = "missions"; scope.launch { drawerState.close() } },
                 onSkills = { screen = "skills"; scope.launch { drawerState.close() } },
+                onNotifications = { screen = "notifications"; scope.launch { drawerState.close() } },
                 onSettings = { screen = "settings"; scope.launch { drawerState.close() } },
             )
         }
@@ -1626,6 +1629,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             }
 
             AnimatedVisibility(
+                screen == "notifications",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                NotificationsScreen(prefs, onClose = { screen = null }, onStatus = { status = it },
+                    onOpen = { link -> navTo(link) })
+            }
+
+            AnimatedVisibility(
                 screen == "tasks",
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
             ) {
@@ -2015,6 +2026,7 @@ fun KatDrawer(
     onTasks: () -> Unit,
     onMissions: () -> Unit,
     onSkills: () -> Unit,
+    onNotifications: () -> Unit,
     onSettings: () -> Unit,
 ) {
     // From the package rather than BuildConfig: this way it always shows the
@@ -2103,6 +2115,7 @@ fun KatDrawer(
             DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
             DrawerAction("Missions", Icons.Outlined.Flag, onMissions)
             DrawerAction("Skills", Icons.Outlined.Lightbulb, onSkills)
+            DrawerAction("Notifications", Icons.Outlined.Notifications, onNotifications)
             DrawerAction("Settings", Icons.Outlined.Settings, onSettings)
         }
     }
@@ -2219,6 +2232,84 @@ private fun SkillsScreen(
                             color = Kat.accentText, modifier = Modifier.tap { decide(p, true) })
                         Text("Discard", fontSize = 12.5.sp, fontFamily = Plex,
                             color = Kat.textFaint, modifier = Modifier.tap { decide(p, false) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The manager's notification list (it keeps every entry with its read
+ *  state — the system notification is only the doorbell). Newest first,
+ *  unread emphasised; tapping follows the link like a tapped system
+ *  notification; opening the screen marks everything read. */
+@Composable
+private fun NotificationsScreen(
+    prefs: Prefs,
+    onClose: () -> Unit,
+    onStatus: (String) -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var items by remember { mutableStateOf<List<ManagerSync.NotifItem>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
+    val fmt = remember { java.text.SimpleDateFormat("EEE dd.MM. HH:mm", java.util.Locale.getDefault()) }
+
+    LaunchedEffect(reload) {
+        val res = withContext(Dispatchers.IO) {
+            ManagerSync.pollNotifications(prefs.serverUrl, prefs.user, prefs.pass, 0, 0)
+        }
+        if (res?.items != null) { items = res.items.sortedByDescending { it.ts }; loaded = true }
+        else onStatus("⚠️ Could not load notifications: ${ManagerSync.lastStatus}")
+    }
+    // Seen = read: the list is the review, so what you looked at stops counting as new.
+    LaunchedEffect(loaded) {
+        if (loaded && items.any { !it.read }) {
+            withContext(Dispatchers.IO) { ManagerSync.markNotifRead(prefs.serverUrl, prefs.user, prefs.pass) }
+            prefs.notifLastTs = maxOf(prefs.notifLastTs, items.maxOfOrNull { it.ts } ?: 0L)
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(Kat.bg)) {
+        ScreenHeader("Notifications", onClose)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (loaded && items.isEmpty()) Text(
+                "No notifications yet. Agents send one for finished tasks, findings, " +
+                "skill proposals and briefings.",
+                fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint,
+            )
+            items.forEach { n ->
+                val unread = !n.read
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(Kat.surface)
+                        .border(1.dp, if (unread) Kat.accentText else Kat.hairlineStrong, RoundedCornerShape(14.dp))
+                        .tap { if (n.link.isNotBlank()) { onOpen(n.link); onClose() } }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(n.title.ifBlank { "kAIm56" }, fontSize = 14.sp, fontFamily = Plex,
+                            fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Medium,
+                            color = Kat.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f))
+                        if (n.instance.isNotBlank())
+                            Text(n.instance, fontSize = 11.sp, fontFamily = PlexMono, color = Kat.agent(n.instance))
+                    }
+                    if (n.body.isNotBlank())
+                        Text(n.body, fontSize = 12.5.sp, fontFamily = Plex, color = Kat.textDim,
+                            maxLines = 6, overflow = TextOverflow.Ellipsis)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(fmt.format(java.util.Date(n.ts * 1000)), fontSize = 11.sp, fontFamily = PlexMono, color = Kat.textFaint)
+                        if (n.link.isNotBlank())
+                            Text(when { n.link.startsWith("chat:") -> "open chat"; else -> "open " + n.link },
+                                fontSize = 11.sp, fontFamily = Plex, color = Kat.accentText)
                     }
                 }
             }

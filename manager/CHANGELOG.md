@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-26
 
+- App 5.43: Notifications screen in the drawer (the manager's list, newest first, unread highlighted, tap follows the link, opening marks all read); notification navigation refactored into one function used by system notifications and the list.
 - Job board: ⋯ / right-click menu on a card excludes the company or the role — written as a rule into the jobresearcher's playbook (`/api/playbook-add`), so the daily search stops listing them; the board hides matching cards and lists the rules with remove.
 - Job board lists one card per JOB merged across runs (first seen, runs seen, gone since, verdict), from the structured `runs/<date>.json` the daily task now writes; new read-only route `GET /api/workspace/<instance>/<path>` (`mgr/wsfiles.py`: listing or file, fenced, admin only) for apps.
 - Apps: browser front-ends next to the chat page — one folder `apps/<name>/` (app.json + index.html), scanned from `APPS_DIR` (site.json, default `apps/` next to `manager/`), listed by `/api/apps` and in the chat sidebar, served under `/apps/<name>/` behind the login (`mgr/apps.py`); first app `apps/jobboard` (the jobresearcher's runs + a chat with it).

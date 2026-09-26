@@ -5,6 +5,12 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.43
+
+- Notifications screen (drawer → Notifications): review everything the agents
+  sent, newest first, unread highlighted. Tap one to jump to its chat, tasks,
+  missions or skills. Opening the list marks all as read.
+
 ## 5.42
 
 - Notifications now reach the phone while the app is closed: a background
