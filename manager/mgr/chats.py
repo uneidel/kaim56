@@ -170,6 +170,10 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
     elif kind == "voice":
         cid = str(sender)
         title = f"Voice · {inst_name} · " + time.strftime("%d.%m. %H:%M")
+    elif kind == "mail":
+        sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "mail"))[:24] or "mail"
+        cid = f"mail-{inst_name}-{sid}"
+        title = f"Mail · {inst_name} · {sender}"
     else:
         sid = re.sub(r"[^a-zA-Z0-9]", "", (sender or "signal"))[:20] or "signal"
         cid = f"sig-{inst_name}-{sid}"

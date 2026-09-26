@@ -36,6 +36,7 @@ AGENT_TOOLS_CATALOG = [
     {"name": "mission_update", "desc": "Advance a mission step (orchestrator only)"},
     {"name": "mission_finish", "desc": "Complete a mission (orchestrator only)"},
     {"name": "send_signal", "desc": "Send a Signal message to the user (allowed numbers only)"},
+    {"name": "send_mail", "desc": "Send a mail from the instance's own address (allowed recipients only)"},
     {"name": "notify", "desc": "Push notification to app + web manager (title + text)"},
     {"name": "ha_control", "desc": "Turn a Home Assistant device/area on or off by spoken name (matches + auto-learns aliases)"},
     {"name": "ha_learn_alias", "desc": "Teach Home Assistant a spoken-name alias for an entity (STT mishears names)"},
@@ -64,7 +65,7 @@ AGENT_TOOL_NAMES = {t["name"] for t in AGENT_TOOLS_CATALOG}
 
 SANDBOX_DEFAULT_TOOLS = ["bash", "read_file", "write_file", "list_dir", "offload_read",
                          "http_fetch", "web_search", "read_pdf"]
-SANDBOX_NEVER = {"spawn_subagent", "create_task", "send_signal", "notify", "get_secret", "list_secrets"}
+SANDBOX_NEVER = {"spawn_subagent", "create_task", "send_signal", "send_mail", "notify", "get_secret", "list_secrets"}
 
 
 def sandbox_config(caller, sandbox):

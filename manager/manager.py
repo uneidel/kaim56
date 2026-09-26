@@ -85,6 +85,7 @@ from mgr import saddler as _saddler_mod
 from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
+from mgr import mail as _mail
 from mgr import skills as _skills            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store
@@ -101,6 +102,7 @@ _mcp.configure(_paths.BASE, _instances.load_instances, _secrets.allowed_secret_k
 _memfs.configure(_paths.BASE)
 _hindsight.configure(lambda: _settings.load_settings(), log=print)
 _signal_mod.configure(_paths.BASE)
+_mail.configure(_paths.BASE)
 _mcp.HUB_TZ = _host.HOST_TZ          # hub processes (caldav-mcp …) format dates in this zone
 os.makedirs(_paths.RUN_DIR, exist_ok=True)
 _gateway.configure(_paths.BASE)
@@ -145,4 +147,5 @@ if __name__ == "__main__":
     _startup.migrate_mcp_config_out_of_instances()
     threading.Thread(target=_tasks._task_worker, daemon=True).start()
     threading.Thread(target=_signal_mod._signal_receiver, daemon=True).start()
+    threading.Thread(target=_mail._mail_receiver, daemon=True).start()
     ThreadingHTTPServer(_host.LISTEN, _httpd.H).serve_forever()

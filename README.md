@@ -4,7 +4,7 @@ A workbench for personal AI agents: build, run, watch and constrain them on your
 own machine. Every agent runs in its own Firecracker microVM; a single-process
 manager on the Python standard library gives it tools, memory, secrets, a schedule,
 a policy, traces and a voice. You talk to the agents from an Android app, the
-browser, a hands-free desktop client, an ESP32 device or Signal — and the LLM keys
+browser, a hands-free desktop client, an ESP32 device, Signal or e-mail — and the LLM keys
 never leave the host. Models are consumed (OpenRouter, a local server), not hosted
 or trained here.
 

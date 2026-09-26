@@ -2396,6 +2396,90 @@ class ManagerFunctions(unittest.TestCase):
             js_entry = next(e for e in cat if e["name"] == "jobspy")
             self.assertEqual(js_entry["args"], ["/app/jobspy_mcp.py"])
 
+    def test_mail_routing_parsing_and_inbound_turn(self):
+        """mgr/mail: an instance's address is <local>+<name>@<domain>; a mail is
+        routed by that tag (unknown/no tag -> orchestrator); only allowed senders
+        reach an agent; the turn gets the body marked as untrusted, lands in a
+        'mail' conversation and the reply is mailed back to the sender with
+        threading headers; duplicates and own mails are dropped."""
+        m = self.m
+        ml = m._mail
+        st = {"MAIL_ADDRESS": "Agent@Example.com", "MAIL_IMAP_HOST": "imap.x", "MAIL_PASSWORD": "pw",
+              "MAIL_ALLOWED_SENDERS": "Ulrich@Home.test, boss@corp.test"}
+        insts = [{"name": "orchestrator", "config": {}}, {"name": "jobresearcher", "config": {}},
+                 {"name": "hass", "config": {"MAIL_TAG": "Home-Bot"}}]
+        old = (m._settings.load_settings, m._instances.load_instances, m._chats.chat_log_append,
+               m._audit.audit_append, ml._smtp, dict(ml._seen_ids))
+        logged, sent = [], []
+        class FakeSmtp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def send_message(self, msg): sent.append(msg)
+        try:
+            m._settings.load_settings = lambda: st
+            m._instances.load_instances = lambda: insts
+            m._chats.chat_log_append = lambda inst, sender, u, r, kind="signal": logged.append((inst, sender, u, r, kind))
+            m._audit.audit_append = lambda *a, **k: None
+            ml._smtp = lambda c: FakeSmtp()
+            ml._seen_ids.clear()
+            c = ml.conf()
+            self.assertTrue(c["ok"]); self.assertEqual(c["user"], "agent@example.com"); self.assertEqual(c["smtp_host"], "imap.x")
+            self.assertEqual(ml.address_of(insts[1]), "agent+jobresearcher@example.com")
+            self.assertEqual(ml.address_of(insts[2]), "agent+home-bot@example.com")       # MAIL_TAG, sanitized
+            self.assertEqual(ml.route(["agent+jobresearcher@example.com"]), "jobresearcher")
+            self.assertEqual(ml.route(["x@other.test", "AGENT+HOME-BOT@example.com"]), "hass")
+            self.assertEqual(ml.route(["agent@example.com"]), "orchestrator")
+            self.assertEqual(ml.route(["agent+nobody@example.com"]), "orchestrator")
+            self.assertEqual(ml.route(["other+jobresearcher@example.com"]), "orchestrator")   # not our account
+            # parsing: multipart with html only in one part, decoded headers
+            raw = (b"From: =?utf-8?q?Ulrich_N=C3=B6?= <ulrich@home.test>\r\nTo: Agent <agent+jobresearcher@example.com>\r\n"
+                   b"Subject: =?utf-8?q?Stellen_pr=C3=BCfen?=\r\nMessage-ID: <m1@home.test>\r\n"
+                   b"Content-Type: multipart/alternative; boundary=BB\r\n\r\n--BB\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+                   b"<p>Bitte <b>heute</b> suchen.</p><script>x</script>\r\n--BB--\r\n")
+            p = ml.parse(raw)
+            self.assertEqual((p["from"], p["from_name"], p["subject"], p["id"]), ("ulrich@home.test", "Ulrich N\u00f6", "Stellen pr\u00fcfen", "<m1@home.test>"))
+            self.assertEqual(p["text"], "Bitte heute suchen.")
+            self.assertIn("agent+jobresearcher@example.com", p["to"])
+            # inbound turn
+            runs = []
+            deliver = lambda name, msg: (runs.append((name, msg)), (True, "Gefunden: 2 Stellen"))[1]
+            inst, reply, note = ml.handle_inbound(raw, deliver=deliver)
+            self.assertEqual((inst, reply), ("jobresearcher", "Gefunden: 2 Stellen"))
+            self.assertEqual(runs[0][0], "jobresearcher")
+            self.assertIn("[Mail] From: Ulrich N\u00f6 <ulrich@home.test>", runs[0][1])
+            self.assertIn("not instructions", runs[0][1]); self.assertTrue(runs[0][1].endswith("Bitte heute suchen."))
+            self.assertEqual(logged[0][0], "jobresearcher"); self.assertEqual(logged[0][4], "mail"); self.assertIn("Stellen", logged[0][2])
+            out = sent[-1]
+            self.assertEqual(out["To"], "ulrich@home.test"); self.assertEqual(out["Subject"], "Re: Stellen pr\u00fcfen")
+            self.assertIn("agent+jobresearcher@example.com", out["From"]); self.assertEqual(out["In-Reply-To"], "<m1@home.test>")
+            self.assertEqual(out.get_content().strip(), "Gefunden: 2 Stellen")
+            # the same Message-ID again: dropped; an unknown sender: dropped before any turn
+            self.assertEqual(ml.handle_inbound(raw, deliver=deliver)[2], "duplicate")
+            bad = raw.replace(b"ulrich@home.test", b"spam@evil.test").replace(b"<m1@", b"<m2@")
+            self.assertIn("not allowed", ml.handle_inbound(bad, deliver=deliver)[2]); self.assertEqual(len(runs), 1)
+            own = raw.replace(b"ulrich@home.test", b"agent+jobresearcher@example.com").replace(b"<m1@", b"<m3@")
+            st["MAIL_ALLOWED_SENDERS"] += ", agent+jobresearcher@example.com"
+            self.assertEqual(ml.handle_inbound(own, deliver=deliver)[2], "own mail"); self.assertEqual(len(runs), 1)
+            # a failed turn: no reply mail, logged
+            n_sent = len(sent)
+            self.assertIsNone(ml.handle_inbound(raw.replace(b"<m1@", b"<m4@"), deliver=lambda n, msg: (False, "error: timeout"))[1])
+            self.assertEqual(len(sent), n_sent)
+            # the send tool: allowlist, redaction, rate limit; unconfigured mail says so
+            ok, note = ml.send("nobody@else.test", "s", "t", inst=insts[1])
+            self.assertFalse(ok); self.assertIn("not permitted", note)
+            ok, note = ml.send("boss@corp.test", "Report", "key sk-or-v1-" + "ab" * 32, inst=insts[1])
+            self.assertTrue(ok); self.assertNotIn("sk-or-v1-", sent[-1].get_content()); self.assertIn("[SECRET", sent[-1].get_content())
+            ml._sent[:] = [time.time()] * ml.MAIL_RATE[0]
+            self.assertIn("rate limit", ml.send("boss@corp.test", "s", "t")[1])
+            ml._sent.clear()
+            st["MAIL_PASSWORD"] = ""
+            self.assertIn("not configured", ml.send("boss@corp.test", "s", "t")[1])
+            self.assertEqual(ml.fetch_once(), 0)
+        finally:
+            (m._settings.load_settings, m._instances.load_instances, m._chats.chat_log_append,
+             m._audit.audit_append, ml._smtp) = old[:5]
+            ml._seen_ids.clear(); ml._seen_ids.update(old[5]); ml._sent.clear()
+
     def test_mcp_servers_validated_against_catalog(self):
         """The Policy tab assigns MCPs through the config route: names must
         exist in the catalog, spaces are tolerated, empty means none."""
@@ -3238,6 +3322,36 @@ class ManagerFunctions(unittest.TestCase):
     @staticmethod
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
+
+    def test_mail_route_is_guest_and_policy_gated(self):
+        """POST /api/mail: a guest sends from its own plus address through the
+        manager; an instance without the send_mail tool is refused; a stranger
+        is not a guest and gets nothing."""
+        m = self.m
+        calls = []
+        old = m._guests.instance_by_ip, m._mail.send, m._audit.audit_append, m._policy.tool_allowed
+        try:
+            m._guests.instance_by_ip = lambda ip: {"name": "jobresearcher", "config": {}} if ip == "172.30.1.2" else None
+            m._mail.send = lambda to, subject, text, inst=None, **k: (calls.append((to, subject, text, inst["name"] if inst else None)), (True, "sent"))[1]
+            m._audit.audit_append = lambda *a, **k: None
+            m._policy.tool_allowed = lambda inst, tool: tool != "send_mail" or inst["name"] != "locked"
+            h = self._post_handler("/api/mail", "172.30.1.2", json.dumps({"to": "boss@corp.test", "subject": "S", "text": "T"}).encode())
+            h._do_POST()
+            self.assertEqual(self._status(h), 200); self.assertEqual(calls, [("boss@corp.test", "S", "T", "jobresearcher")])
+            m._guests.instance_by_ip = lambda ip: {"name": "locked", "config": {}} if ip == "172.30.1.2" else None
+            h = self._post_handler("/api/mail", "172.30.1.2", json.dumps({"to": "boss@corp.test", "subject": "S", "text": "T"}).encode())
+            h._do_POST()
+            self.assertEqual(self._status(h), 403); self.assertEqual(len(calls), 1)
+            old_pw = m._auth.PW
+            m._auth.PW = "secret-for-this-test"           # with a password set, a stranger without auth is refused
+            try:
+                h = self._post_handler("/api/mail", "10.0.0.9", json.dumps({"to": "boss@corp.test", "subject": "S", "text": "T"}).encode())
+                h._do_POST()
+                self.assertEqual(self._status(h), 401); self.assertEqual(len(calls), 1)
+            finally:
+                m._auth.PW = old_pw
+        finally:
+            m._guests.instance_by_ip, m._mail.send, m._audit.audit_append, m._policy.tool_allowed = old
 
     def test_request_body_is_capped(self):
         """A body over the cap is answered 413 without being read; a bad or

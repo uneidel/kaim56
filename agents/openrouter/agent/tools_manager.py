@@ -212,6 +212,24 @@ def t_notify(title, message=""):
         return f"⚠️ Error: {e!r}"
 
 
+def t_send_mail(to, subject, text):
+    """Send a mail from this instance's own address. Delivery runs in the
+    manager: the mailbox lives there and the recipient is checked against
+    the allowed list — so from here you cannot mail arbitrary addresses."""
+    try:
+        body = _mgrclient._mgr(_mgrclient._manager_base(), "/api/mail",
+                    {"to": (to or "").strip(), "subject": subject or "", "text": text}, timeout=90)
+        d = json.loads(body)
+        return ("Mail sent: " if d.get("ok") else "\u26a0\ufe0f not sent: ") + str(d.get("note", ""))
+    except urllib.error.HTTPError as e:
+        try:
+            return "\u26a0\ufe0f not sent: " + str(json.loads(e.read()).get("note", e.code))
+        except Exception:
+            return f"\u26a0\ufe0f not sent: HTTP {e.code}"
+    except Exception as e:
+        return f"\u26a0\ufe0f Error: {e!r}"
+
+
 def t_send_signal(text, to=""):
     """Write to the user via Signal. Delivery runs in the manager: the
     bot number and the API access live there, and the recipient is checked

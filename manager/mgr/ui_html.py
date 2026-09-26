@@ -640,6 +640,12 @@ HTML_BOTTOM = """
   Outbound: agents call <code>send_signal</code>, the manager checks the recipient against
   <code>ALLOWED_SENDERS</code> (only people who may command the bot can be written to), rate-limits
   10 per 5 minutes, audits every call. Bot number and API stay on the host.</p></div>
+  <div class="card blueprint"><span class=card-title>Mail</span>
+  <p class=card-body>One external IMAP/SMTP mailbox for all agents (<code>mgr/mail.py</code>); every instance has its own
+  address by plus-addressing (<code>&lt;account&gt;+&lt;name&gt;@&lt;domain&gt;</code>, or its <code>MAIL_TAG</code>), no tag &#8594; orchestrator.
+  The manager polls the inbox: only <code>MAIL_ALLOWED_SENDERS</code> reach an agent, the body enters the turn marked as untrusted,
+  the reply is mailed back in-thread and the exchange shows as a &#8220;Mail&#183;&lt;instance&gt;&#8221; conversation. Agents send through
+  <code>send_mail</code> &#8594; <code>/api/mail</code> (allowlist, secret redaction, throttle) &#8212; the account never enters a VM.</p></div>
 
   <div class="card blueprint"><span class=card-title>Notifications</span>
   <p class=card-body>A push channel alongside Signal: the agent tool <code>notify(title, message)</code> writes

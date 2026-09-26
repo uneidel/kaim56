@@ -149,6 +149,16 @@ BUILTIN = {
                     {"text": {"type": "string", "description": "message text"},
                      "to": {"type": "string", "description": "optional: number in the format +49…"}},
                     ["text"]),
+    "send_mail": (_tools_manager.t_send_mail,
+                  "Send an e-mail from your own address (the manager's mailbox, "
+                  "<account>+<your name>@<domain>). For results or questions that belong "
+                  "in mail, or to answer a mail you were asked about. Recipients only from "
+                  "the allowed list; plain text, no Markdown. Do NOT use for the normal "
+                  "reply to a mail turn — that reply is mailed back automatically.",
+                  {"to": {"type": "string", "description": "recipient address"},
+                   "subject": {"type": "string", "description": "subject line"},
+                   "text": {"type": "string", "description": "plain-text body"}},
+                  ["to", "subject", "text"]),
     "read_inbox": (_tools_manager.t_read_inbox,
                   "Read new user messages (Signal/app/web) since the last run — "
                   "the orchestrator's inbox. Each message comes only once (watermark); "

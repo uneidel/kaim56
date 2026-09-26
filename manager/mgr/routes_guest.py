@@ -19,6 +19,7 @@ from mgr import guests as _guests
 from mgr import haalias as _haalias
 from mgr import hindsight as _hindsight
 from mgr import instances as _instances
+from mgr import mail as _mail
 from mgr import irohgw as _irohgw
 from mgr import katfs as _katfs
 from mgr import mcp as _mcp
@@ -559,6 +560,22 @@ def _rt_hitl_create(h):
     hid = _signal_mod.hitl_create(inst["name"] if inst else "admin", str(body.get("tool", ""))[:40],
                       str(body.get("target", ""))[:200])
     return h._json({"id": hid})
+
+
+@_routes.ROUTER.post("/api/mail")
+def _rt_mail_send(h):
+    # Recipient checked against MAIL_ALLOWED_SENDERS, the account lives on the
+    # host, the From is the instance's plus address — the VM knows none of it.
+    body = h._body()
+    inst = h._guest()
+    if inst is not None and not _policy.tool_allowed(inst, "send_mail"):
+        return h._json({"ok": False, "note": "send_mail not allowed for this instance"}, 403)
+    ok, note = _mail.send(body.get("to"), body.get("subject"), body.get("text") or body.get("message"), inst=inst)
+    try:
+        _audit.audit_append(inst["name"] if inst else "admin", "send_mail", (body.get("to") or ""), ok)
+    except Exception:
+        pass
+    return h._json({"ok": ok, "note": note}, 200 if ok else 400)
 
 
 @_routes.ROUTER.post("/api/signal")

@@ -21,7 +21,7 @@ from mgr import instances as _instances
 # default, not open by default.
 GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
                     "/api/skill-proposals", "/api/sessions-search",
-                    "/api/stt", "/api/tts", "/api/signal", "/api/mcp",
+                    "/api/stt", "/api/tts", "/api/signal", "/api/mail", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
                     "/api/notify", "/api/mission-start", "/api/mission-update",

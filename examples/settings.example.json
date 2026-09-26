@@ -1,7 +1,15 @@
 {
-  "OPENROUTER_API_KEY": "sk-or-v1-…",
-  "ANTHROPIC_API_KEY": "sk-ant-…",
-  "OPENAI_API_KEY": "sk-…",
-  "SIGNAL_NUMBER": "+49…",
-  "ALLOWED_SENDERS": "+49…"
+  "OPENROUTER_API_KEY": "sk-or-v1-\u2026",
+  "ANTHROPIC_API_KEY": "sk-ant-\u2026",
+  "OPENAI_API_KEY": "sk-\u2026",
+  "SIGNAL_NUMBER": "+49\u2026",
+  "ALLOWED_SENDERS": "+49\u2026",
+  "MAIL_ADDRESS": "agent@example.com",
+  "MAIL_IMAP_HOST": "mail.example.com",
+  "MAIL_IMAP_PORT": "993",
+  "MAIL_SMTP_HOST": "mail.example.com",
+  "MAIL_SMTP_PORT": "465",
+  "MAIL_USER": "",
+  "MAIL_PASSWORD": "",
+  "MAIL_ALLOWED_SENDERS": "you@example.com"
 }
