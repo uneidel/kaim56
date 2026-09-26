@@ -19,11 +19,14 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);min
 @media(max-width:800px){main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}
 section{min-height:0;display:flex;flex-direction:column}
 #runs{overflow:auto;padding:14px 16px;border-right:1px solid var(--border)}
-.run{background:var(--panel);border:1px solid var(--border);padding:12px 14px;margin-bottom:12px}
-.run .when{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
-.run p{margin:.4em 0}.run ul{padding-left:1.2em;margin:.3em 0}.run a{color:var(--accent);word-break:break-all}
-.run code{font-size:12px;background:var(--bg);padding:1px 4px}
-.run .ask{font-size:12px;padding:3px 8px;margin-top:6px}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:10px}.bar .grow{flex:1}
+.job{background:var(--panel);border:1px solid var(--border);padding:10px 12px;margin-bottom:10px;position:relative}
+.job.gone{opacity:.55}
+.job .row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-right:52px}.job a{color:var(--accent);text-decoration:none}.job a:hover{text-decoration:underline}
+.job .row2{font-size:13px;margin-top:2px}.job .row3{font-size:12px;color:var(--muted);margin-top:4px}
+.job .note{font-size:12.5px;margin-top:6px;border-left:2px solid var(--border);padding-left:8px;white-space:pre-wrap}
+.tag{font-size:11px;border:1px solid var(--border);padding:1px 6px;color:var(--muted)}
+.job .ask{position:absolute;top:8px;right:8px;font-size:12px;padding:3px 8px}
 #chat{display:flex;flex-direction:column}
 #log{flex:1;overflow:auto;padding:14px 16px}
 .msg{max-width:92%;margin:0 0 10px;padding:8px 11px;border:1px solid var(--border);background:var(--panel);white-space:pre-wrap;word-break:break-word}
@@ -36,53 +39,70 @@ section{min-height:0;display:flex;flex-direction:column}
   <button id=runNow title="Queue the daily task now">Run search now</button>
   <a href="/chat?i=jobresearcher">Open chat</a> · <a href="/">Manager</a></header>
 <main>
-  <section><div id=runs><p class=muted>Loading runs…</p></div></section>
-  <section id=chat><div id=log><p class=muted>Ask the jobresearcher about a posting, or click “Ask about this” on a run.</p></div>
+  <section><div id=runs>
+    <div class=bar><span id=count class=muted>…</span><span class=grow></span>
+      <label class=muted><input type=checkbox id=showGone> show gone</label></div>
+    <div id=jobs><p class=muted>Loading jobs…</p></div></div></section>
+  <section id=chat><div id=log><p class=muted>Ask the jobresearcher about a posting, or click “Ask” on a job.</p></div>
     <div id=compose><textarea id=t placeholder="Ask jobresearcher… (Enter sends, Shift+Enter newline)"></textarea><button id=send>Send</button></div></section>
 </main>
 <script>
+/* One card per JOB, merged across runs. The agent writes runs/<date>.json
+   into its workspace after every search (a list of postings, see the task
+   text); the manager serves those read-only (/api/workspace). Merging is
+   done HERE, deterministically, by the posting's URL: first seen, last
+   seen, how many runs, and whether the latest run still lists it. */
 const INSTANCE='jobresearcher', $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-/* a tiny Markdown subset: the task results use bold, bullets, links, code, headings */
-function md(s){
-  s=esc(s).replace(/`([^`\n]+)`/g,'<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>')
-    .replace(/(^|[^"'>])(https?:\/\/[^\s<]+[^\s<.,;:)])/g,'$1<a href="$2" target=_blank rel=noopener>$2</a>')
-    .replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>');
-  const out=[];let list=null;
-  for(const line of s.split('\n')){
-    const li=line.match(/^\s*[-*•]\s+(.*)$/);
-    if(li){if(!list){list=[];}list.push('<li>'+li[1]+'</li>');continue}
-    if(list){out.push('<ul>'+list.join('')+'</ul>');list=null}
-    const h=line.match(/^#{1,3}\s+(.*)$/);
-    if(h)out.push('<p><b>'+h[1]+'</b></p>');else if(line.trim())out.push('<p>'+line+'</p>');
-  }
-  if(list)out.push('<ul>'+list.join('')+'</ul>');
-  return out.join('');
-}
 const fmt=ts=>new Date(ts*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
-let TASK=null;
-async function loadRuns(){
-  const [tasks,chats]=await Promise.all([fetch('/api/tasks').then(r=>r.json()),fetch('/api/chats').then(r=>r.json())]);
+const days=d=>{const n=Math.round((Date.now()-new Date(d+'T12:00:00').getTime())/864e5);return n<=0?'today':n===1?'1 day':n+' days'};
+const norm=u=>String(u||'').trim().replace(/^http:/,'https:').replace(/[?#].*$/,'').replace(/\/+$/,'').toLowerCase();
+let TASK=null,JOBS=[],LATEST='';
+async function loadTask(){
+  const tasks=await fetch('/api/tasks').then(r=>r.json());
   const list=Array.isArray(tasks)?tasks:(tasks.tasks||[]);
   TASK=list.find(t=>t.instance===INSTANCE&&t.schedule)||list.find(t=>t.instance===INSTANCE)||null;
   $('status').textContent=TASK?`daily task · ${TASK.status}${TASK.next_run?' · next '+fmt(TASK.next_run):''}`:'no task for '+INSTANCE;
   $('runNow').disabled=!TASK;
-  const convs=Array.isArray(chats)?chats:(chats.chats||[]);
-  const tc=convs.find(c=>c.id==='task-'+INSTANCE);
-  const runs=[];
-  if(tc)for(const m of tc.messages||[])if(!m.user&&m.text&&m.text.length>80)runs.push(m.text);
-  if(!runs.length&&TASK&&TASK.result)runs.push(TASK.result);
-  $('runs').innerHTML=runs.length?runs.slice().reverse().map((r,i)=>`<div class=run><div class=when><span>${i===0?'latest run':'earlier run'}</span>`+
-    (i===0&&TASK&&TASK.updated?`<span>${fmt(TASK.updated)}</span>`:'')+`</div>${md(r)}`+
-    `<button class=ask onclick="askAbout(${runs.length-1-i})">Ask about this</button></div>`).join(''):'<p class=muted>No runs yet — press “Run search now”.</p>';
-  window._runs=runs;
 }
-function askAbout(i){$('t').value='About this run of the job search:\n\n'+window._runs[i].slice(0,1500)+'\n\nMy question: ';$('t').focus();$('t').setSelectionRange($('t').value.length,$('t').value.length)}
+async function loadJobs(){
+  const dir=await fetch(`/api/workspace/${INSTANCE}/runs`).then(r=>r.ok?r.json():{entries:[]});
+  const files=(dir.entries||[]).filter(e=>!e.dir&&/^\d{4}-\d{2}-\d{2}\.json$/.test(e.name)).map(e=>e.name).sort();
+  const byUrl=new Map();
+  for(const f of files){
+    const date=f.slice(0,10);
+    let items=[];try{const d=await fetch(`/api/workspace/${INSTANCE}/runs/${f}`).then(r=>r.json());items=Array.isArray(d)?d:(d.jobs||[])}catch(e){continue}
+    for(const it of items){
+      const key=norm(it.url||it.job_url)||(String(it.title||'')+'@'+String(it.company||'')).toLowerCase();
+      if(!key||key==='@')continue;
+      const j=byUrl.get(key)||{key,first:date,runs:0,history:[]};
+      Object.assign(j,{title:it.title||j.title,company:it.company||j.company,location:it.location||j.location,
+        url:it.url||it.job_url||j.url,remote:it.remote??j.remote,source:it.source||it.site||j.source,
+        posted:it.date_posted||it.posted||j.posted,verdict:it.verdict||it.fit||j.verdict,note:it.note||it.notes||j.note,last:date});
+      j.runs++;j.history.push(date);byUrl.set(key,j);
+    }
+  }
+  LATEST=files.length?files[files.length-1].slice(0,10):'';
+  JOBS=[...byUrl.values()].map(j=>({...j,gone:!!LATEST&&j.last!==LATEST})).sort((a,b)=>(a.gone-b.gone)||(b.first>a.first?1:-1)||(a.title||'').localeCompare(b.title||''));
+  draw();
+}
+function draw(){
+  const showGone=$('showGone').checked,list=JOBS.filter(j=>showGone||!j.gone);
+  $('count').textContent=JOBS.length?`${JOBS.filter(j=>!j.gone).length} open · ${JOBS.filter(j=>j.gone).length} gone · latest run ${LATEST}`:'';
+  if(!JOBS.length){$('jobs').innerHTML='<p class=muted>No structured runs yet (workspace/runs/&lt;date&gt;.json). The next search writes the first one — press “Run search now”.</p>';return}
+  $('jobs').innerHTML=list.map((j,i)=>`<div class="job${j.gone?' gone':''}">
+    <div class=row1><a href="${esc(j.url)}" target=_blank rel=noopener><b>${esc(j.title||'(untitled)')}</b></a>
+      ${j.verdict?`<span class=tag>${esc(j.verdict)}</span>`:''}${j.remote===true||/remote|hybrid/i.test(String(j.remote||''))?`<span class=tag>${esc(j.remote===true?'remote':j.remote)}</span>`:''}</div>
+    <div class=row2>${esc(j.company||'')}${j.location?' · '+esc(j.location):''}${j.source?' · '+esc(j.source):''}</div>
+    <div class=row3>first seen <b>${esc(j.first)}</b> (${days(j.first)}) · seen in ${j.runs} run${j.runs>1?'s':''}${j.gone?` · <b>gone</b> since ${esc(j.last)}`:''}${j.posted?' · posted '+esc(j.posted):''}</div>
+    ${j.note?`<div class=note>${esc(j.note)}</div>`:''}
+    <button class=ask onclick="askAbout(${JOBS.indexOf(j)})">Ask</button></div>`).join('')||'<p class=muted>Nothing open. Tick “show gone”.</p>';
+}
+function askAbout(i){const j=JOBS[i];$('t').value=`About this posting: ${j.title||''} at ${j.company||''} (${j.url||''})\n\nMy question: `;$('t').focus();$('t').setSelectionRange($('t').value.length,$('t').value.length)}
+$('showGone').onchange=draw;
 $('runNow').onclick=async()=>{if(!TASK)return;$('runNow').disabled=true;
   const r=await fetch(`/api/tasks/${TASK.id}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:'run'})}).then(r=>r.json()).catch(()=>({msg:'failed'}));
-  $('status').textContent=r.msg||'queued';setTimeout(loadRuns,60000);setTimeout(()=>{$('runNow').disabled=false},5000)};
-/* chat: the same streaming route the chat page uses */
+  $('status').textContent=r.msg||'queued';setTimeout(refresh,90000);setTimeout(()=>{$('runNow').disabled=false},5000)};
 function add(text,me){const d=document.createElement('div');d.className='msg'+(me?' me':'');d.textContent=text;$('log').appendChild(d);$('log').scrollTop=1e9;return d}
 async function send(){
   const text=$('t').value.trim();if(!text)return;$('t').value='';add(text,true);$('send').disabled=true;
@@ -97,6 +117,6 @@ async function send(){
 }
 $('send').onclick=send;
 $('t').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
-loadRuns().catch(e=>{$('runs').innerHTML='<p class=muted>⚠️ '+esc(e)+'</p>'});
-setInterval(loadRuns,120000);
+async function refresh(){try{await loadTask();await loadJobs()}catch(e){$('jobs').innerHTML='<p class=muted>⚠️ '+esc(e)+'</p>'}}
+refresh();setInterval(refresh,120000);
 </script></body></html>

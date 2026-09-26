@@ -97,6 +97,7 @@ from mgr import util as _util                # noqa: F401
 from mgr import vm as _vm                    # noqa: F401
 from mgr import voice as _voice              # noqa: F401
 from mgr import websearch as _websearch_mod
+from mgr import wsfiles as _wsfiles          # noqa: F401
 
 # ---- wiring: what a module cannot derive itself ------------------------------
 _missions.configure(_paths.BASE)

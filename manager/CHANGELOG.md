@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-26
 
+- Job board lists one card per JOB merged across runs (first seen, runs seen, gone since, verdict), from the structured `runs/<date>.json` the daily task now writes; new read-only route `GET /api/workspace/<instance>/<path>` (`mgr/wsfiles.py`: listing or file, fenced, admin only) for apps.
 - Apps: browser front-ends next to the chat page — one folder `apps/<name>/` (app.json + index.html), scanned from `APPS_DIR` (site.json, default `apps/` next to `manager/`), listed by `/api/apps` and in the chat sidebar, served under `/apps/<name>/` behind the login (`mgr/apps.py`); first app `apps/jobboard` (the jobresearcher's runs + a chat with it).
 - Chat page: a "written by AI?" gauge top right of every reply (`mgr/aicheck.py`, route `/aic/`): the xkqr.org/aicomment classifier runs in the browser, results cached per text; assets cached from the author's site under `run/aicheck` (no license published, so not vendored), the text never leaves the browser.
 - Mail channel (`mgr/mail.py`): one external IMAP/SMTP mailbox, an address per instance via plus-addressing (`<account>+<name>@<domain>`, `MAIL_TAG` overrides), host-side poller delivers allowed senders' mails as a turn and mails the reply back in-thread; `send_mail` tool / `POST /api/mail` (allowlist, redaction, throttle); Settings `MAIL_*`; chat kind `mail`.

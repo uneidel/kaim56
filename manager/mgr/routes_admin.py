@@ -14,11 +14,13 @@ import json
 import mimetypes
 import os
 import re
+import urllib.parse
 import urllib.request
 
 from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
+from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
 from mgr import browse as _browse
 from mgr import chats as _chats
@@ -189,6 +191,20 @@ def _rt_katfs_redirect(h):
     h.send_response(301)
     h.send_header("Location", "/katfs/")
     h.end_headers()
+
+
+@_routes.ROUTER.get("/api/workspace/", prefix=True, admin=True)
+def _rt_workspace(h):
+    # Read-only: a folder listing (JSON) or a file from an instance's
+    # workspace, for the operator's apps (mgr/wsfiles.py).
+    path = urllib.parse.unquote(h.path.split("?", 1)[0])
+    name, _, rel = path[len("/api/workspace/"):].partition("/")
+    kind, payload, ct = _wsfiles.read(name, rel)
+    if kind is None:
+        return h._json({"error": payload}, 404)
+    if kind == "dir":
+        return h._json({"instance": name, "path": rel.strip("/"), "entries": payload})
+    return payload, ct
 
 
 @_routes.ROUTER.get("/api/apps", admin=True)

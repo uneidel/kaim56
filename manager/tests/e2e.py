@@ -3323,6 +3323,40 @@ class ManagerFunctions(unittest.TestCase):
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
 
+    def test_workspace_read_route_is_read_only_and_fenced(self):
+        """/api/workspace/<inst>/<path>: a folder lists, a file streams with its
+        type; traversal, dotfiles, symlinks out, unknown instances -> 404; VMs
+        never (admin only); nothing is ever written."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-ws-")
+        ws = os.path.join(tmp, "agent", "jr"); os.makedirs(os.path.join(ws, "runs"))
+        open(os.path.join(ws, "runs", "2026-09-26.json"), "w").write('[{"title": "CTO"}]')
+        open(os.path.join(ws, ".secret"), "w").write("x"); open(os.path.join(tmp, "outside"), "w").write("host")
+        os.symlink(os.path.join(tmp, "outside"), os.path.join(ws, "link"))
+        old = m._mounts.AGENT_ROOT, m._instances.load_instances, m._guests.instance_by_ip
+        try:
+            m._mounts.AGENT_ROOT = os.path.join(tmp, "agent")
+            m._instances.load_instances = lambda: [{"name": "jr", "index": 2}]
+            m._guests.instance_by_ip = lambda ip: {"name": "jr", "index": 2} if ip == "172.30.2.2" else None
+            kind, lst, _ = m._wsfiles.read("jr", "")
+            self.assertEqual(kind, "dir"); self.assertEqual([e["name"] for e in lst], ["link", "runs"])   # no dotfiles listed
+            self.assertEqual(m._wsfiles.read("jr", "runs")[1][0]["name"], "2026-09-26.json")
+            kind, data, ct = m._wsfiles.read("jr", "runs/2026-09-26.json")
+            self.assertEqual((kind, data, ct), ("file", b'[{"title": "CTO"}]', "application/json; charset=utf-8"))
+            for bad in ("../outside", "runs/../../outside", ".secret", "link", "runs/nope.json"):
+                self.assertIsNone(m._wsfiles.read("jr", bad)[0], bad)
+            self.assertIsNone(m._wsfiles.read("other", "")[0])
+            h = self._handler("/api/workspace/jr/runs/2026-09-26.json", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 200); self.assertTrue(h.wfile.getvalue().endswith(b'[{"title": "CTO"}]'))
+            h = self._handler("/api/workspace/jr/runs", "10.0.0.9"); h._do_GET()
+            self.assertIn(b'"entries"', h.wfile.getvalue())
+            h = self._handler("/api/workspace/jr/../outside", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 404)
+            h = self._handler("/api/workspace/jr/runs", "172.30.2.2"); h._do_GET()      # the VM itself (index 2)
+            self.assertNotEqual(self._status(h), 200)
+        finally:
+            m._mounts.AGENT_ROOT, m._instances.load_instances, m._guests.instance_by_ip = old
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/
