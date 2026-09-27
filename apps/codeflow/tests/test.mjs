@@ -149,7 +149,7 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
   w.tasks[0].result = '⚠️ OpenRouter HTTP 429: {"error": {"message": "guardrail: budget: 5,021,229/5,000,000 tokens used today", "code": 429}}';
   await createMachine(w.api, w.opts('A')).tick(w.repo());
   assert.equal(w.cfg.CODEFLOW_STATE, 'failed'); assert.equal(w.added.length, 0); assert.equal(w.cfg.CODEFLOW_ROUND, '1');
-  assert.match(w.cfg.CODEFLOW_ERROR, /daily token budget .*5,021,229\/5,000,000 tokens used today.*BUDGET_TOKENS/);
+  assert.match(w.cfg.CODEFLOW_ERROR, /daily token budget .*5,021,229\/5,000,000 tokens used today.*Policy tab/);
   assert.match(stopReason('⚠️ OpenRouter HTTP 402: insufficient credits'), /refused the request: OpenRouter HTTP 402/);
   assert.equal(stopReason("⚠️ OpenRouter error: TimeoutError('timed out')"), '');          // transient: a new round
   const v = fakeWorld({ state: 'analysing', round: 1 });

@@ -10,6 +10,7 @@ one place.
 """
 
 from mgr import instances as _instances
+from mgr import llmproxy as _llmproxy
 from mgr import personas as _personas
 from mgr import secrets as _secrets
 from mgr import skills as _skills
@@ -164,5 +165,9 @@ def effective_policy(inst):
         "mcps": mcps,
         "katfs_share": cfg.get("KATFS_SHARE", ""),
         "auto_reset": str(cfg.get("AUTO_RESET_MIN", "") or "0"),
+        "budget": _llmproxy.budget_of(inst),                 # tokens per day, 0 = off
+        "budget_default": "BUDGET_TOKENS" not in cfg,
+        "budget_default_value": _llmproxy.GUARD_BUDGET_TOKENS,
+        "used_today": _llmproxy.used_today(inst["name"]),
     }
 

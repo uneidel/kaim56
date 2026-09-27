@@ -3214,6 +3214,44 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIn("rate", why)
         self.assertTrue(m._llmproxy._guard_check(None)[0])   # Admin/Host immer frei
 
+    def test_budget_is_runtime_configurable_per_instance(self):
+        """BUDGET_TOKENS: the key proxy reads it per request, so raising or
+        lowering it applies at once; the config route says so (and still says
+        'after stop/start' for keys the VM reads); a bad value is refused; the
+        Policy tab gets budget, default flag and today's usage."""
+        m, lp = self.m, self.m._llmproxy
+        tmp = tempfile.mkdtemp(prefix="e2e-bud-")
+        old = (lp.used_today, m._paths.INST_DIR, m._instances.is_running, dict(lp._guard_calls))
+        try:
+            self.assertEqual(lp.budget_of({"name": "x"}), lp.GUARD_BUDGET_TOKENS)
+            self.assertEqual(lp.budget_of({"name": "x", "config": {"BUDGET_TOKENS": "20000000"}}), 20_000_000)
+            self.assertEqual(lp.budget_of({"name": "x", "config": {"BUDGET_TOKENS": "lots"}}), lp.GUARD_BUDGET_TOKENS)
+            lp.used_today = lambda name: 5_021_229
+            inst = {"name": "e2e-bud", "config": {"LLM_RATE_MIN": "0"}}
+            ok, why = lp._guard_check(inst)
+            self.assertFalse(ok); self.assertIn("5,021,229/5,000,000", why)
+            inst["config"]["BUDGET_TOKENS"] = "20000000"                       # raised: the next call passes
+            self.assertEqual(lp._guard_check(inst), (True, ""))
+            inst["config"]["BUDGET_TOKENS"] = "0"                              # 0 = no limit
+            self.assertTrue(lp._guard_check(inst)[0])
+            # the config route
+            m._paths.INST_DIR = tmp
+            json.dump({"name": "e2e-bud", "index": 7, "config": {}}, open(os.path.join(tmp, "e2e-bud.json"), "w"))
+            m._instances.is_running = lambda i: True
+            self.assertEqual(m._instances._set_config_key("e2e-bud", "BUDGET_TOKENS", "20000000"),
+                             "BUDGET_TOKENS = 20000000 (applies at once)")
+            self.assertIn("whole number", m._instances._set_config_key("e2e-bud", "BUDGET_TOKENS", "2e7"))
+            self.assertIn("after stop/start", m._instances._set_config_key("e2e-bud", "AUTO_RESET_MIN", "30"))
+            self.assertEqual(_readj(os.path.join(tmp, "e2e-bud.json"))["config"]["BUDGET_TOKENS"], "20000000")
+            pol = m._policy.effective_policy(_readj(os.path.join(tmp, "e2e-bud.json")))
+            self.assertEqual((pol["budget"], pol["budget_default"], pol["used_today"]), (20_000_000, False, 5_021_229))
+            self.assertEqual(m._instances._set_config_key("e2e-bud", "BUDGET_TOKENS", ""), "BUDGET_TOKENS removed (applies at once)")
+            pol = m._policy.effective_policy(_readj(os.path.join(tmp, "e2e-bud.json")))
+            self.assertEqual((pol["budget"], pol["budget_default"]), (lp.GUARD_BUDGET_TOKENS, True))
+        finally:
+            lp.used_today, m._paths.INST_DIR, m._instances.is_running = old[:3]
+            lp._guard_calls.clear(); lp._guard_calls.update(old[3])
+
     def test_usage_for_shape(self):
         m = self.m
         d = m._store.usage_for("orchestrator", 0)

@@ -344,6 +344,11 @@ def session_info(inst):
 
 
 
+# Config keys the MANAGER reads per request (not the VM at start): a change
+# applies at once, no stop/start. Everything else rides the config disk.
+RUNTIME_KEYS = {"BUDGET_TOKENS", "LLM_RATE_MIN", "DELEGATE_TARGETS"}
+
+
 def _set_config_key(name, key, val):
     """Set/delete a single config key (secrets stay out — broker only)."""
     inst = next((i for i in load_instances() if i["name"] == name), None)
@@ -353,11 +358,14 @@ def _set_config_key(name, key, val):
         return f"error: key '{key}' not allowed"
     if key == "MCP_SERVERS" and mcp_servers_error(val):
         return "error: " + mcp_servers_error(val)
+    if key == "BUDGET_TOKENS" and val not in ("", None) and not re.fullmatch(r"\d{1,12}", str(val)):
+        return "error: BUDGET_TOKENS must be a whole number of tokens (0 = no limit)"
     cfg = inst.setdefault("config", {})
     if val in ("", None):
         cfg.pop(key, None)
     else:
         cfg[key] = str(val)
     save_instance(inst)
-    return (f"{key} " + ("removed" if val in ("", None) else f"= {val}")
-            + (" (applies after stop/start)" if is_running(inst) else ""))
+    when = (" (applies at once)" if key in RUNTIME_KEYS
+            else " (applies after stop/start)" if is_running(inst) else "")
+    return f"{key} " + ("removed" if val in ("", None) else f"= {val}") + when

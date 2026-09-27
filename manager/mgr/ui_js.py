@@ -126,6 +126,7 @@ async function loadPolicy(auto){
       `<div class=kv><b>Auto-reset</b><span style="display:flex;gap:8px;align-items:center;font-size:12.5px"><input class="input mono" type=number min=0 step=5 data-ar="${esc(p.name)}" value="${esc(p.auto_reset||'0')}" style="width:80px;font-size:12.5px">`+
         `<span class=text-muted>min idle, then a fresh context (0 = never) · applies after a restart</span>`+
         `<button class="btn btn-secondary btn-sm" onclick="savePolAutoReset('${esc(p.name)}')">Save</button><span class=msg data-armsg="${esc(p.name)}"></span></span></div>`+
+      polBudgetRow(p)+
       (p.katfs_share?`<div class=kv><b>katfs</b><span class=mono style="font-size:12px">${escT(p.katfs_share)}</span></div>`:'')+
       `<div style="margin-top:8px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">`+
         `<b style="font-family:var(--font-heading);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Tools</b>`+
@@ -168,6 +169,33 @@ function savePolMcps(name){
       if(!bad)POL_DIRTY.delete(name);
       el.innerHTML=(bad?'⚠️ ':'✓ ')+escT(m)+(/applies after/.test(m)?` <button class="btn btn-secondary btn-sm" onclick="act('${esc(name)}','restart')">Restart now</button>`:'');
     }).catch(e=>{const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
+}
+/* Daily token budget per instance: BUDGET_TOKENS, enforced at the key proxy and
+   read per request — a change applies at once, no restart. Shown in millions. */
+const _mtok=n=>(n/1e6).toLocaleString(undefined,{maximumFractionDigits:2})+'M';
+function polBudgetRow(p){
+  const b=+p.budget||0, u=+p.used_today||0, pct=b?Math.min(100,100*u/b):0;
+  const col=!b?'var(--color-neutral-400,#9ca3af)':pct>=100?'var(--color-danger,#c0392b)':pct>=80?'var(--color-warning,#d97706)':'var(--color-success,#16a34a)';
+  return `<div class=kv><b>Token budget</b><span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px">`+
+    `<input class="input mono" type=number min=0 step=0.5 data-bud="${esc(p.name)}" value="${b?+(b/1e6).toFixed(2):0}" style="width:90px;font-size:12.5px">`+
+    `<span class=text-muted>M tokens/day (0 = no limit)</span>`+
+    `<span style="display:inline-flex;align-items:center;gap:6px;min-width:190px">${_bar(u,b||Math.max(u,1),col)}`+
+      `<span class=mono style="font-size:12px;white-space:nowrap">${_mtok(u)} used today${b?` · ${Math.round(pct)}%`:''}</span></span>`+
+    `<span class=text-muted>${p.budget_default?'default':'custom'} · applies at once</span>`+
+    `<button class="btn btn-secondary btn-sm" onclick="savePolBudget('${esc(p.name)}')">Save</button>`+
+    (p.budget_default?'':`<button class="btn btn-ghost btn-sm" title="back to the default of ${_mtok(+p.budget_default_value||0)}" onclick="savePolBudget('${esc(p.name)}',true)">Default</button>`)+
+    `<span class=msg data-budmsg="${esc(p.name)}"></span></span></div>`;
+}
+function savePolBudget(name,reset){
+  const v=reset?'':String(Math.max(0,Math.round(parseFloat(document.querySelector(`input[data-bud="${CSS.escape(name)}"]`).value||'0')*1e6)));
+  fetch(`/api/instances/${name}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:'BUDGET_TOKENS',value:v})}).then(async r=>{
+      let d={}; try{d=await r.json()}catch(e){}
+      const el=document.querySelector(`[data-budmsg="${CSS.escape(name)}"]`);
+      const m=d.msg||('HTTP '+r.status), bad=!r.ok||/error/.test(m);
+      if(el)el.textContent=(bad?'⚠️ ':'✓ ')+m;
+      if(!bad)setTimeout(loadPolicy,600);
+    });
 }
 function _bar(pct,max,color){
   const w=Math.max(0,Math.min(100,max?100*pct/max:0));
@@ -1321,6 +1349,7 @@ function notifClick(link){
   else if(link==='skills'){location.hash='#skills';loadProposals();}
   else if(link&&link.startsWith('chat:'))
     location.href='/chat?i='+encodeURIComponent(link.slice(5));   // same tab: no popup blocker
+  else if(TABS.includes(link)){location.hash='#'+link;}           // any other tab by name (policy, …)
 }
 function notifDesktop(list){
   if(!('Notification' in window)||Notification.permission!=='granted')return;

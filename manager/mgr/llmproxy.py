@@ -45,6 +45,22 @@ _guard_calls = {}          # instance -> [timestamps]
 _guard_notified = {}       # instance -> ts of the last budget notify
 
 
+def budget_of(inst):
+    """The instance's daily token budget: BUDGET_TOKENS from its config (read
+    per request, so a change applies at once), else the default; 0 = off."""
+    try:
+        return int((inst.get("config") or {}).get("BUDGET_TOKENS", GUARD_BUDGET_TOKENS))
+    except (TypeError, ValueError):
+        return GUARD_BUDGET_TOKENS
+
+
+def used_today(name):
+    """Tokens (in + out) the instance used since local midnight."""
+    midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
+    u = _store.usage_for(name, midnight)
+    return (u.get("in") or 0) + (u.get("out") or 0)
+
+
 def _guard_check(inst):
     """(allowed, reason). inst = instance dict or None (admin/host: always ok)."""
     if inst is None:
@@ -64,14 +80,9 @@ def _guard_check(inst):
             return False, f"rate limit: {rate} LLM calls/min reached"
         lst.append(now)
     # 2) Daily budget (tokens since local midnight)
-    try:
-        budget = int(cfg.get("BUDGET_TOKENS", GUARD_BUDGET_TOKENS))
-    except ValueError:
-        budget = GUARD_BUDGET_TOKENS
+    budget = budget_of(inst)
     if budget > 0:
-        midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
-        u = _store.usage_for(name, midnight)
-        used = (u.get("in") or 0) + (u.get("out") or 0)
+        used = used_today(name)
         if used >= budget:
             with _guard_lock:
                 last = _guard_notified.get(name, 0)
@@ -82,8 +93,8 @@ def _guard_check(inst):
                 try:
                     _notify.notify_add("guardrail", f"Budget reached: {name}",
                                f"{used:,} tokens today (limit {budget:,}). LLM calls "
-                               f"pause until midnight. Override: BUDGET_TOKENS in the "
-                               f"instance config.", link="tasks")
+                               f"pause until midnight — or raise the budget in the "
+                               f"Policy tab (applies at once).", link="policy")
                 except Exception:
                     pass
             return False, f"budget: {used:,}/{budget:,} tokens used today"
