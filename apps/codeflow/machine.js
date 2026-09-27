@@ -43,7 +43,7 @@ const taskIdOf = r => ((r && r.msg) || '').match(/task (\w+) created/)?.[1] || '
 export function stopReason(result) {
   const r = String(result || '');
   if (/guardrail: budget/.test(r)) return 'the daily token budget of this instance is used up (' +
-    (r.match(/budget: ([\d,]+\/[\d,]+ tokens used today)/)?.[1] || 'guardrail') + ') — raise BUDGET_TOKENS in its config or try tomorrow';
+    (r.match(/budget: ([\d,]+\/[\d,]+ tokens used today)/)?.[1] || 'guardrail') + ') — raise it in the manager\'s Policy tab (applies at once) or try tomorrow';
   if (/HTTP (401|402|403|429)\b/.test(r)) return 'the model provider refused the request: ' + r.replace(/^⚠️\s*/, '').slice(0, 240);
   return '';
 }
