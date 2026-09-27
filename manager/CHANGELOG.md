@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-27
 
+- Projects, strategy `worktree` (`mgr/projwt.py`): per writer a folder on branch `proj/<p>/<writer>`, the lead sees them read-only at `/project/<p>.members/<writer>`; diff/merge/discard in the Projects tab (Changes) and for a lead agent (`project_status`/`project_diff`/`project_merge`, merge only with `lead_may_merge`); git never touches a VM-writable path.
 - Projects (`mgr/projects.py`, Projects tab): a folder set named once, instances join as lead/writer/reader; strategy `shared` — a host folder at `/project/<name>` (rw for writers, ro otherwise, applied live) or a katfs share (write for writers only). Guests may now POST `/api/katfs/write|delete` — the gate never allowed it, so the agent's katfs writes always failed.
 - Task worker runs in parallel: one lane per instance (serial within it), up to `WORKER_PARALLEL` (default 3) at once; ephemeral tasks are no lane. Cause: one thread ran every task of every instance in turn, so a 30-min round delayed everything else.
 - Instances: the 📁 dialog (now "Folders") also sets the katfs share of an existing — also running — instance; KATFS_SHARE is read by the manager per file operation, so it applies at once (runtime key).

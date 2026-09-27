@@ -122,14 +122,15 @@ def mount_specs(inst):
     # Projects (mgr/projects.py) the instance is a member of: the same
     # mechanism at /project/<name>, their own fsid block (a slot per membership).
     for pm in _projects.host_mounts(inst["name"]):
-        target = os.path.join(FCMNT_ROOT, inst["name"], "p-" + pm["project"])
-        specs.append({"idx": "p-" + pm["project"], "host": pm["host"], "guest": pm["guest"],
+        idx = "p-" + pm["project"] + ("." + pm["key"] if pm["key"] else "")
+        target = os.path.join(FCMNT_ROOT, inst["name"], idx)
+        specs.append({"idx": idx, "host": pm["host"], "guest": pm["guest"],
                       "ro": pm["ro"], "target": target, "sub": target,
-                      "fsid": PROJECT_FSID + (inst.get("index", 0) % 200) * 16 + pm["slot"]})
+                      "fsid": PROJECT_FSID + (inst.get("index", 0) % 200) * 64 + pm["slot"]})
     return specs
 
 
-PROJECT_FSID = 8000        # 4000..7199 are the per-instance blocks above
+PROJECT_FSID = 8000        # 4000..7199 are the per-instance blocks above; 64 slots each
 
 
 def workspace_fsid(inst):

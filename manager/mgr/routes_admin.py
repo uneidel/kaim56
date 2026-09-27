@@ -238,14 +238,37 @@ def _rt_projects_save(h):
     return h._json(r, 400 if "error" in r else 200)
 
 
+def _project_path(h):
+    """/api/projects/<name>/<op>[/<member>] -> (name, op, member)."""
+    parts = urllib.parse.unquote(h.path.split("?", 1)[0])[len("/api/projects/"):].strip("/").split("/")
+    return (parts + ["", "", ""])[:3]
+
+
+@_routes.ROUTER.get("/api/projects/", prefix=True, admin=True)
+def _rt_projects_review(h):
+    # GET /api/projects/<name>/status (every writer) | /diff/<member> (a patch)
+    name, op, member = _project_path(h)
+    if op == "status":
+        return h._json({"project": name, "members": _projects.review(name)})
+    if op == "diff":
+        r, st = _projects.member_op(name, "diff", member)
+        return (r.encode(), "text/plain; charset=utf-8") if st == 200 else h._json(r, st)
+    return h._json({"error": "unknown operation"}, 404)
+
+
+_PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
+                 "discard": lambda n, m: _projects.member_op(n, "discard", m),
+                 "delete": lambda n, m: (lambda r: (r, 404 if "error" in r else 200))(_projects.delete(n))}
+
+
 @_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)
-def _rt_projects_delete(h):
-    # POST /api/projects/<name>/delete
-    name, _, op = h.path.split("?", 1)[0][len("/api/projects/"):].strip("/").partition("/")
-    if op != "delete":
+def _rt_projects_op(h):
+    # POST /api/projects/<name>/delete | /merge/<member> | /discard/<member>
+    name, op, member = _project_path(h)
+    if op not in _PROJECT_POST:
         return h._json({"error": "unknown operation"}, 404)
-    r = _projects.delete(name)
-    return h._json(r, 404 if "error" in r else 200)
+    r, st = _PROJECT_POST[op](name, member)
+    return h._json(r, st)
 
 
 @_routes.ROUTER.get("/api/apps", admin=True)

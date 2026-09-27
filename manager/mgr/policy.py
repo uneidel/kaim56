@@ -58,6 +58,9 @@ AGENT_TOOLS_CATALOG = [
     {"name": "remote_read", "desc": "Read a katfs file"},
     {"name": "remote_write", "desc": "Write a katfs file"},
     {"name": "remote_delete", "desc": "Delete a katfs file/folder"},
+    {"name": "project_status", "desc": "Lead: writers' changes in its projects"},
+    {"name": "project_diff", "desc": "Lead: a writer's changes as a patch"},
+    {"name": "project_merge", "desc": "Lead: merge a writer's work (if allowed)"},
     {"name": "list_secrets", "desc": "Show granted secret names"},
     {"name": "get_secret", "desc": "Fetch a granted secret"},
 ]

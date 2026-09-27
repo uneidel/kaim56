@@ -1,6 +1,6 @@
 # Design: projects — one folder set, many agents, in parallel
 
-Status: **accepted**; phase 1 (parallel worker) and phase 2 (`shared`, Projects tab) built. Owner: Ulrich. Written 2026-09-27.
+Status: **accepted**; phases 1–3 built (parallel worker, `shared`, `worktree`); `overlay` open. Owner: Ulrich. Written 2026-09-27.
 
 ## Why
 
@@ -72,6 +72,12 @@ advisory path locks — a writer's `write_file`/`remote_write` on a path another
 holds for a running task is refused with the holder's name.
 
 ### worktree
+As built (differs from the sketch below where noted): writers' folders are plain files filled by
+`git archive | tar -x` as the guest user — no `git worktree`, so no VM-writable `.git` file at all; a
+snapshot is a guest copy into a private `/var/tmp` stage, committed by the repo owner. The lead's
+views are `/project/<name>.members/<writer>` (a sibling, not inside the read-only `/project/<name>`).
+The merged/snapshot commits carry the repo's own identity.
+
 - On join: branch `proj/<name>/<member>` from `base`, `git worktree add` into
   `.projects/<name>/wt/<member>` — **as the guest user, hardened** (the checkout.py
   flags: no hooks, no fsmonitor, no symlinks, no file/ext transport).

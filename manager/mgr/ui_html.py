@@ -289,9 +289,9 @@ HTML_TOP = """</head><body>
     <div class=grid2>
       <div class=field><label>Name</label><input class="input mono" id=pj-name placeholder="codeflow-dev" spellcheck=false autocomplete=off></div>
       <div class=field><label>Strategy (for several writers)</label>
-        <select class=input id=pj-strategy>
+        <select class=input id=pj-strategy onchange=pjType()>
           <option value=shared>shared — everyone works in the one folder</option>
-          <option value=worktree disabled>worktree — a git branch per writer (coming)</option>
+          <option value=worktree>worktree — a git branch + folder per writer</option>
           <option value=overlay disabled>overlay — a private layer per writer (coming)</option>
         </select></div>
       <div class=field><label>Source</label>
@@ -306,6 +306,9 @@ HTML_TOP = """</head><body>
           <input class="input mono" id=pj-subdir placeholder="apps/codeflow" style="flex:1;min-width:0">
         </div></div>
       <div class=field id=pj-katfsbox style="display:none"><label>katfs share</label><select class=input id=pj-share></select></div>
+      <div class=field id=pj-basebox style="display:none"><label>Base branch (empty = the checked-out one)</label>
+        <input class="input mono" id=pj-base placeholder="main" spellcheck=false autocomplete=off>
+        <span class=text-muted style="font-size:12px">The host folder must be the top of the repo (use the subfolder field to narrow). Each writer works on <code>proj/&#8249;project&#8250;/&#8249;writer&#8250;</code>.</span></div>
       <div class="field span2"><label>Members</label>
         <div id=pj-members style="display:grid;gap:6px"></div>
         <div><button type=button class="btn btn-secondary btn-sm" onclick=pjAddMember()>+ Member</button>
@@ -737,9 +740,14 @@ HTML_BOTTOM = """
   with a role: <b>lead</b> and <b>reader</b> read-only, <b>writer</b> read-write. Strategy <code>shared</code>: a host folder rides the
   host-folder mechanism &#8212; exported per VM IP from <code>.fcmnt/&#8249;inst&#8250;/p-&#8249;name&#8250;</code>, own fsid block (8000+), a stable
   slot per membership &#8212; and appears at <code>/project/&#8249;name&#8250;</code>; joins and leaves re-export the running members at once.
-  A katfs project is the member's share when its config names none; only writers may write it. The task worker runs
-  one lane per instance, up to <code>WORKER_PARALLEL</code> at once, so the members really work side by side.
-  <code>worktree</code> and <code>overlay</code> (a branch / a private layer per writer) are next (docs/design-projects.md).</p></div>
+  A katfs project is the member's share when its config names none; only writers may write it. Strategy <code>worktree</code>
+  (<code>mgr/projwt.py</code>): each writer its own plain folder on branch <code>proj/&#8249;p&#8250;/&#8249;writer&#8250;</code>, the lead sees them read-only at
+  <code>/project/&#8249;p&#8250;.members/&#8249;writer&#8250;</code>. git never runs on a VM-writable path: folders are filled by <code>tar</code> as the guest user,
+  a snapshot is copied by the guest into a private /var/tmp stage, then committed by the repo owner with explicit
+  <code>GIT_DIR</code>/<code>GIT_WORK_TREE</code>, no hooks/fsmonitor/ext-diff; merge = <code>git merge --no-ff</code> on a clean checkout or
+  <code>merge-tree</code>+<code>update-ref</code>, conflicts change nothing. The operator reviews in the Projects tab; a lead agent via
+  <code>project_status/diff/merge</code> (merge only with <code>lead_may_merge</code>). The task worker runs one lane per instance, up to
+  <code>WORKER_PARALLEL</code> at once. <code>overlay</code> is next (docs/design-projects.md).</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
@@ -886,6 +894,20 @@ HTML_BOTTOM = """
     <div class=dialog-actions>
       <button class="btn btn-secondary" onclick=mdlgClose()>Cancel</button>
       <button class="btn btn-primary" onclick=saveMounts()>Save</button>
+    </div>
+  </div>
+</div>
+
+<div id=pjdlg class=dialog-backdrop style="display:none">
+  <div class="dialog blueprint" style="width:min(980px,100%)">
+    <div class=dialog-title>Changes — <span id=pjdlgname class=mono style="font-size:16px"></span></div>
+    <div class=dialog-body id=pjdlgsum>…</div>
+    <pre id=pjdlgdiff class=mono style="max-height:52vh;overflow:auto;font-size:12px;line-height:1.45;margin:0;padding:10px;background:var(--color-neutral-100);white-space:pre"></pre>
+    <div class=dialog-actions>
+      <span id=pjdlgmsg class=msg style="margin-right:auto"></span>
+      <button class="btn btn-secondary" onclick=pjDlgClose()>Close</button>
+      <button class="btn btn-secondary" onclick=pjDiscard()>Discard</button>
+      <button class="btn btn-primary" onclick=pjMerge()>Merge into base</button>
     </div>
   </div>
 </div>

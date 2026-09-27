@@ -553,3 +553,60 @@ def t_remote_delete(path, recursive=False):
     if recursive:
         q += "&recursive=1"
     return _katfs_post(_mgrclient._manager_base() + q)
+
+
+# ---- projects: the lead reviews its writers (worktree strategy) ------------
+def _mgr_error(e):
+    try:
+        return json.loads(e.read().decode("utf-8", "replace")).get("error") or f"HTTP {e.code}"
+    except Exception:
+        return f"HTTP {e.code}"
+
+
+def t_project_status():
+    """Every writer's changes in the projects this agent leads."""
+    try:
+        d = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(), "/api/project/status", timeout=120))
+    except urllib.error.HTTPError as e:
+        return f"Error: {_mgr_error(e)}"
+    except Exception as e:
+        return f"Error: {e!r}"
+    if not d.get("projects"):
+        return "You lead no worktree project."
+    out = []
+    for p in d["projects"]:
+        out.append(f"Project {p['project']} (base {p.get('base')}, "
+                   f"{'you may merge' if p.get('may_merge') else 'merging is left to the operator'}); "
+                   f"writers' folders are readable at /project/{p['project']}.members/<writer>:")
+        for w, st in (p.get("members") or {}).items():
+            if st.get("error"):
+                out.append(f"  {w}: error — {st['error']}")
+                continue
+            files = ", ".join(f"{a} {f}" for a, f in st.get("files", [])[:40]) or "no changes"
+            out.append(f"  {w}: {st.get('ahead', 0)} ahead, {st.get('behind', 0)} behind — {files}")
+    return "\n".join(out)
+
+
+def t_project_diff(project, member):
+    """A writer's changes as a patch."""
+    try:
+        return _mgrclient._mgr_get(_mgrclient._manager_base(),
+                                   f"/api/project/diff?project={urllib.parse.quote(project)}"
+                                   f"&member={urllib.parse.quote(member)}", timeout=120)
+    except urllib.error.HTTPError as e:
+        return f"Error: {_mgr_error(e)}"
+    except Exception as e:
+        return f"Error: {e!r}"
+
+
+def t_project_merge(project, member):
+    """Merge a writer's work into the project's base branch."""
+    try:
+        d = json.loads(_mgrclient._mgr(_mgrclient._manager_base(), "/api/project/merge",
+                                       {"project": project, "member": member}, timeout=180))
+    except urllib.error.HTTPError as e:
+        return f"Error: {_mgr_error(e)}"
+    except Exception as e:
+        return f"Error: {e!r}"
+    return f"Merged ({d.get('commit', '')[:12]})" + (f" — {d['note']}" if d.get("note") else "")
+

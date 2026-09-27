@@ -31,6 +31,7 @@ from mgr import notify as _notify
 from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
+from mgr import projects as _projects
 from mgr import routes as _routes
 from mgr import rules as _rules
 from mgr import saddler as _saddler_mod
@@ -665,6 +666,51 @@ def _rt_voice(h):
     h.send_header("Content-Length", str(len(data)))
     h.end_headers()
     h.wfile.write(data)
+
+
+# ---- projects: the lead reviews its writers (mgr/projects.py) ---------------
+@_routes.ROUTER.get("/api/project/status")
+def _rt_project_status_guest(h):
+    # A lead VM: every writer's changes in the worktree projects it leads.
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    return h._json({"projects": [{"project": p["name"], "base": p.get("base"),
+                                  "may_merge": bool(p.get("lead_may_merge")),
+                                  "members": _projects.review(p["name"])} for p in _projects.lead_of(inst["name"])]})
+
+
+def _lead_project(h, name):
+    inst = h._guest()
+    if inst is None:
+        return None, h._json({"error": "guests only"}, 403)
+    p = next((x for x in _projects.lead_of(inst["name"]) if x["name"] == name), None)
+    if p is None:
+        return None, h._json({"error": f"you are not the lead of a worktree project {name!r}"}, 403)
+    return p, None
+
+
+@_routes.ROUTER.get("/api/project/diff")
+def _rt_project_diff_guest(h):
+    q = _routes._qs(h)
+    p, err = _lead_project(h, q.get("project", [""])[0])
+    if p is None:
+        return err
+    r, st = _projects.member_op(p["name"], "diff", q.get("member", [""])[0])
+    return (r.encode(), "text/plain; charset=utf-8") if st == 200 else h._json(r, st)
+
+
+@_routes.ROUTER.post("/api/project/merge")
+def _rt_project_merge_guest(h):
+    # Only when the operator allowed it for this project (lead_may_merge).
+    b = h._body() or {}
+    p, err = _lead_project(h, str(b.get("project") or ""))
+    if p is None:
+        return err
+    if not p.get("lead_may_merge"):
+        return h._json({"error": "merging is left to the operator in this project — report the result instead"}, 403)
+    r, st = _projects.member_op(p["name"], "merge", str(b.get("member") or ""))
+    return h._json(r, st)
 
 
 # ---- katfs (guest: own share only; admin: browser) -------------------------

@@ -537,9 +537,10 @@ async function loadProjects(){
   const src=p=>p.source.type==='katfs'?'katfs · '+p.source.share:
     p.source.path+(p.source.subdir?'/'+p.source.subdir:'');
   document.getElementById('projrows').innerHTML=PROJECTS.length?PROJECTS.map(p=>
-    `<tr><td><b class=mono>${escT(p.name)}</b><div class=text-muted style="font-size:12px">${escT(p.strategy)}</div></td>`+
+    `<tr><td><b class=mono>${escT(p.name)}</b><div class=text-muted style="font-size:12px">${escT(p.strategy)}${p.base?' · base '+escT(p.base):''}${p.lead_may_merge?' · lead merges':''}</div></td>`+
     `<td class=mono style="font-size:12.5px;word-break:break-all">${escT(src(p))}</td>`+
-    `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
+    `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`+
+      (p.strategy==='worktree'&&m.role==='writer'?` <button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(p.name)}','${esc(n)}')">Changes</button>`:'')).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
     `<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="editProject('${esc(p.name)}')">Edit</button>`+
     `<button class="btn btn-ghost btn-sm" onclick="delProject('${esc(p.name)}')">✕</button></td></tr>`).join('')
     :'<tr><td colspan=4 class=text-muted>No projects yet — name a folder below and add the instances that work on it.</td></tr>';
@@ -548,7 +549,8 @@ async function loadProjects(){
 }
 function pjType(){const k=document.getElementById('pj-type').value==='katfs';
   document.getElementById('pj-hostbox').style.display=k?'none':'';
-  document.getElementById('pj-katfsbox').style.display=k?'':'none';}
+  document.getElementById('pj-katfsbox').style.display=k?'':'none';
+  document.getElementById('pj-basebox').style.display=document.getElementById('pj-strategy').value==='worktree'?'':'none';}
 function pjShares(cur){
   const shares=[...(window.KATFS_SHARES||[])], sel=document.getElementById('pj-share');
   cur=cur||sel.value;
@@ -564,7 +566,8 @@ function pjAddMember(name,role){
   document.getElementById('pj-members').appendChild(row);
 }
 function pjReset(){
-  PJ_EDIT=''; ['pj-name','pj-path','pj-subdir'].forEach(i=>document.getElementById(i).value='');
+  PJ_EDIT=''; ['pj-name','pj-path','pj-subdir','pj-base'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('pj-strategy').value='shared';
   document.getElementById('pj-name').disabled=false; document.getElementById('pj-merge').checked=false;
   document.getElementById('pj-type').value='host'; pjType();
   document.getElementById('pj-members').innerHTML=''; pjAddMember();
@@ -577,6 +580,7 @@ function editProject(name){
   PJ_EDIT=name;
   document.getElementById('pj-name').value=p.name; document.getElementById('pj-name').disabled=true;
   document.getElementById('pj-strategy').value=p.strategy;
+  document.getElementById('pj-base').value=p.base||'';
   document.getElementById('pj-type').value=p.source.type; pjType();
   document.getElementById('pj-path').value=p.source.path||''; document.getElementById('pj-subdir').value=p.source.subdir||'';
   pjShares(p.source.share||'');
@@ -594,12 +598,46 @@ async function saveProject(){
   const source=type==='katfs'?{type,share:document.getElementById('pj-share').value}
     :{type,path:document.getElementById('pj-path').value.trim(),subdir:document.getElementById('pj-subdir').value.trim()};
   const body={name:document.getElementById('pj-name').value.trim(),strategy:document.getElementById('pj-strategy').value,
-    source,members,lead_may_merge:document.getElementById('pj-merge').checked};
+    source,members,lead_may_merge:document.getElementById('pj-merge').checked,base:document.getElementById('pj-base').value.trim()};
   let d={}; try{d=await (await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   const msg=document.getElementById('pjmsg');
   if(d.error){msg.textContent=d.error;return}
   msg.textContent='saved ✓'+(d.warn?' — '+d.warn:'');
   pjReset(); loadProjects();
+}
+/* review one writer of a worktree project: files, diff, merge / discard */
+let PJ_REV=null;
+async function pjReview(p,w){
+  PJ_REV={p,w};
+  document.getElementById('pjdlgname').textContent=p+' · '+w;
+  document.getElementById('pjdlgsum').textContent='taking a snapshot of the folder…';
+  document.getElementById('pjdlgdiff').textContent=''; document.getElementById('pjdlgmsg').textContent='';
+  document.getElementById('pjdlg').style.display='grid';
+  const base='/api/projects/'+encodeURIComponent(p);
+  let st={}; try{st=((await (await fetch(base+'/status')).json()).members||{})[w]||{}}catch(e){st={error:'manager not reachable'}}
+  const sum=document.getElementById('pjdlgsum');
+  if(st.error){sum.textContent=st.error;return}
+  sum.innerHTML=`<code>${escT(st.branch)}</code> · <b>${st.ahead}</b> ahead, <b>${st.behind}</b> behind the base · `+
+    (st.files.length?st.files.map(f=>`<span class="tag tag-neutral">${escT(f[0])} ${escT(f[1])}</span>`).join(' '):'no changes');
+  try{document.getElementById('pjdlgdiff').textContent=await (await fetch(base+'/diff/'+encodeURIComponent(w))).text()}catch(e){}
+}
+function pjDlgClose(){document.getElementById('pjdlg').style.display='none';PJ_REV=null}
+async function pjOp(op){
+  if(!PJ_REV)return {};
+  const r=await fetch('/api/projects/'+encodeURIComponent(PJ_REV.p)+'/'+op+'/'+encodeURIComponent(PJ_REV.w),{method:'POST'});
+  return r.json();
+}
+async function pjMerge(){
+  const d=await pjOp('merge'), msg=document.getElementById('pjdlgmsg');
+  if(d.error){msg.textContent=d.error+(d.conflicts&&d.conflicts.length?': '+d.conflicts.join(', '):'');return}
+  const done='merged ✓ '+(d.commit||'').slice(0,12)+(d.note?' — '+d.note:'');
+  pjReview(PJ_REV.p,PJ_REV.w).then(()=>{document.getElementById('pjdlgmsg').textContent=done});
+}
+async function pjDiscard(){
+  if(!confirm('Throw away '+PJ_REV.w+"'s work? Its folder and branch go back to the base."))return;
+  const d=await pjOp('discard');
+  if(d.error){document.getElementById('pjdlgmsg').textContent=d.error;return}
+  pjReview(PJ_REV.p,PJ_REV.w).then(()=>{document.getElementById('pjdlgmsg').textContent='discarded ✓'});
 }
 async function delProject(name){
   if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;

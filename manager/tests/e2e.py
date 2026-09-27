@@ -1349,6 +1349,11 @@ class AgentLogic(unittest.TestCase):
 # ===========================================================================
 # OFFLINE: Manager-Funktionen
 # ===========================================================================
+def _wtext(path, text):
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
 class ManagerFunctions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -3466,7 +3471,7 @@ class ManagerFunctions(unittest.TestCase):
                            "members": {"a": {"role": "lead"}, "b": {"role": "writer"}, "c": "reader"}})
             self.assertTrue(r.get("ok"), r)
             specs = {i["name"]: [s for s in m._mounts.mount_specs(i) if s["guest"] == "/project/dev"] for i in insts}
-            for n, ro, fsid in (("a", True, 8000 + 3 * 16), ("b", False, 8000 + 4 * 16), ("c", True, 8000 + 5 * 16)):
+            for n, ro, fsid in (("a", True, 8000 + 3 * 64), ("b", False, 8000 + 4 * 64), ("c", True, 8000 + 5 * 64)):
                 self.assertEqual(len(specs[n]), 1, n)
                 sp = specs[n][0]
                 self.assertEqual((sp["ro"], sp["fsid"], sp["host"]), (ro, fsid, os.path.join(tmp, "repo", "app")), n)
@@ -3476,13 +3481,13 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(pj.upsert({"name": "dev2", "source": {"type": "host", "path": tmp},
                                        "members": {"b": {"role": "writer"}}}).get("ok"))
             fs = {s["guest"]: s["fsid"] for s in m._mounts.mount_specs(insts[1])}
-            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 64, 8000 + 65))
+            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 256, 8000 + 257))
             pj.upsert({"name": "dev", "source": src, "members": {"b": {"role": "writer"}}})
             fs = {s["guest"]: s["fsid"] for s in m._mounts.mount_specs(insts[1])}
-            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 64, 8000 + 65))
+            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 256, 8000 + 257))
             self.assertFalse([s for s in m._mounts.mount_specs(insts[0]) if s["guest"].startswith("/project/")])  # a left
             # refused
-            for body, why in (({"name": "x", "strategy": "worktree", "source": src}, "not built yet"),
+            for body, why in (({"name": "x", "strategy": "overlay", "source": src}, "not built yet"),
                               ({"name": "x", "strategy": "magic", "source": src}, "strategy must be"),
                               ({"name": "x", "source": src, "members": {"zz": "writer"}}, "unknown instance"),
                               ({"name": "x", "source": src, "members": {"a": "boss"}}, "role must be"),
@@ -3547,6 +3552,157 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((self._status(h), sent), (200, [("write", "abc123")]))
         finally:
             m._guests.instance_by_ip, m._katfs._katfs_answer = old_ip, old_answer
+            restore()
+
+    def _git_repo(self, tmp):
+        import subprocess as sp
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(os.path.join(repo, "apps", "x"))
+        g = lambda *a: sp.run(["git", "-C", repo, *a], check=True, capture_output=True, text=True).stdout
+        g("init", "-q", "-b", "main")
+        g("config", "user.name", "op"); g("config", "user.email", "op@example.com")
+        _wtext(os.path.join(repo, "apps", "x", "file.txt"), "one\n")
+        _wtext(os.path.join(repo, "top.txt"), "top\n")
+        g("add", "-A"); g("commit", "-q", "-m", "init")
+        return repo, g
+
+    def test_projects_worktree_branch_per_writer(self):
+        """worktree: each writer its own folder (the subdir only) on its own
+        branch; the lead sees the source and every writer read-only. A snapshot
+        commits the folder — a planted symlink stays a link, a FIFO never
+        reaches git; merge (clean / conflict / dirty / base not checked out),
+        discard, leave and delete behave as documented."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        pj, wt = m._projects, m._projwt
+        old = m._mounts.AGENT_ROOT, wt.STAGE_ROOT
+        try:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+            repo, g = self._git_repo(tmp)
+            body = {"name": "wp", "strategy": "worktree", "source": {"type": "host", "path": repo, "subdir": "apps/x"},
+                    "members": {"a": "lead", "b": "writer", "c": "reader"}}
+            r = pj.upsert(body)
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(r["project"]["base"], "main")                        # the checked-out branch
+            d = wt.tree_dir("wp", "b")
+            self.assertEqual(sorted(os.listdir(d)), ["file.txt"])                 # the subdir, no .git
+            self.assertIn("proj/wp/b", g("branch", "--list", "proj/*"))
+            specs = {i["name"]: {s["guest"]: s for s in m._mounts.mount_specs(i)} for i in insts}
+            self.assertEqual((specs["b"]["/project/wp"]["host"], specs["b"]["/project/wp"]["ro"]), (d, False))
+            self.assertEqual((specs["a"]["/project/wp"]["ro"], specs["a"]["/project/wp.members/b"]["host"],
+                              specs["a"]["/project/wp.members/b"]["ro"]), (True, d, True))
+            self.assertNotEqual(specs["a"]["/project/wp"]["fsid"], specs["a"]["/project/wp.members/b"]["fsid"])
+            self.assertEqual(specs["c"]["/project/wp"]["host"], os.path.join(repo, "apps", "x"))
+            self.assertNotIn("/project/wp.members/b", specs["c"])
+            # the writer works: a change, a new file, a symlink out, a FIFO
+            _wtext(os.path.join(d, "file.txt"), "one\ntwo\n")
+            _wtext(os.path.join(d, "new.txt"), "new\n")
+            os.symlink("/etc/passwd", os.path.join(d, "link"))
+            os.mkfifo(os.path.join(d, "pipe"))
+            st, code = pj.member_op("wp", "status", "b")
+            self.assertEqual(code, 200, st)
+            self.assertEqual((st["ahead"], st["behind"]), (1, 0))
+            self.assertEqual(sorted(tuple(f) for f in st["files"]),
+                             [("A", "apps/x/link"), ("A", "apps/x/new.txt"), ("M", "apps/x/file.txt")])
+            self.assertEqual(g("cat-file", "-p", "proj/wp/b:apps/x/link"), "/etc/passwd")    # a link, not the file
+            self.assertEqual(g("show", "proj/wp/b:top.txt"), "top\n")                         # outside the subdir: kept
+            tip = g("rev-parse", "proj/wp/b").strip()
+            pj.member_op("wp", "status", "b")
+            self.assertEqual(g("rev-parse", "proj/wp/b").strip(), tip)            # no change -> no new commit
+            patch, code = pj.member_op("wp", "diff", "b")
+            self.assertIn("+two", patch)
+            # merge: main is checked out and clean -> git merge --no-ff
+            r, code = pj.member_op("wp", "merge", "b")
+            self.assertEqual(code, 200, r)
+            self.assertEqual(len(g("log", "-1", "--format=%P", "main").split()), 2)
+            self.assertTrue(os.path.exists(os.path.join(repo, "apps", "x", "new.txt")))
+            # conflict: nothing changes
+            _wtext(os.path.join(d, "file.txt"), "B\n")
+            _wtext(os.path.join(repo, "apps", "x", "file.txt"), "M\n")
+            g("commit", "-qam", "op edits")
+            head = g("rev-parse", "main").strip()
+            r, code = pj.member_op("wp", "merge", "b")
+            self.assertEqual((code, r.get("conflicts")), (409, ["apps/x/file.txt"]), r)
+            self.assertEqual((g("rev-parse", "main").strip(), g("status", "--porcelain")), (head, ""))
+            # dirty checkout: refused
+            _wtext(os.path.join(repo, "top.txt"), "dirty\n")
+            r, code = pj.member_op("wp", "merge", "b")
+            self.assertIn("uncommitted", r.get("error", ""))
+            g("checkout", "-q", "--", "top.txt")
+            # discard: branch back to main, folder refilled in place
+            ino = os.stat(d).st_ino
+            r, code = pj.member_op("wp", "discard", "b")
+            self.assertEqual(code, 200, r)
+            self.assertEqual(g("rev-parse", "proj/wp/b").strip(), head)
+            self.assertEqual((sorted(os.listdir(d)), open(os.path.join(d, "file.txt")).read(), os.stat(d).st_ino),
+                             (["file.txt", "link", "new.txt"], "M\n", ino))
+            self.assertTrue(os.path.islink(os.path.join(d, "link")))              # merged earlier: back as a link
+            # base not checked out: merge-tree + commit-tree, the operator's checkout untouched
+            g("checkout", "-q", "-b", "other")
+            _wtext(os.path.join(d, "late.txt"), "late\n")
+            r, code = pj.member_op("wp", "merge", "b")
+            self.assertEqual(code, 200, r)
+            self.assertEqual(g("show", "main:apps/x/late.txt"), "late\n")
+            self.assertEqual((g("symbolic-ref", "--short", "HEAD").strip(), os.path.exists(os.path.join(repo, "apps", "x", "late.txt"))),
+                             ("other", False))
+            # review is for writers of worktree projects only
+            self.assertEqual(pj.member_op("wp", "merge", "c")[1], 404)
+            self.assertEqual(pj.member_op("nope", "status", "b")[1], 404)
+            # b leaves: folder gone, branch kept; delete: the project folder gone
+            self.assertTrue(pj.upsert({**body, "base": "main", "members": {"a": "lead", "b": "reader"}}).get("ok"))
+            self.assertFalse(os.path.exists(d))
+            self.assertIn("proj/wp/b", g("branch", "--list", "proj/*"))
+            pj.delete("wp")
+            self.assertFalse(os.path.exists(os.path.join(m._mounts.AGENT_ROOT, ".projects", "wp")))
+            # refused
+            os.makedirs(os.path.join(repo, "untracked"))                          # on disk, not in the branch
+            for b2, why in (({**body, "source": {"type": "host", "path": os.path.join(repo, "apps")}}, "not the top"),
+                            ({**body, "base": "nope"}, "does not exist"),
+                            ({**body, "source": {"type": "host", "path": repo, "subdir": "untracked"}}, "has no folder"),
+                            ({**body, "source": {"type": "katfs", "share": "abc"}}, "katfs works with shared only"),
+                            ({**body, "strategy": "overlay"}, "not built yet")):
+                self.assertIn(why, pj.upsert(b2).get("error", ""), b2)
+        finally:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT = old
+            restore()
+
+    def test_projects_lead_reviews_over_guest_routes(self):
+        """A lead VM sees its writers' changes and diffs; anyone else is refused;
+        it merges only when the project allows it."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        old = m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._guests.instance_by_ip
+        try:
+            m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+            repo, g = self._git_repo(tmp)
+            body = {"name": "lp", "strategy": "worktree", "source": {"type": "host", "path": repo},
+                    "members": {"a": "lead", "b": "writer"}}
+            self.assertTrue(m._projects.upsert(body).get("ok"))
+            _wtext(os.path.join(m._projwt.tree_dir("lp", "b"), "x.txt"), "x\n")
+            ips = {"172.30.3.2": insts[0], "172.30.4.2": insts[1]}
+            m._guests.instance_by_ip = lambda ip: ips.get(ip)
+            h = self._handler("/api/project/status", "172.30.3.2"); h._do_GET()
+            d = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual(d["projects"][0]["members"]["b"]["files"], [["A", "x.txt"]])
+            h = self._handler("/api/project/status", "172.30.4.2"); h._do_GET()      # a writer leads nothing
+            self.assertEqual(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["projects"], [])
+            h = self._handler("/api/project/diff?project=lp&member=b", "172.30.3.2"); h._do_GET()
+            self.assertIn(b"+x", h.wfile.getvalue())
+            h = self._handler("/api/project/diff?project=lp&member=b", "172.30.4.2"); h._do_GET()
+            self.assertEqual(self._status(h), 403)
+            mb = json.dumps({"project": "lp", "member": "b"}).encode()
+            h = self._post_handler("/api/project/merge", "172.30.3.2", mb); h._do_POST()
+            self.assertEqual(self._status(h), 403)                                  # not allowed in this project
+            self.assertTrue(m._projects.upsert({**body, "lead_may_merge": True}).get("ok"))
+            h = self._post_handler("/api/project/merge", "172.30.3.2", mb); h._do_POST()
+            self.assertEqual(self._status(h), 200, h.wfile.getvalue())
+            self.assertEqual(g("show", "main:x.txt"), "x\n")
+            # the admin side: status and diff over /api/projects/<p>/…
+            m._guests.instance_by_ip = lambda ip: None
+            h = self._handler("/api/projects/lp/status", "127.0.0.1"); h._do_GET()
+            self.assertIn(b'"b"', h.wfile.getvalue())
+        finally:
+            m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._guests.instance_by_ip = old
             restore()
 
     def test_projects_admin_routes(self):
