@@ -3172,6 +3172,73 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(ig.gateway_node_id(), "b" * 64)
         self.assertTrue(ig.status()["available"])
 
+    def test_worker_one_lane_per_instance(self):
+        """worker_claim: a due task of an instance that already runs one waits
+        untouched; other instances and 'ephemeral' (own VM per task) go."""
+        m = self.m
+        now = int(time.time())
+        tasks = [{"id": "x1", "instance": "x", "status": "running", "message": "m"},
+                 {"id": "x2", "instance": "x", "status": "pending", "message": "m"},
+                 {"id": "y1", "instance": "y", "status": "pending", "message": "m"}]
+        dirty, t = m._tasks.worker_claim(tasks, now, lambda t: False, [], [])
+        self.assertEqual(t["id"], "y1")
+        self.assertEqual(tasks[1]["status"], "pending"); self.assertNotIn("recent_runs", tasks[1])   # untouched
+        dirty, t = m._tasks.worker_claim(tasks, now, lambda t: False, [], [])
+        self.assertIsNone(t)                                          # x busy, y now running
+        eph = [{"id": "e1", "instance": "ephemeral", "status": "running", "message": "m"},
+               {"id": "e2", "instance": "ephemeral", "status": "pending", "message": "m"}]
+        self.assertEqual(m._tasks.worker_claim(eph, now, lambda t: False, [], [])[1]["id"], "e2")
+
+    def test_worker_runs_instances_in_parallel_but_each_serially(self):
+        """The dispatcher against a real (temporary) task store: tasks of
+        different instances overlap, at most WORKER_PARALLEL at once, never
+        two of one instance; every task ends done and is logged."""
+        import threading as _th
+        m, tk = self.m, self.m._tasks
+        tmp = tempfile.mkdtemp(prefix="e2e-lanes-")
+        running, peak, per_inst, lock = set(), [0], {}, _th.Lock()
+        overlap_same = []
+        def fake_run(instance, message, model=None, timeout=0, sandbox=None):
+            with lock:
+                if instance in running:
+                    overlap_same.append(instance)
+                running.add(instance); peak[0] = max(peak[0], len(running))
+            time.sleep(0.4)
+            with lock:
+                running.discard(instance); per_inst[instance] = per_inst.get(instance, 0) + 1
+            return True, f"ok {message}"
+        saved = (m._store.TASKS_FILE, tk._run_task_now, tk.WORKER_PARALLEL, m._chats.chat_log_append,
+                 m._store.history_add, tk._mission_advance_fire, tk.time.sleep)
+        try:
+            m._store.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            m._store.save_tasks([]) if hasattr(m._store, "save_tasks") else open(m._store.TASKS_FILE, "w").write("[]")
+            for inst, n in (("x", 3), ("y", 1), ("z", 1), ("w", 1)):
+                for k in range(n):
+                    m._store.add_task(inst, f"{inst}{k}")
+            tk._run_task_now, tk.WORKER_PARALLEL = fake_run, 2
+            m._chats.chat_log_append = lambda *a, **k: None
+            m._store.history_add = lambda *a, **k: None
+            tk._mission_advance_fire = lambda tid: None
+            real_sleep = saved[6]
+            tk.time.sleep = lambda s: real_sleep(min(s, 0.05))         # fast dispatcher cycles
+            tk._stop.clear()
+            th = _th.Thread(target=tk._task_worker, daemon=True); th.start()
+            deadline = time.time() + 15
+            while time.time() < deadline and any(t["status"] != "done" for t in m._store.load_tasks()):
+                real_sleep(0.1)
+            tk._stop.set(); th.join(5)
+            done = m._store.load_tasks()
+            self.assertTrue(all(t["status"] == "done" for t in done), [(t["id"], t["status"]) for t in done])
+            self.assertEqual(per_inst, {"x": 3, "y": 1, "z": 1, "w": 1})
+            self.assertEqual(overlap_same, [])                                        # never two of one instance
+            self.assertEqual(peak[0], 2)                                              # parallel, and capped
+            self.assertTrue(all(t["result"].startswith("ok ") for t in done))
+        finally:
+            tk._stop.set()
+            (m._store.TASKS_FILE, tk._run_task_now, tk.WORKER_PARALLEL, m._chats.chat_log_append,
+             m._store.history_add, tk._mission_advance_fire, tk.time.sleep) = saved
+            tk._active.clear()
+
     def test_reclaim_stuck_tasks(self):
         m = self.m
         import mgr.store as st

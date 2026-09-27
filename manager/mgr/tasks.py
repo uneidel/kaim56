@@ -31,6 +31,14 @@ from mgr import vm as _vm
 
 
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", "1800"))    # worker-run tasks: 30 min
+# Tasks run in parallel across instances (one lane per instance, serial
+# within it) — at most WORKER_PARALLEL at a time. It was one thread for every
+# task of every instance: a 30-min analysis round delayed the 07:00 job search.
+WORKER_PARALLEL = max(1, int(os.environ.get("WORKER_PARALLEL", "3")))
+PARALLEL_ANY = {"ephemeral"}          # targets that are no lane (their own VM per task)
+_active = set()                       # ids of tasks running in a lane thread
+_active_lock = threading.Lock()
+_stop = threading.Event()             # set only by tests: ends the dispatcher loop
 
 
 def _chat_post(inst, message, timeout=600):
@@ -330,8 +338,14 @@ def worker_claim(tasks, now, hb_idle, skipped_hb, throttled):
             return t.get("next_run", 0) <= now
         return t.get("status") == "pending"
 
+    # One lane per instance: an agent has one conversation, so a second task
+    # for an instance that is busy waits (untouched) for the next pass. Other
+    # instances run beside it. 'ephemeral' is no lane — every such task gets
+    # its own VM (bounded by EPHEMERAL_MAX).
+    busy = {x.get("instance") for x in tasks
+            if x.get("status") == "running" and x.get("instance") not in PARALLEL_ANY}
     for t in tasks:
-        if not due(t):
+        if not due(t) or t.get("instance") in busy:
             continue
         if hb_idle(t):
             t["next_run"] = _store._next_run(t["schedule"], now)
@@ -356,10 +370,75 @@ def worker_claim(tasks, now, hb_idle, skipped_hb, throttled):
     return bool(throttled) or bool(skipped_hb), None
 
 
+def _execute(t):
+    """Run one claimed task and book its outcome — in its own lane thread."""
+    try:
+        sched = bool(t.get("schedule"))
+        # From here on EVERYTHING is guarded individually: an error
+        # anywhere must never leave the task as a "running" orphan
+        # (bug Aug 20: exception in the follow-up -> outer except ->
+        # the task never fired again and the chat entry was missing).
+        try:
+            ok, res = _run_task_now(t["instance"], t["message"], t.get("model"), timeout=TASK_TIMEOUT,
+                                    sandbox=t.get("sandbox"))
+        except Exception as e:
+            ok, res = False, f"worker-exception (run): {e!r}"
+            _util._wlog(f"{t['id']}: {res}")
+        def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched):
+            tt = next((x for x in fresh if x["id"] == _tid), None)
+            if tt is None:
+                return False, None
+            tt["updated"] = int(time.time())
+            tt["result"] = _res
+            if _sched:
+                tt["status"] = "scheduled"
+                tt["next_run"] = _store._next_run(tt["schedule"], int(time.time()))
+            else:
+                tt["status"] = "done" if _ok else "error"
+            return True, None
+        try:
+            _store.with_tasks(done_mut)
+        except Exception as e:
+            _util._wlog(f"{t['id']}: status update failed: {e!r}")
+        try:
+            _chats.chat_log_append(t.get("instance", "task"), "task",
+                            t.get("message", ""), res, kind="task")
+        except Exception as e:
+            _util._wlog(f"{t['id']}: chat_log_append: {e!r}")
+        try:
+            _store.history_add(t.get("instance", ""), t.get("message", ""), res, ok,
+                        t.get("schedule", ""), origin="worker")
+        except Exception as e:
+            _util._wlog(f"{t['id']}: history_add: {e!r}")
+        try:
+            _mission_advance_fire(t["id"])
+        except Exception as e:
+            _util._wlog(f"{t['id']}: mission-advance: {e!r}")
+        # A scheduled task that fails would otherwise fail again
+        # tomorrow, silently — the result only sits in the Tasks tab.
+        # One push per DISTINCT failure text (not one per day).
+        if sched and not ok and res != t.get("result"):
+            try:
+                _notify.notify_add(t.get("instance") or "task",
+                           f"Scheduled task failed: {t['id']}",
+                           (str(t.get("message", ""))[:120] + " — " + str(res))[:900],
+                           link="tasks")
+            except Exception as e:
+                _util._wlog(f"{t['id']}: failure notify: {e!r}")
+    finally:
+        with _active_lock:
+            _active.discard(t["id"])
+
+
+def _spawn_lane(t):
+    threading.Thread(target=_execute, args=(t,), daemon=True, name=f"task-{t['id']}").start()
+
+
 def _task_worker():
-    """Processes due/pending tasks sequentially in the background."""
+    """Dispatches due/pending tasks to lane threads (one per instance, at most
+    WORKER_PARALLEL at once) and does the idle housekeeping."""
     reclaim_stuck_tasks()
-    while True:
+    while not _stop.is_set():
         ran = False
         try:
             now = int(time.time())
@@ -394,8 +473,10 @@ def _task_worker():
                 return True
 
             skipped_hb = []
+            with _active_lock:
+                free = len(_active) < WORKER_PARALLEL
             t = _store.with_tasks(lambda ts: worker_claim(ts, now, heartbeat_idle,
-                                                   skipped_hb, throttled))
+                                                   skipped_hb, throttled)) if free else None
             for tid in skipped_hb:
                 _util._wlog(f"{tid}: heartbeat skipped (idle — no inbox, no mission)")
             for tid, tmsg in throttled:
@@ -406,58 +487,9 @@ def _task_worker():
                 except Exception:
                     pass
             if t is not None:
-                sched = bool(t.get("schedule"))
-                # From here on EVERYTHING is guarded individually: an error
-                # anywhere must never leave the task as a "running" orphan
-                # (bug Aug 20: exception in the follow-up -> outer except ->
-                # the task never fired again and the chat entry was missing).
-                try:
-                    ok, res = _run_task_now(t["instance"], t["message"], t.get("model"), timeout=TASK_TIMEOUT,
-                                            sandbox=t.get("sandbox"))
-                except Exception as e:
-                    ok, res = False, f"worker-exception (run): {e!r}"
-                    _util._wlog(f"{t['id']}: {res}")
-                def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched):
-                    tt = next((x for x in fresh if x["id"] == _tid), None)
-                    if tt is None:
-                        return False, None
-                    tt["updated"] = int(time.time())
-                    tt["result"] = _res
-                    if _sched:
-                        tt["status"] = "scheduled"
-                        tt["next_run"] = _store._next_run(tt["schedule"], int(time.time()))
-                    else:
-                        tt["status"] = "done" if _ok else "error"
-                    return True, None
-                try:
-                    _store.with_tasks(done_mut)
-                except Exception as e:
-                    _util._wlog(f"{t['id']}: status update failed: {e!r}")
-                try:
-                    _chats.chat_log_append(t.get("instance", "task"), "task",
-                                    t.get("message", ""), res, kind="task")
-                except Exception as e:
-                    _util._wlog(f"{t['id']}: chat_log_append: {e!r}")
-                try:
-                    _store.history_add(t.get("instance", ""), t.get("message", ""), res, ok,
-                                t.get("schedule", ""), origin="worker")
-                except Exception as e:
-                    _util._wlog(f"{t['id']}: history_add: {e!r}")
-                try:
-                    _mission_advance_fire(t["id"])
-                except Exception as e:
-                    _util._wlog(f"{t['id']}: mission-advance: {e!r}")
-                # A scheduled task that fails would otherwise fail again
-                # tomorrow, silently — the result only sits in the Tasks tab.
-                # One push per DISTINCT failure text (not one per day).
-                if sched and not ok and res != t.get("result"):
-                    try:
-                        _notify.notify_add(t.get("instance") or "task",
-                                   f"Scheduled task failed: {t['id']}",
-                                   (str(t.get("message", ""))[:120] + " — " + str(res))[:900],
-                                   link="tasks")
-                    except Exception as e:
-                        _util._wlog(f"{t['id']}: failure notify: {e!r}")
+                with _active_lock:
+                    _active.add(t["id"])
+                _spawn_lane(t)
                 ran = True
         except Exception as e:
             _util._wlog(f"worker-loop: {e!r}")

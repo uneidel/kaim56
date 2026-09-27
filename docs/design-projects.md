@@ -1,6 +1,6 @@
 # Design: projects — one folder set, many agents, in parallel
 
-Status: **proposal**, not built. Owner: Ulrich. Written 2026-09-27.
+Status: **accepted**, phase 1 (parallel worker) built. Owner: Ulrich. Written 2026-09-27.
 
 ## Why
 
@@ -142,9 +142,9 @@ holds for a running task is refused with the holder's name.
 4. **`overlay`** — after the NFS-export prototype; plus advisory path locks; lead tools.
 5. A live run: frontier planner + two executors (one local) on `apps/codeflow`.
 
-## Open questions for Ulrich
+## Decisions (Ulrich, 2026-09-27)
 
-1. Own **Projects** tab, or inside Instances?
-2. May a lead agent merge on its own (`lead_may_merge`), or always you?
-3. katfs only with `shared` — acceptable?
-4. `WORKER_PARALLEL` default 3?
+1. Own **Projects** tab.
+2. A lead agent may merge too — per project, `lead_may_merge`.
+3. katfs only with `shared` — accepted.
+4. `WORKER_PARALLEL` default 3.

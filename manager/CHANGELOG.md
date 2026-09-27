@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-27
 
+- Task worker runs in parallel: one lane per instance (serial within it), up to `WORKER_PARALLEL` (default 3) at once; ephemeral tasks are no lane. Cause: one thread ran every task of every instance in turn, so a 30-min round delayed everything else.
 - Instances: the 📁 dialog (now "Folders") also sets the katfs share of an existing — also running — instance; KATFS_SHARE is read by the manager per file operation, so it applies at once (runtime key).
 - Code flow: the local llama.cpp (Jetson) as a model choice — config keys only (LLAMA_ENDPOINT from Settings or the existing llama instance, EGRESS_ALLOW pinned to it, so the agent reaches that server and nothing else); switching an existing repo back to a cloud model undoes it.
 - Policy tab: a daily token budget per instance (BUDGET_TOKENS, in M tokens, 0 = no limit, back to default) with today's usage bar; the key proxy reads it per request, so a change applies at once — the config route now says so for runtime keys (BUDGET_TOKENS, LLM_RATE_MIN, DELEGATE_TARGETS); notification links open any tab by name.
