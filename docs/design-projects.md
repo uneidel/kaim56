@@ -1,6 +1,6 @@
 # Design: projects — one folder set, many agents, in parallel
 
-Status: **accepted**, phase 1 (parallel worker) built. Owner: Ulrich. Written 2026-09-27.
+Status: **accepted**; phase 1 (parallel worker) and phase 2 (`shared`, Projects tab) built. Owner: Ulrich. Written 2026-09-27.
 
 ## Why
 

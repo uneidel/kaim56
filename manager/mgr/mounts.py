@@ -17,6 +17,7 @@ from mgr import host as _host
 from mgr import instances as _instances
 from mgr import memfs as _memfs
 from mgr import paths as _paths
+from mgr import projects as _projects
 from mgr import util as _util
 from mgr import vm as _vm
 
@@ -118,7 +119,17 @@ def mount_specs(inst):
         specs.append({"idx": "memory", "host": mem, "guest": "/memory", "ro": False,
                       "target": target, "sub": target,
                       "fsid": 4000 + (inst.get("index", 0) % 200) * 16 + 15})
+    # Projects (mgr/projects.py) the instance is a member of: the same
+    # mechanism at /project/<name>, their own fsid block (a slot per membership).
+    for pm in _projects.host_mounts(inst["name"]):
+        target = os.path.join(FCMNT_ROOT, inst["name"], "p-" + pm["project"])
+        specs.append({"idx": "p-" + pm["project"], "host": pm["host"], "guest": pm["guest"],
+                      "ro": pm["ro"], "target": target, "sub": target,
+                      "fsid": PROJECT_FSID + (inst.get("index", 0) % 200) * 16 + pm["slot"]})
     return specs
+
+
+PROJECT_FSID = 8000        # 4000..7199 are the per-instance blocks above
 
 
 def workspace_fsid(inst):
@@ -251,6 +262,21 @@ def mount_error(host, guest):
     return ""
 
 
+def apply_live(inst, old_specs):
+    """A running instance's folders changed: tear down the removed ones, export
+    the current set. The guest's reconciler mounts/unmounts within 5 seconds."""
+    new_subs = {s["sub"] for s in mount_specs(inst)}
+    for s in old_specs:
+        if s["sub"] not in new_subs:
+            _util.sh("umount", "-l", s["target"], check=False)
+            try:
+                os.rmdir(s["target"])
+            except OSError:
+                pass
+    setup_mounts(inst)            # bind+export of the current folders (idempotent)
+    write_desired(inst)
+
+
 def set_mounts(name, mounts):
     inst = next((i for i in _instances.load_instances() if i["name"] == name), None)
     if not inst:
@@ -271,17 +297,7 @@ def set_mounts(name, mounts):
     _instances.save_instance(inst)
     note = ""
     if _instances.is_running(inst):
-        # apply LIVE: tear down removed folders, export the current (new) ones.
-        new_subs = {s["sub"] for s in mount_specs(inst)}
-        for s in old_specs:
-            if s["sub"] not in new_subs:
-                _util.sh("umount", "-l", s["target"], check=False)
-                try:
-                    os.rmdir(s["target"])
-                except OSError:
-                    pass
-        setup_mounts(inst)            # bind+export of the current folders (idempotent)
-        write_desired(inst)           # the running guest mounts them itself (reconciler)
+        apply_live(inst, old_specs)
         note = " (applied live)"
     if warn:
         note += (f" — read-only for the agent until {GUEST_USER} may write there: "

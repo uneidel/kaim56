@@ -39,6 +39,7 @@ from mgr import paths as _paths
 from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
+from mgr import projects as _projects
 from mgr import resources as _resources
 from mgr import routes as _routes
 from mgr import rules as _rules
@@ -221,6 +222,30 @@ def _rt_workspace(h):
     if kind == "dir":
         return h._json({"instance": name, "path": rel.strip("/"), "entries": payload})
     return payload, ct
+
+
+@_routes.ROUTER.get("/api/projects", admin=True)
+def _rt_projects(h):
+    # Projects (mgr/projects.py): one folder set, joined by instances with a role.
+    return h._json({"projects": _projects.load(), "strategies": list(_projects.STRATEGIES),
+                    "planned": list(_projects.PLANNED), "roles": list(_projects.ROLES)})
+
+
+@_routes.ROUTER.post("/api/projects", admin=True)
+def _rt_projects_save(h):
+    # Create or replace one project (members included); applies live to running members.
+    r = _projects.upsert(h._body() or {})
+    return h._json(r, 400 if "error" in r else 200)
+
+
+@_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)
+def _rt_projects_delete(h):
+    # POST /api/projects/<name>/delete
+    name, _, op = h.path.split("?", 1)[0][len("/api/projects/"):].strip("/").partition("/")
+    if op != "delete":
+        return h._json({"error": "unknown operation"}, 404)
+    r = _projects.delete(name)
+    return h._json(r, 404 if "error" in r else 200)
 
 
 @_routes.ROUTER.get("/api/apps", admin=True)

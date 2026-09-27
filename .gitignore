@@ -15,6 +15,7 @@ manager/plugins/.pins.json
 manager/chats.json
 manager/chats_tombstones.json
 manager/tasks.json
+manager/projects.json
 manager/memory.json
 manager/inbox_wm.json
 # Aufgaben-History inkl. SQLite-WAL-Sidecars (-wal/-shm)

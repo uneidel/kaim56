@@ -16,6 +16,7 @@ HTML_TOP = """</head><body>
     <a href="#mcp">MCP</a>
     <a href="#tasks">Tasks</a>
     <a href="#missions">Missions</a>
+    <a href="#projects">Projects</a>
     <a href="#policy">Policy</a>
     <a href="#models">Models</a>
     <a href="#resources">Resources</a>
@@ -272,6 +273,48 @@ HTML_TOP = """</head><body>
     <span class=text-muted style="font-size:13px">…</span>
   </div>
   <p class=text-muted style="font-size:12.5px;margin-top:14px">Any agent creates a mission itself when a job needs several steps — e.g. via chat: "… — as a mission". The owner plans, the steps run on whichever instance has the needed tools.</p>
+</section>
+
+<section class="screen" id=s-projects>
+  <div class=sec-head>
+    <div><h6>One folder, many agents</h6><h3>Projects</h3></div>
+    <span class="note text-muted">Name a folder once, let instances join it with a role · lead and reader see it read-only, writers read-write · mounted at <code>/project/&#8249;name&#8250;</code>, joins and leaves apply live</span>
+  </div>
+  <table class=table>
+    <thead><tr><th style="width:18%">Project</th><th>Source</th><th>Members</th><th style="width:1%"></th></tr></thead>
+    <tbody id=projrows></tbody>
+  </table>
+  <div class="panel blueprint" style="margin-top:32px">
+    <h4 style="margin:0 0 16px" id=pj-head>New project</h4>
+    <div class=grid2>
+      <div class=field><label>Name</label><input class="input mono" id=pj-name placeholder="codeflow-dev" spellcheck=false autocomplete=off></div>
+      <div class=field><label>Strategy (for several writers)</label>
+        <select class=input id=pj-strategy>
+          <option value=shared>shared — everyone works in the one folder</option>
+          <option value=worktree disabled>worktree — a git branch per writer (coming)</option>
+          <option value=overlay disabled>overlay — a private layer per writer (coming)</option>
+        </select></div>
+      <div class=field><label>Source</label>
+        <select class=input id=pj-type onchange=pjType()>
+          <option value=host>📁 Host folder</option>
+          <option value=katfs>katfs share</option>
+        </select></div>
+      <div class=field id=pj-hostbox><label>Host folder · subfolder (optional)</label>
+        <div style="display:flex;gap:6px">
+          <input class="input mono" id=pj-path placeholder="/home/…/repo" style="flex:2;min-width:0">
+          <button type=button class="btn btn-secondary" onclick="pkOpen(document.getElementById('pj-path').value||'/home',p=>document.getElementById('pj-path').value=p)">📁</button>
+          <input class="input mono" id=pj-subdir placeholder="apps/codeflow" style="flex:1;min-width:0">
+        </div></div>
+      <div class=field id=pj-katfsbox style="display:none"><label>katfs share</label><select class=input id=pj-share></select></div>
+      <div class="field span2"><label>Members</label>
+        <div id=pj-members style="display:grid;gap:6px"></div>
+        <div><button type=button class="btn btn-secondary btn-sm" onclick=pjAddMember()>+ Member</button>
+          <span class=text-muted style="font-size:12px;margin-left:8px">lead = the planner (sees everything, read-only) · writer = changes files · reader = looks only</span></div></div>
+      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none">
+        <input type=checkbox id=pj-merge> The lead may merge writers' work on its own (applies from the worktree strategy on)</label></div>
+    </div>
+    <div class=panel-foot><span id=pjmsg class=msg></span><button class="btn btn-secondary" id=pj-cancel style="display:none" onclick=pjReset()>Cancel</button><button class="btn btn-primary" id=pj-save onclick=saveProject()>Create project</button></div>
+  </div>
 </section>
 
 <section class="screen" id=s-sharing>
@@ -689,6 +732,15 @@ HTML_BOTTOM = """
   iroh via an <b>embedded</b> <code>kaim56-tunnel</code> (started as a child process) &#8212; one file,
   no HTTPS endpoint. Target instance and a custom prompt are configurable.</p></div>
 
+  <div class="card blueprint"><span class=card-title>Projects</span>
+  <p class=card-body>One folder set named once (<code>projects.json</code>, <code>mgr/projects.py</code>), joined by instances
+  with a role: <b>lead</b> and <b>reader</b> read-only, <b>writer</b> read-write. Strategy <code>shared</code>: a host folder rides the
+  host-folder mechanism &#8212; exported per VM IP from <code>.fcmnt/&#8249;inst&#8250;/p-&#8249;name&#8250;</code>, own fsid block (8000+), a stable
+  slot per membership &#8212; and appears at <code>/project/&#8249;name&#8250;</code>; joins and leaves re-export the running members at once.
+  A katfs project is the member's share when its config names none; only writers may write it. The task worker runs
+  one lane per instance, up to <code>WORKER_PARALLEL</code> at once, so the members really work side by side.
+  <code>worktree</code> and <code>overlay</code> (a branch / a private layer per writer) are next (docs/design-projects.md).</p></div>
+
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
   Agents reach it through manager-proxied tools (<code>remote_ls/read/write/delete</code>); the share
@@ -830,6 +882,7 @@ HTML_BOTTOM = """
     <div class=dialog-body style="margin-top:14px"><b>katfs share</b>: a folder shared from a browser or <code>katfs-share</code> on any machine;
       the agent reads and writes it with <code>remote_ls</code> / <code>remote_read</code> / <code>remote_write</code>. Applies at once, also while the instance runs.</div>
     <select class=input id=mdlgkatfs></select>
+    <div class=dialog-body id=mdlgproj style="margin-top:14px;display:none"></div>
     <div class=dialog-actions>
       <button class="btn btn-secondary" onclick=mdlgClose()>Cancel</button>
       <button class="btn btn-primary" onclick=saveMounts()>Save</button>

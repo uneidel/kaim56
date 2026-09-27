@@ -510,7 +510,7 @@ async function refreshUsage(){
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
+const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','projects','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
@@ -527,7 +527,86 @@ function tabsFade(){const n=document.getElementById('tabs');if(!n)return;
   n.classList.toggle('more',n.scrollWidth-n.clientWidth>2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2);}
 window.addEventListener('resize',tabsFade);
 document.getElementById('tabs').addEventListener('scroll',tabsFade,{passive:true});
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='sharing'){loadKatfs();loadIroh();}});
+
+/* — Projects: one folder set, joined by instances with a role (mgr/projects.py) — */
+let PROJECTS=[], PJ_EDIT='', PJ_INSTS=[];
+async function loadProjects(){
+  try{PROJECTS=(await (await fetch('/api/projects')).json()).projects||[]}catch(e){return}
+  try{PJ_INSTS=(await (await fetch('/api/instances')).json()).map(i=>i.name)}catch(e){}
+  const src=p=>p.source.type==='katfs'?'katfs · '+p.source.share:
+    p.source.path+(p.source.subdir?'/'+p.source.subdir:'');
+  document.getElementById('projrows').innerHTML=PROJECTS.length?PROJECTS.map(p=>
+    `<tr><td><b class=mono>${escT(p.name)}</b><div class=text-muted style="font-size:12px">${escT(p.strategy)}</div></td>`+
+    `<td class=mono style="font-size:12.5px;word-break:break-all">${escT(src(p))}</td>`+
+    `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
+    `<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="editProject('${esc(p.name)}')">Edit</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick="delProject('${esc(p.name)}')">✕</button></td></tr>`).join('')
+    :'<tr><td colspan=4 class=text-muted>No projects yet — name a folder below and add the instances that work on it.</td></tr>';
+  if(!document.getElementById('pj-members').children.length&&!PJ_EDIT)pjAddMember();
+  pjShares('');
+}
+function pjType(){const k=document.getElementById('pj-type').value==='katfs';
+  document.getElementById('pj-hostbox').style.display=k?'none':'';
+  document.getElementById('pj-katfsbox').style.display=k?'':'none';}
+function pjShares(cur){
+  const shares=[...(window.KATFS_SHARES||[])], sel=document.getElementById('pj-share');
+  cur=cur||sel.value;
+  if(cur&&!shares.some(x=>x.id===cur))shares.push({id:cur,name:'(not shared right now)'});
+  sel.innerHTML=shares.length?shares.map(x=>`<option value="${esc(x.id)}"${x.id===cur?' selected':''}>${escT((x.name||x.id)+' — '+x.id)}</option>`).join('')
+    :'<option value="">no katfs share online</option>';
+}
+function pjAddMember(name,role){
+  const row=document.createElement('div'); row.className='pjrow'; row.style.cssText='display:flex;gap:6px';
+  row.innerHTML=`<select class="input pjn" style="flex:2">${PJ_INSTS.map(n=>`<option${n===name?' selected':''}>${escT(n)}</option>`).join('')}</select>`+
+    `<select class="input pjr" style="flex:1">${['writer','lead','reader'].map(r=>`<option${r===role?' selected':''}>${r}</option>`).join('')}</select>`+
+    `<button type=button class="btn btn-ghost btn-sm" onclick="this.parentNode.remove()">✕</button>`;
+  document.getElementById('pj-members').appendChild(row);
+}
+function pjReset(){
+  PJ_EDIT=''; ['pj-name','pj-path','pj-subdir'].forEach(i=>document.getElementById(i).value='');
+  document.getElementById('pj-name').disabled=false; document.getElementById('pj-merge').checked=false;
+  document.getElementById('pj-type').value='host'; pjType();
+  document.getElementById('pj-members').innerHTML=''; pjAddMember();
+  document.getElementById('pj-head').textContent='New project';
+  document.getElementById('pj-save').textContent='Create project';
+  document.getElementById('pj-cancel').style.display='none';
+}
+function editProject(name){
+  const p=PROJECTS.find(x=>x.name===name); if(!p)return;
+  PJ_EDIT=name;
+  document.getElementById('pj-name').value=p.name; document.getElementById('pj-name').disabled=true;
+  document.getElementById('pj-strategy').value=p.strategy;
+  document.getElementById('pj-type').value=p.source.type; pjType();
+  document.getElementById('pj-path').value=p.source.path||''; document.getElementById('pj-subdir').value=p.source.subdir||'';
+  pjShares(p.source.share||'');
+  document.getElementById('pj-merge').checked=!!p.lead_may_merge;
+  document.getElementById('pj-members').innerHTML='';
+  Object.entries(p.members||{}).forEach(([n,m])=>pjAddMember(n,m.role));
+  document.getElementById('pj-head').textContent='Edit project '+name;
+  document.getElementById('pj-save').textContent='Save';
+  document.getElementById('pj-cancel').style.display='';
+  document.getElementById('pj-head').scrollIntoView({block:'nearest'});
+}
+async function saveProject(){
+  const type=document.getElementById('pj-type').value, members={};
+  document.querySelectorAll('#pj-members .pjrow').forEach(r=>{members[r.querySelector('.pjn').value]={role:r.querySelector('.pjr').value}});
+  const source=type==='katfs'?{type,share:document.getElementById('pj-share').value}
+    :{type,path:document.getElementById('pj-path').value.trim(),subdir:document.getElementById('pj-subdir').value.trim()};
+  const body={name:document.getElementById('pj-name').value.trim(),strategy:document.getElementById('pj-strategy').value,
+    source,members,lead_may_merge:document.getElementById('pj-merge').checked};
+  let d={}; try{d=await (await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  const msg=document.getElementById('pjmsg');
+  if(d.error){msg.textContent=d.error;return}
+  msg.textContent='saved ✓'+(d.warn?' — '+d.warn:'');
+  pjReset(); loadProjects();
+}
+async function delProject(name){
+  if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;
+  await fetch('/api/projects/'+encodeURIComponent(name)+'/delete',{method:'POST'});
+  if(PJ_EDIT===name)pjReset();
+  loadProjects();
+}
 
 async function loadPlaybooks(){
   const sel=document.getElementById('pbinst');
@@ -904,6 +983,9 @@ async function editMounts(name){
     const lbl=(x.name||x.id)+(x.device?' · '+x.device:'')+(x.readonly?' · read-only':'')+' — '+x.id;
     return `<option value="${esc(x.id)}"${x.id===cur?' selected':''}>${escT(lbl)}</option>`}).join('');
   sel.dataset.orig=cur;
+  const pb=document.getElementById('mdlgproj'), mine=(PROJECTS||[]).filter(p=>(p.members||{})[name]);
+  pb.style.display=mine.length?'':'none';
+  pb.innerHTML='<b>Projects</b>: '+mine.map(p=>`<a href="#projects" onclick=mdlgClose()>${escT(p.name)}</a> (${escT(p.members[name].role)}) at <code>/project/${escT(p.name)}</code>`).join(' · ');
   document.getElementById('mdlg').style.display='grid';
 }
 function mdlgClose(){document.getElementById('mdlg').style.display='none'}
@@ -1302,7 +1384,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();loadMissions();loadProjects();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   refreshUsage();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a
@@ -1313,6 +1395,7 @@ window.onload=()=>{
     const t=location.hash.slice(1)||'instances';
     if(t==='tasks'&&!TK_EDIT)loadTasks();
     else if(t==='missions')loadMissions();
+    else if(t==='projects'&&!PJ_EDIT)loadProjects();
     else if(t==='policy')loadPolicy(true);
     else if(t==='resources')loadResources();
     else if(t==='instances')refreshUsage();

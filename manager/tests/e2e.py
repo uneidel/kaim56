@@ -1353,6 +1353,8 @@ class ManagerFunctions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.m = _load("manager_e2e", MANAGER_PATH)
+        # the live projects.json (root-only) must not reach any mount test
+        cls.m._projects.PROJECTS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-noproj-"), "projects.json")
 
     def test_resource_stats_shape(self):
         """resource_stats returns per instance size + live fields; an instance
@@ -3430,6 +3432,133 @@ class ManagerFunctions(unittest.TestCase):
     @staticmethod
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
+
+    # ---- projects: one folder set, instances join with a role ----------------------
+    def _projects_env(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-proj-")
+        os.makedirs(os.path.join(tmp, "repo", "app"))
+        insts = [{"name": n, "index": i, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
+                  "mounts": [], "config": {}} for n, i in (("a", 3), ("b", 4), ("c", 5))]
+        old = (m._browse.BROWSE_ROOTS, m._projects.PROJECTS_FILE, m._instances.load_instances,
+               m._instances.is_running, m._mounts.apply_live, m._memfs.folder)
+        m._browse.BROWSE_ROOTS = (tmp,)
+        m._projects.PROJECTS_FILE = os.path.join(tmp, "projects.json")
+        m._instances.load_instances = lambda: [dict(i) for i in insts]
+        m._instances.is_running = lambda i: False
+        m._memfs.folder = lambda name: ""
+
+        def restore():
+            (m._browse.BROWSE_ROOTS, m._projects.PROJECTS_FILE, m._instances.load_instances,
+             m._instances.is_running, m._mounts.apply_live, m._memfs.folder) = old
+        return tmp, insts, restore
+
+    def test_projects_shared_host_folder_by_role(self):
+        """A shared host project is one folder at /project/<name> in every
+        member: writable for writers only, its own fsid block, a stable slot
+        per membership, and only what the design allows is accepted."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        pj = m._projects
+        try:
+            src = {"type": "host", "path": os.path.join(tmp, "repo"), "subdir": "app"}
+            r = pj.upsert({"name": "Dev", "source": src,
+                           "members": {"a": {"role": "lead"}, "b": {"role": "writer"}, "c": "reader"}})
+            self.assertTrue(r.get("ok"), r)
+            specs = {i["name"]: [s for s in m._mounts.mount_specs(i) if s["guest"] == "/project/dev"] for i in insts}
+            for n, ro, fsid in (("a", True, 8000 + 3 * 16), ("b", False, 8000 + 4 * 16), ("c", True, 8000 + 5 * 16)):
+                self.assertEqual(len(specs[n]), 1, n)
+                sp = specs[n][0]
+                self.assertEqual((sp["ro"], sp["fsid"], sp["host"]), (ro, fsid, os.path.join(tmp, "repo", "app")), n)
+                self.assertTrue(sp["sub"].endswith(f"/.fcmnt/{n}/p-dev"), sp["sub"])   # inside the guest's own subtree
+            self.assertIn(f"/project/dev|{'rw'}", m._mounts.desired_lines(insts[1]))
+            # a second project: the next free slot; re-saving the first keeps its slot
+            self.assertTrue(pj.upsert({"name": "dev2", "source": {"type": "host", "path": tmp},
+                                       "members": {"b": {"role": "writer"}}}).get("ok"))
+            fs = {s["guest"]: s["fsid"] for s in m._mounts.mount_specs(insts[1])}
+            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 64, 8000 + 65))
+            pj.upsert({"name": "dev", "source": src, "members": {"b": {"role": "writer"}}})
+            fs = {s["guest"]: s["fsid"] for s in m._mounts.mount_specs(insts[1])}
+            self.assertEqual((fs["/project/dev"], fs["/project/dev2"]), (8000 + 64, 8000 + 65))
+            self.assertFalse([s for s in m._mounts.mount_specs(insts[0]) if s["guest"].startswith("/project/")])  # a left
+            # refused
+            for body, why in (({"name": "x", "strategy": "worktree", "source": src}, "not built yet"),
+                              ({"name": "x", "strategy": "magic", "source": src}, "strategy must be"),
+                              ({"name": "x", "source": src, "members": {"zz": "writer"}}, "unknown instance"),
+                              ({"name": "x", "source": src, "members": {"a": "boss"}}, "role must be"),
+                              ({"name": "x", "source": src, "members": {"a": "lead", "b": "lead"}}, "one lead"),
+                              ({"name": "x", "source": {**src, "subdir": "../.."}}, "inside the source"),
+                              ({"name": "x", "source": {"type": "host", "path": "/srv"}}, "must be under"),
+                              ({"name": "../x", "source": src}, "name:"),
+                              ({"name": "x", "source": {"type": "nfs"}}, "source.type")):
+                self.assertIn(why, pj.upsert(body).get("error", ""), body)
+            self.assertNotIn("x", [p["name"] for p in pj.load()])
+            self.assertEqual(pj.delete("dev").get("ok"), True)
+            self.assertIn("unknown", pj.delete("dev").get("error", ""))
+        finally:
+            restore()
+
+    def test_projects_apply_live_to_running_members(self):
+        """Joining and leaving re-exports the folders of the RUNNING members,
+        with their specs from before the change (so the old mount is released)."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        calls = []
+        try:
+            m._instances.is_running = lambda i: i["name"] != "c"
+            m._mounts.apply_live = lambda inst, before: calls.append((inst["name"], [s["guest"] for s in before]))
+            src = {"type": "host", "path": tmp}
+            m._projects.upsert({"name": "p", "source": src, "members": {"a": "writer", "c": "reader"}})
+            self.assertEqual(calls, [("a", [])])                          # c is stopped: it mounts at start
+            calls.clear()
+            m._projects.upsert({"name": "p", "source": src, "members": {"b": "writer"}})
+            self.assertEqual(sorted(calls), [("a", ["/project/p"]), ("b", [])])
+            calls.clear()
+            m._projects.delete("p")
+            self.assertEqual(calls, [("b", ["/project/p"])])
+        finally:
+            restore()
+
+    def test_projects_katfs_share_and_write_only_for_writers(self):
+        """A katfs project is the member's share when its config names none;
+        lead and readers may read it but not write; one katfs share per instance."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        old_ip, old_answer = m._guests.instance_by_ip, m._katfs._katfs_answer
+        try:
+            r = m._projects.upsert({"name": "k", "source": {"type": "katfs", "share": "abc123"},
+                                    "members": {"a": "lead", "b": "writer"}})
+            self.assertTrue(r.get("ok"), r)
+            a, b, c = insts
+            self.assertEqual([m._katfs.katfs_share_for(i) for i in insts], ["abc123", "abc123", ""])
+            self.assertEqual([m._katfs.katfs_writable_for(i) for i in insts], [False, True, True])
+            own = {**a, "config": {"KATFS_SHARE": "mine"}}                # its own share wins, as before
+            self.assertEqual((m._katfs.katfs_share_for(own), m._katfs.katfs_writable_for(own)), ("mine", True))
+            self.assertIn("one katfs share", m._projects.upsert(
+                {"name": "k2", "source": {"type": "katfs", "share": "def456"}, "members": {"b": "writer"}}).get("error", ""))
+            self.assertEqual(m._mounts.mount_specs(b), [])                 # katfs is no NFS mount
+            # the guest route: the lead is refused, the writer reaches the node
+            sent = []
+            m._katfs._katfs_answer = lambda h, op, share, path, *a: (sent.append((op, share)), (200, "text/plain", b"ok"))[1]
+            m._guests.instance_by_ip = lambda ip: {"172.30.3.2": a, "172.30.4.2": b}.get(ip)
+            h = self._post_handler("/api/katfs/write?path=x.txt", "172.30.3.2", b"hi"); h._do_POST()
+            self.assertEqual(self._status(h), 403)
+            h = self._post_handler("/api/katfs/write?path=x.txt", "172.30.4.2", b"hi"); h._do_POST()
+            self.assertEqual((self._status(h), sent), (200, [("write", "abc123")]))
+        finally:
+            m._guests.instance_by_ip, m._katfs._katfs_answer = old_ip, old_answer
+            restore()
+
+    def test_projects_admin_routes(self):
+        """The Projects tab's API is admin-only and answers errors as 400/404."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        try:
+            self.assertTrue(m._routes.ROUTER.resolve("GET", "/api/projects")[1])
+            self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects")[1])
+            self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/p/delete")[1])
+        finally:
+            restore()
 
     # ---- checkout: a GitHub repo into an instance's workspace ------------------------
     def test_checkout_parse_repo(self):

@@ -685,6 +685,8 @@ def _rt_katfs_guest_write(h):
     inst = h._guest()
     if inst is None:
         return h._json({"error": "guests only"}, 403)
+    if not _katfs.katfs_writable_for(inst):
+        return h._json({"error": "read-only: this instance is lead/reader of the project"}, 403)
     q = _routes._qs(h)
     path, share = q.get("path", [""])[0], _katfs.katfs_share_for(inst)
     ln = int(h.headers.get("Content-Length", 0) or 0)

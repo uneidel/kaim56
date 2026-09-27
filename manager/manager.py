@@ -20,6 +20,7 @@ else lives in mgr/, one concern per module:
     guestproxy    admin-to-VM relays: chat stream, terminal, katfs, /i/ proxy
     netfw         taps, anti-spoof, host input rules, egress per instance
     mounts        guest squash user, per-instance NFS exports, mount deny list
+    projects      one folder set joined by instances with a role (shared strategy)
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
   the VMs
@@ -79,6 +80,7 @@ from mgr import paths as _paths
 from mgr import personas as _personas        # noqa: F401
 from mgr import plugins as _plugins          # noqa: F401
 from mgr import policy as _policy            # noqa: F401
+from mgr import projects as _projects        # noqa: F401
 from mgr import resources as _resources      # noqa: F401
 from mgr import routes as _routes            # noqa: F401
 from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its routes in ROUTER on import)

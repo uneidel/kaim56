@@ -25,7 +25,8 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
                     "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
-                    "/api/mission-finish", "/api/ha-alias", "/api/ha-control")
+                    "/api/mission-finish", "/api/ha-alias", "/api/ha-control",
+                    "/api/katfs/write", "/api/katfs/delete")   # own share only (katfs_share_for)
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
 
 # GET paths a guest VM must never reach: the admin UI, the web chat, the katfs

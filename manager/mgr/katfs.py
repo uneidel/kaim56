@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+from mgr import projects as _projects
+
 # ---- katfs (P2P folder sharing from the browser) --------------------------
 # The katfs host node runs on the host (port 8790) and holds the iroh
 # connection to the sharing browser tab. Agents reach <gateway>:8790 via
@@ -35,7 +37,17 @@ def katfs_share_for(inst):
     """The share this instance MAY use. Exactly the one from its config —
     never one supplied by the guest. Empty means: the node decides, which it
     can only do while at most one share is active."""
-    return (inst.get("config", {}).get("KATFS_SHARE", "") or "").strip()
+    own = (inst.get("config", {}).get("KATFS_SHARE", "") or "").strip()
+    return own or _projects.katfs_membership(inst["name"])[0]
+
+
+def katfs_writable_for(inst):
+    """May this instance write its share? Its own KATFS_SHARE: yes (the
+    browser decides read-only); a project's share: writers only."""
+    if (inst.get("config", {}).get("KATFS_SHARE", "") or "").strip():
+        return True
+    share, writable = _projects.katfs_membership(inst["name"])
+    return writable or not share
 
 
 def katfs_proxy_fs(op, share, path, recursive=False, body=None):
