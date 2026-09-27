@@ -3242,6 +3242,9 @@ class ManagerFunctions(unittest.TestCase):
                              "BUDGET_TOKENS = 20000000 (applies at once)")
             self.assertIn("whole number", m._instances._set_config_key("e2e-bud", "BUDGET_TOKENS", "2e7"))
             self.assertIn("after stop/start", m._instances._set_config_key("e2e-bud", "AUTO_RESET_MIN", "30"))
+            # the katfs share is read by the manager per file operation -> a running instance gets it at once
+            self.assertEqual(m._instances._set_config_key("e2e-bud", "KATFS_SHARE", "abc123"), "KATFS_SHARE = abc123 (applies at once)")
+            self.assertEqual(m._katfs.katfs_share_for(_readj(os.path.join(tmp, "e2e-bud.json"))), "abc123")
             self.assertEqual(_readj(os.path.join(tmp, "e2e-bud.json"))["config"]["BUDGET_TOKENS"], "20000000")
             pol = m._policy.effective_policy(_readj(os.path.join(tmp, "e2e-bud.json")))
             self.assertEqual((pol["budget"], pol["budget_default"], pol["used_today"]), (20_000_000, False, 5_021_229))

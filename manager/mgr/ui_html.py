@@ -823,10 +823,13 @@ HTML_BOTTOM = """
 <div id=mdlg class=dialog-backdrop style="display:none">
   <div class="dialog blueprint" style="width:min(720px,100%)">
     
-    <div class=dialog-title>Host folders — <span id=mdlgname class=mono style="font-size:16px"></span></div>
-    <div class=dialog-body>Host path → guest path, "ro" = read-only. Saved changes are picked up by the reconciler in the running guest.</div>
+    <div class=dialog-title>Folders — <span id=mdlgname class=mono style="font-size:16px"></span></div>
+    <div class=dialog-body><b>Host folders</b>: host path → guest path, "ro" = read-only. Saved changes are picked up by the reconciler in the running guest.</div>
     <div id=mdlgrows></div>
     <div><button type=button class="btn btn-secondary btn-sm" onclick="addMount(null,'mdlgrows')">+ Folder</button></div>
+    <div class=dialog-body style="margin-top:14px"><b>katfs share</b>: a folder shared from a browser or <code>katfs-share</code> on any machine;
+      the agent reads and writes it with <code>remote_ls</code> / <code>remote_read</code> / <code>remote_write</code>. Applies at once, also while the instance runs.</div>
+    <select class=input id=mdlgkatfs></select>
     <div class=dialog-actions>
       <button class="btn btn-secondary" onclick=mdlgClose()>Cancel</button>
       <button class="btn btn-primary" onclick=saveMounts()>Save</button>

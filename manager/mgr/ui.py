@@ -163,7 +163,7 @@ def render():
                 f" title=\"Audit / activity (tools & URLs called)\""
                 f" onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>")
         btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px\""
-                f" title=\"Host folders\" onclick=\"editMounts('{name}')\">{IC_FILES}</button>")
+                f" title=\"Folders: host folders and katfs share\" onclick=\"editMounts('{name}')\">{IC_FILES}</button>")
         btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px;"
                 f"color:var(--color-neutral-600)\" title=Delete onclick=\"del('{name}')\">{IC_DEL}</button>")
         mtxt = ""

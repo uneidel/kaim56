@@ -896,6 +896,14 @@ async function editMounts(name){
   document.getElementById('mdlgname').textContent=name;
   document.getElementById('mdlgrows').innerHTML='';
   (inst.mounts||[]).forEach(m=>addMount(m,'mdlgrows'));
+  // katfs: the shares online now, plus the instance's current one even if its provider is offline
+  const cur=(inst.config||{}).KATFS_SHARE||'', sel=document.getElementById('mdlgkatfs');
+  const shares=[...(window.KATFS_SHARES||[])];
+  if(cur&&!shares.some(x=>x.id===cur))shares.push({id:cur,name:'(not shared right now)'});
+  sel.innerHTML='<option value="">— none —</option>'+shares.map(x=>{
+    const lbl=(x.name||x.id)+(x.device?' · '+x.device:'')+(x.readonly?' · read-only':'')+' — '+x.id;
+    return `<option value="${esc(x.id)}"${x.id===cur?' selected':''}>${escT(lbl)}</option>`}).join('');
+  sel.dataset.orig=cur;
   document.getElementById('mdlg').style.display='grid';
 }
 function mdlgClose(){document.getElementById('mdlg').style.display='none'}
@@ -903,8 +911,15 @@ async function saveMounts(){
   const mounts=collectMounts(document.getElementById('mdlgrows'));
   const r=await fetch(`/api/instances/${MDLG}/mounts`,{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({mounts})});
-  const d=await r.json(); mdlgClose();
-  alert(d.msg||'ok');location.reload();
+  const d=await r.json(); const msgs=[d.msg||'ok'];
+  const sel=document.getElementById('mdlgkatfs');
+  if(sel.value!==(sel.dataset.orig||'')){
+    const k=await (await fetch(`/api/instances/${MDLG}/config`,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'KATFS_SHARE',value:sel.value})})).json();
+    msgs.push(k.msg||'katfs: ok');
+  }
+  mdlgClose();
+  alert(msgs.join('\\n'));location.reload();
 }
 
 /* — Model switch for existing instances: the same picker as on create

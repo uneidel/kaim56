@@ -346,7 +346,7 @@ def session_info(inst):
 
 # Config keys the MANAGER reads per request (not the VM at start): a change
 # applies at once, no stop/start. Everything else rides the config disk.
-RUNTIME_KEYS = {"BUDGET_TOKENS", "LLM_RATE_MIN", "DELEGATE_TARGETS"}
+RUNTIME_KEYS = {"BUDGET_TOKENS", "LLM_RATE_MIN", "DELEGATE_TARGETS", "KATFS_SHARE"}
 
 
 def _set_config_key(name, key, val):
