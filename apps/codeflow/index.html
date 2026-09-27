@@ -94,7 +94,7 @@ import dagre from 'https://esm.sh/@dagrejs/dagre@1.1.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import hljs from 'https://esm.sh/highlight.js@11.10.0/lib/common';
 import * as L from './lib.js';
-import { createMachine, reposFrom } from './machine.js';
+import { createMachine, reposFrom, localEndpoint, hostOf, LOCAL } from './machine.js';
 
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
@@ -113,6 +113,7 @@ const api = {
   skills: () => J('/api/skills').then(d => Array.isArray(d) ? d : d.skills || []),
   create: body => post('/api/create', body),
   setCfg: (n, key, value) => post(`/api/instances/${enc(n)}/config`, { key, value }),
+  setInternet: (n, on) => post(`/api/instances/${enc(n)}/internet`, { on }),
   restart: n => post(`/api/instances/${enc(n)}/restart`, {}),
   checkout: (n, repo) => post(`/api/checkout/${enc(n)}`, { repo }),
   checkoutState: n => J(`/api/checkout/${enc(n)}`),
@@ -287,9 +288,10 @@ function Chat({ name, draft, setDraft }) {
 /* ---- open-repo dialog ----------------------------------------------------------------- */
 function OpenDialog({ onClose, onOpened }) {
   const [repo, setRepo] = useState(''), [model, setModel] = useState(''), [note, setNote] = useState(''), [busy, setBusy] = useState(false);
-  const [models, setModels] = useState([]);
+  const [models, setModels] = useState([]), [local, setLocal] = useState('');
   useEffect(() => { fetch('/api/openrouter-models?tools=1&relevant=1').then(r => r.json())
-    .then(d => setModels((Array.isArray(d) ? d : d.models || []).filter(m => m.id))).catch(() => {}); }, []);
+    .then(d => setModels((Array.isArray(d) ? d : d.models || []).filter(m => m.id))).catch(() => {});
+    Promise.all([api.settings(), api.instances()]).then(([st, ins]) => setLocal(localEndpoint(st, ins))).catch(() => {}); }, []);
   async function submit(e) {
     e.preventDefault(); if (!repo.trim()) return;
     setBusy(true); setNote('Checking the repository and creating its agent…');
@@ -302,10 +304,13 @@ function OpenDialog({ onClose, onOpened }) {
       <input autoFocus value=${repo} onInput=${e => setRepo(e.target.value)} placeholder="owner/repo or https://github.com/owner/repo" />
       <select value=${model} onChange=${e => setModel(e.target.value)} aria-label="Model">
         <option value="">Default model (${L.DEFAULT_MODEL})</option>
+        ${local && html`<option value=${LOCAL}>Local llama.cpp on ${hostOf(local)} — free, slow, small context</option>`}
         ${models.map(m => html`<option key=${m.id} value=${m.id}>${m.id}${m.pricing ? '  ·  ' + m.pricing : ''}</option>`)}
       </select>
-      <div className="small muted">Pick a strong tool-calling model: a weak one tends to describe what it would do instead of
-        doing it, and the checker then sends it back for another round.</div>
+      <div className="small muted">${model === LOCAL
+        ? html`The local model costs nothing but runs on the Jetson's GPU with a small context window: fine for small
+          repositories, a large one fills the context after a few reads. The agent may reach only that server — no internet.`
+        : 'Pick a strong tool-calling model: a weak one tends to describe what it would do instead of doing it, and the checker then sends it back for another round.'}</div>
       <div className="small muted">Private repositories need a fine-grained GitHub token (read-only “Contents” and “Metadata”)
         as <b>GITHUB_TOKEN</b> in the manager's Secrets tab. A new agent instance is created for the repo (no internet, code
         tools only); it analyses the code and draws the data flow — usually 5 to 20 minutes. Keep this page open meanwhile:

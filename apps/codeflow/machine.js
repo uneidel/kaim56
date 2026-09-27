@@ -31,9 +31,31 @@ export function reposFrom(instances) {
     return { name: i.name, full: c.CODEFLOW_REPO, url: `https://github.com/${c.CODEFLOW_REPO}`, state: c.CODEFLOW_STATE || 'failed',
       task: c.CODEFLOW_TASK || '', round: +c.CODEFLOW_ROUND || 0, commit: c.CODEFLOW_COMMIT || '', error: c.CODEFLOW_ERROR || '',
       stack: (c.CODEFLOW_STACK || '').split(',').filter(Boolean), skills: (c.CODEFLOW_SKILLS || '').split(',').filter(Boolean),
-      model: c.OPENROUTER_MODEL || '', running: !!i.running, lock: c.CODEFLOW_LOCK || '' };
+      model: c.LLAMA_ENDPOINT ? `local · ${hostOf(c.LLAMA_ENDPOINT)}` : c.OPENROUTER_MODEL || '',
+      local: !!c.LLAMA_ENDPOINT, running: !!i.running, lock: c.CODEFLOW_LOCK || '' };
   }).sort((a, b) => a.full.toLowerCase().localeCompare(b.full.toLowerCase()));
 }
+export const LOCAL = 'local';                    // the model choice "the self-hosted llama.cpp"
+export const hostOf = ep => (String(ep).match(/^https?:\/\/([^/:]+)/) || [])[1] || '';
+
+/** The llama.cpp endpoint the platform already uses: Settings, else an existing llama instance. */
+export function localEndpoint(settings, instances) {
+  return String(settings?.LLAMA_ENDPOINT || '').trim() ||
+    ((instances || []).find(i => i.template === 'llama' && i.config?.LLAMA_ENDPOINT)?.config.LLAMA_ENDPOINT || '');
+}
+
+/** Config keys for a model choice. Local: the agent talks to llama.cpp directly (the
+ *  manager's firewall opens exactly that host:port) and EGRESS_ALLOW pins everything
+ *  else shut — the private address is rejected before the allowlist, so only the
+ *  endpoint and DNS stay open. Cloud: through the key proxy, no internet at all. */
+export function modelConfig(model, endpoint, proxy) {
+  if (model === LOCAL) {
+    if (!endpoint) throw new Error('no local model is set up (no LLAMA_ENDPOINT in Settings or on a llama instance)');
+    return { cfg: { LLAMA_ENDPOINT: endpoint, LLAMA_MODEL: 'local-model', EGRESS_ALLOW: hostOf(endpoint), OPENROUTER_MODEL: '' }, internet: true };
+  }
+  return { cfg: { LLAMA_ENDPOINT: '', LLAMA_MODEL: '', EGRESS_ALLOW: '', OPENROUTER_MODEL: model || L.DEFAULT_MODEL }, internet: !proxy };
+}
+
 const taskIdOf = r => ((r && r.msg) || '').match(/task (\w+) created/)?.[1] || '';
 
 /** A round that ended on an error another round would only repeat — the per-instance
@@ -75,21 +97,28 @@ export function createMachine(api, { checkerSource, fileLines, sleep = ms => new
     if (!co.ok) { await setCfgs(name, { CODEFLOW_ERROR: co.error || 'checkout failed', CODEFLOW_STATE: 'failed' }); throw new Error(co.error || 'checkout failed'); }
   }
 
-  /** Open (or re-open) a repo: instance through /api/create, files through the checkout. */
+  /** Open (or re-open) a repo: instance through /api/create, files through the checkout.
+   *  `model`: an OpenRouter id, LOCAL, or '' (default — keeps an existing repo's choice). */
   async function openRepo(text, model) {
     const { owner, repo, full } = L.parseRepo(text);
     const [insts, settings, personas] = await Promise.all([api.instances(), api.settings(), api.personas()]);
     const name = L.instanceName(owner, repo, insts);
-    if (!insts.some(i => i.name === name)) {
+    const proxy = settings.LLM_KEY_PROXY === '1';
+    const existing = insts.find(i => i.name === name);
+    if (!existing) {
       const persona = personas.find(p => p.name === L.PERSONA)?.prompt || '';
-      const r = await api.create({ name, template: 'openrouter', mounts: [], mcps: [],
-        internet: settings.LLM_KEY_PROXY !== '1',            // with the key proxy the agent needs no internet at all
-        config: { TRANSPORT: 'web', AGENT_SYSTEM: L.frame(persona, full), AGENT_TOOLS: L.TOOLS.join(','),
-          OPENROUTER_MODEL: model || L.DEFAULT_MODEL, SKILL_LEARN: '0', AUTO_RESET_MIN: '0',
-          CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning' } });
+      const mc = modelConfig(model, localEndpoint(settings, insts), proxy);
+      const cfg = { TRANSPORT: 'web', AGENT_SYSTEM: L.frame(persona, full), AGENT_TOOLS: L.TOOLS.join(','),
+        SKILL_LEARN: '0', AUTO_RESET_MIN: '0', CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning' };
+      for (const [k, v] of Object.entries(mc.cfg)) if (v) cfg[k] = v;
+      const r = await api.create({ name, template: 'openrouter', mounts: [], mcps: [], internet: mc.internet, config: cfg });
       if (!/created/.test(r.msg || '')) throw new Error(r.msg || 'could not create the instance');
     } else {
-      if (model) await api.setCfg(name, 'OPENROUTER_MODEL', model);
+      if (model) {                                  // switching model (or local <-> cloud) on an existing repo
+        const mc = modelConfig(model, localEndpoint(settings, insts), proxy);
+        await setCfgs(name, mc.cfg);
+        if (!!existing.internet !== mc.internet) await api.setInternet(name, mc.internet);
+      }
       await setCfgs(name, { CODEFLOW_REPO: full, CODEFLOW_ERROR: '', CODEFLOW_STATE: 'cloning' });
     }
     await startCheckout(name, full);

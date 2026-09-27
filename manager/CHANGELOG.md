@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-27
 
+- Code flow: the local llama.cpp (Jetson) as a model choice — config keys only (LLAMA_ENDPOINT from Settings or the existing llama instance, EGRESS_ALLOW pinned to it, so the agent reaches that server and nothing else); switching an existing repo back to a cloud model undoes it.
 - Policy tab: a daily token budget per instance (BUDGET_TOKENS, in M tokens, 0 = no limit, back to default) with today's usage bar; the key proxy reads it per request, so a change applies at once — the config route now says so for runtime keys (BUDGET_TOKENS, LLM_RATE_MIN, DELEGATE_TARGETS); notification links open any tab by name.
 - Code flow: several open pages no longer race (a lock in CODEFLOW_LOCK, task/round written before the state — a second tab once declared a repo incomplete mid-round); a round that ends on the token budget or an access error stops with that message instead of burning the remaining rounds; the agent writes a first graph early and reads code in small slices (a run exhausted the 5M daily budget on context bloat); the checker is ASCII-only and no longer compared byte by byte (`apps/codeflow/machine.js`).
 

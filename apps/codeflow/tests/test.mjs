@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateTree } from './flowcheck.js';
 import * as L from './lib.js';
-import { createMachine, reposFrom, LOCK_TTL, stopReason } from './machine.js';
+import { createMachine, reposFrom, LOCK_TTL, stopReason, modelConfig, localEndpoint, LOCAL } from './machine.js';
 
 const FX = JSON.parse(readFileSync(new URL('./fixtures.json', import.meta.url)));
 const PY = JSON.parse(readFileSync(new URL('./py-results.json', import.meta.url)));
@@ -156,5 +156,29 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
   v.tasks[0].result = "⚠️ OpenRouter error: TimeoutError('timed out')";
   await createMachine(v.api, v.opts('A')).tick(v.repo());
   assert.equal(v.cfg.CODEFLOW_ROUND, '2'); assert.equal(v.added.length, 1);
+}
+{ // local model: the Jetson's llama.cpp, reached directly, everything else shut; switching back to cloud undoes it
+  const EP = 'http://192.168.56.247:8080/';
+  assert.equal(localEndpoint({}, [{ template: 'llama', config: { LLAMA_ENDPOINT: EP } }]), EP);
+  assert.equal(localEndpoint({ LLAMA_ENDPOINT: 'http://10.0.0.5:8080' }, []), 'http://10.0.0.5:8080');
+  assert.deepEqual(modelConfig(LOCAL, EP, true), { cfg: { LLAMA_ENDPOINT: EP, LLAMA_MODEL: 'local-model', EGRESS_ALLOW: '192.168.56.247', OPENROUTER_MODEL: '' }, internet: true });
+  assert.deepEqual(modelConfig('qwen/qwen3-coder', EP, true), { cfg: { LLAMA_ENDPOINT: '', LLAMA_MODEL: '', EGRESS_ALLOW: '', OPENROUTER_MODEL: 'qwen/qwen3-coder' }, internet: false });
+  assert.equal(modelConfig('', EP, true).cfg.OPENROUTER_MODEL, L.DEFAULT_MODEL);
+  assert.throws(() => modelConfig(LOCAL, '', true), /no local model/);
+  const created = [], net = [];
+  const cfg = {};
+  const insts = [{ name: 'uncensored', template: 'llama', config: { LLAMA_ENDPOINT: EP } }];
+  const api = { instances: async () => insts, settings: async () => ({ LLM_KEY_PROXY: '1' }), personas: async () => [{ name: 'code-explorer', prompt: 'P' }],
+    create: async b => { created.push(b); insts.push({ name: b.name, internet: b.internet, config: { ...b.config } }); return { msg: `instance '${b.name}' created` }; },
+    setCfg: async (n, k, v) => { cfg[k] = v; }, setInternet: async (n, on) => net.push(on), checkout: async () => ({ ok: true }) };
+  const Mx = createMachine(api, { tab: 'A', settle: 1, checkerSource: async () => '', fileLines: async () => null });
+  assert.equal(await Mx.openRepo('acme/shop', LOCAL), 'repo-shop');
+  const c = created[0];
+  assert.equal(c.template, 'openrouter'); assert.equal(c.internet, true);
+  assert.equal(c.config.LLAMA_ENDPOINT, EP); assert.equal(c.config.EGRESS_ALLOW, '192.168.56.247'); assert.ok(!('OPENROUTER_MODEL' in c.config));
+  assert.equal(reposFrom(insts).find(r => r.name === 'repo-shop').model, 'local · 192.168.56.247');
+  await Mx.openRepo('acme/shop', 'qwen/qwen3-coder');                       // back to the cloud
+  assert.deepEqual([cfg.LLAMA_ENDPOINT, cfg.EGRESS_ALLOW, cfg.OPENROUTER_MODEL], ['', '', 'qwen/qwen3-coder']); assert.deepEqual(net, [false]);
+  assert.equal(created.length, 1);
 }
 console.log(`OK: ${n} checker cases in parity with validate_flow.py, lib.js and machine.js checks passed`);
