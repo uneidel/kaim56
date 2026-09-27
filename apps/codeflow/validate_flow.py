@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# kAIm56 — self-hosted Firecracker AI-agent platform
+# kAIm56 - self-hosted Firecracker AI-agent platform
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
@@ -8,12 +8,12 @@
 The Code flow app (apps/codeflow) hands this file to the repo's agent with the
 analysis task; the agent writes it into its workspace and runs it. The app
 applies the same rules in the browser (flowcheck.js) to decide whether a round
-is done — keep both in step (tests/ runs them on the same fixtures).
+is done - keep both in step (tests/ runs them on the same fixtures).
 
 The workspace holds the checkout in src/ and the graphs the agent writes in
 flow/: flow/overview.json (how data moves between the components) and
 flow/<id>.json for every overview node with "detail": "<id>" (the same shape,
-one level down, at function level). Nodes carry no code themselves — only
+one level down, at function level). Nodes carry no code themselves - only
 references (file relative to src/, 1-based inclusive lines); the app cuts the
 snippets from the checkout, so what is shown is the real code, never the
 model's paraphrase of it.
@@ -28,7 +28,7 @@ Every code reference names its "symbol" (the function, class, key or table
 as written in the code) and that name must occur in the referenced lines.
 That is the grounding check: a model that knows a famous repository draws a
 plausible graph from memory with line ranges that exist but hold something
-else — the first real run did exactly that. The symbol rule forces it to read.
+else - the first real run did exactly that. The symbol rule forces it to read.
 
     python3 validate_flow.py                    check flow/ (exit 0 = OK)
     python3 validate_flow.py map                the files in src/ with line counts
@@ -81,7 +81,7 @@ def validate_graph(g, root, level="overview", cache=None):
     if not isinstance(edges, list):
         return ["'edges' must be a list"]
     if len(nodes) > MAX_NODES[level]:
-        err.append(f"{len(nodes)} nodes — at most {MAX_NODES[level]} at the {level} level; group the minor steps")
+        err.append(f"{len(nodes)} nodes - at most {MAX_NODES[level]} at the {level} level; group the minor steps")
     if not str(g.get("title") or "").strip():
         err.append("'title' is missing")
     src = os.path.realpath(os.path.join(root, "src"))
@@ -116,7 +116,7 @@ def validate_graph(g, root, level="overview", cache=None):
                 err.append(f"{where}: code file '{f}' must be a path relative to src/"); continue
             p = os.path.realpath(os.path.join(src, f))
             if not p.startswith(src + os.sep) or not os.path.isfile(p):
-                hint = " — paths are relative to src/, drop the 'src/' prefix" if f.startswith("src/") else ""
+                hint = " - paths are relative to src/, drop the 'src/' prefix" if f.startswith("src/") else ""
                 err.append(f"{where}: code file '{f}' does not exist in src/{hint}"); continue
             if not (isinstance(s, int) and isinstance(e, int) and not isinstance(s, bool) and not isinstance(e, bool)):
                 err.append(f"{where}: {f}: 'start'/'end' must be integers"); continue
@@ -125,13 +125,13 @@ def validate_graph(g, root, level="overview", cache=None):
             if not (1 <= s <= e <= n_lines):
                 err.append(f"{where}: {f}:{s}-{e} is outside the file (1-{n_lines})"); continue
             if e - s + 1 > MAX_SPAN:
-                err.append(f"{where}: {f}:{s}-{e} spans {e - s + 1} lines — at most {MAX_SPAN}; point at the part that moves the data")
+                err.append(f"{where}: {f}:{s}-{e} spans {e - s + 1} lines - at most {MAX_SPAN}; point at the part that moves the data")
             sym = str(r.get("symbol") or "").strip()
             tok = _symbol_token(sym)
             if not tok:
-                err.append(f"{where}: {f}:{s}-{e} needs a 'symbol' — the function/class/key those lines define or use, as written in the code")
+                err.append(f"{where}: {f}:{s}-{e} needs a 'symbol' - the function/class/key those lines define or use, as written in the code")
             elif not re.search(r"(?<![A-Za-z0-9_$])" + re.escape(tok) + r"(?![A-Za-z0-9_$])", "\n".join(lines[s - 1:e])):
-                err.append(f"{where}: symbol '{sym}' does not occur in {f}:{s}-{e} — read the file "
+                err.append(f"{where}: symbol '{sym}' does not occur in {f}:{s}-{e} - read the file "
                            f"(python3 validate_flow.py find {tok}) and point at the real lines")
         d = n.get("detail")
         if d is not None:
@@ -157,7 +157,7 @@ def validate_graph(g, root, level="overview", cache=None):
         seen.add((s, t, data)); linked.update((s, t))
     if len(ids) > 1:
         for nid in sorted(ids - linked):
-            err.append(f"node '{nid}': not connected by any edge — the graph follows the data, so every node is on a path")
+            err.append(f"node '{nid}': not connected by any edge - the graph follows the data, so every node is on a path")
     return err
 
 
@@ -233,7 +233,7 @@ def repo_map(root, limit=500):
             n = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
             rows.append(f"{os.path.relpath(p, src)}  ({n})")
     if total > len(rows):
-        rows.append(f"… {total - len(rows)} more (binaries, large files or over the limit)")
+        rows.append(f"... {total - len(rows)} more (binaries, large files or over the limit)")
     return rows
 
 

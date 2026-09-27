@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-27
+
+- Code flow: several open pages no longer race (a lock in CODEFLOW_LOCK, task/round written before the state — a second tab once declared a repo incomplete mid-round); a round that ends on the token budget or an access error stops with that message instead of burning the remaining rounds; the agent writes a first graph early and reads code in small slices (a run exhausted the 5M daily budget on context bloat); the checker is ASCII-only and no longer compared byte by byte (`apps/codeflow/machine.js`).
+
 ## 2026-09-26
 
 - Code flow app (`apps/codeflow`): a GitHub repo as its own agent that draws its data flow (React Flow, real code per node), built on the existing API — state in `CODEFLOW_*` instance config keys, rounds judged in the browser by `flowcheck.js` (twin of the agent's `validate_flow.py`, symbol-in-range grounding check). The only manager piece is the generic `mgr/checkout.py` (`POST/GET /api/checkout/<instance>`: guest-user clone via /var/tmp staging, no .git in the VM, token only as env header); `/api/workspace` accepts repo-style path names.

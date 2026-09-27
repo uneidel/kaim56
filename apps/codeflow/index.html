@@ -93,8 +93,8 @@ import { ReactFlow, Background, Controls, MiniMap, MarkerType, Handle, Position,
 import dagre from 'https://esm.sh/@dagrejs/dagre@1.1.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import hljs from 'https://esm.sh/highlight.js@11.10.0/lib/common';
-import { validateTree } from './flowcheck.js';
 import * as L from './lib.js';
+import { createMachine, reposFrom } from './machine.js';
 
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
@@ -135,103 +135,8 @@ function fileLines(name, path, commit = '') {
 let CHECKER = null;               // the Python checker the agent gets, fetched once from this app
 const checkerSource = () => CHECKER || (CHECKER = fetch('./validate_flow.py', { cache: 'no-store' }).then(r => r.text()).then(t => t.trimEnd()));
 
-async function setCfgs(name, kv) { for (const [k, v] of Object.entries(kv)) await api.setCfg(name, k, L.oneLine(v)); }
-const taskIdOf = r => ((r && r.msg) || '').match(/task (\w+) created/)?.[1] || '';
-function reposFrom(instances) {
-  return (instances || []).filter(i => i.config?.CODEFLOW_REPO).map(i => {
-    const c = i.config;
-    return { name: i.name, full: c.CODEFLOW_REPO, url: `https://github.com/${c.CODEFLOW_REPO}`, state: c.CODEFLOW_STATE || 'failed',
-      task: c.CODEFLOW_TASK || '', round: +c.CODEFLOW_ROUND || 0, commit: c.CODEFLOW_COMMIT || '', error: c.CODEFLOW_ERROR || '',
-      stack: (c.CODEFLOW_STACK || '').split(',').filter(Boolean), skills: (c.CODEFLOW_SKILLS || '').split(',').filter(Boolean),
-      model: c.OPENROUTER_MODEL || '', running: !!i.running };
-  }).sort((a, b) => a.full.toLowerCase().localeCompare(b.full.toLowerCase()));
-}
+const M = createMachine(api, { checkerSource, fileLines });   // the per-repo state machine (machine.js)
 
-/** The app's judgement of a round: the JS twin of validate_flow.py on the workspace. */
-async function checkFlow(name, commit) {
-  return validateTree(f => api.flow(name, f.replace(/\.json$/, '')), f => fileLines(name, f, commit));
-}
-
-/** Open (or re-open) a repo: instance through /api/create, files through the checkout. */
-async function openRepo(text, model) {
-  const { owner, repo, full } = L.parseRepo(text);
-  const [insts, settings, personas] = await Promise.all([api.instances(), api.settings(), api.personas()]);
-  const name = L.instanceName(owner, repo, insts);
-  if (!insts.some(i => i.name === name)) {
-    const persona = personas.find(p => p.name === L.PERSONA)?.prompt || '';
-    const r = await api.create({ name, template: 'openrouter', mounts: [], mcps: [],
-      internet: settings.LLM_KEY_PROXY !== '1',            // with the key proxy the agent needs no internet at all
-      config: { TRANSPORT: 'web', AGENT_SYSTEM: L.frame(persona, full), AGENT_TOOLS: L.TOOLS.join(','),
-        OPENROUTER_MODEL: model || L.DEFAULT_MODEL, SKILL_LEARN: '0', AUTO_RESET_MIN: '0',
-        CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning' } });
-    if (!/created/.test(r.msg || '')) throw new Error(r.msg || 'could not create the instance');
-  } else {
-    if (model) await api.setCfg(name, 'OPENROUTER_MODEL', model);
-    await setCfgs(name, { CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning', CODEFLOW_ERROR: '' });
-  }
-  await startCheckout(name, full);
-  return name;
-}
-async function startCheckout(name, full) {
-  const co = await api.checkout(name, full);
-  if (!co.ok) { await setCfgs(name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: co.error || 'checkout failed' }); throw new Error(co.error || 'checkout failed'); }
-}
-
-/** After the checkout: stack, skills as a playbook rule, a clean conversation, the first round. */
-async function prepare(repo, commit) {
-  const n = repo.name;
-  const files = await L.listFiles(p => api.ls(n, 'src' + (p ? '/' + p : '')));
-  const stack = await L.detectStack(files, f => api.text(n, 'src/' + f));
-  const skills = L.pickSkills(stack, await api.skills());
-  for (const p of await api.playbooks(n)) if (String(p.text || '').startsWith('Repository stack:')) await api.pbRemove(n, p.id);
-  if (stack.length) await api.pbAdd(n, `Repository stack: ${stack.join(', ')}.` + (skills.length
-    ? ` Relevant skills in the library: ${skills.join(', ')} — load one with load_skill when a question touches its area.` : ''));
-  if (repo.running) await api.restart(n);        // a changed model applies on start
-  await api.say(n, '/reset');                    // no reading back its own earlier analysis
-  const id = taskIdOf(await api.addTask(n, L.analysisPrompt(repo.full, commit, stack, skills, await checkerSource())));
-  if (!id) throw new Error('could not queue the analysis task');
-  await setCfgs(n, { CODEFLOW_STATE: 'analysing', CODEFLOW_TASK: id, CODEFLOW_ROUND: '1', CODEFLOW_COMMIT: commit,
-    CODEFLOW_STACK: stack.join(','), CODEFLOW_SKILLS: skills.join(','), CODEFLOW_ERROR: '' });
-}
-
-/** One step of a repo's state machine; runs on every poll while the app is open.
- *  cloning -> (checkout done) prepare -> analysing -> (task over) check -> ready |
- *  follow-up round | incomplete. The checker decides, not the model's claim. */
-const INFLIGHT = new Set();
-async function tick(repo, tasks) {
-  if (INFLIGHT.has(repo.name) || !['cloning', 'analysing'].includes(repo.state)) return false;
-  INFLIGHT.add(repo.name);
-  try {
-    if (repo.state === 'cloning') {
-      const co = await api.checkoutState(repo.name);
-      if (co.status === 'running') return false;
-      if (co.status !== 'done') {
-        await setCfgs(repo.name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: co.error || 'the checkout was interrupted (manager restart?) — re-analyse' });
-        return true;
-      }
-      await prepare(repo, co.commit);
-      return true;
-    }
-    const t = tasks.find(x => x.id === repo.task);
-    if (t && ['pending', 'running'].includes(t.status)) return false;
-    const res = await checkFlow(repo.name, repo.commit);
-    if (res.ok) { await setCfgs(repo.name, { CODEFLOW_STATE: 'ready', CODEFLOW_ERROR: '' }); return true; }
-    if (repo.round >= L.MAX_ROUNDS) {
-      await setCfgs(repo.name, { CODEFLOW_STATE: 'incomplete', CODEFLOW_ERROR: `${res.errors.length} problem(s) left after ${repo.round} rounds` });
-      return true;
-    }
-    const checker = await checkerSource();
-    const local = await api.text(repo.name, 'validate_flow.py');
-    const errors = [...res.errors];
-    if (local != null && local.trimEnd() !== checker) errors.unshift('validate_flow.py in the workspace differs from the original — write it again, exactly as given below');
-    const id = taskIdOf(await api.addTask(repo.name, L.followupPrompt(repo.full, repo.commit, repo.stack, repo.skills, checker, errors, repo.round + 1)));
-    if (id) await setCfgs(repo.name, { CODEFLOW_TASK: id, CODEFLOW_ROUND: String(repo.round + 1) });
-    return true;
-  } catch (e) {
-    await setCfgs(repo.name, { CODEFLOW_STATE: 'failed', CODEFLOW_ERROR: String(e.message || e) }).catch(() => {});
-    return true;
-  } finally { INFLIGHT.delete(repo.name); }
-}
 const fmtAgo = ts => { if (!ts) return ''; const m = Math.round((Date.now() / 1000 - ts) / 60);
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const LANG = { py: 'python', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript',
@@ -388,7 +293,7 @@ function OpenDialog({ onClose, onOpened }) {
   async function submit(e) {
     e.preventDefault(); if (!repo.trim()) return;
     setBusy(true); setNote('Checking the repository and creating its agent…');
-    try { onOpened(await openRepo(repo.trim(), model)); }
+    try { onOpened(await M.openRepo(repo.trim(), model)); }
     catch (err) { setNote('⚠️ ' + (err.message || err)); setBusy(false); }
   }
   return html`<div className="dlg" onClick=${e => { if (e.target.className === 'dlg') onClose(); }}>
@@ -432,7 +337,7 @@ function App() {
       const list = reposFrom(insts), tlist = Array.isArray(ts) ? ts : ts.tasks || [];
       setRepos(list); setTasks(tlist);
       let moved = false;
-      for (const r of list) moved = (await tick(r, tlist)) || moved;     // the state machine runs here
+      for (const r of list) moved = (await M.tick(r)) || moved;          // the state machine runs here
       if (moved) setRepos(reposFrom(await api.instances()));
     } catch (e) { setRepos(r => r || []); }
   }, []);
@@ -463,7 +368,7 @@ function App() {
   }, [sel, cur, stamp, dir]);
   useEffect(() => {                                            // what the checker still finds, for the banner
     if (!repo || repo.state !== 'incomplete') { setProblems([]); return; }
-    let on = true; checkFlow(repo.name, repo.commit).then(r => on && setProblems(r.errors)); return () => { on = false; };
+    let on = true; M.checkFlow(repo.name, repo.commit).then(r => on && setProblems(r.errors)); return () => { on = false; };
   }, [sel, stamp]);
 
   const drill = id => { setPath(p => [...p.filter(x => x !== id), id]); setNode(null); };
@@ -472,7 +377,7 @@ function App() {
     setTab('chat'); };
   async function reanalyse() {
     if (!repo || !confirm(`Pull the latest ${repo.full} and analyse it again? The current graph is replaced.`)) return;
-    try { await setCfgs(repo.name, { CODEFLOW_STATE: 'cloning', CODEFLOW_ERROR: '' }); await startCheckout(repo.name, repo.full); }
+    try { await M.reanalyse(repo); }
     catch (e) { alert(e.message || e); }
     poll();
   }

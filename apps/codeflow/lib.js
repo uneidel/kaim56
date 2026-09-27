@@ -119,9 +119,14 @@ function spec(full, commit, stack, skills, checker) {
   const sk = skills.length ? ` Skills for this stack, if a question needs them (load_skill): ${skills.join(', ')}.` : '';
   return `Analyse the repository ${full} (commit ${String(commit || '').slice(0, 10)}) and draw how its DATA flows.\n\n` +
     `The checkout is in ./src (read it, never modify it). Detected stack: ${stack.join(', ') || 'unknown'}.${sk}\n\n` +
-    'FIRST: write the checker with write_file to ./validate_flow.py — EXACTLY the text between the markers ' +
-    '(if the file already exists with this content, keep it):\n<<<VALIDATE_FLOW_PY\n' + checker + '\nVALIDATE_FLOW_PY\n' +
+    'FIRST: if ./validate_flow.py does not exist yet, write it with write_file — the text between the markers. ' +
+    'It is a helper for you; do not spend time comparing it byte by byte:\n<<<VALIDATE_FLOW_PY\n' + checker + '\nVALIDATE_FLOW_PY\n' +
     'Then get the shape of the repo: `python3 validate_flow.py map`.\n\n' +
+    'WORK IN SMALL READS: your context is limited and every tool output stays in it. Look at code with ' +
+    '`python3 validate_flow.py show FILE START END` (at most 80 lines at a time) and `find NAME`; never print whole ' +
+    'large files, lock files, data or fixture folders.\n\n' +
+    'WRITE EARLY: after about 20 tool calls write a first flow/overview.json and run the checker — then improve it. ' +
+    'A round can be cut off (time or model limits); a graph written early survives that, one planned at the end does not.\n\n' +
     'GOAL: a data-flow graph a developer understands in a minute. Follow the DATA, not the call tree: where it ' +
     'enters (HTTP handlers, CLI args, files, queues, UI events, schedulers), how it is validated and transformed, ' +
     "where it is stored, where it leaves (responses, files, external APIs). Edges name WHAT flows ('order JSON', " +

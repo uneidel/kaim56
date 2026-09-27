@@ -1,10 +1,10 @@
-// kAIm56 — self-hosted Firecracker AI-agent platform
+// kAIm56 - self-hosted Firecracker AI-agent platform
 // Copyright (C) 2026 the kAIm56 authors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The graph checker of validate_flow.py, in the browser: the app decides with
 // it whether an analysis round is done (the agent runs the Python twin in its
-// VM). Same rules, same messages — tests/ runs both on the same fixtures.
+// VM). Same rules, same messages - tests/ runs both on the same fixtures.
 //
 //   readJSON(name)  -> Promise<object | null | {__invalid: message}>   flow/<name>
 //   readLines(file) -> Promise<string[] | null>                         src/<file>
@@ -28,7 +28,7 @@ export async function validateGraph(g, level, readLines, hasDetail) {
   if (!Array.isArray(nodes) || !nodes.length) return ["'nodes' must be a non-empty list"];
   if (!Array.isArray(edges)) return ["'edges' must be a list"];
   if (nodes.length > MAX_NODES[level])
-    err.push(`${nodes.length} nodes — at most ${MAX_NODES[level]} at the ${level} level; group the minor steps`);
+    err.push(`${nodes.length} nodes - at most ${MAX_NODES[level]} at the ${level} level; group the minor steps`);
   if (!String(g.title || '').trim()) err.push("'title' is missing");
   const ids = new Set();
   for (let i = 0; i < nodes.length; i++) {
@@ -53,16 +53,16 @@ export async function validateGraph(g, level, readLines, hasDetail) {
       if (!f || f.startsWith('/') || f.split('/').includes('..')) { err.push(`${where}: code file '${f}' must be a path relative to src/`); continue; }
       const lines = await readLines(f);
       if (!lines) {
-        const hint = f.startsWith('src/') ? " — paths are relative to src/, drop the 'src/' prefix" : '';
+        const hint = f.startsWith('src/') ? " - paths are relative to src/, drop the 'src/' prefix" : '';
         err.push(`${where}: code file '${f}' does not exist in src/${hint}`); continue;
       }
       if (!isInt(s) || !isInt(e)) { err.push(`${where}: ${f}: 'start'/'end' must be integers`); continue; }
       if (!(1 <= s && s <= e && e <= lines.length)) { err.push(`${where}: ${f}:${s}-${e} is outside the file (1-${lines.length})`); continue; }
-      if (e - s + 1 > MAX_SPAN) err.push(`${where}: ${f}:${s}-${e} spans ${e - s + 1} lines — at most ${MAX_SPAN}; point at the part that moves the data`);
+      if (e - s + 1 > MAX_SPAN) err.push(`${where}: ${f}:${s}-${e} spans ${e - s + 1} lines - at most ${MAX_SPAN}; point at the part that moves the data`);
       const sym = String(r.symbol || '').trim(), tok = symbolToken(sym);
-      if (!tok) err.push(`${where}: ${f}:${s}-${e} needs a 'symbol' — the function/class/key those lines define or use, as written in the code`);
+      if (!tok) err.push(`${where}: ${f}:${s}-${e} needs a 'symbol' - the function/class/key those lines define or use, as written in the code`);
       else if (!new RegExp(`(?<![A-Za-z0-9_$])${escRe(tok)}(?![A-Za-z0-9_$])`).test(lines.slice(s - 1, e).join('\n')))
-        err.push(`${where}: symbol '${sym}' does not occur in ${f}:${s}-${e} — read the file (python3 validate_flow.py find ${tok}) and point at the real lines`);
+        err.push(`${where}: symbol '${sym}' does not occur in ${f}:${s}-${e} - read the file (python3 validate_flow.py find ${tok}) and point at the real lines`);
     }
     const d = n.detail;
     if (d !== undefined && d !== null) {
@@ -84,7 +84,7 @@ export async function validateGraph(g, level, readLines, hasDetail) {
   });
   if (ids.size > 1)
     [...ids].filter(x => !linked.has(x)).sort()
-      .forEach(nid => err.push(`node '${nid}': not connected by any edge — the graph follows the data, so every node is on a path`));
+      .forEach(nid => err.push(`node '${nid}': not connected by any edge - the graph follows the data, so every node is on a path`));
   return err;
 }
 
