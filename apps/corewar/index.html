@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Core War</title>
+<style>
+  :root {
+    --bg: #0a0d12;
+    --panel: #10151d;
+    --line: #202a3a;
+    --text: #cbd6e4;
+    --dim: #64738a;
+    --amber: #ffb454;
+    --ice: #58c1ff;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 16px;
+    display: flex;
+    justify-content: center;
+  }
+  .app { width: 100%; max-width: 860px; }
+
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 4px 16px;
+    padding-bottom: 10px; margin-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 {
+    font-size: 17px; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase;
+  }
+  h1 .w1 { color: var(--amber); }
+  h1 .w2 { color: var(--ice); }
+  .spec { color: var(--dim); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+
+  /* --- core map: the signature element ---------------------------------- */
+  .coremap { position: relative; }
+  .ruler {
+    display: flex; justify-content: space-between;
+    color: var(--dim); font-size: 10px; letter-spacing: 0.08em;
+    padding: 0 1px 3px;
+  }
+  canvas#core {
+    display: block; width: 100%; aspect-ratio: 5 / 4;
+    image-rendering: pixelated;
+    background: #0d1118;
+    border: 1px solid var(--line);
+  }
+  .legend {
+    display: flex; gap: 18px; flex-wrap: wrap;
+    color: var(--dim); font-size: 11px; padding: 6px 1px 0;
+  }
+  .chip { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; }
+  .chip.a { background: var(--amber); }
+  .chip.b { background: var(--ice); }
+  .chip.p { background: #f2f6fc; }
+
+  /* --- transport --------------------------------------------------------- */
+  .transport {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 14px 0 6px;
+  }
+  button {
+    font: inherit; color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 7px 16px; cursor: pointer;
+    letter-spacing: 0.04em;
+  }
+  button:hover { border-color: var(--dim); }
+  button:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
+  button.primary { border-color: var(--amber); color: var(--amber); }
+  .speed { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; margin-left: auto; }
+  input[type=range] { accent-color: var(--amber); width: 130px; }
+  .rounds { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  .rounds input {
+    font: inherit; width: 52px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); padding: 5px 6px;
+  }
+  .scoreline b.c1 { color: var(--amber); }
+  .scoreline b.c2 { color: var(--ice); }
+
+  .status {
+    display: flex; gap: 22px; flex-wrap: wrap;
+    color: var(--dim); font-size: 12px; margin-bottom: 6px;
+  }
+  .status b { color: var(--text); font-weight: 600; }
+  .status .p1 b { color: var(--amber); }
+  .status .p2 b { color: var(--ice); }
+
+  .banner {
+    min-height: 22px; font-size: 13px; margin-bottom: 12px;
+    color: var(--text);
+  }
+  .banner.err { color: #ff7a7a; }
+
+  /* --- warrior editors ---------------------------------------------------- */
+  .warriors { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 700px) { .warriors { grid-template-columns: 1fr 1fr; } }
+  .warrior {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-top: 2px solid var(--amber);
+    padding: 12px;
+  }
+  .warrior.two { border-top-color: var(--ice); }
+  .warrior .head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+  }
+  .warrior .head label {
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  .warrior .head label { color: var(--amber); }
+  .warrior.two .head label { color: var(--ice); }
+  select {
+    font: inherit; font-size: 12px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line); padding: 3px 6px;
+  }
+  textarea {
+    width: 100%; min-height: 170px; resize: vertical;
+    font: inherit; font-size: 13px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--line);
+    padding: 8px; tab-size: 6; white-space: pre;
+  }
+  textarea:focus-visible { outline: 1px solid var(--dim); }
+
+  footer { color: var(--dim); font-size: 11px; margin-top: 16px; line-height: 1.7; }
+  footer code { color: var(--text); }
+
+  /* --- kAIm56 additions: tabs, AI players, changes ------------------------- */
+  nav.tabs { display: flex; gap: 2px; margin: -4px 0 14px; border-bottom: 1px solid var(--line); }
+  nav.tabs button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 6px 14px; color: var(--dim); }
+  nav.tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--amber); }
+  nav.tabs .count { color: var(--amber); margin-left: 6px; }
+  section[hidden] { display: none; }
+  .ai { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 11px; color: var(--dim); }
+  .ai select { flex: 1; min-width: 0; }
+  .ai .left { white-space: nowrap; }
+  .adapt { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; color: var(--dim); font-size: 12px; margin: 0 0 10px; }
+  .adapt input { font: inherit; width: 58px; color: var(--text); background: var(--panel); border: 1px solid var(--line); padding: 4px 6px; }
+  .banner.ai-wait { color: var(--ice); }
+  .changes { display: grid; gap: 12px; }
+  .change { background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--amber); padding: 10px 12px; }
+  .change.p2 { border-left-color: var(--ice); }
+  .change.bad { border-left-color: #ff7a7a; }
+  .change .meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--dim); font-size: 11px; letter-spacing: 0.04em; }
+  .change .meta b { color: var(--text); font-weight: 600; }
+  .change .why { margin: 8px 0; font-family: system-ui, sans-serif; font-size: 13.5px; line-height: 1.55; max-width: 70ch; }
+  .change .err { color: #ff7a7a; font-size: 12px; margin: 6px 0; }
+  .diff { margin: 0; padding: 8px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; line-height: 1.45; overflow-x: auto; white-space: pre; }
+  .diff .add { color: #8fe3a1; background: rgba(80, 200, 120, 0.08); display: block; }
+  .diff .del { color: #ff9a9a; background: rgba(255, 90, 90, 0.08); display: block; }
+  .diff .same { color: var(--dim); display: block; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 11px; margin-top: 6px; }
+  .empty { color: var(--dim); font-size: 13px; }
+  pre.rules { white-space: pre-wrap; font-size: 12.5px; line-height: 1.55; background: var(--panel); border: 1px solid var(--line); padding: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span class="w1">Core</span> <span class="w2">War</span></h1>
+    <span class="spec">MARS · ICWS'88 · 8000 Words · KI-Spieler</span>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="arena">Arena</button>
+    <button role="tab" aria-selected="false" data-tab="changes">Änderungen<span class="count" id="chCount"></span></button>
+    <button role="tab" aria-selected="false" data-tab="rules">Regeln</button>
+  </nav>
+
+  <section id="tab-arena">
+  <div class="coremap">
+    <div class="ruler"><span>+0</span><span>+25</span><span>+50</span><span>+75</span><span>+99</span></div>
+    <canvas id="core" width="600" height="480"></canvas>
+    <div class="legend">
+      <span><i class="chip a"></i>Warrior 1</span>
+      <span><i class="chip b"></i>Warrior 2</span>
+      <span><i class="chip p"></i>aktive Prozesse</span>
+      <span>1 Zeile = 100 Zellen, Adresse = Zeile × 100 + Spalte</span>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button id="btnRun" class="primary" disabled>Start</button>
+    <button id="btnNew" disabled>Neues Match</button>
+    <button id="btnSnap" disabled>Snapshot kopieren</button>
+    <label class="rounds" for="rounds">Runden
+      <input id="rounds" type="number" min="1" max="99" value="5">
+    </label>
+    <div class="speed">
+      <label for="speed">Tempo</label>
+      <input id="speed" type="range" min="1" max="60" value="20">
+      <span id="speedVal">80/Frame</span>
+    </div>
+  </div>
+  <div class="adapt">
+    <label>KI passt an alle <input id="cfgEvery" type="number" min="50" max="80000" step="50" value="500"> Zyklen</label>
+    <label>max <input id="cfgPerRound" type="number" min="0" max="50" value="10"> Anpassungen je Spieler und Runde</label>
+    <label>max <input id="cfgSteps" type="number" min="1" max="50" value="8"> Schritte je Task</label>
+  </div>
+
+  <div class="status">
+    <span>Runde <b id="stRound">–</b></span>
+    <span>Zyklus <b id="stCycle">0</b></span>
+    <span class="p1">W1-Prozesse <b id="stP1">–</b></span>
+    <span class="p2">W2-Prozesse <b id="stP2">–</b></span>
+    <span class="scoreline">Stand <span id="stScore">–</span></span>
+  </div>
+  <div class="banner" id="banner" aria-live="polite">Lade …</div>
+
+  <div class="warriors">
+    <div class="warrior one">
+      <div class="head">
+        <label for="src1">Warrior 1</label>
+        <select id="preset1" aria-label="Preset für Warrior 1"></select>
+      </div>
+      <div class="ai"><span>KI</span><select id="model1" aria-label="Modell für Warrior 1"></select><span class="left" id="left1"></span></div>
+      <textarea id="src1" spellcheck="false" aria-label="Redcode Warrior 1"></textarea>
+    </div>
+    <div class="warrior two">
+      <div class="head">
+        <label for="src2">Warrior 2</label>
+        <select id="preset2" aria-label="Preset für Warrior 2"></select>
+      </div>
+      <div class="ai"><span>KI</span><select id="model2" aria-label="Modell für Warrior 2"></select><span class="left" id="left2"></span></div>
+      <textarea id="src2" spellcheck="false" aria-label="Redcode Warrior 2"></textarea>
+    </div>
+  </div>
+
+  <footer>
+    Befehle: <code>DAT MOV ADD SUB JMP JMZ JMN DJN CMP SPL SLT</code> ·
+    Adressierung: <code>#</code> immediate, <code>$</code> direct, <code>@</code> indirect, <code>&lt;</code> predecrement.
+    Mit einem Modell je Warrior wird das Spiel alle N Zyklen angehalten: jeder KI-Spieler bekommt einen Task
+    (in einer Wegwerf-VM, keine neue Instanz) mit den Regeln, dem Spielstand und der ganzen Core-Matrix und darf
+    sein Programm neu schreiben. Der neue Code wird an seiner Ladeadresse in den Core geschrieben, seine Prozesse
+    laufen weiter. Was sich geändert hat und warum, steht im Tab „Änderungen“.
+  </footer>
+  </section>
+
+  <section id="tab-changes" hidden>
+    <div class="changes" id="changes"><p class="empty">Noch keine Anpassungen. Wähle für einen Warrior ein Modell und starte ein Match.</p></div>
+  </section>
+
+  <section id="tab-rules" hidden>
+    <p class="empty" style="margin-bottom:10px">Genau dieser Text geht mit jedem Task an das Modell — zusammen mit dem Spielstand, der Core-Matrix und dem aktuellen Programm.</p>
+    <pre class="rules" id="rulesText"></pre>
+  </section>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
