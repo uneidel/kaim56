@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-09-28
+
+- Skills measured (RRSI ideas): a discard carries a reason, the distiller sees the catalog and the discards, a discarded name is refused for 30 days; every `load_skill` is recorded with its turn and the Skills tab shows loads, outcome, tokens per load and a verdict from 5 loads on; the Policy tab shows the fixed context per call (system, tool schemas, playbooks, MEMORY.md …) × calls per day. `/api/skills/<name>?turn=` no longer folds the query into the name.
+
 ## 2026-09-27
 
 - Projects, strategy `worktree` (`mgr/projwt.py`): per writer a folder on branch `proj/<p>/<writer>`, the lead sees them read-only at `/project/<p>.members/<writer>`; diff/merge/discard in the Projects tab (Changes) and for a lead agent (`project_status`/`project_diff`/`project_merge`, merge only with `lead_may_merge`); git never touches a VM-writable path.

@@ -409,7 +409,9 @@ def t_search_sessions(query, instance=""):
 def t_load_skill(name):
     """Load a skill into the context (returns the knowledge document)."""
     try:
-        return _mgrclient._mgr_get(_mgrclient._manager_base(), f"/api/skills/{urllib.parse.quote(str(name), safe='')}")
+        # the turn id lets the manager count what the skill did for the turn (Skills tab)
+        return _mgrclient._mgr_get(_mgrclient._manager_base(), f"/api/skills/{urllib.parse.quote(str(name), safe='')}"
+                                   f"?turn={urllib.parse.quote(_observe._turn_id[0])}")
     except Exception as e:
         return f"Error: {e!r}"
 

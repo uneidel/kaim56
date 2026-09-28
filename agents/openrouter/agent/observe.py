@@ -77,11 +77,11 @@ def trace_turn(event, **kw):
         pass
 
 
-def _trace_begin(kind):
+def _trace_begin(kind, ctx=None):
     _turn_kind[0] = kind
     _turn_step[0] = 0
     _turn_t0[0] = time.monotonic()
-    trace_turn("start")
+    trace_turn("start", **({"ctx": ctx} if ctx else {}))
 
 
 def _trace_end(outcome):

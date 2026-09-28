@@ -891,6 +891,43 @@ class AgentLogic(unittest.TestCase):
         finally:
             a._llm.or_chat, a._mgrclient._mgr, a._learn.SKILL_LEARN, a._learn.SKILL_LEARN_MIN_STEPS, a._observe._turn_step[0], threading.Thread = old
 
+    def test_distiller_sees_the_catalog_and_the_discards(self):
+        """RRSI's proposal-side rule: the distiller is told which skills exist
+        and which proposals were discarded (with the reason), so it does not
+        redraw a turned-down idea."""
+        a = self.a
+        seen, posts = [], []
+        old = a._llm.or_chat, a._mgrclient._mgr, a._mgrclient._mgr_get
+        try:
+            a._mgrclient._mgr_get = lambda base, path, timeout=30: json.dumps(
+                {"skills": ["job-search"], "discarded": [{"name": "cv-mailer", "description": "mail CVs", "reason": "one-off"}]})
+            a._mgrclient._mgr = lambda base, path, payload=None, timeout=60: posts.append(payload) or "ok"
+            a._llm.or_chat = lambda msgs, tools, model=None: seen.append(msgs[0]["content"]) or {"content": "NONE"}
+            a._learn._learn_skill([{"role": "user", "content": "x"}], "x")
+            self.assertIn("job-search", seen[0])
+            self.assertIn("cv-mailer: mail CVs (reason: one-off)", seen[0])
+            self.assertEqual(posts, [])
+            a._mgrclient._mgr_get = lambda *a_, **k: (_ for _ in ()).throw(OSError("manager away"))
+            seen.clear(); a._learn._learn_skill([{"role": "user", "content": "x"}], "x")
+            self.assertTrue(seen[0].startswith(a._learn._LEARN_SYSTEM))            # no history: still distils
+        finally:
+            a._llm.or_chat, a._mgrclient._mgr, a._mgrclient._mgr_get = old
+
+    def test_fixed_context_is_measured_per_part(self):
+        """The cost rule's input: the agent reports what each fixed part of the
+        context costs at turn start (system, tools, injected blocks)."""
+        a = self.a
+        cx = a._context
+        hist = [{"role": "system", "content": "S" * 400},
+                {"role": "system", "content": cx.PLAYBOOK_TAG + " " + "p" * 199},
+                {"role": "system", "content": cx.MEMINDEX_TAG + " " + "m" * 386},
+                {"role": "user", "content": "u" * 80}, {"role": "assistant", "content": "a" * 40},
+                {"role": "system", "content": cx.RECALL_TAG + " " + "r" * 32}]
+        got = cx.ctx_sizes(hist, [{"type": "function", "function": {"name": "x" * 380}}])
+        self.assertEqual({k: got[k] for k in ("system", "playbooks", "memory_index", "recall", "conversation")},
+                         {"system": 100, "playbooks": 52, "memory_index": 100, "recall": 10, "conversation": 30})
+        self.assertGreater(got["tools"], 95)
+
     # --- Tree-Chat: /branch + /back -------------------------------------------
     def test_branch_and_back(self):
         a = self.a
@@ -3437,6 +3474,110 @@ class ManagerFunctions(unittest.TestCase):
     @staticmethod
     def _status(h):
         return int(h.wfile.getvalue().split(b" ", 2)[1] or 0)
+
+    # ---- skills: history of proposals, measured use, the fixed context ----------
+    def _skills_env(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-skl-")
+        st, sk = m._store, m._skills
+        old = (st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], sk.SKILLS_FILE, sk.SKILL_PROPOSALS_FILE,
+               m._notify.notify_add)
+        st.HISTORY_DB, st._migrated[0], st._turns_migrated[0] = os.path.join(tmp, "history.db"), False, None
+        sk.SKILLS_FILE, sk.SKILL_PROPOSALS_FILE = os.path.join(tmp, "skills.json"), os.path.join(tmp, "props.json")
+        m._notify.notify_add = lambda *a, **k: None
+
+        def restore():
+            (st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], sk.SKILLS_FILE, sk.SKILL_PROPOSALS_FILE,
+             m._notify.notify_add) = old
+        return tmp, restore
+
+    def test_discarded_skill_is_not_redrawn(self):
+        """A discard carries a reason; the same name is refused for 30 days and
+        the distiller's history lists it — RRSI: condition on the edit history."""
+        m = self.m
+        sk = m._skills
+        tmp, restore = self._skills_env()
+        body = "## Purpose\n" + "step " * 30
+        try:
+            pid, _ = sk.proposal_add("vm1", "cv-mailer", "mail CVs", body)
+            self.assertIn("discarded", sk.proposal_decide(pid, False, reason="one-off, not reusable"))
+            pid2, why = sk.proposal_add("vm1", "cv-mailer", "mail CVs again", body)
+            self.assertIsNone(pid2)
+            self.assertIn("one-off, not reusable", why)
+            h = sk.proposal_history()
+            self.assertEqual(h["discarded"], [{"name": "cv-mailer", "description": "mail CVs", "reason": "one-off, not reusable"}])
+            # after the window the idea may come back
+            items = sk.load_proposals(); items[0]["decided"] -= (sk.REDRAW_DAYS + 1) * 86400; sk.save_proposals(items)
+            self.assertIsNotNone(sk.proposal_add("vm1", "cv-mailer", "mail CVs", body)[0])
+            pid3, _ = sk.proposal_add("vm1", "job-search", "search jobs", body)
+            sk.proposal_decide(pid3, True)
+            self.assertEqual(sk.proposal_history()["skills"], ["job-search"])
+        finally:
+            restore()
+
+    def test_skill_stats_judge_only_with_enough_loads(self):
+        """What a skill did: loads recorded with their turn (the guest route
+        strips ?turn= from the name), the turns' outcomes decide the verdict —
+        nothing is judged below SKILL_MIN_USES loads."""
+        m = self.m
+        st, sk = m._store, m._skills
+        tmp, restore = self._skills_env()
+        old_ip = m._guests.instance_by_ip
+        try:
+            now = int(time.time())
+            json.dump([{"name": n, "description": "", "content": "x" * 400, "added": now - 40 * 86400}
+                       for n in ("good", "bad", "rare", "idle")] +
+                      [{"name": "fresh", "description": "", "content": "y", "added": now}], open(sk.SKILLS_FILE, "w"))
+            vm = {"name": "vm1"}
+            m._guests.instance_by_ip = lambda ip: vm if ip == "172.30.1.2" else None
+            h = self._handler("/api/skills/good?turn=t0", "172.30.1.2"); h._do_GET()
+            self.assertIn(b"x" * 400, h.wfile.getvalue())                        # the name without the query
+            st.turn_start("vm1", "t0"); st.turn_end("vm1", "t0", outcome="ok")
+            for i, (skill, outcome) in enumerate([("good", "ok")] * 5 + [("bad", "error")] * 4 + [("bad", "ok")] * 2
+                                                 + [("rare", "ok")] * 2):
+                turn = f"u{i}"
+                st.turn_start("vm1", turn); st.turn_end("vm1", turn, outcome=outcome)
+                st.skill_use_add("vm1", skill, turn)
+            stats = sk.skill_stats(now + 5)
+            self.assertEqual((stats["good"]["verdict"], stats["good"]["uses"], stats["good"]["ok"]), ("working", 6, 6))
+            self.assertEqual((stats["bad"]["verdict"], stats["bad"]["failed"]), ("failing", 4))
+            self.assertEqual(stats["rare"]["verdict"], "few")
+            self.assertEqual(stats["idle"]["verdict"], "unused")
+            self.assertEqual(stats["fresh"]["verdict"], "new")                   # just added: not "unused"
+            json.dump([{"name": "legacy", "description": "", "content": "z"}], open(sk.SKILLS_FILE, "w"))
+            self.assertEqual(sk.skill_stats(now)["legacy"]["verdict"], "new")     # predates the measurement
+            self.assertEqual(sk.load_skills()[0]["added"], now)
+            json.dump([{"name": n, "description": "", "content": "x" * 400, "added": now - 40 * 86400}
+                       for n in ("good", "bad", "rare", "idle")], open(sk.SKILLS_FILE, "w"))
+            self.assertEqual(stats["good"]["load_tokens"], 100)
+            h = self._handler("/api/skills/good?turn=t9", "10.0.0.5"); h._do_GET()   # the operator's read: not counted
+            self.assertEqual(sk.skill_stats(now + 5)["good"]["uses"], 6)
+        finally:
+            m._guests.instance_by_ip = old_ip
+            restore()
+
+    def test_fixed_context_cost_in_policy(self):
+        """The trace start carries the agent's context sizes; the policy shows
+        the fixed part per call and per day (calls × fixed)."""
+        m = self.m
+        st = m._store
+        tmp, restore = self._skills_env()
+        old_ip = m._guests.instance_by_ip
+        try:
+            vm = {"name": "vm1", "config": {}}
+            m._guests.instance_by_ip = lambda ip: vm if ip == "172.30.1.2" else None
+            body = json.dumps({"turn": "t1", "event": "start", "kind": "chat",
+                               "ctx": {"system": 1200, "tools": 3000, "playbooks": 400, "conversation": 900, "bad": "x"}}).encode()
+            h = self._post_handler("/api/trace", "172.30.1.2", body); h._do_POST()
+            self.assertEqual(self._status(h), 204)
+            for _ in range(3):
+                st.usage_add("vm1", "m", 10, 1, 0.0, turn="t1")
+            c = m._policy._context_cost("vm1")
+            self.assertEqual((c["fixed"], c["conversation"], c["calls_24h"], c["per_day"]), (4600, 900, 3, 13800))
+            self.assertNotIn("bad", c["parts"])
+        finally:
+            m._guests.instance_by_ip = old_ip
+            restore()
 
     # ---- projects: one folder set, instances join with a role ----------------------
     def _projects_env(self):

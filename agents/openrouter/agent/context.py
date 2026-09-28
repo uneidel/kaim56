@@ -413,3 +413,26 @@ def _branch_close(cmd):
 # the agent finished into the void and the result was lost. With a deadline
 # the loop stops fetching in time and answers with what it has.
 _deadline = [0.0]
+
+
+# ---- what every turn costs before the user says a word ---------------------
+_CTX_TAGS = (("playbooks", PLAYBOOK_TAG), ("memory_index", MEMINDEX_TAG), ("missions", MISSION_TAG),
+             ("now", NOW_TAG), ("recall", RECALL_TAG), ("summary", SUMMARY_TAG))
+
+
+def ctx_sizes(hist, tools):
+    """Estimated tokens (chars/4) of the fixed parts of the context at turn
+    start: system prompt, tool schemas and each injected block; the rest is
+    the conversation. Reported with the turn so the operator sees what a
+    playbook, a memory index or a tool costs on EVERY call (the cost rule)."""
+    out = {"system": 0, "tools": len(json.dumps(tools or [], ensure_ascii=False)) // 4, "conversation": 0}
+    for i, m in enumerate(hist or []):
+        n = len(_msg_text(m)) // 4
+        if m.get("role") == "system":
+            c = str(m.get("content") or "")
+            key = next((k for k, tag in _CTX_TAGS if c.startswith(tag)), "system" if i == 0 else "other")
+            out[key] = out.get(key, 0) + n
+        else:
+            out["conversation"] += n
+    return out
+

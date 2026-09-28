@@ -13,6 +13,7 @@ from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
 from mgr import personas as _personas
 from mgr import secrets as _secrets
+from mgr import store as _store
 from mgr import skills as _skills
 
 AGENT_TOOLS_CATALOG = [
@@ -172,5 +173,16 @@ def effective_policy(inst):
         "budget_default": "BUDGET_TOKENS" not in cfg,
         "budget_default_value": _llmproxy.GUARD_BUDGET_TOKENS,
         "used_today": _llmproxy.used_today(inst["name"]),
+        "context": _context_cost(inst["name"]),
     }
+
+
+def _context_cost(name):
+    """The fixed context every turn starts with (estimated tokens per part, as
+    the agent reported it last) and what it costs per day: the cost rule —
+    a block that rides along on every call has to earn its tokens."""
+    parts, calls = _store.ctx_latest(name)
+    fixed = {k: v for k, v in parts.items() if k != "conversation"}
+    return {"parts": fixed, "fixed": sum(fixed.values()), "conversation": parts.get("conversation", 0),
+            "calls_24h": calls, "per_day": sum(fixed.values()) * calls}
 

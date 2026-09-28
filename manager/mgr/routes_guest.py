@@ -65,8 +65,13 @@ def _rt_skills(h):
 
 @_routes.ROUTER.get("/api/skills/", prefix=True)
 def _rt_skill(h):
-    nm = re.sub(r"[^a-z0-9_-]", "", h.path.split("/api/skills/", 1)[1].lower())
+    # ?turn=: a guest's load is recorded with its turn — the Skills tab then
+    # shows what the skill did for the turns that loaded it.
+    nm = re.sub(r"[^a-z0-9_-]", "", h.path.split("?", 1)[0].split("/api/skills/", 1)[1].lower())
     sk = next((x for x in _skills.load_skills() if x.get("name") == nm), None)
+    inst = h._guest()
+    if sk and inst is not None:
+        _store.skill_use_add(inst["name"], nm, _routes._qs(h).get("turn", [""])[0])
     return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),
             "text/plain; charset=utf-8")
 
@@ -504,7 +509,7 @@ def _rt_trace(h):
     turn = str(body.get("turn") or "")[:16]
     if turn:
         if body.get("event") == "start":
-            _store.turn_start(inst["name"], turn, body.get("kind") or "chat")
+            _store.turn_start(inst["name"], turn, body.get("kind") or "chat", ctx=body.get("ctx"))
         elif body.get("event") == "end":
             _store.turn_end(inst["name"], turn, ms=body.get("ms"), steps=body.get("steps"),
                      outcome=body.get("outcome") or "ok", kind=body.get("kind") or "chat")
@@ -755,6 +760,12 @@ def _rt_models(h):
 @_routes.ROUTER.get("/api/plugins")
 def _rt_plugins(h):
     return h._json({"plugins": _plugins.list_plugins()})
+
+
+@_routes.ROUTER.get("/api/skill-proposals/history")
+def _rt_skill_proposal_history(h):
+    # For the distiller in the VM: the catalog's names and what was discarded (why).
+    return h._json(_skills.proposal_history())
 
 
 @_routes.ROUTER.post("/api/skill-proposals")

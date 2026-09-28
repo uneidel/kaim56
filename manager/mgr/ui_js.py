@@ -126,7 +126,7 @@ async function loadPolicy(auto){
       `<div class=kv><b>Auto-reset</b><span style="display:flex;gap:8px;align-items:center;font-size:12.5px"><input class="input mono" type=number min=0 step=5 data-ar="${esc(p.name)}" value="${esc(p.auto_reset||'0')}" style="width:80px;font-size:12.5px">`+
         `<span class=text-muted>min idle, then a fresh context (0 = never) · applies after a restart</span>`+
         `<button class="btn btn-secondary btn-sm" onclick="savePolAutoReset('${esc(p.name)}')">Save</button><span class=msg data-armsg="${esc(p.name)}"></span></span></div>`+
-      polBudgetRow(p)+
+      polBudgetRow(p)+polCtxRow(p)+
       (p.katfs_share?`<div class=kv><b>katfs</b><span class=mono style="font-size:12px">${escT(p.katfs_share)}</span></div>`:'')+
       `<div style="margin-top:8px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">`+
         `<b style="font-family:var(--font-heading);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Tools</b>`+
@@ -173,6 +173,17 @@ function savePolMcps(name){
 /* Daily token budget per instance: BUDGET_TOKENS, enforced at the key proxy and
    read per request — a change applies at once, no restart. Shown in millions. */
 const _mtok=n=>(n/1e6).toLocaleString(undefined,{maximumFractionDigits:2})+'M';
+/* the cost rule: what rides along on every LLM call, and what that costs per day */
+const CTX_LBL={system:'system prompt',tools:'tool schemas',playbooks:'playbooks',memory_index:'MEMORY.md',
+  missions:'missions',now:'clock',recall:'memory recall',summary:'summary',other:'other'};
+function polCtxRow(p){
+  const c=p.context||{}; if(!c.fixed)return '';
+  const parts=Object.entries(c.parts||{}).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1])
+    .map(([k,v])=>`<span class="tag tag-neutral">${escT(CTX_LBL[k]||k)} ~${fmtTok(v)}</span>`).join(' ');
+  return `<div class=kv><b>Fixed context</b><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12.5px">`+
+    `<span class=mono>~${fmtTok(c.fixed)} per call</span>${parts}`+
+    `<span class=text-muted>× ${c.calls_24h} calls in 24 h ≈ ${fmtTok(c.per_day)} tokens/day before caching</span></span></div>`;
+}
 function polBudgetRow(p){
   const b=+p.budget||0, u=+p.used_today||0, pct=b?Math.min(100,100*u/b):0;
   const col=!b?'var(--color-neutral-400,#9ca3af)':pct>=100?'var(--color-danger,#c0392b)':pct>=80?'var(--color-warning,#d97706)':'var(--color-success,#16a34a)';
@@ -749,12 +760,30 @@ async function loadProposals(){
     `<button class="btn btn-secondary btn-sm" onclick="decideProposal('${esc(p.id)}','discard')">Discard</button></div></div>`).join('')+`</div>`;
 }
 async function decideProposal(id,what){
-  const r=await (await fetch('/api/skill-proposals/'+encodeURIComponent(id)+'/'+what,{method:'POST'})).json();
+  // a discard may carry a reason: the agents see it and do not propose the idea again
+  let reason='';
+  if(what==='discard'){reason=prompt('Why discard it? (optional — the agents are told, so they do not propose it again)','');
+    if(reason===null)return;}
+  const r=await (await fetch('/api/skill-proposals/'+encodeURIComponent(id)+'/'+what,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})})).json();
   if(what==='approve')location.reload(); else loadProposals();
   if(r.msg&&/error|unknown/.test(r.msg))alert(r.msg);
 }
-function renderSkills(){
-  loadProposals();
+let SKSTATS={};
+async function loadSkillStats(){
+  try{SKSTATS=(await (await fetch('/api/skill-stats')).json()).skills||{}}catch(e){SKSTATS={}}
+  renderSkills(true);
+}
+const SK_VERDICT={working:'tag-accent',failing:'tag-neutral',unused:'tag-neutral',few:'tag-neutral','new':'tag-neutral'};
+function skStat(n){const st=SKSTATS[n]; if(!st)return '';
+  const col=st.verdict==='failing'?' style="background:var(--color-danger,#c0392b);color:#fff"':'';
+  return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;margin-top:6px" title="${esc(st.why)}">`+
+    `<span class="tag ${SK_VERDICT[st.verdict]||'tag-neutral'}"${col}>${escT(st.verdict)}</span>`+
+    `<span class=text-muted>${st.uses} load${st.uses===1?'':'s'} · ${st.ok} ok · ${st.failed} failed`+
+    (st.last?` · last ${new Date(st.last*1000).toLocaleDateString()}`:'')+
+    ` · ~${st.load_tokens} tokens per load</span></div>`;}
+function renderSkills(statsOnly){
+  if(!statsOnly){loadProposals();loadSkillStats();}
   document.getElementById('skills').innerHTML=SKILLS.map(s=>
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:8px">`+
@@ -763,7 +792,7 @@ function renderSkills(){
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px" title=Edit onclick="editSkill('${esc(s.name)}')">${I_EDIT}</button>`+
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px;color:var(--color-neutral-600)" title=Delete onclick="delSkill('${esc(s.name)}')">${I_DEL}</button>`+
     `</span></div>`+
-    `<p class=card-body style="font-size:12.5px">${escT(s.description||'')}</p></div>`)
+    `<p class=card-body style="font-size:12.5px">${escT(s.description||'')}</p>${skStat(s.name)}</div>`)
     .join('')||'<span class=text-muted style="font-size:13px">none</span>';
 }
 async function editSkill(n){const s=SKILLS.find(x=>x.name===n);if(!s)return;

@@ -708,7 +708,15 @@ def _rt_skill_proposal_decide(h):
     parts = h.path.split("?", 1)[0].strip("/").split("/")
     if len(parts) != 4 or parts[3] not in ("approve", "discard"):
         return "unknown"
-    return _skills.proposal_decide(re.sub(r"[^a-f0-9]", "", parts[2]), parts[3] == "approve")
+    return _skills.proposal_decide(re.sub(r"[^a-f0-9]", "", parts[2]), parts[3] == "approve",
+                                   reason=str((h._body() or {}).get("reason") or ""))
+
+
+@_routes.ROUTER.get("/api/skill-stats", admin=True)
+def _rt_skill_stats(h):
+    # What each skill did in the last 30 days (loads, outcome of those turns, cost).
+    return h._json({"days": _skills.SKILL_WINDOW_DAYS, "min_uses": _skills.SKILL_MIN_USES,
+                    "skills": _skills.skill_stats()})
 
 
 

@@ -763,6 +763,14 @@ HTML_BOTTOM = """
   <div class="card blueprint"><span class=card-title>Playbooks &#8212; rules the agent learns</span>
   <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
 
+  <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
+  <p class=card-body>After a long successful turn the agent distils a skill proposal; nothing enters the catalog without the operator&#8217;s click. The distiller
+  is told the catalog and the proposals the operator <b>discarded</b> (with the reason), and the manager refuses a discarded name for 30 days &#8212; turned-down
+  ideas are not redrawn (RRSI: condition on the edit history). Every <code>load_skill</code> is recorded with its turn (<code>skill_use</code>); the Skills tab shows per skill
+  loads, how the loading turns ended and the tokens per load, and judges only from 5 loads on (<i>working</i> / <i>failing</i> / <i>unused</i> after 30 days).
+  The <b>cost rule</b>: the agent reports the fixed context at turn start (system prompt, tool schemas, playbooks, MEMORY.md, recall); the Policy tab shows it per call
+  and &#215; calls per day, so a block that rides along on every call has to earn its tokens.</p></div>
+
   <div class="card blueprint"><span class=card-title>Missions &#8212; multi-step autonomy</span>
   <p class=card-body>Plan + progress store for multi-step assignments, persisted on the host
   (<code>missions.json</code>, keyed by the OWNER instance) so the working state survives resets and

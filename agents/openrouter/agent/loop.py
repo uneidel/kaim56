@@ -256,7 +256,7 @@ def run(user_message, deadline=0.0, kind="chat", turn=None):
     _context._recall(user_message)
     _context._history.append({"role": "user", "content": user_message})
     _busy[0] = True
-    _observe._trace_begin(kind)
+    _observe._trace_begin(kind, _context.ctx_sizes(_context._history, _tools.TOOLS))
     out = "⚠️ (no answer)"
     try:
         out = _run_goal(_context._history, user_message) if _goal else _tool_loop(_context._history)
@@ -327,7 +327,7 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
         content = user_message
     _context._history.append({"role": "user", "content": content})
     _busy[0] = True
-    _observe._trace_begin(kind)
+    _observe._trace_begin(kind, _context.ctx_sizes(_context._history, _tools.TOOLS))
     outcome = "error"
     try:
         if _goal:

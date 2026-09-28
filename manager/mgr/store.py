@@ -59,6 +59,13 @@ def _hist_conn():
         instance TEXT, turn TEXT, kind TEXT,
         ts_start INTEGER, ts_end INTEGER, ms INTEGER, steps INTEGER, outcome TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_turns_inst_ts ON turns(instance, ts_start)")
+    _migrate_turns(c)
+    # Skill loads: which turn loaded which skill — joined with the turn's
+    # outcome and tokens it says what a skill did (Skills tab, mgr/skills.py).
+    c.execute("""CREATE TABLE IF NOT EXISTS skill_use(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER, instance TEXT, skill TEXT, turn TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_skill_use ON skill_use(skill, ts)")
     # Semantic long-term memory: per memory a text + embedding vector
     # (as JSON). Search loads an instance's vectors and computes cosine in
     # memory — at a personal scale (hundreds) that is enough without
@@ -90,6 +97,22 @@ def _migrate_spans(c):
     _migrated[0] = True
 
 
+_turns_migrated = [None]          # the DB path it was done for (tests switch DBs)
+
+
+def _migrate_turns(c):
+    """turns grew a ctx column: the fixed context at turn start (JSON of
+    estimated tokens per part, reported by the agent)."""
+    if _turns_migrated[0] == HISTORY_DB:
+        return
+    if "ctx" not in {r[1] for r in c.execute("PRAGMA table_info(turns)")}:
+        try:
+            c.execute("ALTER TABLE turns ADD COLUMN ctx TEXT")
+        except sqlite3.OperationalError:
+            pass
+    _turns_migrated[0] = HISTORY_DB
+
+
 def usage_add(instance, model, prompt_tokens, completion_tokens, cost,
               turn="", ms=None, step=None, ok=True, err=""):
     try:
@@ -107,12 +130,14 @@ def usage_add(instance, model, prompt_tokens, completion_tokens, cost,
 
 
 # ---- turns (traces) ---------------------------------------------------------
-def turn_start(instance, turn, kind="chat", ts=None):
+def turn_start(instance, turn, kind="chat", ts=None, ctx=None):
+    ctx = {str(k)[:24]: int(v) for k, v in (ctx or {}).items()
+           if isinstance(v, (int, float)) and 0 <= v < 10_000_000} if isinstance(ctx, dict) else {}
     try:
         with _hist_lock, _hist_conn() as c:
-            c.execute("INSERT INTO turns(instance,turn,kind,ts_start) VALUES(?,?,?,?)",
+            c.execute("INSERT INTO turns(instance,turn,kind,ts_start,ctx) VALUES(?,?,?,?,?)",
                       (str(instance)[:80], str(turn)[:16], str(kind or "chat")[:16],
-                       int(ts or time.time())))
+                       int(ts or time.time()), json.dumps(dict(list(ctx.items())[:16])) if ctx else None))
         return "ok"
     except Exception as e:
         return f"error: {e!r}"
@@ -139,14 +164,19 @@ def turn_end(instance, turn, ms=None, steps=None, outcome="ok", kind="chat"):
         return f"error: {e!r}"
 
 
-_TURN_COLS = ("id", "instance", "turn", "kind", "ts_start", "ts_end", "ms", "steps", "outcome")
+_TURN_COLS = ("id", "instance", "turn", "kind", "ts_start", "ts_end", "ms", "steps", "outcome", "ctx")
 
 
 def _turn_rows(c, where, params):
+    _migrate_turns(c)
     rows = [dict(zip(_TURN_COLS, r)) for r in c.execute(
-        "SELECT id,instance,turn,kind,ts_start,ts_end,ms,steps,outcome FROM turns "
+        "SELECT id,instance,turn,kind,ts_start,ts_end,ms,steps,outcome,ctx FROM turns "
         f"WHERE {where} ORDER BY ts_start DESC, id DESC", params)]
     for t in rows:                      # the LLM side of the turn, summed
+        try:
+            t["ctx"] = json.loads(t["ctx"]) if t["ctx"] else None
+        except ValueError:
+            t["ctx"] = None
         n, pt, ct, cost, bad = c.execute(
             "SELECT COUNT(*), SUM(prompt_tokens), SUM(completion_tokens), SUM(cost), "
             "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) FROM llm_usage WHERE instance=? AND turn=?",
@@ -263,6 +293,7 @@ def sessions_query(query, instance=None, limit=10):
 def turns_prune(days=30):
     try:
         with _hist_lock, _hist_conn() as c:
+            c.execute("DELETE FROM skill_use WHERE ts < ?", (int(time.time()) - days * 86400,))
             return c.execute("DELETE FROM turns WHERE ts_start < ?",
                              (int(time.time()) - days * 86400,)).rowcount
     except Exception:
@@ -589,4 +620,44 @@ def mem_recall(instance, key=None):
     m = load_memory().get(instance, {})
     return m if key is None else m.get(key, "")
 
+
+# ---- skill use and the fixed context (what a skill / a block costs) --------
+def skill_use_add(instance, skill, turn):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            c.execute("INSERT INTO skill_use(ts,instance,skill,turn) VALUES(?,?,?,?)",
+                      (int(time.time()), str(instance)[:80], str(skill)[:48], str(turn or "")[:16]))
+        return "ok"
+    except Exception as e:
+        return f"error: {e!r}"
+
+
+def skill_use_rows(since):
+    """[(skill, instance, turn, ts, outcome, tokens)] of every skill load since
+    `since`; outcome/tokens from the loading turn (None when unknown)."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            return c.execute(
+                "SELECT u.skill, u.instance, u.turn, u.ts, "
+                "(SELECT outcome FROM turns t WHERE t.instance=u.instance AND t.turn=u.turn "
+                " ORDER BY t.id DESC LIMIT 1), "
+                "(SELECT SUM(prompt_tokens)+SUM(completion_tokens) FROM llm_usage l "
+                " WHERE l.instance=u.instance AND l.turn=u.turn) "
+                "FROM skill_use u WHERE u.ts>=? ORDER BY u.ts", (int(since),)).fetchall()
+    except Exception:
+        return []
+
+
+def ctx_latest(instance):
+    """(ctx dict of the newest reporting turn, LLM calls in the last 24 h) —
+    the fixed context and how often it is sent (every call resends it)."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            r = c.execute("SELECT ctx FROM turns WHERE instance=? AND ctx IS NOT NULL "
+                          "ORDER BY ts_start DESC, id DESC LIMIT 1", (instance,)).fetchone()
+            n = c.execute("SELECT COUNT(*) FROM llm_usage WHERE instance=? AND ts>=?",
+                          (instance, int(time.time()) - 86400)).fetchone()[0]
+        return (json.loads(r[0]) if r and r[0] else {}), int(n or 0)
+    except Exception:
+        return {}, 0
 

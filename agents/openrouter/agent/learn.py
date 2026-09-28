@@ -58,9 +58,29 @@ def _turn_slice(hist, user_text):
     return out
 
 
+def _history_note():
+    """What is already known: the catalog and the proposals the operator
+    discarded, with the reason — so the distiller does not redraw an idea
+    that was already turned down (RRSI: condition on the edit history)."""
+    try:
+        d = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(), "/api/skill-proposals/history", timeout=10))
+    except Exception:
+        return ""
+    out = []
+    if d.get("skills"):
+        out.append("Skills that already exist (propose an UPDATE only with the same name and a real "
+                   "improvement): " + ", ".join(d["skills"]))
+    if d.get("discarded"):
+        out.append("Proposals the operator DISCARDED — do not propose these or anything equivalent again:\n" +
+                   "\n".join(f"- {x.get('name')}: {x.get('description', '')}"
+                             + (f" (reason: {x['reason']})" if x.get("reason") else "") for x in d["discarded"]))
+    return "\n\n".join(out)
+
+
 def _learn_skill(turn_msgs, user_text):
     """One model call, no tools; posts the proposal or does nothing."""
-    msgs = [{"role": "system", "content": _LEARN_SYSTEM}] + turn_msgs + \
+    note = _history_note()
+    msgs = [{"role": "system", "content": _LEARN_SYSTEM + ("\n\n" + note if note else "")}] + turn_msgs + \
            [{"role": "user", "content": "Distill now: NONE or the JSON object."}]
     try:
         reply = _llm.or_chat(msgs, []).get("content") or ""
