@@ -574,6 +574,52 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         pushChats()
     }
 
+    // Replies whose stream broke — app closed, screen gone, network lost: the
+    // bubble carries our turn id and the manager keeps the answer with the turn
+    // (/api/trace/<instance>?turn=), so the reply is filled in afterwards.
+    // Only empty bubbles and ones that ended in a transport error; a reply the
+    // user aborted stays aborted.
+    val recoverTried = remember { HashMap<String, Long>() }      // turn -> first attempt
+    suspend fun recoverReplies() {
+        if (prefs.serverUrl.isBlank()) return
+        val now = System.currentTimeMillis()
+        for (c in conversations.toList()) {
+            if (c.mode != "server") continue
+            val inst = c.instance.ifBlank { prefs.instance }
+            if (inst.isBlank()) continue
+            for (m in c.messages.toList()) {
+                val t = m.turn ?: continue
+                if (m.user || !ServerAgent.needsRecovery(m.text)) continue
+                if (busy && c.id == currentId && m.key == c.messages.lastOrNull()?.key) continue   // streaming right now
+                val first = recoverTried.getOrPut(t) { now }
+                if (now - first > 30 * 60_000L) continue                  // gave up on this one
+                val tr = withContext(Dispatchers.IO) {
+                    ManagerSync.trace(prefs.serverUrl, prefs.user, prefs.pass, inst, t)
+                } ?: continue
+                val r = ServerAgent.recovered(tr)
+                when (r.state) {
+                    "unknown" -> { if (now - first > 2 * 60_000L) recoverTried[t] = 0L; continue }   // old agent / claude bridge
+                    "running" -> continue                                  // still thinking: next round
+                    "none" -> { recoverTried[t] = 0L; continue }           // nothing kept: give up
+                }
+                val i = c.messages.indexOfFirst { it.key == m.key }
+                if (i >= 0 && ServerAgent.needsRecovery(c.messages[i].text)) {
+                    c.messages[i] = c.messages[i].copy(text = r.answer)
+                    c.updatedAt = System.currentTimeMillis()
+                    store.save(conversations)
+                    pushChats()
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        delay(2000)                                   // at start (and after the screen came back)
+        while (true) {
+            runCatching { recoverReplies() }
+            delay(10_000)
+        }
+    }
+
     fun newChat() {
         val c = Conversation(mode = prefs.mode)
         conversations.add(0, c)
@@ -1046,8 +1092,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         persist()
 
         if (current.mode == "server") {
-            val botMsg = Msg(false, "")
+            // the turn id is OURS and stored with the (still empty) bubble right away:
+            // if this stream dies (app closed, screen gone, network), the reply is
+            // recovered from the manager by it (recoverReplies)
+            val turnId = ServerAgent.newTurnId()
+            val botMsg = Msg(false, "", turn = turnId)
             msgs.add(botMsg)
+            persist()                         // the bubble (with its turn id) survives a dying app
             val botKey = botMsg.key           // address by key, NOT by index (interrupt/sync-safe)
             val inst = current.instance.ifBlank { prefs.instance }
             val myGen = ++turnGen[0]
@@ -1059,7 +1110,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             scope.launch {
                 val err = withContext(Dispatchers.IO) {
                     ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
-                        chatId = current.id, cancel = ch,
+                        chatId = current.id, turn = turnId, cancel = ch,
                         onTurn = { t -> mainHandler.post {
                             val i = msgs.indexOfFirst { it.key == botKey }
                             if (i >= 0) msgs[i] = msgs[i].copy(turn = t)

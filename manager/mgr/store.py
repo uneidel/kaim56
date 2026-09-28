@@ -105,11 +105,13 @@ def _migrate_turns(c):
     estimated tokens per part, reported by the agent)."""
     if _turns_migrated[0] == HISTORY_DB:
         return
-    if "ctx" not in {r[1] for r in c.execute("PRAGMA table_info(turns)")}:
-        try:
-            c.execute("ALTER TABLE turns ADD COLUMN ctx TEXT")
-        except sqlite3.OperationalError:
-            pass
+    have = {r[1] for r in c.execute("PRAGMA table_info(turns)")}
+    for col in ("ctx", "answer"):          # answer: what the client should have got (recovery)
+        if col not in have:
+            try:
+                c.execute(f"ALTER TABLE turns ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError:
+                pass
     _turns_migrated[0] = HISTORY_DB
 
 
@@ -143,22 +145,29 @@ def turn_start(instance, turn, kind="chat", ts=None, ctx=None):
         return f"error: {e!r}"
 
 
-def turn_end(instance, turn, ms=None, steps=None, outcome="ok", kind="chat"):
-    """Close the turn's row; a turn whose start was lost gets a full row."""
+ANSWER_MAX = 60000
+
+
+def turn_end(instance, turn, ms=None, steps=None, outcome="ok", kind="chat", answer=None):
+    """Close the turn's row; a turn whose start was lost gets a full row.
+    `answer`: the text the client was sent — a client that lost the stream
+    (app closed, network gone) fetches it by the turn id."""
+    ans = None if answer is None else str(answer)[:ANSWER_MAX]
     try:
         now = int(time.time())
         with _hist_lock, _hist_conn() as c:
+            _migrate_turns(c)
             cur = c.execute(
-                "UPDATE turns SET ts_end=?, ms=?, steps=?, outcome=? WHERE id = "
+                "UPDATE turns SET ts_end=?, ms=?, steps=?, outcome=?, answer=? WHERE id = "
                 "(SELECT id FROM turns WHERE instance=? AND turn=? ORDER BY id DESC LIMIT 1)",
                 (now, None if ms is None else int(ms), None if steps is None else int(steps),
-                 str(outcome or "ok")[:16], str(instance)[:80], str(turn)[:16]))
+                 str(outcome or "ok")[:16], ans, str(instance)[:80], str(turn)[:16]))
             if cur.rowcount == 0:
-                c.execute("INSERT INTO turns(instance,turn,kind,ts_start,ts_end,ms,steps,outcome) "
-                          "VALUES(?,?,?,?,?,?,?,?)",
+                c.execute("INSERT INTO turns(instance,turn,kind,ts_start,ts_end,ms,steps,outcome,answer) "
+                          "VALUES(?,?,?,?,?,?,?,?,?)",
                           (str(instance)[:80], str(turn)[:16], str(kind or "chat")[:16],
                            now - int((ms or 0) / 1000), now, None if ms is None else int(ms),
-                           None if steps is None else int(steps), str(outcome or "ok")[:16]))
+                           None if steps is None else int(steps), str(outcome or "ok")[:16], ans))
         return "ok"
     except Exception as e:
         return f"error: {e!r}"
@@ -204,11 +213,13 @@ def turn_trace(instance, turn):
                    for r in c.execute(
                        "SELECT ts, model, prompt_tokens, completion_tokens, cost, step, ms, ok, err "
                        "FROM llm_usage WHERE instance=? AND turn=? ORDER BY ts, id", (instance, turn))]
+            ans = c.execute("SELECT answer FROM turns WHERE instance=? AND turn=? ORDER BY id DESC LIMIT 1",
+                            (instance, turn)).fetchone()
         for r in llm:
             r["ok"] = bool(r["ok"] is None or r["ok"])
-        return {"turn": rows[0] if rows else None, "llm": llm}
+        return {"turn": rows[0] if rows else None, "llm": llm, "answer": ans[0] if ans else None}
     except Exception:
-        return {"turn": None, "llm": []}
+        return {"turn": None, "llm": [], "answer": None}
 
 
 # ---- sessions: full-text search over chats and task runs (FTS5) ------------
@@ -443,7 +454,7 @@ def with_tasks(mutator):
         return result
 
 
-def add_task(instance, message, schedule="", model="", sandbox=None):
+def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0):
     schedule = (schedule or "").strip()
     t = {"id": uuid.uuid4().hex[:12], "instance": instance, "message": message,
          "schedule": schedule, "status": "scheduled" if schedule else "pending",
@@ -453,6 +464,8 @@ def add_task(instance, message, schedule="", model="", sandbox=None):
         t["model"] = str(model).strip()[:120]      # ephemeral target: VM created with it
     if sandbox:
         t["sandbox"] = sandbox                     # ephemeral target: the narrower cage (manager.sandbox_config)
+    if max_steps:
+        t["max_steps"] = int(max_steps)            # ephemeral target: the agent's tool-round cap
 
     def mut(tasks):
         tasks.append(t)

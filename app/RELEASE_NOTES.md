@@ -5,6 +5,14 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.44
+
+- Replies are no longer lost. If the app is closed, the screen goes away or the
+  network drops while an agent is still thinking, the empty (or broken-off)
+  answer bubble is filled in automatically as soon as the agent has finished —
+  within about ten seconds of opening the app again. A reply you aborted
+  yourself stays aborted.
+
 ## 5.43
 
 - Notifications screen (drawer → Notifications): review everything the agents

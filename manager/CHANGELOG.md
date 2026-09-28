@@ -7,6 +7,8 @@ commit messages.
 
 ## 2026-09-28
 
+- Lost replies recovered: a client may name the turn itself (`turn` in the chat payload, 8-16 hex), the agent reports the text it streamed with the turn's end, the manager keeps it (`turns.answer`, 30 days) and `/api/trace/<instance>?turn=` returns it; App 5.44 fills empty or broken-off bubbles from it. Cause: the app's stream lived in the chat screen's scope — leaving the screen during a long local-model turn dropped the reply, and the empty bubble was saved.
+- Core War app (`apps/corewar`): MARS arena; every N cycles each warrior with a model gets an ephemeral task (rules, state, full core matrix, its program) and its answer is written into the core at its loading address; a Changes tab shows diff and reason. Generic manager piece: `POST /api/tasks` takes optional `model` and `max_steps` for ephemeral tasks.
 - Skills measured (RRSI ideas): a discard carries a reason, the distiller sees the catalog and the discards, a discarded name is refused for 30 days; every `load_skill` is recorded with its turn and the Skills tab shows loads, outcome, tokens per load and a verdict from 5 loads on; the Policy tab shows the fixed context per call (system, tool schemas, playbooks, MEMORY.md …) × calls per day. `/api/skills/<name>?turn=` no longer folds the query into the name.
 
 ## 2026-09-27

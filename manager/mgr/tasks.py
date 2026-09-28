@@ -84,25 +84,27 @@ _ephemeral_slots = threading.BoundedSemaphore(EPHEMERAL_MAX)
 # skill baked into its system prompt. The cage is the Firecracker VM as
 # always; what changes is what the agent inside may do. A caller can only
 # narrow: no tool it does not hold itself, no host outside its own allowlist.
-def _run_ephemeral(message, model=None, timeout=600, sandbox=None):
+def _run_ephemeral(message, model=None, timeout=600, sandbox=None, max_steps=0):
     """Run a task in a FRESH, isolated VM that is deleted afterwards — at most
     EPHEMERAL_MAX at a time: every one is a full VM (RAM, tap, disk), and any
     guest may ask for one, so the rest queue instead of exhausting the host."""
     if not _ephemeral_slots.acquire(timeout=600):
         return (False, f"ephemeral VM slots busy ({EPHEMERAL_MAX} at a time) — try again later")
     try:
-        return _run_ephemeral_vm(message, model, timeout, sandbox)
+        return _run_ephemeral_vm(message, model, timeout, sandbox, max_steps)
     finally:
         _ephemeral_slots.release()
 
 
-def _run_ephemeral_vm(message, model=None, timeout=600, sandbox=None):
+def _run_ephemeral_vm(message, model=None, timeout=600, sandbox=None, max_steps=0):
     name = "task-" + uuid.uuid4().hex[:6]
     cfg = {"TRANSPORT": "web", "NO_SPAWN": "1"}
     internet = True
     if sandbox:                                   # {"cfg": {...}, "internet": bool} from sandbox_config
         cfg.update(sandbox.get("cfg") or {})
         internet = bool(sandbox.get("internet", True))
+    if max_steps:
+        cfg["AGENT_MAX_STEPS"] = str(int(max_steps))   # the caller's cap on tool rounds
     if model:
         cfg["OPENROUTER_MODEL"] = model           # an explicit model wins over a persona's model
         print(f"[ephemeral] {name}: sandbox tools={cfg.get('AGENT_TOOLS') or 'all'} "
@@ -172,15 +174,16 @@ def task_target_sweep():
     return hit
 
 
-def _run_task_now(instance, message, model=None, timeout=600, sandbox=None):
+def _run_task_now(instance, message, model=None, timeout=600, sandbox=None, max_steps=0):
     """Run a task — on a named instance (routing to the capability) or in an
     ephemeral VM (target == 'ephemeral'). `model` applies to the ephemeral VM
     only — a named instance keeps its own configuration. `timeout` is the
     caller's patience; the worker allows TASK_TIMEOUT, a waiting guest 600 s."""
     if instance == "ephemeral":
+        extra = {"max_steps": int(max_steps)} if max_steps else {}
         if sandbox:
-            return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, sandbox)
-        return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout)
+            return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, sandbox, **extra)
+        return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, **extra)
     return _run_named(instance, message, timeout)
 
 
@@ -380,7 +383,7 @@ def _execute(t):
         # the task never fired again and the chat entry was missing).
         try:
             ok, res = _run_task_now(t["instance"], t["message"], t.get("model"), timeout=TASK_TIMEOUT,
-                                    sandbox=t.get("sandbox"))
+                                    sandbox=t.get("sandbox"), **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}))
         except Exception as e:
             ok, res = False, f"worker-exception (run): {e!r}"
             _util._wlog(f"{t['id']}: {res}")

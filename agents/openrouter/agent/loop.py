@@ -245,7 +245,7 @@ def run(user_message, deadline=0.0, kind="chat", turn=None):
             out = _tool_loop(hist)
             return out
         finally:
-            _observe._trace_end(_learn._outcome_of(out))
+            _observe._trace_end(_learn._outcome_of(out), answer=out)
             _learn._maybe_learn(hist, m, _learn._outcome_of(out))
     _auto_reset()
     _context._trim_history()
@@ -263,7 +263,7 @@ def run(user_message, deadline=0.0, kind="chat", turn=None):
         return out
     finally:
         _busy[0] = False
-        _observe._trace_end(_learn._outcome_of(out))
+        _observe._trace_end(_learn._outcome_of(out), answer=out)
         _learn._maybe_learn(_context._history, user_message, _learn._outcome_of(out))
 
 
@@ -327,6 +327,13 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
         content = user_message
     _context._history.append({"role": "user", "content": content})
     _busy[0] = True
+    # everything the client is sent, also kept for the turn's trace: a client
+    # that lost the stream recovers the reply by the turn id
+    sent, _send = [], on_token
+
+    def on_token(tok):
+        sent.append(tok)
+        _send(tok)
     _observe._trace_begin(kind, _context.ctx_sizes(_context._history, _tools.TOOLS))
     outcome = "error"
     try:
@@ -381,5 +388,5 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
         outcome = "max_steps"
     finally:
         _busy[0] = False
-        _observe._trace_end(outcome)
+        _observe._trace_end(outcome, answer="".join(sent))
         _learn._maybe_learn(_context._history, user_message, outcome)

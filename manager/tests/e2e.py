@@ -220,16 +220,21 @@ class AgentLogic(unittest.TestCase):
             on_token("done"); return {"role": "assistant", "content": "done"}
         def fake_exec(name, args):
             _t.sleep(0.15); return "ok"
-        saved = (a._llm.or_chat_stream, a._tools.exec_tool, a._config.HEARTBEAT_SEC, a._loop._drain_steer, a._loop._goal)
+        saved = (a._llm.or_chat_stream, a._tools.exec_tool, a._config.HEARTBEAT_SEC, a._loop._drain_steer, a._loop._goal,
+                 a._observe.trace_turn)
+        ends = []
+        a._observe.trace_turn = lambda event, **kw: ends.append(kw) if event == "end" else None
         a._llm.or_chat_stream = fake_stream; a._tools.exec_tool = fake_exec
         a._config.HEARTBEAT_SEC = 0.03; a._loop._drain_steer = lambda *x: False; a._loop._goal = None
         try:
             del a._context._history[1:]
             a._loop.run_stream("build something", toks.append)
         finally:
-            (a._llm.or_chat_stream, a._tools.exec_tool, a._config.HEARTBEAT_SEC, a._loop._drain_steer, a._loop._goal) = saved
+            (a._llm.or_chat_stream, a._tools.exec_tool, a._config.HEARTBEAT_SEC, a._loop._drain_steer, a._loop._goal,
+             a._observe.trace_turn) = saved
         out = "".join(toks)
         self.assertIn("\U0001f527", out)   # Tool-Status
+        self.assertEqual(ends[-1].get("answer"), out)                   # the trace keeps what the client got
         self.assertIn("\u00b7", out)        # Heartbeat waehrend Tool-Lauf
         self.assertIn("done", out)           # final reply afterwards
 
@@ -4694,8 +4699,37 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(seen[-1][1]["AGENT_TOOLS"], "bash"); self.assertFalse(seen[-1][2]); self.assertEqual(seen[-1][1]["NO_SPAWN"], "1")
             ok, res = m._tasks._run_ephemeral_vm("do", "google/gemini-2.5-flash", 60)
             self.assertNotIn("AGENT_TOOLS", seen[-1][1]); self.assertTrue(seen[-1][2]); self.assertEqual(seen[-1][1]["OPENROUTER_MODEL"], "google/gemini-2.5-flash")
+            self.assertNotIn("AGENT_MAX_STEPS", seen[-1][1])
+            ok, res = m._tasks._run_ephemeral_vm("do", None, 60, None, 7)             # the caller's tool-round cap
+            self.assertEqual(seen[-1][1]["AGENT_MAX_STEPS"], "7")
         finally:
             m._instances.create_instance, m._instances.load_instances, m._guestchat.wait_web, m._tasks._chat_post, m._vm.stop, m._instances.delete_instance = old
+
+    def test_admin_task_with_model_and_step_cap(self):
+        """POST /api/tasks may carry model and max_steps — for an ephemeral VM
+        only; the task keeps them and _run_task_now hands them to the VM."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-tkm-")
+        old = m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral
+        try:
+            m._store.TASKS_FILE = os.path.join(tmp, "tasks.json")
+            m._guests.instance_by_ip = lambda ip: None
+            def post(body):
+                h = self._post_handler("/api/tasks", "127.0.0.1", json.dumps(body).encode(), origin="http://127.0.0.1:8700")
+                h._do_POST()
+                return json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]).get("msg", "")
+            self.assertIn("created", post({"instance": "ephemeral", "message": "m", "model": "x/y", "max_steps": 6}))
+            t = m._store.load_tasks()[-1]
+            self.assertEqual((t["model"], t["max_steps"]), ("x/y", 6))
+            self.assertIn("ephemeral tasks only", post({"instance": "orchestrator", "message": "m", "model": "x/y"}))
+            self.assertIn("1-50", post({"instance": "ephemeral", "message": "m", "max_steps": 99}))
+            self.assertIn("whole number", post({"instance": "ephemeral", "message": "m", "max_steps": "ten"}))
+            got = []
+            m._tasks._run_ephemeral = lambda msg, model=None, timeout=600, sandbox=None, max_steps=0: got.append((model, max_steps)) or (True, "")
+            m._tasks._run_task_now("ephemeral", "m", "x/y", max_steps=6)
+            self.assertEqual(got, [("x/y", 6)])
+        finally:
+            m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral = old
 
     def test_proxy_books_upstream_usage(self):
         m = self.m
@@ -4979,9 +5013,22 @@ class ManagerFunctions(unittest.TestCase):
             h = self._handler("/api/trace/vm1", "10.0.0.5"); h._do_GET()
             lst = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["turns"]
             self.assertEqual([t["turn"] for t in lst], ["t1"])
+            self.assertNotIn("answer", lst[0])
             # the audit reader is unchanged apart from ms
             recs = m._audit.audit_read("vm1")
             self.assertEqual(set(recs[0]) - {"ms"}, {"ts", "tool", "target", "ok", "err", "turn"})
+            self.assertIsNone(tr["answer"])                            # an end without answer keeps none
+            # the answer the client was sent: kept with the turn, only in the single-turn read
+            self.assertEqual(post("/api/trace", {"turn": "t3", "event": "start", "kind": "stream"}), 204)
+            self.assertEqual(post("/api/trace", {"turn": "t3", "event": "end", "kind": "stream", "steps": 1,
+                                                 "ms": 5, "outcome": "ok", "answer": "⟦think⟧x⟦/think⟧OK"}), 204)
+            h = self._handler("/api/trace/vm1?turn=t3", "10.0.0.5"); h._do_GET()
+            tr3 = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual((tr3["answer"], tr3["turn"]["ts_end"] is not None), ("⟦think⟧x⟦/think⟧OK", True))
+            h = self._handler("/api/trace/vm1", "10.0.0.5"); h._do_GET()
+            self.assertNotIn("answer", json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["turns"][0])
+            st.turn_end("vm1", "t4", answer="y" * (st.ANSWER_MAX + 10))
+            self.assertEqual(len(st.turn_trace("vm1", "t4")["answer"]), st.ANSWER_MAX)
             # an end without a start still yields a full row; old rows have no turn
             st.turn_end("vm1", "t9", ms=10, steps=1, outcome="error")
             self.assertEqual(st.turns_read("vm1")[0]["turn"], "t9")

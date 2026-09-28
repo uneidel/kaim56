@@ -5,6 +5,7 @@
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Transport-Layer fuer den OpenRouter-Agent: TRANSPORT=signal | web."""
 import json
+import re
 import uuid
 import os
 import time
@@ -134,7 +135,11 @@ class H(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             deadline = 0.0
         kind = "task" if d.get("kind") == "task" else None   # Trace-Art: Task-Lauf oder Chat
-        turn = uuid.uuid4().hex[:8]     # der Turn bekommt seinen Namen VOR den Headern
+        # The turn is named BEFORE the headers. A client may name it itself (8-16
+        # hex): then it knows the id before a byte flows and can recover the
+        # answer by it if the stream breaks (app closed, network gone).
+        want = str(d.get("turn") or "")
+        turn = want if re.fullmatch(r"[0-9a-f]{8,16}", want) else uuid.uuid4().hex[:8]
         # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
         # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
         if self.path.rstrip("/").endswith("/steer"):

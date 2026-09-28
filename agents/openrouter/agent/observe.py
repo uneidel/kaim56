@@ -84,6 +84,12 @@ def _trace_begin(kind, ctx=None):
     trace_turn("start", **({"ctx": ctx} if ctx else {}))
 
 
-def _trace_end(outcome):
+ANSWER_MAX = 60000
+
+
+def _trace_end(outcome, answer=None):
+    """`answer`: what the client was sent — the manager keeps it with the turn,
+    so a client that lost the stream recovers the reply by the turn id."""
+    extra = {"answer": str(answer)[:ANSWER_MAX]} if answer is not None else {}
     trace_turn("end", steps=_turn_step[0], ms=int((time.monotonic() - _turn_t0[0]) * 1000),
-               outcome=outcome)
+               outcome=outcome, **extra)

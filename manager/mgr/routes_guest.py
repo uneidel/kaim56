@@ -511,8 +511,10 @@ def _rt_trace(h):
         if body.get("event") == "start":
             _store.turn_start(inst["name"], turn, body.get("kind") or "chat", ctx=body.get("ctx"))
         elif body.get("event") == "end":
+            ans = body.get("answer")
             _store.turn_end(inst["name"], turn, ms=body.get("ms"), steps=body.get("steps"),
-                     outcome=body.get("outcome") or "ok", kind=body.get("kind") or "chat")
+                     outcome=body.get("outcome") or "ok", kind=body.get("kind") or "chat",
+                     answer=ans if isinstance(ans, str) else None)
     h.send_response(204); h.end_headers()
 
 

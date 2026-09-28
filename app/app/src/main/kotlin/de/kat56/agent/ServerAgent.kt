@@ -72,6 +72,7 @@ object ServerAgent {
         message: String,
         image: String? = null,
         chatId: String = "",
+        turn: String? = null,               // our own turn id: known before a byte flows (recovery)
         cancel: CancelHandle? = null,
         onTurn: (String) -> Unit = {},      // turn id from the X-Kaim-Turn header (trace)
         onPartial: (String) -> Unit,
@@ -94,6 +95,7 @@ object ServerAgent {
             val payload = JSONObject().put("message", message)
             if (image != null) payload.put("image", image)   // Base64 JPEG (ohne data:-Präfix)
             if (chatId.isNotEmpty()) payload.put("chat", chatId)
+            if (!turn.isNullOrEmpty()) payload.put("turn", turn)
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             val code = conn.responseCode
             if (code !in 200..299) {
@@ -136,4 +138,27 @@ object ServerAgent {
     /** Manche IOExceptions haben keine message — dann bleibt sonst "Fehler:" stehen. */
     private fun errText(e: Exception): String =
         e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+
+    /** Does this reply bubble need recovering? Empty, or it ended in a transport
+     *  error the app appended ("⚠️ Fehler…", "⚠️ HTTP…"). An aborted reply does not. */
+    fun needsRecovery(text: String): Boolean {
+        if (text.isBlank()) return true
+        val last = text.lines().lastOrNull { it.isNotBlank() }?.trim() ?: return true
+        return last.startsWith("⚠️ Fehler") || last.startsWith("⚠️ HTTP")
+    }
+
+    /** What /api/trace/<instance>?turn= says about a lost reply: "unknown" (no such
+     *  turn — old agent, claude bridge), "running" (ask again later), "none" (ended,
+     *  nothing kept) or "answer" with the text the stream should have delivered. */
+    data class Recovered(val state: String, val answer: String = "")
+
+    fun recovered(tr: org.json.JSONObject): Recovered {
+        val row = tr.optJSONObject("turn") ?: return Recovered("unknown")
+        if (row.isNull("ts_end")) return Recovered("running")
+        val ans = if (tr.isNull("answer")) "" else tr.optString("answer", "")
+        return if (ans.isBlank()) Recovered("none") else Recovered("answer", ans)
+    }
+
+    /** A turn id for a new reply: 12 hex characters (the bridge accepts 8-16 hex). */
+    fun newTurnId(): String = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
 }

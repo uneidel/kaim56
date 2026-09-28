@@ -364,7 +364,8 @@ def _rt_trace_read(h):
     # audit_read is newest-first; the file order is the call order (ts has
     # only seconds, so a stable sort on ts alone would swap calls of one second)
     tools = [e for e in reversed(_audit.audit_read(nm, limit=_audit.AUDIT_MAX_LINES)) if e.get("turn") == turn]
-    return h._json({"instance": nm, "turn": t["turn"], "llm": t["llm"], "tools": tools})
+    # answer: the text the client was sent — the app recovers a reply it lost by it
+    return h._json({"instance": nm, "turn": t["turn"], "llm": t["llm"], "tools": tools, "answer": t.get("answer")})
 
 
 
@@ -636,7 +637,18 @@ def _rt_tasks_create(h):
         return "instance/message missing"
     if terr:
         return terr
-    t = _store.add_task(target, b.get("message", ""), b.get("schedule", ""))
+    # model / max_steps: for an ephemeral VM only (a named instance keeps its
+    # own configuration) — the same an agent may ask for with create_task.
+    model = str(b.get("model") or "").strip()[:120]
+    try:
+        max_steps = int(b.get("max_steps") or 0)
+    except (TypeError, ValueError):
+        return "max_steps must be a whole number"
+    if (model or max_steps) and target != "ephemeral":
+        return "model/max_steps apply to ephemeral tasks only"
+    if not 0 <= max_steps <= 50:
+        return "max_steps must be 1-50"
+    t = _store.add_task(target, b.get("message", ""), b.get("schedule", ""), model=model, max_steps=max_steps)
     return f"task {t['id']} created ({t['status']})"
 
 
