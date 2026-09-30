@@ -4774,7 +4774,7 @@ class ManagerFunctions(unittest.TestCase):
                                          {"role": "assistant", "content": "⟦think⟧hm⟦/think⟧Hello"},
                                          {"role": "user", "content": [{"type": "text", "text": "fix my SQL"}]},
                                          {"role": "tool", "content": "TOOL OUTPUT"}]})
-            self.assertEqual(p, "Earlier: hi Hello\nRequest: fix my SQL")
+            self.assertEqual(p, "fix my SQL")                                    # the current request only
             self.assertEqual(rt.premise({"messages": [{"role": "system", "content": "x"}]}), "")
             pol = rt.DEFAULT_POLICY
             cheap = {"key": "openrouter/google/gemini-2.5-flash"}; strong = {"key": "orcarouter/tencent/hy3"}

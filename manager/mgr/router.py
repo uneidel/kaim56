@@ -25,7 +25,6 @@ one place.
 """
 import json
 import os
-import re
 import threading
 import time
 import urllib.request
@@ -130,23 +129,17 @@ def candidates():
 
 # ---- the decision ----------------------------------------------------------
 def premise(payload):
-    """The last user turn (+ the one before it), as plain text, truncated —
-    what the classifier reads. System prompts and tool output stay out."""
+    """The last user turn as plain text, truncated — what the classifier reads.
+    Only that turn: earlier small talk in the premise pulled a plain code task
+    to "chat" (live, 2026-09-30); system prompts and tool output stay out too."""
     msgs = [m for m in (payload.get("messages") or []) if isinstance(m, dict)]
-    users = [i for i, m in enumerate(msgs) if m.get("role") == "user"]
+    users = [m for m in msgs if m.get("role") == "user"]
     if not users:
         return ""
-
-    def text(m):
-        c = m.get("content")
-        if isinstance(c, list):
-            c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-        return str(c or "").strip()
-    last = text(msgs[users[-1]])
-    prev = [text(m) for m in msgs[max(0, users[-1] - 2):users[-1]] if m.get("role") in ("user", "assistant")]
-    prev = re.sub(r"⟦think⟧.*?⟦/think⟧", "", " ".join(prev), flags=re.S).strip()
-    p = (f"Earlier: {prev[-400:]}\n" if prev else "") + f"Request: {last}"
-    return p[-PREMISE_MAX:]
+    c = users[-1].get("content")
+    if isinstance(c, list):
+        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return str(c or "").strip()[-PREMISE_MAX:]
 
 
 def classify(policy, text):
