@@ -66,6 +66,11 @@ def _hist_conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, instance TEXT, skill TEXT, turn TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_skill_use ON skill_use(skill, ts)")
+    # Model router decisions (mgr/router.py): one row per routed turn.
+    c.execute("""CREATE TABLE IF NOT EXISTS route_log(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER, instance TEXT, turn TEXT, own TEXT, chosen TEXT, classes TEXT, ms INTEGER, why TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_route_inst ON route_log(instance, ts)")
     # Semantic long-term memory: per memory a text + embedding vector
     # (as JSON). Search loads an instance's vectors and computes cosine in
     # memory — at a personal scale (hundreds) that is enough without
@@ -305,6 +310,7 @@ def turns_prune(days=30):
     try:
         with _hist_lock, _hist_conn() as c:
             c.execute("DELETE FROM skill_use WHERE ts < ?", (int(time.time()) - days * 86400,))
+            c.execute("DELETE FROM route_log WHERE ts < ?", (int(time.time()) - days * 86400,))
             return c.execute("DELETE FROM turns WHERE ts_start < ?",
                              (int(time.time()) - days * 86400,)).rowcount
     except Exception:
@@ -673,4 +679,42 @@ def ctx_latest(instance):
         return (json.loads(r[0]) if r and r[0] else {}), int(n or 0)
     except Exception:
         return {}, 0
+
+
+# ---- model router decisions ------------------------------------------------
+_ROUTE_COLS = ("ts", "instance", "turn", "own", "chosen", "classes", "ms", "why")
+
+
+def route_add(instance, turn, own, chosen, classes, ms, why):
+    try:
+        with _hist_lock, _hist_conn() as c:
+            c.execute("INSERT INTO route_log(ts,instance,turn,own,chosen,classes,ms,why) VALUES(?,?,?,?,?,?,?,?)",
+                      (int(time.time()), str(instance)[:80], str(turn or "")[:16], str(own)[:160], str(chosen)[:160],
+                       json.dumps(classes or {})[:1000], int(ms or 0), str(why or "")[:200]))
+        return "ok"
+    except Exception as e:
+        return f"error: {e!r}"
+
+
+def routes_read(instance=None, limit=50, turn=None):
+    """Newest first; `turn` narrows to one turn."""
+    where, args = [], []
+    if instance:
+        where.append("instance=?"); args.append(instance)
+    if turn:
+        where.append("turn=?"); args.append(turn)
+    sql = "SELECT ts,instance,turn,own,chosen,classes,ms,why FROM route_log"
+    sql += (" WHERE " + " AND ".join(where)) if where else ""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            rows = [dict(zip(_ROUTE_COLS, r)) for r in
+                    c.execute(sql + " ORDER BY ts DESC, id DESC LIMIT ?", (*args, int(limit)))]
+        for r in rows:
+            try:
+                r["classes"] = json.loads(r["classes"] or "{}")
+            except ValueError:
+                r["classes"] = {}
+        return rows
+    except Exception:
+        return []
 

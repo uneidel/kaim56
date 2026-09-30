@@ -174,6 +174,7 @@ def effective_policy(inst):
         "budget_default_value": _llmproxy.GUARD_BUDGET_TOKENS,
         "used_today": _llmproxy.used_today(inst["name"]),
         "context": _context_cost(inst["name"]),
+        "model_router": cfg.get("MODEL_ROUTER", ""),                 # router policy, "" = off (mgr/router.py)
     }
 
 

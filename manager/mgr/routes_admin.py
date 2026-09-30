@@ -41,6 +41,7 @@ from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import resources as _resources
+from mgr import router as _router
 from mgr import routes as _routes
 from mgr import rules as _rules
 from mgr import secrets as _secrets
@@ -271,6 +272,29 @@ def _rt_projects_op(h):
     return h._json(r, st)
 
 
+@_routes.ROUTER.get("/api/router", admin=True)
+def _rt_router(h):
+    # Model router (mgr/router.py): Jev's health, the tiers, the running models
+    # (the candidates), the policies and the latest decisions.
+    health = {"ok": False, "error": "JEV_URL not set"}
+    if _router.jev_url():
+        try:
+            with urllib.request.urlopen(_router.jev_url() + "/health", timeout=3) as r:
+                health = {"ok": True, **json.load(r)}
+        except Exception as e:
+            health = {"ok": False, "error": repr(e)[:200]}
+    conf = _router.load()
+    return h._json({"jev": health, "url": _router.jev_url(), "tiers": conf["tiers"], "tier_names": list(_router.TIERS),
+                    "policies": sorted(conf["policies"]), "candidates": _router.candidates(),
+                    "recent": _store.routes_read(limit=int((_routes._qs(h).get("limit", ["30"])[0]) or 30))})
+
+
+@_routes.ROUTER.post("/api/router/tiers", admin=True)
+def _rt_router_tiers(h):
+    # {"tiers": {"backend/model": "cheap|strong|code|local"}} — replaces the table.
+    return h._json({"ok": True, "tiers": _router.save_tiers((h._body() or {}).get("tiers") or {})})
+
+
 @_routes.ROUTER.get("/api/apps", admin=True)
 def _rt_apps(h):
     return h._json({"apps": _apps.load_apps()})
@@ -365,7 +389,8 @@ def _rt_trace_read(h):
     # only seconds, so a stable sort on ts alone would swap calls of one second)
     tools = [e for e in reversed(_audit.audit_read(nm, limit=_audit.AUDIT_MAX_LINES)) if e.get("turn") == turn]
     # answer: the text the client was sent — the app recovers a reply it lost by it
-    return h._json({"instance": nm, "turn": t["turn"], "llm": t["llm"], "tools": tools, "answer": t.get("answer")})
+    return h._json({"instance": nm, "turn": t["turn"], "llm": t["llm"], "tools": tools, "answer": t.get("answer"),
+                    "route": (_store.routes_read(nm, limit=1, turn=turn) or [None])[0]})
 
 
 

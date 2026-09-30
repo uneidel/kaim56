@@ -126,7 +126,7 @@ async function loadPolicy(auto){
       `<div class=kv><b>Auto-reset</b><span style="display:flex;gap:8px;align-items:center;font-size:12.5px"><input class="input mono" type=number min=0 step=5 data-ar="${esc(p.name)}" value="${esc(p.auto_reset||'0')}" style="width:80px;font-size:12.5px">`+
         `<span class=text-muted>min idle, then a fresh context (0 = never) · applies after a restart</span>`+
         `<button class="btn btn-secondary btn-sm" onclick="savePolAutoReset('${esc(p.name)}')">Save</button><span class=msg data-armsg="${esc(p.name)}"></span></span></div>`+
-      polBudgetRow(p)+polCtxRow(p)+
+      polBudgetRow(p)+polCtxRow(p)+polRouterRow(p)+
       (p.katfs_share?`<div class=kv><b>katfs</b><span class=mono style="font-size:12px">${escT(p.katfs_share)}</span></div>`:'')+
       `<div style="margin-top:8px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">`+
         `<b style="font-family:var(--font-heading);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Tools</b>`+
@@ -196,6 +196,54 @@ function polBudgetRow(p){
     `<button class="btn btn-secondary btn-sm" onclick="savePolBudget('${esc(p.name)}')">Save</button>`+
     (p.budget_default?'':`<button class="btn btn-ghost btn-sm" title="back to the default of ${_mtok(+p.budget_default_value||0)}" onclick="savePolBudget('${esc(p.name)}',true)">Default</button>`)+
     `<span class=msg data-budmsg="${esc(p.name)}"></span></span></div>`;
+}
+/* model router: a policy per instance, off by default (mgr/router.py) */
+function polRouterRow(p){
+  const pols=window.ROUTER_POLICIES||['default'], cur=p.model_router||'';
+  const opts=['<option value="">off</option>'].concat(pols.map(n=>`<option${n===cur?' selected':''}>${escT(n)}</option>`));
+  if(cur&&pols.indexOf(cur)<0)opts.push(`<option selected>${escT(cur)}</option>`);
+  return `<div class=kv><b>Model router</b><span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px">`+
+    `<select class=input data-rt="${esc(p.name)}" style="width:auto;font-size:12.5px" onchange="savePolRouter('${esc(p.name)}')">${opts.join('')}</select>`+
+    `<span class=text-muted>${cur?'each turn may run on another running model (Models tab → Model router)':'the instance always uses its own model'} · applies at once</span>`+
+    `<span class=msg data-rtmsg="${esc(p.name)}"></span></span></div>`;
+}
+function savePolRouter(name){
+  const v=document.querySelector(`select[data-rt="${CSS.escape(name)}"]`).value;
+  fetch(`/api/instances/${name}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:'MODEL_ROUTER',value:v})}).then(async r=>{
+      let d={}; try{d=await r.json()}catch(e){}
+      const el=document.querySelector(`[data-rtmsg="${CSS.escape(name)}"]`), m=d.msg||('HTTP '+r.status);
+      if(el)el.textContent=(!r.ok||/error/.test(m)?'⚠️ ':'✓ ')+m;
+    });
+}
+async function loadRouter(){
+  let d; try{d=await (await fetch('/api/router')).json()}catch(e){return}
+  window.ROUTER_POLICIES=d.policies||['default'];
+  const j=d.jev||{};
+  document.getElementById('rtjev').innerHTML=j.ok&&j.ready
+    ?`Jev ready · <code>${escT(j.model||'')}</code> · ${j.calls||0} classifications · <code>${escT(d.url)}</code>`
+    :`Jev not available — ${escT(j.error||'loading')} ${d.url?'':'(set JEV_URL in Settings)'}`;
+  const tiers=d.tiers||{}, names=d.tier_names||[];
+  document.getElementById('rtcands').innerHTML=(d.candidates||[]).map(c=>
+    `<tr><td class=mono style="font-size:12.5px">${escT(c.key)}</td><td style="font-size:12.5px">${escT(c.instances.join(', '))}</td>`+
+    `<td><select class=input data-tier="${esc(c.key)}" style="font-size:12.5px"><option value="">— not a target —</option>`+
+    names.map(t=>`<option${tiers[c.key]===t?' selected':''}>${t}</option>`).join('')+`</select></td></tr>`).join('')
+    ||'<tr><td colspan=3 class=text-muted>No running instance with an OpenAI-style model.</td></tr>';
+  const rec=d.recent||[];
+  document.getElementById('rtrecent').innerHTML=rec.length?rec.slice(0,15).map(r=>{
+    const cl=Object.entries(r.classes||{}).map(([q,v])=>`${escT(q)}=${escT(v[0])} ${v[1]}`).join(' · ');
+    const moved=r.chosen&&r.chosen!==r.own;
+    return `<div style="padding:5px 0;border-bottom:1px solid var(--color-divider)"><span class=mono>${new Date(r.ts*1000).toLocaleString()}</span> · <b>${escT(r.instance)}</b> · `+
+      (moved?`<span class="tag tag-accent">${escT(r.own)} → ${escT(r.chosen)}</span>`:`<span class="tag tag-neutral">own model</span>`)+
+      ` <span>${cl}</span> · ${r.ms} ms · ${escT(r.why||'')}</div>`}).join('')
+    :'No routed turns yet.';
+}
+async function saveTiers(){
+  const tiers={};
+  document.querySelectorAll('select[data-tier]').forEach(s=>{if(s.value)tiers[s.dataset.tier]=s.value});
+  const d=await (await fetch('/api/router/tiers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tiers})})).json();
+  document.getElementById('rtmsg').textContent=d.ok?'saved ✓':'⚠️ '+(d.error||'failed');
+  loadRouter();
 }
 function savePolBudget(name,reset){
   const v=reset?'':String(Math.max(0,Math.round(parseFloat(document.querySelector(`input[data-bud="${CSS.escape(name)}"]`).value||'0')*1e6)));
@@ -538,7 +586,7 @@ function tabsFade(){const n=document.getElementById('tabs');if(!n)return;
   n.classList.toggle('more',n.scrollWidth-n.clientWidth>2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2);}
 window.addEventListener('resize',tabsFade);
 document.getElementById('tabs').addEventListener('scroll',tabsFade,{passive:true});
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='sharing'){loadKatfs();loadIroh();}});
 
 /* — Projects: one folder set, joined by instances with a role (mgr/projects.py) — */
 let PROJECTS=[], PJ_EDIT='', PJ_INSTS=[];
@@ -1451,7 +1499,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadProjects();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();loadMissions();loadProjects();loadRouter();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   refreshUsage();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a

@@ -18,6 +18,7 @@ from mgr import notify as _notify
 from mgr import store as _store
 from mgr import guests as _guests
 from mgr import hindsight as _hindsight
+from mgr import router as _router
 from mgr import routes as _routes
 from mgr import settings as _settings
 
@@ -121,6 +122,24 @@ def _proxy_usage(inst, backend, raw, ms=None, turn="", step=None):
         pass
 
 
+def _routed_upstream(target, st):
+    """(url, key) for a router target, or (None, None) when it cannot be served
+    (cloud key missing): then the instance's own model stays."""
+    if target["backend"] == "llama":
+        base = (target.get("upstream") or st.get("LLAMA_ENDPOINT") or "").strip().rstrip("/")
+        if not base:
+            return None, None
+        return (base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")), ""
+    if target["backend"] not in LLM_PROXY_UPSTREAMS:
+        return None, None
+    url, keyname = LLM_PROXY_UPSTREAMS[target["backend"]]
+    if target["backend"] == "orcarouter" and (st.get("ORCAROUTER_URL") or "").strip():
+        u = st["ORCAROUTER_URL"].strip().rstrip("/")
+        url = u if u.endswith("/chat/completions") else u + ("/chat/completions" if u.endswith("/v1") else "/v1/chat/completions")
+    key = (st.get(keyname) or "").strip()
+    return (url, key) if key else (None, None)
+
+
 class LLMProxyMixin:
     """The handler side of the key proxy: POST /api/llm/<backend>/chat/completions
     from a VM, upstream with the host-held key, usage booked per instance.
@@ -173,14 +192,23 @@ class LLMProxyMixin:
                 "step": self.headers.get("X-Kaim-Step", "") or None}
         _t0 = time.monotonic()
         try:
-            want_stream = bool(json.loads(payload or b"{}").get("stream"))
+            body = json.loads(payload or b"{}")
+            want_stream = bool(body.get("stream"))
         except (ValueError, AttributeError):
-            want_stream = False
-        req = urllib.request.Request(url, data=payload, method="POST", headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "HTTP-Referer": f"https://{_settings.PUBLIC_HOST}",
-            "X-Title": "kat56-agent"})
+            body, want_stream = None, False
+        # Model router (opt-in per instance, mgr/router.py): the turn may run on
+        # another model the running instances use — never blocks, never a new provider.
+        if isinstance(body, dict) and ginst is not None and (ginst.get("config") or {}).get("MODEL_ROUTER"):
+            target = _router.route(ginst, body, span["turn"])
+            re_url, re_key = _routed_upstream(target, st) if target else (None, None)
+            if re_url:
+                body["model"] = target["model"]
+                payload, url, key, backend = json.dumps(body).encode(), re_url, re_key, target["backend"]
+        headers = {"Content-Type": "application/json",
+                   "HTTP-Referer": f"https://{_settings.PUBLIC_HOST}", "X-Title": "kat56-agent"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
         try:
             r = urllib.request.urlopen(req, timeout=600)
         except urllib.error.HTTPError as e:

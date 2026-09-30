@@ -36,6 +36,7 @@ SETTINGS_SCHEMA = [
     {"key": "SIGNAL_API", "label": "Signal REST API URL"},
     {"key": "LLAMA_ENDPOINT", "label": "llama.cpp endpoint (OpenAI-compatible base URL, e.g. http://10.0.0.50:8080/v1)"},
     {"key": "LLAMA_API_KEY", "label": "llama.cpp API key (optional, only if --api-key is set)"},
+    {"key": "JEV_URL", "label": "Jev model router — classifier service (OpenJev) the key proxy asks for instances with a router policy; blank = off, e.g. http://127.0.0.1:8891"},
     {"key": "HINDSIGHT_URL", "label": "Hindsight memory server — optional second memory (facts from every turn, recall + reflect); blank = off, e.g. http://127.0.0.1:8888"},
     {"key": "LLM_KEY_PROXY", "label": "LLM key injection proxy (1 = keys stay on the host, VMs proxy through the manager)", "options": [
         {"value": "", "label": "— off (agent fetches key via broker) —"},

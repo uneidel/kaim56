@@ -22,6 +22,7 @@ else lives in mgr/, one concern per module:
     mounts        guest squash user, per-instance NFS exports, mount deny list
     projects      one folder set joined by instances with a role (shared / worktree)
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
+    router        model router: per-turn model choice via Jev (opt-in per instance)
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
   the VMs
@@ -84,6 +85,7 @@ from mgr import policy as _policy            # noqa: F401
 from mgr import projects as _projects        # noqa: F401
 from mgr import projwt as _projwt            # noqa: F401
 from mgr import resources as _resources      # noqa: F401
+from mgr import router as _router            # noqa: F401
 from mgr import routes as _routes            # noqa: F401
 from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_guest as _routes_guest  # noqa: F401  (registers its routes in ROUTER on import)

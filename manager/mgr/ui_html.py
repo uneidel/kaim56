@@ -229,6 +229,18 @@ HTML_TOP = """</head><body>
     <table class=table id=mdltable><tbody id=mdlrows></tbody></table>
   </div>
   <div class=panel-foot><span id=mdlmsg class=msg></span><button class="btn btn-primary" onclick=saveModels()>Save shortlist</button></div>
+
+  <div class="panel blueprint" style="margin-top:32px">
+    <h4 style="margin:0 0 6px">Model router</h4>
+    <p class=text-muted style="font-size:12.5px;margin:0 0 12px;max-width:80ch">Jev (OpenJev, a small NLI classifier) reads the first message of a turn and the key proxy
+      runs that turn on another model — only for instances where you switch a router policy on (Policy tab), only among the models your
+      <b>running</b> instances use, and only those you give a tier here. Jev slow or down: the instance's own model, as always.</p>
+    <div id=rtjev class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
+    <table class=table><thead><tr><th>Model (running)</th><th>Used by</th><th style="width:160px">Tier</th></tr></thead><tbody id=rtcands></tbody></table>
+    <div class=panel-foot><span id=rtmsg class=msg></span><button class="btn btn-primary" onclick=saveTiers()>Save tiers</button></div>
+    <h4 style="margin:22px 0 8px;font-size:14px">Latest decisions</h4>
+    <div id=rtrecent class=text-muted style="font-size:12.5px">…</div>
+  </div>
 </section>
 
 <section class="screen" id=s-policy>
@@ -762,6 +774,14 @@ HTML_BOTTOM = """
 
   <div class="card blueprint"><span class=card-title>Playbooks &#8212; rules the agent learns</span>
   <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
+
+  <div class="card blueprint"><span class=card-title>Model router (Jev)</span>
+  <p class=card-body>Opt-in per instance (<code>MODEL_ROUTER=&#8249;policy&#8250;</code>, a runtime key; off by default). On the first LLM call of a turn the key proxy
+  asks Jev &#8212; OpenJev 2B v5, an NLI cross-encoder, container on the host CPU (<code>JEV_URL</code>, loopback only) &#8212; one batched question: task and
+  difficulty as entailment probabilities (~6.5&nbsp;s). The policy maps the classes (above a confidence floor) to a tier preference; the candidates are the
+  models the <b>running</b> instances use, and only those the operator gave a tier (cheap / strong / code / local) &#8212; no new provider is ever reached.
+  The decision holds for the whole turn (no model switch inside a tool loop); the proxy rewrites model, upstream and key (the Jetson&#8217;s llama.cpp as a
+  keyless upstream). Jev slow, down or undecided: the instance&#8217;s own model. Every decision lands in <code>route_log</code> (Models tab, trace).</p></div>
 
   <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
   <p class=card-body>After a long successful turn the agent distils a skill proposal; nothing enters the catalog without the operator&#8217;s click. The distiller

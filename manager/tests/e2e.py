@@ -4731,6 +4731,159 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral = old
 
+    # ---- model router (Jev) ------------------------------------------------------------
+    def _router_env(self, running):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-rt-")
+        st, rt = m._store, m._router
+        insts = [{"name": "cheapo", "template": "openrouter", "config": {"OPENROUTER_MODEL": "google/gemini-2.5-flash"}},
+                 {"name": "big", "template": "openrouter", "config": {"ORCAROUTER_MODEL": "tencent/hy3", "MODEL_ROUTER": "default"}},
+                 {"name": "big2", "template": "openrouter", "config": {"ORCAROUTER_MODEL": "tencent/hy3"}},
+                 {"name": "local", "template": "llama", "config": {"LLAMA_ENDPOINT": "http://10.0.0.9:8080/", "LLAMA_MODEL": "local-model"}},
+                 {"name": "claudy", "template": "claude", "config": {"ANTHROPIC_MODEL": "x"}},
+                 {"name": "stopped", "template": "openrouter", "config": {"OPENROUTER_MODEL": "qwen/qwen3-coder"}}]
+        old = (st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], rt.ROUTER_FILE, m._instances.load_instances,
+               m._instances.is_running, m._settings.load_settings, rt.classify)
+        st.HISTORY_DB, st._migrated[0], st._turns_migrated[0] = os.path.join(tmp, "history.db"), False, None
+        rt.ROUTER_FILE = os.path.join(tmp, "router.json")
+        m._instances.load_instances = lambda: [dict(i, config=dict(i["config"])) for i in insts]
+        m._instances.is_running = lambda i: i["name"] in running
+        m._settings.load_settings = lambda: {"JEV_URL": "http://127.0.0.1:8891"}
+        rt._cache.clear()
+
+        def restore():
+            (st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], rt.ROUTER_FILE, m._instances.load_instances,
+             m._instances.is_running, m._settings.load_settings, rt.classify) = old
+            rt._cache.clear()
+        return insts, restore
+
+    def test_router_candidates_premise_and_rules(self):
+        """Candidates are the models of RUNNING instances (deduplicated, no
+        claude); the premise is the last user turn without system/tool text;
+        a rule needs every class above the floor and a tiered candidate."""
+        m = self.m
+        rt = m._router
+        insts, restore = self._router_env({"cheapo", "big", "big2", "local", "claudy"})
+        try:
+            c = {x["key"]: x for x in rt.candidates()}
+            self.assertEqual(sorted(c), ["llama/local-model", "openrouter/google/gemini-2.5-flash", "orcarouter/tencent/hy3"])
+            self.assertEqual(c["orcarouter/tencent/hy3"]["instances"], ["big", "big2"])
+            self.assertEqual(c["llama/local-model"]["upstream"], "http://10.0.0.9:8080/")
+            p = rt.premise({"messages": [{"role": "system", "content": "SYSTEM SECRET"},
+                                         {"role": "user", "content": "hi"},
+                                         {"role": "assistant", "content": "⟦think⟧hm⟦/think⟧Hello"},
+                                         {"role": "user", "content": [{"type": "text", "text": "fix my SQL"}]},
+                                         {"role": "tool", "content": "TOOL OUTPUT"}]})
+            self.assertEqual(p, "Earlier: hi Hello\nRequest: fix my SQL")
+            self.assertEqual(rt.premise({"messages": [{"role": "system", "content": "x"}]}), "")
+            pol = rt.DEFAULT_POLICY
+            cheap = {"key": "openrouter/google/gemini-2.5-flash"}; strong = {"key": "orcarouter/tencent/hy3"}
+            tiered = {"cheap": [cheap], "strong": [strong]}
+            self.assertEqual(rt.pick(pol, {"difficulty": ("trivial", 0.9), "task": ("chat", 0.9)}, tiered), (cheap, 0))
+            self.assertEqual(rt.pick(pol, {"difficulty": ("trivial", 0.4), "task": ("code", 0.9)}, tiered), (strong, 1))  # below floor
+            self.assertEqual(rt.pick(pol, {"difficulty": ("moderate", 0.9), "task": ("text", 0.9)}, tiered), (None, None))
+            self.assertEqual(rt.pick(pol, {"difficulty": ("trivial", 0.9)}, {"code": [strong]}), (None, None))  # no tier for the rule
+        finally:
+            restore()
+
+    def test_router_route_is_opt_in_cached_per_turn_and_never_blocks(self):
+        m = self.m
+        rt, st = m._router, m._store
+        insts, restore = self._router_env({"cheapo", "big", "local"})
+        calls = []
+        try:
+            payload = {"messages": [{"role": "user", "content": "hello there"}]}
+            big = next(i for i in insts if i["name"] == "big")
+            rt.classify = lambda pol, text: (calls.append(text), ({"difficulty": ("trivial", 0.93), "task": ("chat", 0.9)}, 3100))[1]
+            # no instance opted in -> nothing, not even a classification
+            self.assertIsNone(rt.route(next(i for i in insts if i["name"] == "cheapo"), payload, "t1"))
+            # opted in, but no model has a tier -> own model, Jev not asked
+            self.assertIsNone(rt.route(big, payload, "t1"))
+            self.assertEqual(calls, [])
+            self.assertEqual(st.routes_read("big")[0]["why"], "no running model has a tier")
+            rt._cache.clear()
+            rt.save_tiers({"openrouter/google/gemini-2.5-flash": "cheap", "orcarouter/tencent/hy3": "strong", "x": "bogus"})
+            self.assertEqual(rt.load()["tiers"], {"openrouter/google/gemini-2.5-flash": "cheap", "orcarouter/tencent/hy3": "strong"})
+            t = rt.route(big, payload, "t2")
+            self.assertEqual((t["backend"], t["model"]), ("openrouter", "google/gemini-2.5-flash"))
+            self.assertEqual(rt.route(big, payload, "t2"), t)                       # the rest of the turn: cached
+            self.assertEqual(len(calls), 1)
+            r = st.routes_read("big", turn="t2")[0]
+            self.assertEqual((r["own"], r["chosen"], r["ms"]), ("orcarouter/tencent/hy3", "openrouter/google/gemini-2.5-flash", 3100))
+            self.assertEqual(r["classes"]["difficulty"], ["trivial", 0.93])
+            # a stopped model is never a target, even with a tier
+            rt.save_tiers({"openrouter/qwen/qwen3-coder": "cheap"})
+            self.assertIsNone(rt.route(big, payload, "t3"))
+            # Jev failing -> own model, reason recorded
+            rt.save_tiers({"openrouter/google/gemini-2.5-flash": "cheap"})
+            rt.classify = lambda pol, text: (_ for _ in ()).throw(TimeoutError("jev slow"))
+            self.assertIsNone(rt.route(big, payload, "t4"))
+            self.assertIn("jev slow", st.routes_read("big", turn="t4")[0]["why"])
+            # the own model chosen -> no rewrite
+            rt.save_tiers({"orcarouter/tencent/hy3": "cheap"})
+            rt.classify = lambda pol, text: ({"difficulty": ("trivial", 0.9)}, 10)
+            self.assertIsNone(rt.route(big, payload, "t5"))
+            self.assertIn("own model", st.routes_read("big", turn="t5")[0]["why"])
+            # the runtime key: policy-like names only, applies at once
+            saved, old_save = [], m._instances.save_instance
+            m._instances.save_instance = lambda i: saved.append(dict(i["config"]))
+            try:
+                self.assertIn("error", m._instances._set_config_key("big", "MODEL_ROUTER", "../x"))
+                self.assertEqual(m._instances._set_config_key("big", "MODEL_ROUTER", "default"), "MODEL_ROUTER = default (applies at once)")
+                self.assertEqual(m._instances._set_config_key("big", "MODEL_ROUTER", ""), "MODEL_ROUTER removed (applies at once)")
+                self.assertNotIn("MODEL_ROUTER", saved[-1])
+            finally:
+                m._instances.save_instance = old_save
+        finally:
+            restore()
+
+    def test_proxy_runs_the_turn_on_the_routed_model(self):
+        """The key proxy rewrites model, upstream and key for a routed turn; a
+        llama target goes to its endpoint without any key; a cloud target whose
+        key is missing leaves the call on the instance's own model."""
+        import types
+        m = self.m
+        lp = m._llmproxy
+        seen = []
+        inst = {"name": "big", "config": {"ORCAROUTER_MODEL": "tencent/hy3", "MODEL_ROUTER": "default"}}
+
+        class FakeResp:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+            def read(self): return b'{"model":"m","usage":{"prompt_tokens":1,"completion_tokens":1}}'
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        old = (m._guests.instance_by_ip, m._settings.load_settings, m._router.route, lp.urllib.request.urlopen,
+               m._store.usage_add, lp._guard_check)
+        try:
+            m._guests.instance_by_ip = lambda ip: inst if ip == "172.30.5.2" else None
+            m._settings.load_settings = lambda: {"ORCAROUTER_API_KEY": "orc-key", "OPENROUTER_API_KEY": "or-key"}
+            lp._guard_check = lambda i: (True, "")
+            m._store.usage_add = lambda *a, **k: None
+            lp.urllib.request.urlopen = lambda req, timeout=None: (seen.append(req), FakeResp())[1]
+            def call():
+                body = json.dumps({"model": "tencent/hy3", "messages": [{"role": "user", "content": "hi"}]}).encode()
+                h = self._post_handler("/api/llm/orcarouter/chat/completions", "172.30.5.2", body)
+                h.headers["X-Kaim-Turn"] = "t1"
+                h._do_POST()
+                r = seen[-1]
+                return r.full_url, json.loads(r.data)["model"], r.get_header("Authorization")
+            m._router.route = lambda i, body, turn: {"backend": "openrouter", "model": "google/gemini-2.5-flash", "upstream": None}
+            self.assertEqual(call(), ("https://openrouter.ai/api/v1/chat/completions", "google/gemini-2.5-flash", "Bearer or-key"))
+            m._router.route = lambda i, body, turn: {"backend": "llama", "model": "local-model", "upstream": "http://10.0.0.9:8080/"}
+            self.assertEqual(call(), ("http://10.0.0.9:8080/v1/chat/completions", "local-model", None))
+            m._router.route = lambda i, body, turn: None
+            self.assertEqual(call(), ("https://api.orcarouter.ai/v1/chat/completions", "tencent/hy3", "Bearer orc-key"))
+            m._settings.load_settings = lambda: {"ORCAROUTER_API_KEY": "orc-key"}           # openrouter key missing
+            m._router.route = lambda i, body, turn: {"backend": "openrouter", "model": "google/gemini-2.5-flash", "upstream": None}
+            self.assertEqual(call()[1:], ("tencent/hy3", "Bearer orc-key"))
+            inst["config"].pop("MODEL_ROUTER")                                             # not opted in: never asked
+            m._router.route = lambda *a: self.fail("router asked without opt-in")
+            call()
+        finally:
+            (m._guests.instance_by_ip, m._settings.load_settings, m._router.route, lp.urllib.request.urlopen,
+             m._store.usage_add, lp._guard_check) = old
+
     def test_proxy_books_upstream_usage(self):
         m = self.m
         seen = []
