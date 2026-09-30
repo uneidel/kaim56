@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-09-30
 
+- Web chat: "Traces" in the session panel opens the agent's recent turns; a turn shows its fixed context, the model-router decision, every LLM call (model, tokens, time) and every tool call. Cause: the line was a plain status, the traces were only reachable from the admin page.
 - Model router (`mgr/router.py`, `jev/`): Jev (OpenJev 2B v5 on the host CPU, ~6.5 s per turn) classifies the first message of a turn, a policy maps task/difficulty to a tier, the key proxy runs the turn on the chosen model — only among the running instances' models with a tier, only for instances with `MODEL_ROUTER` (off by default, runtime key); decisions in the Models tab and the trace; the Jetson llama is a possible target.
 
 ## 2026-09-28

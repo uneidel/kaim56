@@ -287,6 +287,22 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
 .plist{display:grid}
 .plist>div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)}
 .plist .v{color:var(--accent-700);text-align:right}
+.plist .link{cursor:pointer}
+.plist .link:hover span:first-child,.plist .link:focus-visible span:first-child{color:var(--accent);text-decoration:underline}
+/* trace overlay: the agent's recent turns and one turn's spans */
+#trov{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:5vh 16px}
+#trov.on{display:flex}
+#trbox{background:var(--panel);color:var(--text);border:1px solid var(--border);box-shadow:var(--shadow-md);width:min(900px,100%);max-height:88vh;display:flex;flex-direction:column}
+#trbox header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);font-family:var(--font-heading)}
+#trbox header button{margin-left:auto;width:auto;flex:none;padding:6px 14px}
+#trbody>.pbtn{width:auto;padding:5px 12px}
+#trbody{overflow:auto;padding:8px 16px 16px;font-size:13px}
+.trrow{display:grid;grid-template-columns:150px 70px 70px 1fr;gap:10px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-variant-numeric:tabular-nums}
+.trrow:hover{background:var(--panel-2)}
+#trbody .bad{color:#c0392b}
+.trsec{margin:14px 0 6px;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.trspan{display:grid;grid-template-columns:40px 1fr 90px 70px;gap:10px;padding:4px 0;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;font-size:12.5px}
+.trspan .t{overflow-wrap:anywhere}
 .ptags{display:flex;flex-wrap:wrap;gap:6px}
 .ptag{font-size:11px;letter-spacing:.02em;padding:3px 10px;border:1px solid var(--accent);color:var(--accent)}
 .ptag.ok{border-color:transparent;background:var(--accent-100);color:var(--accent-800)}
@@ -702,7 +718,10 @@ function panelPaint(){
   const d=PANEL.data;
   if(!d||d.error){$('pbody').innerHTML='<div class=text-muted style="font-size:12px">no session data</div>';return;}
   const cell=(k,v)=>`<div><div class=k>${esc(k)}</div><div class=v>${esc(v)}</div></div>`;
-  const plat=(d.platform||[]).map(p=>`<div><span>${esc(p.name)}</span><span class=v>${esc(p.state)}</span></div>`).join('');
+  // "Traces" opens the agent's recent turns (tr*), everything else is a plain status line
+  const plat=(d.platform||[]).map(p=>p.name==='Traces'
+    ?`<div class=link role=button tabindex=0 onclick=openTraces() onkeydown="if(event.key==='Enter')openTraces()"><span>${esc(p.name)} ›</span><span class=v>${esc(p.state)}</span></div>`
+    :`<div><span>${esc(p.name)}</span><span class=v>${esc(p.state)}</span></div>`).join('');
   const mcps=(d.mcps||[]);
   const need=d.need_secret||0;
   $('pbody').innerHTML=
@@ -716,6 +735,44 @@ function panelPaint(){
     (mcps.length?`<div class=ptags>${mcps.map(m=>`<span class="ptag${m.ready?' ok':''}" title="${esc(m.ready?'ready':'missing: '+m.missing.join(', '))}">${esc(m.name)}</span>`).join('')}</div>`
       :`<div class=text-muted style="font-size:12px">none assigned</div>`)+
     (need?`<a class="pbtn pri" style="text-align:center;text-decoration:none" href="/#secrets">Release secrets in the manager</a>`:'');
+}
+/* ---- traces: the agent's recent turns, one turn's LLM + tool spans (/api/trace) ---- */
+const fmtMs=ms=>ms==null?'—':ms>=60000?(ms/60000).toFixed(1)+' min':ms>=1000?(ms/1000).toFixed(1)+' s':ms+' ms';
+const fmtTk=n=>!n?'0':n>=1000?(n/1000).toFixed(1)+'k':String(n);
+function trShow(title,html){
+  let o=$('trov');
+  if(!o){o=document.createElement('div');o.id='trov';
+    o.innerHTML='<div id=trbox role=dialog aria-modal=true><header><span id=trtitle></span><button class=pbtn onclick=trClose()>Close</button></header><div id=trbody></div></div>';
+    o.onclick=e=>{if(e.target===o)trClose()};document.body.appendChild(o);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')trClose()});}
+  $('trtitle').textContent=title;$('trbody').innerHTML=html;o.classList.add('on');
+}
+function trClose(){const o=$('trov');if(o)o.classList.remove('on')}
+async function openTraces(){
+  if(!agent)return;
+  trShow('Traces — '+agent,'<div class=text-muted>loading…</div>');
+  let d={};try{d=await (await fetch('/api/trace/'+encodeURIComponent(agent)+'?limit=50')).json()}catch(e){}
+  const ts=d.turns||[];
+  $('trbody').innerHTML=ts.length?ts.map(t=>
+    `<div class=trrow tabindex=0 onclick="openTurn('${esc(t.turn)}')" onkeydown="if(event.key==='Enter')openTurn('${esc(t.turn)}')">`+
+    `<span>${new Date(t.ts_start*1000).toLocaleString()}</span><span>${esc(t.kind||'')}</span>`+
+    `<span class="${t.outcome&&t.outcome!=='ok'?'bad':''}">${esc(t.ts_end?(t.outcome||'ok'):'running')}</span>`+
+    `<span>${fmtMs(t.ms)} · ${t.llm_calls} LLM calls${t.llm_failed?` (${t.llm_failed} failed)`:''} · ${fmtTk(t.in)} in / ${fmtTk(t.out)} out${t.cost?` · $${t.cost.toFixed(4)}`:''}</span></div>`).join('')
+    :'<div class=text-muted>No turns recorded yet.</div>';
+}
+async function openTurn(turn){
+  let d={};try{d=await (await fetch('/api/trace/'+encodeURIComponent(agent)+'?turn='+encodeURIComponent(turn))).json()}catch(e){}
+  const t=d.turn||{}, r=d.route;
+  const back=`<button class=pbtn onclick=openTraces()>‹ all turns</button>`;
+  const llm=(d.llm||[]).map(x=>`<div class=trspan><span>#${x.step??''}</span><span class=t>${esc(x.model||'')}${x.ok?'':` <b class=bad>${esc(x.err||'failed')}</b>`}</span><span>${fmtTk(x.in)} / ${fmtTk(x.out)}</span><span>${fmtMs(x.ms)}</span></div>`).join('');
+  const tools=(d.tools||[]).map(x=>`<div class=trspan><span>${x.ok?'✓':'✗'}</span><span class=t>${esc(x.tool||'')} <span class=text-muted>${esc(x.target||'')}</span>${x.err?` <b class=bad>${esc(x.err)}</b>`:''}</span><span></span><span>${fmtMs(x.ms)}</span></div>`).join('');
+  const ctx=t.ctx?Object.entries(t.ctx).map(([k,v])=>`${esc(k)} ~${fmtTk(v)}`).join(' · '):'';
+  const route=r?`<div class=trsec>Model router</div><div>${esc(r.own)} → <b>${esc(r.chosen)}</b> · ${Object.entries(r.classes||{}).map(([q,v])=>`${esc(q)}=${esc(v[0])} ${v[1]}`).join(' · ')} · ${fmtMs(r.ms)} · ${esc(r.why||'')}</div>`:'';
+  trShow('Turn '+turn+' — '+agent,
+    `${back}<div style="margin-top:10px">${new Date((t.ts_start||0)*1000).toLocaleString()} · ${esc(t.kind||'')} · <b>${esc(t.ts_end?(t.outcome||'ok'):'running')}</b> · ${fmtMs(t.ms)} · ${t.steps??0} steps · ${fmtTk(t.in)} in / ${fmtTk(t.out)} out${t.cost?` · $${(t.cost||0).toFixed(4)}`:''}</div>`+
+    (ctx?`<div class=trsec>Fixed context at turn start</div><div>${ctx}</div>`:'')+route+
+    `<div class=trsec>LLM calls</div>${llm||'<div class=text-muted>none</div>'}`+
+    `<div class=trsec>Tool calls</div>${tools||'<div class=text-muted>none</div>'}`);
 }
 function openLogs(){if(agent)window.open('/api/session/'+encodeURIComponent(agent)+'/log','_blank')}
 
