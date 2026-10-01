@@ -780,7 +780,9 @@ HTML_BOTTOM = """
   Cloudflare Workers / Durable Objects (<code>celld/</code>, container <code>kaim56-celld</code>, dev mode, loopback 127.0.0.1:9876). <code>apps/</code> is its static
   asset directory; a small Worker maps <code>&#8230;/</code> to <code>index.html</code>. The manager stays the front door: <code>/apps/&#8249;name&#8250;/</code> is admin-only, the
   path is checked (known app, no traversal, no dotfiles) before it is forwarded (<code>CELLD_URL</code>), the apps keep calling <code>/api</code> on the same
-  origin; celld down &#8594; the manager serves its own copy. Next: an app&#8217;s own state in Durable Objects instead of instance config keys.</p></div>
+  origin; celld down &#8594; the manager serves its own copy. An app&#8217;s own server side is <code>/apps/&#8249;name&#8250;/_api/&#8230;</code> (GET/POST, same login and
+  CSRF check, no fallback): Code flow&#8217;s state machine lives in a Durable Object there &#8212; atomic updates and a real compare-and-set lock instead
+  of instance config keys.</p></div>
 
   <div class="card blueprint"><span class=card-title>Model router (Jev)</span>
   <p class=card-body>Opt-in per instance (<code>MODEL_ROUTER=&#8249;policy&#8250;</code>, a runtime key; off by default). On the first LLM call of a turn the key proxy

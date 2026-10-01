@@ -7,7 +7,7 @@
      /api/workspace, never the model's paraphrase), and a chat with the repo's
      agent. The app runs on the manager's EXISTING API; the only manager piece
      is the generic checkout (/api/checkout/<instance>). Its state lives in the
-     instance config as CODEFLOW_* keys; the analysis rounds are judged here
+     app's Durable Object on celld (machine.js); the analysis rounds are judged here
      with flowcheck.js (the agent runs the Python twin, validate_flow.py).
      React + React Flow from esm.sh, no build. -->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -94,7 +94,7 @@ import dagre from 'https://esm.sh/@dagrejs/dagre@1.1.4';
 import htm from 'https://esm.sh/htm@3.1.1';
 import hljs from 'https://esm.sh/highlight.js@11.10.0/lib/common';
 import * as L from './lib.js';
-import { createMachine, reposFrom, localEndpoint, hostOf, LOCAL } from './machine.js';
+import { createMachine, reposFrom, migrate, localEndpoint, hostOf, LOCAL } from './machine.js';
 
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
@@ -125,6 +125,12 @@ const api = {
     body: JSON.stringify({ message, chat: 'app-codeflow-' + n }) }).then(r => r.text()),
   ls: (n, path) => fetch(wsPath(n, path), { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => d && d.entries).catch(() => null),
   text: (n, path) => fetch(wsPath(n, path), { cache: 'no-store' }).then(r => r.ok ? r.text() : null).catch(() => null),
+  // the machine's state: this app's Durable Object on celld, through the manager (same origin, same login)
+  states: () => fetch('_api/repos', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error('state service HTTP ' + r.status); return r.json(); }),
+  patch: (n, set) => post(`_api/repos/${enc(n)}`, { set }).then(d => { if (d.error) throw new Error(d.error); return d; }),
+  seed: (n, set) => post(`_api/repos/${enc(n)}/seed`, { set }),
+  claim: (n, tab, ttl) => post(`_api/repos/${enc(n)}/claim`, { tab, ttl }).then(d => !!d.ok),
+  release: (n, tab) => post(`_api/repos/${enc(n)}/release`, { tab }),
   flow: (n, id) => api.text(n, `flow/${id}.json`).then(t => { if (t == null) return null; try { return JSON.parse(t); } catch (e) { return { __invalid: String(e.message || e) }; } }),
 };
 const FILES = new Map();          // `${instance}@${commit}/${path}` -> Promise<string[] | null>
@@ -336,15 +342,26 @@ function App() {
   const [dir, setDir] = useState(() => { try { return localStorage.getItem('codeflow.dir') || 'LR'; } catch (e) { return 'LR'; } });
   const flipDir = () => setDir(d => { const n = d === 'LR' ? 'TB' : 'LR'; try { localStorage.setItem('codeflow.dir', n); } catch (e) {} return n; });
 
+  const [down, setDown] = useState('');          // the state service (celld) is not reachable
   const poll = useCallback(async () => {
+    let insts, ts, states;
     try {
-      const [insts, ts] = await Promise.all([api.instances(), api.tasks()]);
-      const list = reposFrom(insts), tlist = Array.isArray(ts) ? ts : ts.tasks || [];
-      setRepos(list); setTasks(tlist);
+      [insts, ts] = await Promise.all([api.instances(), api.tasks()]);
+    } catch (e) { setRepos(r => r || []); return; }
+    try {
+      states = await api.states();
+      if (await migrate(api, insts, states)) [insts, states] = await Promise.all([api.instances(), api.states()]);   // repos from the config-key days
+      setDown('');
+    } catch (e) {                                  // without its state the machine must not act on guesses
+      setDown(String(e.message || e)); setRepos(r => r || []); return;
+    }
+    const list = reposFrom(insts, states), tlist = Array.isArray(ts) ? ts : ts.tasks || [];
+    setRepos(list); setTasks(tlist);
+    try {
       let moved = false;
       for (const r of list) moved = (await M.tick(r)) || moved;          // the state machine runs here
-      if (moved) setRepos(reposFrom(await api.instances()));
-    } catch (e) { setRepos(r => r || []); }
+      if (moved) setRepos(reposFrom(await api.instances(), await api.states()));
+    } catch (e) { /* the next poll tries again */ }
   }, []);
   useEffect(() => { poll(); const t = setInterval(poll, 8000); return () => clearInterval(t); }, [poll]);
   useEffect(() => { if (repos && repos.length && !repos.some(r => r.name === sel)) setSel(repos[0].name); }, [repos]);
@@ -445,6 +462,8 @@ function App() {
       <button className="primary" onClick=${() => setOpenDlg(true)}>+ Open repo</button>
       <a href="/chat">Chat</a> · <a href="/">Manager</a>
     </header>
+    ${down && html`<div className="note" role="alert" style=${{ padding: '8px 16px', background: '#7a2e2e', color: '#fff' }}>
+      Code flow's state service (celld) is not reachable — nothing is analysed until it is back. (${down})</div>`}
     <main>
       ${body}
       <aside className="side">

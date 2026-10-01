@@ -10,14 +10,14 @@
 //   analysing --task over, problems, no rounds-->   incomplete
 //   (any error)                                    -> failed
 //
-// State lives in the instance config as CODEFLOW_* keys, written one key per
-// request. Two rules keep several open pages from racing (they did: a second
-// tab saw STATE=analysing next to the previous run's finished task and round
-// 3, and declared the repo incomplete while round 1 had just started):
-//   * a page acts on a repo only while it holds CODEFLOW_LOCK (claimed, then
-//     read back; stale after LOCK_TTL), and re-reads the state after claiming;
-//   * the keys a transition depends on (task, round, commit) are written
-//     BEFORE the state key that makes other pages look at them.
+// Where the state lives: the instance config keeps CODEFLOW_REPO (this
+// instance IS a Code flow repo) and the model; everything that changes while
+// the machine runs (STATE, TASK, ROUND, COMMIT, STACK, SKILLS, ERROR, LOCK)
+// lives in the app's Durable Object on celld (/apps/codeflow/_api/repos).
+// A Durable Object handles one request at a time, so a multi-field update is
+// atomic and the claim is a real compare-and-set — the two workarounds of the
+// config-key days ("write, wait, read back" for the lock; dependent keys
+// before STATE) are gone. Repos from those days are moved over once (migrate).
 // `api` is injected (the page passes its fetch wrappers, tests a fake).
 
 import * as L from './lib.js';
@@ -25,9 +25,15 @@ import { validateTree } from './flowcheck.js';
 
 export const LOCK_TTL = 10 * 60 * 1000;
 
-export function reposFrom(instances) {
+/** The keys that live in the Durable Object, not in the instance config. */
+export const STATE_KEYS = ['CODEFLOW_STATE', 'CODEFLOW_TASK', 'CODEFLOW_ROUND', 'CODEFLOW_COMMIT', 'CODEFLOW_STACK',
+  'CODEFLOW_SKILLS', 'CODEFLOW_ERROR', 'CODEFLOW_LOCK'];
+
+/** Repos = instances with CODEFLOW_REPO; `states` (name -> state from the Durable
+ *  Object) wins over leftover config keys of a repo not migrated yet. */
+export function reposFrom(instances, states = {}) {
   return (instances || []).filter(i => i.config?.CODEFLOW_REPO).map(i => {
-    const c = i.config;
+    const c = { ...i.config, ...(states[i.name] || {}) };
     return { name: i.name, full: c.CODEFLOW_REPO, url: `https://github.com/${c.CODEFLOW_REPO}`, state: c.CODEFLOW_STATE || 'failed',
       task: c.CODEFLOW_TASK || '', round: +c.CODEFLOW_ROUND || 0, commit: c.CODEFLOW_COMMIT || '', error: c.CODEFLOW_ERROR || '',
       stack: (c.CODEFLOW_STACK || '').split(',').filter(Boolean), skills: (c.CODEFLOW_SKILLS || '').split(',').filter(Boolean),
@@ -70,23 +76,35 @@ export function stopReason(result) {
   return '';
 }
 
-export function createMachine(api, { checkerSource, fileLines, sleep = ms => new Promise(r => setTimeout(r, ms)),
-  now = () => Date.now(), tab = Math.random().toString(36).slice(2, 10), settle = 1500 } = {}) {
-  const inflight = new Set();
-  async function setCfgs(name, kv) { for (const [k, v] of Object.entries(kv)) await api.setCfg(name, k, L.oneLine(v)); }
-  const fresh = async name => reposFrom(await api.instances()).find(r => r.name === name);
-
-  /** Claim the repo for this page: write our lock, wait, read it back. */
-  async function claim(name) {
-    const cur = (await fresh(name))?.lock || '';
-    const [owner, ts] = cur.split('@');
-    if (cur && owner !== tab && now() - (+ts || 0) < LOCK_TTL) return false;
-    const mine = `${tab}@${now()}`;
-    await api.setCfg(name, 'CODEFLOW_LOCK', mine);
-    await sleep(settle);                       // a racing page writes in this window; the last writer wins
-    return (await fresh(name))?.lock === mine;
+/** Move a repo's state from its instance config into the Durable Object, once:
+ *  seed (only if the object has nothing yet), then drop the config keys. */
+export async function migrate(api, instances, states) {
+  let moved = 0;
+  for (const i of instances || []) {
+    if (!i.config?.CODEFLOW_REPO) continue;
+    const left = STATE_KEYS.filter(k => k in i.config);
+    if (!left.length) continue;
+    if (!states[i.name]) await api.seed(i.name, Object.fromEntries(left.map(k => [k, i.config[k]])));
+    for (const k of left) await api.setCfg(i.name, k, '');
+    moved++;
   }
-  const release = name => api.setCfg(name, 'CODEFLOW_LOCK', '').catch(() => {});
+  return moved;
+}
+
+export function createMachine(api, { checkerSource, fileLines, tab = Math.random().toString(36).slice(2, 10) } = {}) {
+  const inflight = new Set();
+  /** State keys in one atomic update of the Durable Object, the rest (model …) to the config. */
+  async function setCfgs(name, kv) {
+    const state = {}, cfg = [];
+    for (const [k, v] of Object.entries(kv)) (STATE_KEYS.includes(k) ? (state[k] = L.oneLine(v)) : cfg.push([k, L.oneLine(v)]));
+    for (const [k, v] of cfg) await api.setCfg(name, k, v);
+    if (Object.keys(state).length) await api.patch(name, state);
+  }
+  const fresh = async name => reposFrom(await api.instances(), await api.states()).find(r => r.name === name);
+
+  /** Claim the repo for this page: a compare-and-set in the Durable Object. */
+  const claim = name => api.claim(name, tab, LOCK_TTL);
+  const release = name => api.release(name, tab).catch(() => {});
 
   async function checkFlow(name, commit) {
     return validateTree(f => api.flow(name, f.replace(/\.json$/, '')), f => fileLines(name, f, commit));
@@ -109,10 +127,11 @@ export function createMachine(api, { checkerSource, fileLines, sleep = ms => new
       const persona = personas.find(p => p.name === L.PERSONA)?.prompt || '';
       const mc = modelConfig(model, localEndpoint(settings, insts), proxy);
       const cfg = { TRANSPORT: 'web', AGENT_SYSTEM: L.frame(persona, full), AGENT_TOOLS: L.TOOLS.join(','),
-        SKILL_LEARN: '0', AUTO_RESET_MIN: '0', CODEFLOW_REPO: full, CODEFLOW_STATE: 'cloning' };
+        SKILL_LEARN: '0', AUTO_RESET_MIN: '0', CODEFLOW_REPO: full };
       for (const [k, v] of Object.entries(mc.cfg)) if (v) cfg[k] = v;
       const r = await api.create({ name, template: 'openrouter', mounts: [], mcps: [], internet: mc.internet, config: cfg });
       if (!/created/.test(r.msg || '')) throw new Error(r.msg || 'could not create the instance');
+      await setCfgs(name, { CODEFLOW_ERROR: '', CODEFLOW_STATE: 'cloning' });
     } else {
       if (model) {                                  // switching model (or local <-> cloud) on an existing repo
         const mc = modelConfig(model, localEndpoint(settings, insts), proxy);
@@ -144,7 +163,7 @@ export function createMachine(api, { checkerSource, fileLines, sleep = ms => new
     await api.say(n, '/reset');                    // no reading back its own earlier analysis
     const id = taskIdOf(await api.addTask(n, L.analysisPrompt(repo.full, commit, stack, skills, await checkerSource())));
     if (!id) throw new Error('could not queue the analysis task');
-    // everything the next step reads first, the state that makes it read them last
+    // one atomic update: other pages never see a half-written round
     await setCfgs(n, { CODEFLOW_TASK: id, CODEFLOW_ROUND: '1', CODEFLOW_COMMIT: commit, CODEFLOW_STACK: stack.join(','),
       CODEFLOW_SKILLS: skills.join(','), CODEFLOW_ERROR: '', CODEFLOW_STATE: 'analysing' });
   }

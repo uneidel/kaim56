@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateTree } from './flowcheck.js';
 import * as L from './lib.js';
-import { createMachine, reposFrom, LOCK_TTL, stopReason, modelConfig, localEndpoint, LOCAL } from './machine.js';
+import { createMachine, reposFrom, migrate, STATE_KEYS, LOCK_TTL, stopReason, modelConfig, localEndpoint, LOCAL } from './machine.js';
 
 const FX = JSON.parse(readFileSync(new URL('./fixtures.json', import.meta.url)));
 const PY = JSON.parse(readFileSync(new URL('./py-results.json', import.meta.url)));
@@ -71,14 +71,30 @@ assert.ok(L.frame('PERSONA', 'acme/shop').startsWith('PERSONA\n\nYou are the cod
 
 // ---- machine.js: several open pages must not race ------------------------------------
 function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk = false, lock = '' }) {
-  const cfg = { CODEFLOW_REPO: 'acme/shop', CODEFLOW_STATE: state, CODEFLOW_TASK: task, CODEFLOW_ROUND: String(round),
-    CODEFLOW_COMMIT: 'c1', CODEFLOW_LOCK: lock, OPENROUTER_MODEL: 'm' };
-  const w = { cfg, writes: [], tasks: [{ id: task, status: taskStatus }], added: [], playbooks: [] };
+  // config: what stays on the instance; st: the app's Durable Object (one request at a time —
+  // no await between a check and its write, exactly what the object guarantees)
+  const config = { CODEFLOW_REPO: 'acme/shop', OPENROUTER_MODEL: 'm' };
+  const st = { CODEFLOW_STATE: state, CODEFLOW_TASK: task, CODEFLOW_ROUND: String(round), CODEFLOW_COMMIT: 'c1' };
+  if (lock) st.CODEFLOW_LOCK = lock;
+  const cfg = new Proxy({}, {                                            // one view for the assertions
+    get: (_, k) => (k in st ? st[k] : config[k]),
+    set: (_, k, v) => { (STATE_KEYS.includes(k) ? st : config)[k] = v; return true; },
+  });
+  const w = { cfg, config, st, writes: [], patches: [], tasks: [{ id: task, status: taskStatus }], added: [], playbooks: [] };
   const hop = () => new Promise(r => setTimeout(r, 1));              // every call yields, like the network
   const flows = flowOk ? { overview: clone(FX.overview), ...clone(FX.details) } : {};
   w.api = {
-    instances: async () => { await hop(); return [{ name: 'repo-shop', running: false, config: { ...cfg } }]; },
-    setCfg: async (n, k, v) => { await hop(); w.writes.push([k, v]); if (v === '') delete cfg[k]; else cfg[k] = v; return { msg: 'ok' }; },
+    instances: async () => { await hop(); return [{ name: 'repo-shop', running: false, config: { ...config } }]; },
+    setCfg: async (n, k, v) => { await hop(); w.writes.push([k, v]); if (v === '') delete config[k]; else config[k] = v; return { msg: 'ok' }; },
+    states: async () => { await hop(); return { 'repo-shop': { ...st } }; },
+    patch: async (n, set) => { await hop(); w.patches.push(Object.keys(set)); for (const [k, v] of Object.entries(set)) { if (v === '') delete st[k]; else st[k] = v; } return { ...st }; },
+    claim: async (n, tab, ttl) => {
+      await hop();
+      const [o, ts] = String(st.CODEFLOW_LOCK || '').split('@');
+      if (o && o !== tab && Date.now() - (+ts || 0) < ttl) return false;
+      st.CODEFLOW_LOCK = `${tab}@${Date.now()}`; return true;
+    },
+    release: async (n, tab) => { await hop(); if (String(st.CODEFLOW_LOCK || '').split('@')[0] === tab) delete st.CODEFLOW_LOCK; },
     tasks: async () => { await hop(); return w.tasks.map(t => ({ ...t })); },
     checkoutState: async () => { await hop(); return { status: 'done', commit: 'c2' }; },
     addTask: async (n, message) => { await hop(); const id = 't' + (w.tasks.length); w.tasks.push({ id, status: 'pending', message }); w.added.push(message); return { msg: `task ${id} created (pending)` }; },
@@ -87,11 +103,11 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
     ls: async (n, path) => path === 'src' ? [{ name: 'Dockerfile' }, { name: 'app.py' }] : [],
     text: async () => '', flow: async (n, id) => (id in flows ? flows[id] : null), checkout: async () => ({ ok: true }),
   };
-  w.opts = tab => ({ tab, settle: 5, checkerSource: async () => 'CHECKER', fileLines: async (n, f) => (f in FX.files ? FX.files[f].split('\n') : null) });
-  w.repo = () => reposFrom([{ name: 'repo-shop', config: { ...cfg } }])[0];
+  w.opts = tab => ({ tab, checkerSource: async () => 'CHECKER', fileLines: async (n, f) => (f in FX.files ? FX.files[f].split('\n') : null) });
+  w.repo = () => reposFrom([{ name: 'repo-shop', config: { ...config } }], { 'repo-shop': { ...st } })[0];
   return w;
 }
-{ // two pages, checkout done: exactly one of them prepares; the state key is written last
+{ // two pages, checkout done: exactly one of them prepares; the new round lands in ONE atomic update
   const w = fakeWorld({ state: 'cloning' });
   const A = createMachine(w.api, w.opts('A')), B = createMachine(w.api, w.opts('B'));
   const snap = w.repo();
@@ -99,13 +115,26 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
   assert.equal(w.added.length, 1, 'one analysis task');
   assert.ok(w.added[0].startsWith(`/steps ${L.ANALYSIS_STEPS} Analyse the repository acme/shop (commit c2)`));
   assert.deepEqual([w.cfg.CODEFLOW_STATE, w.cfg.CODEFLOW_ROUND, w.cfg.CODEFLOW_TASK, w.cfg.CODEFLOW_COMMIT], ['analysing', '1', 't1', 'c2']);
-  const keys = w.writes.map(x => x[0]);
-  assert.ok(keys.lastIndexOf('CODEFLOW_STATE') > keys.lastIndexOf('CODEFLOW_TASK'), 'state after task');
-  assert.ok(keys.lastIndexOf('CODEFLOW_STATE') > keys.lastIndexOf('CODEFLOW_ROUND'), 'state after round');
+  const round = w.patches.find(p => p.includes('CODEFLOW_STATE'));
+  assert.ok(round.includes('CODEFLOW_TASK') && round.includes('CODEFLOW_ROUND') && round.includes('CODEFLOW_COMMIT'), 'one update');
   assert.equal(w.cfg.CODEFLOW_LOCK, undefined, 'lock released');
+  assert.ok(!w.writes.some(([k]) => STATE_KEYS.includes(k)), 'no state key in the instance config');
+}
+{ // repos from the config-key days move into the object once; the object's own state is never overwritten
+  const seeded = {}, cfgs = { a: { CODEFLOW_REPO: 'x/a', CODEFLOW_STATE: 'ready', CODEFLOW_ROUND: '2', OPENROUTER_MODEL: 'm' },
+    b: { CODEFLOW_REPO: 'x/b', CODEFLOW_STATE: 'failed' }, c: { CODEFLOW_REPO: 'x/c' }, d: { OPENROUTER_MODEL: 'm', CODEFLOW_STATE: 'x' } };
+  const api = { seed: async (n, set) => { seeded[n] = set; }, setCfg: async (n, k, v) => { if (v === '') delete cfgs[n][k]; } };
+  const insts = () => Object.entries(cfgs).map(([name, config]) => ({ name, config: { ...config } }));
+  assert.equal(await migrate(api, insts(), { b: { CODEFLOW_STATE: 'analysing' } }), 2);
+  assert.deepEqual(seeded, { a: { CODEFLOW_STATE: 'ready', CODEFLOW_ROUND: '2' } });              // b already had state: kept
+  assert.deepEqual([cfgs.a, cfgs.b], [{ CODEFLOW_REPO: 'x/a', OPENROUTER_MODEL: 'm' }, { CODEFLOW_REPO: 'x/b' }]);
+  assert.equal(cfgs.d.CODEFLOW_STATE, 'x');                                                          // not a repo: untouched
+  assert.equal(await migrate(api, insts(), {}), 0);                                                  // once
+  const merged = reposFrom([{ name: 'a', config: { CODEFLOW_REPO: 'x/a', CODEFLOW_STATE: 'failed' } }], { a: { CODEFLOW_STATE: 'ready' } });
+  assert.equal(merged[0].state, 'ready');                                                            // the object wins
 }
 { // the race of 2026-09-27: round 3 of an OLD run, its task done, while a page is mid-prepare:
-  // the holder writes task/round before the state, so a second page never sees the stale pair
+  // the holder updates task/round/state at once, so a second page never sees the stale pair
   const w = fakeWorld({ state: 'cloning', task: 'old', round: 3 });
   const A = createMachine(w.api, w.opts('A')), B = createMachine(w.api, w.opts('B'));
   const snap = w.repo();
@@ -128,7 +157,8 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
 { // a running task: nothing happens, no lock taken
   const w = fakeWorld({ state: 'analysing', taskStatus: 'running' });
   assert.equal(await createMachine(w.api, w.opts('A')).tick(w.repo()), false);
-  assert.equal(w.writes.length, 0);
+  assert.equal(w.writes.length + w.patches.length, 0);
+  assert.equal(w.st.CODEFLOW_LOCK, undefined);
 }
 { // a foreign fresh lock blocks; a stale one is taken over
   const w = fakeWorld({ state: 'analysing', lock: `other@${Date.now()}` });
@@ -170,12 +200,15 @@ function fakeWorld({ state, task = 't0', taskStatus = 'done', round = 1, flowOk 
   const insts = [{ name: 'uncensored', template: 'llama', config: { LLAMA_ENDPOINT: EP } }];
   const api = { instances: async () => insts, settings: async () => ({ LLM_KEY_PROXY: '1' }), personas: async () => [{ name: 'code-explorer', prompt: 'P' }],
     create: async b => { created.push(b); insts.push({ name: b.name, internet: b.internet, config: { ...b.config } }); return { msg: `instance '${b.name}' created` }; },
-    setCfg: async (n, k, v) => { cfg[k] = v; }, setInternet: async (n, on) => net.push(on), checkout: async () => ({ ok: true }) };
-  const Mx = createMachine(api, { tab: 'A', settle: 1, checkerSource: async () => '', fileLines: async () => null });
+    setCfg: async (n, k, v) => { cfg[k] = v; }, patch: async (n, set) => { state[n] = { ...(state[n] || {}), ...set }; },
+    setInternet: async (n, on) => net.push(on), checkout: async () => ({ ok: true }) };
+  const state = {};
+  const Mx = createMachine(api, { tab: 'A', checkerSource: async () => '', fileLines: async () => null });
   assert.equal(await Mx.openRepo('acme/shop', LOCAL), 'repo-shop');
   const c = created[0];
   assert.equal(c.template, 'openrouter'); assert.equal(c.internet, true);
   assert.equal(c.config.LLAMA_ENDPOINT, EP); assert.equal(c.config.EGRESS_ALLOW, '192.168.56.247'); assert.ok(!('OPENROUTER_MODEL' in c.config));
+  assert.ok(!('CODEFLOW_STATE' in c.config)); assert.equal(state['repo-shop'].CODEFLOW_STATE, 'cloning');   // state: the object
   assert.equal(reposFrom(insts).find(r => r.name === 'repo-shop').model, 'local · 192.168.56.247');
   await Mx.openRepo('acme/shop', 'qwen/qwen3-coder');                       // back to the cloud
   assert.deepEqual([cfg.LLAMA_ENDPOINT, cfg.EGRESS_ALLOW, cfg.OPENROUTER_MODEL], ['', '', 'qwen/qwen3-coder']); assert.deepEqual(net, [false]);

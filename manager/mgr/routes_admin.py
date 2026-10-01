@@ -308,12 +308,29 @@ def _rt_app_file(h):
     name, slash, rel = path[len("/apps/"):].partition("/")
     if name and not slash:
         h.send_response(302); h.send_header("Location", f"/apps/{name}/"); h.end_headers(); return
+    if _apps.is_api(rel):                       # the app's own server side on celld
+        st, ct, data = _apps.api_forward("GET", name, rel)
+        return h._send(data, ct, st)
     # celld (CELLD_URL) first; it down or not configured: the manager's own copy
     got = _apps.hosted(name, rel) or _apps.file_of(name, rel)
     data, ct = got
     if data is None:
         return h._json({"error": ct}, 404)
     return data, ct
+
+
+@_routes.ROUTER.post("/apps/", prefix=True, admin=True)
+def _rt_app_api(h):
+    # POST /apps/<name>/_api/... — an app's own server side (Worker + Durable
+    # Object on celld). Only _api paths; admin login and the CSRF origin check
+    # of every POST apply before this runs.
+    path = h.path.split("?", 1)[0]
+    name, _, rel = path[len("/apps/"):].partition("/")
+    if not _apps.is_api(rel):
+        return h._json({"error": "only /apps/<name>/_api/ takes a POST"}, 405)
+    body = h._raw(_apps.API_MAX_BODY)
+    st, ct, data = _apps.api_forward("POST", name, rel, body)
+    return h._send(data, ct, st)
 
 
 @_routes.ROUTER.get("/aic/", prefix=True, admin=True)

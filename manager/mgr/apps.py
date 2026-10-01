@@ -17,6 +17,8 @@ Hosting: with CELLD_URL in Settings the files come from celld (the repo's
 celld/ project, self-hosted Workers / Durable Objects, loopback only) — the
 same path checks first, the same admin login, the same origin for the apps'
 /api calls. celld down or slow: the manager serves the file itself.
+/apps/<name>/_api/... (GET and POST) is the app's own server side on celld
+(Worker + Durable Object) — forwarded the same way, no local fallback.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -104,6 +106,35 @@ def hosted(name, rel):
         return (None, "not found") if e.code == 404 else None
     except (OSError, ValueError):
         return None
+
+
+API_PREFIX = "_api"
+API_MAX_BODY = 64 * 1024
+
+
+def is_api(rel):
+    return (rel or "").strip("/").split("/")[0] == API_PREFIX
+
+
+def api_forward(method, name, rel, body=b""):
+    """(status, content-type, bytes): an app's own server side on celld.
+    Same path checks as the files; 503 when celld is not set up or down."""
+    base = celld_url()
+    segs, why = check_path(name, rel)
+    if segs is None:
+        return 404, "application/json", json.dumps({"error": why}).encode()
+    if not base:
+        return 503, "application/json", b'{"error":"this app needs its server side (CELLD_URL is not set)"}'
+    url = f"{base}/apps/{name}/" + "/".join(urllib.request.quote(s) for s in segs)
+    req = urllib.request.Request(url, data=body if method == "POST" else None, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=CELLD_TIMEOUT) as r:
+            return r.status, r.headers.get("Content-Type", "application/json"), r.read(MAX_FILE)
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", "application/json"), e.read(MAX_FILE)
+    except (OSError, ValueError) as e:
+        return 503, "application/json", json.dumps({"error": f"the app's server side (celld) is not reachable: {e!r}"[:300]}).encode()
 
 
 def file_of(name, rel):

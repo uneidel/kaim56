@@ -4081,6 +4081,63 @@ class ManagerFunctions(unittest.TestCase):
             m._settings.SITE["APPS_DIR"] = old[0]
             m._settings.load_settings = old[1]
 
+    def test_app_server_side_goes_to_celld_only(self):
+        """/apps/<name>/_api/... (GET and POST) is the app's own server side on
+        celld: forwarded with its body after the path checks, behind the login;
+        no local fallback (503 without celld); a POST elsewhere is refused; a
+        VM never gets through."""
+        import http.server, threading
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-capi-")
+        os.makedirs(os.path.join(tmp, "flow"))
+        json.dump({"title": "Flow"}, open(os.path.join(tmp, "flow", "app.json"), "w"))
+        _wtext(os.path.join(tmp, "flow", "index.html"), "<h1>x</h1>")
+        seen = []
+
+        class Celld(http.server.BaseHTTPRequestHandler):
+            def _reply(self, body):
+                b = json.dumps(body).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+            def do_GET(self):
+                seen.append(("GET", self.path, b"")); self._reply({"repo-a": {"CODEFLOW_STATE": "ready"}})
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                seen.append(("POST", self.path, body)); self._reply({"ok": True})
+            def log_message(self, *a): pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Celld)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, m._guests.instance_by_ip
+        try:
+            m._settings.SITE["APPS_DIR"] = tmp
+            m._settings.load_settings = lambda: {"CELLD_URL": f"http://127.0.0.1:{srv.server_port}"}
+            m._guests.instance_by_ip = lambda ip: {"name": "vm"} if ip.startswith("172.30.") else None
+            h = self._handler("/apps/flow/_api/repos", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 200); self.assertIn(b'"CODEFLOW_STATE": "ready"', h.wfile.getvalue())
+            body = json.dumps({"tab": "A", "ttl": 600000}).encode()
+            h = self._post_handler("/apps/flow/_api/repos/repo-a/claim", "10.0.0.9", body, origin="http://127.0.0.1:8700"); h._do_POST()
+            self.assertEqual(self._status(h), 200)
+            self.assertEqual(seen, [("GET", "/apps/flow/_api/repos", b""), ("POST", "/apps/flow/_api/repos/repo-a/claim", body)])
+            h = self._post_handler("/apps/flow/index.html", "10.0.0.9", b"{}", origin="http://127.0.0.1:8700"); h._do_POST()
+            self.assertEqual(self._status(h), 405)                                       # files take no POST
+            for bad in ("/apps/flow/_api/../x", "/apps/nomanifest/_api/repos", "/apps/flow/_api/.env"):
+                h = self._post_handler(bad, "10.0.0.9", b"{}", origin="http://127.0.0.1:8700"); h._do_POST()
+                self.assertNotEqual(self._status(h), 200, bad)
+            h = self._post_handler("/apps/flow/_api/repos/repo-a", "10.0.0.9", b"{}", origin="https://evil.example"); h._do_POST()
+            self.assertEqual(self._status(h), 403)                                       # the CSRF origin check of every POST
+            h = self._handler("/apps/flow/_api/repos", "172.30.1.2"); h._do_GET()
+            self.assertNotEqual(self._status(h), 200)                                    # a VM is not the operator
+            self.assertEqual(len(seen), 2)                                               # none of those reached celld
+            m._settings.load_settings = lambda: {}
+            h = self._handler("/apps/flow/_api/repos", "10.0.0.9"); h._do_GET()
+            self.assertEqual(self._status(h), 503)                                       # no local fallback for state
+            srv.shutdown(); srv.server_close()
+            m._settings.load_settings = lambda: {"CELLD_URL": f"http://127.0.0.1:{srv.server_port}"}
+            self.assertEqual(m._apps.api_forward("GET", "flow", "_api/repos")[0], 503)    # celld gone
+        finally:
+            m._settings.SITE["APPS_DIR"] = old[0]
+            m._settings.load_settings, m._guests.instance_by_ip = old[1], old[2]
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/
