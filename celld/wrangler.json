@@ -13,6 +13,10 @@
       {
         "name": "CODEFLOW",
         "class_name": "CodeflowState"
+      },
+      {
+        "name": "COREWAR",
+        "class_name": "CorewarLog"
       }
     ]
   },
@@ -21,6 +25,12 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "CodeflowState"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "CorewarLog"
       ]
     }
   ]

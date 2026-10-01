@@ -18,8 +18,9 @@ export default {
     const url = new URL(request.url);
     const m = url.pathname.match(/^\/apps\/([a-z0-9][a-z0-9_-]{0,40})\/_api(\/.*)?$/);
     if (m) {
-      if (m[1] !== "codeflow") return json({ error: "this app has no server-side state" }, 404);
-      const stub = env.CODEFLOW.get(env.CODEFLOW.idFromName("codeflow"));
+      const ns = { codeflow: env.CODEFLOW, corewar: env.COREWAR }[m[1]];
+      if (!ns) return json({ error: "this app has no server-side state" }, 404);
+      const stub = ns.get(ns.idFromName(m[1]));          // one object per app
       return stub.fetch(new Request(new URL(m[2] || "/", url), request));
     }
     if (url.pathname.endsWith("/")) url.pathname += "index.html";
@@ -98,5 +99,44 @@ export class CodeflowState extends DurableObject {
       return json({ error: String(e.message || e) }, 400);
     }
     return json({ error: "unknown operation" }, 404);
+  }
+}
+
+// ---- Core War: the Changes tab (every adaptation with reason and diff) -----
+// Shared by every browser instead of living in one browser's localStorage.
+// Keys sort by time, newest are listed first; the oldest go beyond MAX_CHANGES.
+const MAX_CHANGES = 1000;
+const MAX_ENTRY = 32 * 1024;
+
+export class CorewarLog extends DurableObject {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean);       // changes[/clear]
+    if (parts[0] !== "changes") return json({ error: "not found" }, 404);
+    if (parts.length === 1 && request.method === "GET") {
+      const limit = Math.min(MAX_CHANGES, Math.max(1, +url.searchParams.get("limit") || 300));
+      const rows = await this.ctx.storage.list({ prefix: "c:", reverse: true, limit });
+      return json([...rows.values()]);
+    }
+    if (request.method !== "POST") return json({ error: "bad request" }, 400);
+    if (parts[1] === "clear") {
+      await this.ctx.storage.deleteAll();
+      return json({ ok: true });
+    }
+    let entries;
+    try { entries = await request.json(); } catch { return json({ error: "JSON body expected" }, 400); }
+    entries = Array.isArray(entries) ? entries : [entries];
+    const put = {};
+    for (const e of entries.slice(0, 500)) {
+      const raw = JSON.stringify(e || {});
+      if (raw.length > MAX_ENTRY || typeof e !== "object") return json({ error: "entry too large or not an object" }, 400);
+      const ts = Math.max(0, Math.min(+e.ts || Date.now(), Date.now() + 60000));
+      put[`c:${String(ts).padStart(15, "0")}:${crypto.randomUUID().slice(0, 8)}`] = { ...e, ts };
+    }
+    await this.ctx.storage.put(put);
+    const extra = await this.ctx.storage.list({ prefix: "c:", limit: 500 });   // oldest first
+    const total = (await this.ctx.storage.list({ prefix: "c:" })).size;
+    if (total > MAX_CHANGES) await this.ctx.storage.delete([...extra.keys()].slice(0, total - MAX_CHANGES));
+    return json({ ok: true, stored: Object.keys(put).length });
   }
 }

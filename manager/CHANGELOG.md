@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-01
 
+- Core War's Changes tab lives in a Durable Object on celld (`/apps/corewar/_api/changes`, newest first, at most 1000) — the same list in every browser; a browser's earlier local history is uploaded once; celld down → this browser's list, and the tab says so; "Liste leeren".
 - Code flow's state machine moved from the `CODEFLOW_*` instance config keys into a Durable Object on celld (`/apps/codeflow/_api/repos`; atomic multi-field updates, a compare-and-set lock instead of write-wait-read); existing repos migrate on first load, `CODEFLOW_REPO` stays as the marker. The manager forwards `/apps/<name>/_api/` (GET/POST) to celld behind login and CSRF check, no local fallback.
 - Apps hosted on celld (`celld/`, self-hosted Workers/Durable Objects, dev mode, loopback): the manager forwards `/apps/<name>/` there after its own path checks and behind its login (`CELLD_URL`), and serves its own copy when celld is down; a small Worker maps `…/` to `index.html` (celld 0.6 dev does not below the root). Step 2: app state into Durable Objects.
 

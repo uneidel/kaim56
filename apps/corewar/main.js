@@ -319,12 +319,44 @@ function apply(j) {
     $("preset" + j.k).value = "Eigener Code";
   }
   roundHist[j.k].push({ cycle: j.cycle, why: j.why || j.error, ok: j.ok });
-  changes.unshift({ k: j.k, model: j.model, round: j.round, cycle: j.cycle, used: j.used, perRound: j.perRound,
-                    secs: j.secs, ok: j.ok, why: j.why || "", error: j.error || "",
-                    answer: String(j.result || "").slice(0, 6000),
-                    diff: j.after ? lineDiff(j.before, j.after) : [], ts: Date.now() });
+  const entry = { k: j.k, model: j.model, round: j.round, cycle: j.cycle, used: j.used, perRound: j.perRound,
+                  secs: j.secs, ok: j.ok, why: j.why || "", error: j.error || "",
+                  answer: String(j.result || "").slice(0, 6000),
+                  diff: j.after ? lineDiff(j.before, j.after) : [], ts: Date.now() };
+  changes.unshift(entry);
   changes = changes.slice(0, 300);
-  store.set("changes", changes);
+  saveChange(entry);
+  renderChanges();
+}
+
+/* ---- where the Changes live: the app's Durable Object on celld (_api/changes,
+   through the manager: same origin, same login) — shared by every browser.
+   Not reachable: this browser's localStorage, and the tab says so. ---- */
+const log = {
+  server: true,
+  list: () => fetch("_api/changes?limit=300", { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
+  add: entries => fetch("_api/changes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entries) })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); }),
+  clear: () => fetch("_api/changes/clear", { method: "POST" }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); }),
+};
+function saveChange(entry) {
+  if (log.server) log.add(entry).catch(() => { log.server = false; store.set("changes", changes); renderChanges(); });
+  else store.set("changes", changes);
+}
+async function loadChanges() {
+  try {
+    const local = store.get("changes", []);
+    if (local.length && !store.get("changesMoved", false)) {        // the browser's history from before: once to the server
+      await log.add(local.slice().reverse());
+      store.set("changesMoved", true); store.set("changes", []);
+    }
+    changes = await log.list();
+    log.server = true;
+  } catch {
+    log.server = false;
+    changes = store.get("changes", []);
+  }
   renderChanges();
 }
 
@@ -332,6 +364,10 @@ function apply(j) {
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 function renderChanges() {
   $("chCount").textContent = changes.length ? String(changes.length) : "";
+  $("chWhere").textContent = log.server
+    ? "Gespeichert auf dem Server (celld) — in jedem Browser dieselbe Liste."
+    : "Server (celld) nicht erreichbar — die Liste liegt nur in diesem Browser.";
+  $("chClear").hidden = !changes.length;
   if (!changes.length) {
     $("changes").innerHTML = '<p class="empty">Noch keine Anpassungen. Wähle für einen Warrior ein Modell und starte ein Match.</p>';
     return;
@@ -520,12 +556,18 @@ for (const b of document.querySelectorAll("nav.tabs button")) {
   b.addEventListener("click", () => {
     for (const x of document.querySelectorAll("nav.tabs button")) x.setAttribute("aria-selected", String(x === b));
     for (const t of ["arena", "changes", "rules"]) $("tab-" + t).hidden = t !== b.dataset.tab;
+    if (b.dataset.tab === "changes" && !adapting) loadChanges();     // other browsers' adaptations too
   });
 }
 
+$("chClear").addEventListener("click", async () => {
+  if (!confirm("Alle Anpassungen aus der Liste löschen?")) return;
+  if (log.server) { try { await log.clear(); } catch { log.server = false; } }
+  changes = []; store.set("changes", []); renderChanges();
+});
+
 /* ---- boot ---- */
-changes = store.get("changes", []);
-renderChanges();
+loadChanges();
 $("rulesText").textContent = rules(cfg());
 $("btnRun").disabled = false;
 $("btnNew").disabled = false;
