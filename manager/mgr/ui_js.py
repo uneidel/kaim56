@@ -589,7 +589,7 @@ async function refreshUsage(){
 }
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','projects','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
+const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','projects','apps','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
@@ -606,7 +606,7 @@ function tabsFade(){const n=document.getElementById('tabs');if(!n)return;
   n.classList.toggle('more',n.scrollWidth-n.clientWidth>2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2);}
 window.addEventListener('resize',tabsFade);
 document.getElementById('tabs').addEventListener('scroll',tabsFade,{passive:true});
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='settings')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
 
 /* — Projects: one folder set, joined by instances with a role (mgr/projects.py) — */
 let PROJECTS=[], PJ_EDIT='', PJ_INSTS=[];

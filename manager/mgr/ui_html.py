@@ -17,6 +17,7 @@ HTML_TOP = """</head><body>
     <a href="#tasks">Tasks</a>
     <a href="#missions">Missions</a>
     <a href="#projects">Projects</a>
+    <a href="#apps">Apps</a>
     <a href="#policy">Policy</a>
     <a href="#models">Models</a>
     <a href="#resources">Resources</a>
@@ -329,6 +330,22 @@ HTML_TOP = """</head><body>
         <input type=checkbox id=pj-merge> The lead may merge writers' work on its own (applies from the worktree strategy on)</label></div>
     </div>
     <div class=panel-foot><span id=pjmsg class=msg></span><button class="btn btn-secondary" id=pj-cancel style="display:none" onclick=pjReset()>Cancel</button><button class="btn btn-primary" id=pj-save onclick=saveProject()>Create project</button></div>
+  </div>
+</section>
+
+<section class="screen" id=s-apps>
+  <div class=sec-head>
+    <div><h6>Browser apps</h6><h3>Apps</h3></div>
+    <span class="note text-muted">Front-ends under <code>/apps/&#8249;name&#8250;/</code> on top of the platform · hosted by celld, the manager as the fallback · an app&#8217;s own state in its Durable Object</span>
+  </div>
+  <div class="panel blueprint" >
+    <div style="display:flex;align-items:baseline;gap:10px"><h4 style="margin:0">Hosting</h4>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=loadAppsPanel()>Refresh</button></div>
+    <p class=text-muted style="font-size:12.5px;margin:4px 0 12px">Browser apps under <code>/apps/&#8249;name&#8250;/</code> — hosted by celld when
+      <code>CELLD_URL</code> is set (the manager forwards behind its login and serves its own copy when celld is down); an app&#8217;s own state
+      lives in its Durable Object there.</p>
+    <div id=appsHost class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
+    <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side (celld)</th></tr></thead><tbody id=appsRows></tbody></table>
   </div>
 </section>
 
@@ -864,15 +881,6 @@ HTML_BOTTOM = """
     <pre id=updlog hidden class=mono style="font-size:11.5px;max-height:180px;overflow:auto;margin:-8px 0 16px;padding:8px 12px;border:1px solid var(--color-divider);white-space:pre-wrap"></pre>
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
-  </div>
-  <div class="panel blueprint" style="margin-top:24px">
-    <div style="display:flex;align-items:baseline;gap:10px"><h4 style="margin:0">Apps</h4>
-      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=loadAppsPanel()>Refresh</button></div>
-    <p class=text-muted style="font-size:12.5px;margin:4px 0 12px">Browser apps under <code>/apps/&#8249;name&#8250;/</code> — hosted by celld when
-      <code>CELLD_URL</code> is set (the manager forwards behind its login and serves its own copy when celld is down); an app&#8217;s own state
-      lives in its Durable Object there.</p>
-    <div id=appsHost class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
-    <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side (celld)</th></tr></thead><tbody id=appsRows></tbody></table>
   </div>
 </section>
 
