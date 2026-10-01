@@ -865,6 +865,15 @@ HTML_BOTTOM = """
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
   </div>
+  <div class="panel blueprint" style="margin-top:24px">
+    <div style="display:flex;align-items:baseline;gap:10px"><h4 style="margin:0">Apps</h4>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=loadAppsPanel()>Refresh</button></div>
+    <p class=text-muted style="font-size:12.5px;margin:4px 0 12px">Browser apps under <code>/apps/&#8249;name&#8250;/</code> — hosted by celld when
+      <code>CELLD_URL</code> is set (the manager forwards behind its login and serves its own copy when celld is down); an app&#8217;s own state
+      lives in its Durable Object there.</p>
+    <div id=appsHost class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
+    <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side (celld)</th></tr></thead><tbody id=appsRows></tbody></table>
+  </div>
 </section>
 
 </main>

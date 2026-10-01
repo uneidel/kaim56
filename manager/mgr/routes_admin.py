@@ -297,7 +297,12 @@ def _rt_router_tiers(h):
 
 @_routes.ROUTER.get("/api/apps", admin=True)
 def _rt_apps(h):
-    return h._json({"apps": _apps.load_apps(), "hosting": "celld" if _apps.celld_url() else "manager"})
+    # each app: who serves it right now (celld, or the manager's own copy as the
+    # fallback) and its server side's summary (celld's /_status)
+    st = _apps.celld_status()
+    via = "celld" if st["reachable"] else "manager"
+    apps = [{**a, "served_by": via, "server_side": st["apps"].get(a["name"])} for a in _apps.load_apps()]
+    return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager", "celld": st})
 
 
 @_routes.ROUTER.get("/apps/", prefix=True, admin=True)

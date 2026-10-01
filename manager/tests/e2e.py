@@ -4041,12 +4041,16 @@ class ManagerFunctions(unittest.TestCase):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-celld-")
         os.makedirs(os.path.join(tmp, "board"))
-        json.dump({"title": "Board"}, open(os.path.join(tmp, "board", "app.json"), "w"))
+        json.dump({"title": "Board", "server": True}, open(os.path.join(tmp, "board", "app.json"), "w"))
         _wtext(os.path.join(tmp, "board", "index.html"), "<h1>local copy</h1>")
         asked = []
 
         class Celld(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == "/_status":
+                    b = json.dumps({"ok": True, "apps": {"board": {"text": "3 repos · 1 ready"}}}).encode()
+                    self.send_response(200); self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b); return
                 asked.append(self.path)
                 if self.path == "/apps/board/index.html":
                     b = b"<h1>from celld</h1>"
@@ -4069,14 +4073,25 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(asked, ["/apps/board/index.html", "/apps/board/nope.js"])     # nothing else was forwarded
             h = self._handler("/apps/board/", "10.0.0.9"); h._do_GET()
             self.assertTrue(h.wfile.getvalue().endswith(b"<h1>from celld</h1>"))
-            h = self._handler("/api/apps", "10.0.0.9"); h._do_GET()
-            self.assertIn(b'"hosting": "celld"', h.wfile.getvalue())
+            def api_apps():
+                h = self._handler("/api/apps", "10.0.0.9"); h._do_GET()
+                return json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            d = api_apps()
+            self.assertEqual((d["hosting"], d["celld"]["reachable"], d["apps"][0]["served_by"], d["apps"][0]["server_side"]),
+                             ("celld", True, "celld", {"text": "3 repos · 1 ready"}))
             srv.shutdown(); srv.server_close()                                               # celld gone
             self.assertIsNone(m._apps.hosted("board", ""))
+            d = api_apps()
+            self.assertEqual((d["hosting"], d["celld"]["reachable"], d["apps"][0]["served_by"], d["apps"][0]["server_side"]),
+                             ("celld", False, "manager", None))                              # the fallback, visibly
+            self.assertTrue(d["apps"][0]["server"])                                          # declared: "unreachable", not "none"
+            self.assertTrue(d["celld"]["error"])
             h = self._handler("/apps/board/", "10.0.0.9"); h._do_GET()
             self.assertTrue(h.wfile.getvalue().endswith(b"<h1>local copy</h1>"))
             m._settings.load_settings = lambda: {}                                           # not configured
             self.assertIsNone(m._apps.hosted("board", ""))
+            d = api_apps()
+            self.assertEqual((d["hosting"], d["celld"]["configured"], d["apps"][0]["served_by"]), ("manager", False, "manager"))
         finally:
             m._settings.SITE["APPS_DIR"] = old[0]
             m._settings.load_settings = old[1]

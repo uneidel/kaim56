@@ -197,6 +197,26 @@ function polBudgetRow(p){
     (p.budget_default?'':`<button class="btn btn-ghost btn-sm" title="back to the default of ${_mtok(+p.budget_default_value||0)}" onclick="savePolBudget('${esc(p.name)}',true)">Default</button>`)+
     `<span class=msg data-budmsg="${esc(p.name)}"></span></span></div>`;
 }
+/* Settings → Apps: who serves each app (celld or the manager's fallback), and its server side */
+async function loadAppsPanel(){
+  let d; try{d=await (await fetch('/api/apps')).json()}catch(e){document.getElementById('appsHost').textContent='manager not reachable';return}
+  const c=d.celld||{};
+  const dot=(ok,txt)=>`<span class="tag ${ok?'tag-accent':'tag-neutral'}">${escT(txt)}</span>`;
+  document.getElementById('appsHost').innerHTML=!c.configured
+    ?`${dot(false,'manager')} celld is not set up — the manager serves the apps itself (set <code>CELLD_URL</code> above, e.g. http://127.0.0.1:9876).`
+    :c.reachable?`${dot(true,'celld reachable')} <code>${escT(c.url)}</code> · ${c.ms} ms`
+    :`${dot(false,'celld down')} <code>${escT(c.url)}</code> — the manager serves its own copy; apps with a server side cannot save state (${escT(c.error||'')})`;
+  const apps=d.apps||[];
+  document.getElementById('appsRows').innerHTML=apps.length?apps.map(a=>{
+    const ss=a.server_side;
+    return `<tr><td><a href="/apps/${encodeURIComponent(a.name)}/" target=_blank>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`+
+      `<div class=text-muted style="font-size:11.5px">${escT(a.name)}</div></td>`+
+      `<td>${a.served_by==='celld'?dot(true,'celld'):dot(false,c.configured?'manager (fallback)':'manager')}</td>`+
+      `<td style="font-size:12.5px">${ss?(ss.error?'⚠️ '+escT(ss.error):escT(ss.text||''))
+        :a.server?'⚠️ unreachable — this app keeps its state on celld':'<span class=text-muted>none — files only</span>'}</td></tr>`}).join('')
+    :'<tr><td colspan=3 class=text-muted>No apps (a folder with app.json + index.html under apps/).</td></tr>';
+}
+
 /* model router: a policy per instance, off by default (mgr/router.py) */
 function polRouterRow(p){
   const pols=window.ROUTER_POLICIES||['default'], cur=p.model_router||'';
@@ -586,7 +606,7 @@ function tabsFade(){const n=document.getElementById('tabs');if(!n)return;
   n.classList.toggle('more',n.scrollWidth-n.clientWidth>2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2);}
 window.addEventListener('resize',tabsFade);
 document.getElementById('tabs').addEventListener('scroll',tabsFade,{passive:true});
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='settings')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
 
 /* — Projects: one folder set, joined by instances with a role (mgr/projects.py) — */
 let PROJECTS=[], PJ_EDIT='', PJ_INSTS=[];
@@ -905,7 +925,7 @@ async function voiceHealth(){
 function saveSettings(){
   const d={};document.querySelectorAll('#settings input,#settings select').forEach(i=>d[i.dataset.s]=i.value);
   fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-    .then(()=>{Object.assign(SETTINGS,d);document.getElementById('setmsg').textContent='saved ✓';renderParams()});
+    .then(()=>{Object.assign(SETTINGS,d);document.getElementById('setmsg').textContent='saved ✓';renderParams();loadAppsPanel()});
 }
 function fieldFor(p){
   const v=p.default||SETTINGS[p.key]||'';
@@ -1499,7 +1519,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadProjects();loadRouter();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   refreshUsage();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a

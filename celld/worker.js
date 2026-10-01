@@ -13,12 +13,25 @@ import { DurableObject } from "cloudflare:workers";
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
+// The apps with a server side, and their Durable Object namespace.
+const SERVER_SIDE = env => ({ codeflow: env.CODEFLOW, corewar: env.COREWAR });
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/_status") {                 // for the manager's Apps panel: one summary per app
+      const apps = {};
+      for (const [name, ns] of Object.entries(SERVER_SIDE(env))) {
+        try {
+          const r = await ns.get(ns.idFromName(name)).fetch(new Request(new URL("/summary", url)));
+          apps[name] = await r.json();
+        } catch (e) { apps[name] = { error: String(e.message || e) }; }
+      }
+      return json({ ok: true, apps });
+    }
     const m = url.pathname.match(/^\/apps\/([a-z0-9][a-z0-9_-]{0,40})\/_api(\/.*)?$/);
     if (m) {
-      const ns = { codeflow: env.CODEFLOW, corewar: env.COREWAR }[m[1]];
+      const ns = SERVER_SIDE(env)[m[1]];
       if (!ns) return json({ error: "this app has no server-side state" }, 404);
       const stub = ns.get(ns.idFromName(m[1]));          // one object per app
       return stub.fetch(new Request(new URL(m[2] || "/", url), request));
@@ -49,7 +62,14 @@ function clean(set) {
 export class CodeflowState extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean);       // repos[/<name>[/op]]
+    const parts = url.pathname.split("/").filter(Boolean);       // repos[/<name>[/op]] | summary
+    if (parts[0] === "summary") {
+      const all = [...(await this.ctx.storage.list({ prefix: "repo:" })).values()];
+      const states = {};
+      for (const r of all) states[r.CODEFLOW_STATE || "?"] = (states[r.CODEFLOW_STATE || "?"] || 0) + 1;
+      return json({ repos: all.length, states, text: `${all.length} repos` +
+        (all.length ? " · " + Object.entries(states).map(([k, v]) => `${v} ${k}`).join(" · ") : "") });
+    }
     if (parts[0] !== "repos") return json({ error: "not found" }, 404);
     if (parts.length === 1 && request.method === "GET") {
       const all = await this.ctx.storage.list({ prefix: "repo:" });
@@ -111,7 +131,13 @@ const MAX_ENTRY = 32 * 1024;
 export class CorewarLog extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean);       // changes[/clear]
+    const parts = url.pathname.split("/").filter(Boolean);       // changes[/clear] | summary
+    if (parts[0] === "summary") {
+      const all = await this.ctx.storage.list({ prefix: "c:" });
+      const last = [...all.values()].pop();
+      return json({ changes: all.size, last: last?.ts || 0,
+        text: `${all.size} change${all.size === 1 ? "" : "s"}` + (last ? ` · last ${new Date(last.ts).toISOString().slice(0, 16).replace("T", " ")} UTC` : "") });
+    }
     if (parts[0] !== "changes") return json({ error: "not found" }, 404);
     if (parts.length === 1 && request.method === "GET") {
       const limit = Math.min(MAX_CHANGES, Math.max(1, +url.searchParams.get("limit") || 300));

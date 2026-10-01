@@ -4,7 +4,8 @@
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Apps: browser front-ends next to the chat page, one folder each.
 
-<APPS_DIR>/<name>/app.json  {"title", "description", "icon", "instance"}
+<APPS_DIR>/<name>/app.json  {"title", "description", "icon", "instance", "server"}
+                            ("server": true = it keeps state on celld, /apps/<name>/_api/)
 <APPS_DIR>/<name>/index.html + whatever it needs (js, css, images)
 
 The manager lists them (/api/apps, the chat sidebar) and serves the files
@@ -28,6 +29,7 @@ import json
 import mimetypes
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -64,7 +66,8 @@ def load_apps():
             print(f"[apps] {mf}: {e}", flush=True)
             continue
         out.append({"name": f, "title": str(m.get("title") or f)[:60], "description": str(m.get("description") or "")[:200],
-                    "icon": str(m.get("icon") or "▦")[:4], "instance": str(m.get("instance") or "")[:40]})
+                    "icon": str(m.get("icon") or "▦")[:4], "instance": str(m.get("instance") or "")[:40],
+                    "server": bool(m.get("server"))})          # it has a server side on celld (/apps/<name>/_api/)
     return out
 
 
@@ -106,6 +109,24 @@ def hosted(name, rel):
         return (None, "not found") if e.code == 404 else None
     except (OSError, ValueError):
         return None
+
+
+def celld_status():
+    """For the Settings tab's Apps panel: {configured, url, reachable, ms, error,
+    apps: {name: summary}} — celld's /_status (each app's server-side summary)."""
+    base = celld_url()
+    out = {"configured": bool(base), "url": base, "reachable": False, "ms": None, "error": "", "apps": {}}
+    if not base:
+        return out
+    t0 = time.monotonic()
+    try:
+        with urllib.request.urlopen(base + "/_status", timeout=3) as r:
+            d = json.load(r)
+        out.update(reachable=True, apps=d.get("apps") or {})
+    except (OSError, ValueError) as e:
+        out["error"] = repr(e)[:200]
+    out["ms"] = int((time.monotonic() - t0) * 1000)
+    return out
 
 
 API_PREFIX = "_api"
