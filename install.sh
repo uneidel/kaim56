@@ -21,6 +21,9 @@
 #   --with-jev         also run Jev, the model router's classifier (OpenJev 2B, CPU;
 #                      ~5 GB image + ~4.4 GB model; container on 127.0.0.1:8891;
 #                      switch it on with JEV_URL=http://127.0.0.1:8891 in Settings)
+#   --with-celld       also run celld (self-hosted Workers/Durable Objects) as the apps'
+#                      host: dev mode, loopback 127.0.0.1:9876, behind the manager login;
+#                      switch it on with CELLD_URL=http://127.0.0.1:9876 in Settings)
 #   --release          update the clone to the newest release tag first (what the
 #                      Update button in the web UI runs, via kaim56-update.service)
 #   KAIM56_BASE=<dir>  target directory (default: $HOME)
@@ -39,7 +42,7 @@ REPO_URL="${REPO_URL:-https://github.com/uneidel/kaim56.git}"
 BASE="${KAIM56_BASE:-$HOME}"
 FC_DIR="$BASE/firecracker"
 GUEST_DNS="${GUEST_DNS:-1.1.1.1}"
-CHECK_ONLY=0; NO_BUILD=0; WITH_VOICE=0; WITH_AGENTS=0; FILES_ONLY=0; RELEASE=0; WITH_HINDSIGHT=0; WITH_JEV=0
+CHECK_ONLY=0; NO_BUILD=0; WITH_VOICE=0; WITH_AGENTS=0; FILES_ONLY=0; RELEASE=0; WITH_HINDSIGHT=0; WITH_JEV=0; WITH_CELLD=0
 for a in "$@"; do case "$a" in
   --check) CHECK_ONLY=1;;
   --release) RELEASE=1;;
@@ -49,6 +52,7 @@ for a in "$@"; do case "$a" in
   --with-agents) WITH_AGENTS=1;;
   --with-hindsight) WITH_HINDSIGHT=1;;
   --with-jev) WITH_JEV=1;;
+  --with-celld) WITH_CELLD=1;;
   *) echo "unknown option: $a"; exit 2;;
 esac; done
 
@@ -121,7 +125,7 @@ for pair in "openrouter:openrouter-agent" "claude:claude-signal-firecracker"; do
   from="${pair%%:*}"; to="${pair##*:}"
   [ -d "$SRC/agents/$from" ] && rsync -a --exclude '__pycache__' "$SRC/agents/$from/" "$BASE/$to/"
 done
-for d in voice embed mcp-hub jev; do [ -d "$SRC/$d" ] && rsync -a "$SRC/$d/" "$BASE/$d/"; done
+for d in voice embed mcp-hub jev celld apps; do [ -d "$SRC/$d" ] && rsync -a "$SRC/$d/" "$BASE/$d/"; done
 chmod +x "$FC_DIR/run-tests.sh" 2>/dev/null || true
 
 # ── [4] Binaries: firecracker + guest kernel ────────────────────────────────
@@ -184,6 +188,15 @@ if [ "$NO_BUILD" = "0" ]; then
       docker run -d --restart unless-stopped --name kaim56-jev -p 127.0.0.1:8891:8891 -v jev-hf:/hf kaim56-jev )
     echo "  Jev on 127.0.0.1:8891 — enable it in Settings: JEV_URL=http://127.0.0.1:8891, then a router policy per instance (Policy tab)"
   fi
+  if [ "$WITH_CELLD" = "1" ]; then
+    # The apps' host (optional, loopback only): the celld/ project with the
+    # apps mounted as its static assets; the manager forwards /apps/ to it.
+    ( cd "$BASE/celld" && docker build -q -t kaim56-celld . && docker rm -f kaim56-celld 2>/dev/null; \
+      docker run -d --restart unless-stopped --name kaim56-celld -p 127.0.0.1:9876:9876 \
+        -v "$BASE/celld":/project -v "$BASE/apps":/project/public/apps:ro -v celld-dev:/project/.celld \
+        -w /project kaim56-celld dev /project --host 0.0.0.0 )
+    echo "  celld on 127.0.0.1:9876 — enable it in Settings: CELLD_URL=http://127.0.0.1:9876"
+  fi
 else
   say "[5/7] Builds skipped (--no-build)"
 fi
@@ -235,7 +248,7 @@ echo net.ipv4.ip_forward=1 | $SUDO tee /etc/sysctl.d/99-kaim56.conf >/dev/null
 # The update unit: root, oneshot, this installer again with the same options
 # plus --release; the manager starts it from the Settings tab (/api/update)
 # and shows its log (run/update.log).
-FLAGS="--release"; [ "$WITH_VOICE" = 1 ] && FLAGS="$FLAGS --with-voice"; [ "$WITH_AGENTS" = 1 ] && FLAGS="$FLAGS --with-agents"; [ "$WITH_HINDSIGHT" = 1 ] && FLAGS="$FLAGS --with-hindsight"; [ "$WITH_JEV" = 1 ] && FLAGS="$FLAGS --with-jev"
+FLAGS="--release"; [ "$WITH_VOICE" = 1 ] && FLAGS="$FLAGS --with-voice"; [ "$WITH_AGENTS" = 1 ] && FLAGS="$FLAGS --with-agents"; [ "$WITH_HINDSIGHT" = 1 ] && FLAGS="$FLAGS --with-hindsight"; [ "$WITH_JEV" = 1 ] && FLAGS="$FLAGS --with-jev"; [ "$WITH_CELLD" = 1 ] && FLAGS="$FLAGS --with-celld"
 $SUDO tee /etc/systemd/system/kaim56-update.service >/dev/null <<UNIT
 [Unit]
 Description=kAIm56 update (install.sh --release, started from the web UI)

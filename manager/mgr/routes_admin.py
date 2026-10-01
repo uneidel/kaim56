@@ -297,7 +297,7 @@ def _rt_router_tiers(h):
 
 @_routes.ROUTER.get("/api/apps", admin=True)
 def _rt_apps(h):
-    return h._json({"apps": _apps.load_apps()})
+    return h._json({"apps": _apps.load_apps(), "hosting": "celld" if _apps.celld_url() else "manager"})
 
 
 @_routes.ROUTER.get("/apps/", prefix=True, admin=True)
@@ -308,7 +308,9 @@ def _rt_app_file(h):
     name, slash, rel = path[len("/apps/"):].partition("/")
     if name and not slash:
         h.send_response(302); h.send_header("Location", f"/apps/{name}/"); h.end_headers(); return
-    data, ct = _apps.file_of(name, rel)
+    # celld (CELLD_URL) first; it down or not configured: the manager's own copy
+    got = _apps.hosted(name, rel) or _apps.file_of(name, rel)
+    data, ct = got
     if data is None:
         return h._json({"error": ct}, 404)
     return data, ct

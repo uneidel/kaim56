@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-01
+
+- Apps hosted on celld (`celld/`, self-hosted Workers/Durable Objects, dev mode, loopback): the manager forwards `/apps/<name>/` there after its own path checks and behind its login (`CELLD_URL`), and serves its own copy when celld is down; a small Worker maps `…/` to `index.html` (celld 0.6 dev does not below the root). Step 2: app state into Durable Objects.
+
 ## 2026-09-30
 
 - Web chat: "Traces" in the session panel opens the agent's recent turns; a turn shows its fixed context, the model-router decision, every LLM call (model, tokens, time) and every tool call. Cause: the line was a plain status, the traces were only reachable from the admin page.

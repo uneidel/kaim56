@@ -13,6 +13,11 @@ NOT the sandbox the guest proxy puts on VM pages. Logic lives in the agents
 and the API; an app is only UI. APPS_DIR: site.json, else apps/ next to
 manager/ (the repo layout), else BASE/apps.
 
+Hosting: with CELLD_URL in Settings the files come from celld (the repo's
+celld/ project, self-hosted Workers / Durable Objects, loopback only) — the
+same path checks first, the same admin login, the same origin for the apps'
+/api calls. celld down or slow: the manager serves the file itself.
+
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
@@ -21,6 +26,8 @@ import json
 import mimetypes
 import os
 import re
+import urllib.error
+import urllib.request
 
 from mgr import paths as _paths
 from mgr import settings as _settings
@@ -59,18 +66,53 @@ def load_apps():
     return out
 
 
-def file_of(name, rel):
-    """(bytes, content-type) of a file inside the app's folder, or (None, why).
-    Every path segment is checked — no traversal, no dotfiles, no symlink
-    escape; an empty path is index.html."""
+CELLD_TIMEOUT = 5
+
+
+def celld_url():
+    return (_settings.load_settings().get("CELLD_URL") or "").strip().rstrip("/")
+
+
+def check_path(name, rel):
+    """(segments, '') when /apps/<name>/<rel> may be served, else (None, why).
+    Every path segment is checked — no traversal, no dotfiles; an empty path
+    is index.html."""
     ad = apps_dir()
     if not ad or not _NAME.match(name or "") or not os.path.isfile(os.path.join(ad, name, "app.json")):
         return None, "unknown app"          # a folder without a manifest is not an app, whatever it holds
-    rel = (rel or "").strip("/") or "index.html"
-    segs = rel.split("/")
+    segs = ((rel or "").strip("/") or "index.html").split("/")
     if any(not _SEG.match(s) or s.startswith(".") for s in segs):
         return None, "bad path"
-    root = os.path.realpath(os.path.join(ad, name))
+    return segs, ""
+
+
+def hosted(name, rel):
+    """(bytes, content-type) from celld, (None, "not found") on its 404, or
+    None when celld is not configured or does not answer (-> serve locally)."""
+    base = celld_url()
+    segs, why = check_path(name, rel)
+    if not base or segs is None:
+        return None
+    url = f"{base}/apps/{name}/" + "/".join(urllib.request.quote(s) for s in segs)
+    try:
+        with urllib.request.urlopen(url, timeout=CELLD_TIMEOUT) as r:
+            data = r.read(MAX_FILE + 1)
+            if len(data) > MAX_FILE:
+                return None, "not found"
+            return data, r.headers.get("Content-Type", "application/octet-stream")
+    except urllib.error.HTTPError as e:
+        return (None, "not found") if e.code == 404 else None
+    except (OSError, ValueError):
+        return None
+
+
+def file_of(name, rel):
+    """(bytes, content-type) of a file inside the app's folder, or (None, why).
+    check_path() first, and no symlink escape."""
+    segs, why = check_path(name, rel)
+    if segs is None:
+        return None, why
+    root = os.path.realpath(os.path.join(apps_dir(), name))
     p = os.path.realpath(os.path.join(root, *segs))
     if not p.startswith(root + os.sep) or not os.path.isfile(p) or os.path.getsize(p) > MAX_FILE:
         return None, "not found"

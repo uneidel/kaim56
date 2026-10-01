@@ -775,6 +775,13 @@ HTML_BOTTOM = """
   <div class="card blueprint"><span class=card-title>Playbooks &#8212; rules the agent learns</span>
   <p class=card-body>Standing rules that ALWAYS apply, distinct from the meaning-based semantic memory. When the user says how to do something, states a lasting preference, or corrects the approach, the agent records it with <code>playbook_add</code>; every turn all playbooks are injected as a <code>[Playbooks]</code> block, so the orchestrator&#8217;s know-how grows with the user&#8217;s wishes. Per-instance store (<code>playbooks.json</code>, cap 40), tools <code>playbooks</code>/<code>playbook_forget</code>. Editable in the Personas tab (Playbooks panel). Proven: teach &#8220;stock prices via http_fetch from Yahoo&#8221; once &#8594; after a context reset the vague question &#8220;how&#8217;s Apple?&#8221; is answered correctly without naming the source again.</p></div>
 
+  <div class="card blueprint"><span class=card-title>Apps on celld</span>
+  <p class=card-body>The browser apps (<code>apps/&#8249;name&#8250;/</code>: Job board, Code flow, Core War) are hosted by <b>celld</b> &#8212; a self-hosted runtime for
+  Cloudflare Workers / Durable Objects (<code>celld/</code>, container <code>kaim56-celld</code>, dev mode, loopback 127.0.0.1:9876). <code>apps/</code> is its static
+  asset directory; a small Worker maps <code>&#8230;/</code> to <code>index.html</code>. The manager stays the front door: <code>/apps/&#8249;name&#8250;/</code> is admin-only, the
+  path is checked (known app, no traversal, no dotfiles) before it is forwarded (<code>CELLD_URL</code>), the apps keep calling <code>/api</code> on the same
+  origin; celld down &#8594; the manager serves its own copy. Next: an app&#8217;s own state in Durable Objects instead of instance config keys.</p></div>
+
   <div class="card blueprint"><span class=card-title>Model router (Jev)</span>
   <p class=card-body>Opt-in per instance (<code>MODEL_ROUTER=&#8249;policy&#8250;</code>, a runtime key; off by default). On the first LLM call of a turn the key proxy
   asks Jev &#8212; OpenJev 2B v5, an NLI cross-encoder, container on the host CPU (<code>JEV_URL</code>, loopback only) &#8212; one batched question: task and

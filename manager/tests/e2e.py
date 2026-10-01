@@ -4033,6 +4033,54 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._mounts.AGENT_ROOT, m._instances.load_instances, m._guests.instance_by_ip = old
 
+    def test_apps_hosted_on_celld_with_the_manager_as_fallback(self):
+        """CELLD_URL set: /apps/<name>/ comes from celld (behind the same login
+        and path checks); its 404 is a 404; celld down or unset: the manager's
+        own copy. A path the manager would refuse never reaches celld."""
+        import http.server, threading
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-celld-")
+        os.makedirs(os.path.join(tmp, "board"))
+        json.dump({"title": "Board"}, open(os.path.join(tmp, "board", "app.json"), "w"))
+        _wtext(os.path.join(tmp, "board", "index.html"), "<h1>local copy</h1>")
+        asked = []
+
+        class Celld(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                asked.append(self.path)
+                if self.path == "/apps/board/index.html":
+                    b = b"<h1>from celld</h1>"
+                    self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+                else:
+                    self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers()
+            def log_message(self, *a): pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Celld)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = m._settings.SITE.get("APPS_DIR"), m._settings.load_settings
+        try:
+            m._settings.SITE["APPS_DIR"] = tmp
+            m._settings.load_settings = lambda: {"CELLD_URL": f"http://127.0.0.1:{srv.server_port}/"}
+            self.assertEqual(m._apps.hosted("board", ""), (b"<h1>from celld</h1>", "text/html; charset=utf-8"))
+            self.assertEqual(m._apps.hosted("board", "nope.js"), (None, "not found"))
+            for bad in ("../x", ".env", "a/../../b"):
+                self.assertIsNone(m._apps.hosted("board", bad), bad)
+            self.assertIsNone(m._apps.hosted("nomanifest", ""))
+            self.assertEqual(asked, ["/apps/board/index.html", "/apps/board/nope.js"])     # nothing else was forwarded
+            h = self._handler("/apps/board/", "10.0.0.9"); h._do_GET()
+            self.assertTrue(h.wfile.getvalue().endswith(b"<h1>from celld</h1>"))
+            h = self._handler("/api/apps", "10.0.0.9"); h._do_GET()
+            self.assertIn(b'"hosting": "celld"', h.wfile.getvalue())
+            srv.shutdown(); srv.server_close()                                               # celld gone
+            self.assertIsNone(m._apps.hosted("board", ""))
+            h = self._handler("/apps/board/", "10.0.0.9"); h._do_GET()
+            self.assertTrue(h.wfile.getvalue().endswith(b"<h1>local copy</h1>"))
+            m._settings.load_settings = lambda: {}                                           # not configured
+            self.assertIsNone(m._apps.hosted("board", ""))
+        finally:
+            m._settings.SITE["APPS_DIR"] = old[0]
+            m._settings.load_settings = old[1]
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/
@@ -4049,8 +4097,10 @@ class ManagerFunctions(unittest.TestCase):
         open(os.path.join(tmp, "outside.txt"), "w").write("host file")
         os.symlink(os.path.join(tmp, "outside.txt"), os.path.join(tmp, "board", "link.txt"))
         old = m._settings.SITE.get("APPS_DIR")
+        old_ls = m._settings.load_settings
         try:
             m._settings.SITE["APPS_DIR"] = tmp
+            m._settings.load_settings = lambda: {}          # the manager's own copy (no CELLD_URL from the live settings)
             apps = m._apps.load_apps()
             self.assertEqual([a["name"] for a in apps], ["board"])
             self.assertEqual(apps[0]["title"], "Job board"); self.assertEqual(apps[0]["instance"], "jobresearcher")
@@ -4076,6 +4126,7 @@ class ManagerFunctions(unittest.TestCase):
             m._settings.SITE["APPS_DIR"] = "/nonexistent"
             self.assertEqual(m._apps.load_apps(), [])
         finally:
+            m._settings.load_settings = old_ls
             if old is None:
                 m._settings.SITE.pop("APPS_DIR", None)
             else:
