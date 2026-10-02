@@ -800,7 +800,7 @@ HTML_BOTTOM = """
   path is checked (known app, no traversal, no dotfiles) before it is forwarded (<code>CELLD_URL</code>), the apps keep calling <code>/api</code> on the same
   origin; celld down &#8594; the manager serves its own copy. An app&#8217;s own server side is <code>/apps/&#8249;name&#8250;/_api/&#8230;</code> (GET/POST, same login and
   CSRF check, no fallback): Code flow&#8217;s state machine lives in a Durable Object there &#8212; atomic updates and a real compare-and-set lock instead
-  of instance config keys. <b>To Cloudflare and back</b> (Apps tab, <code>mgr/cloud.py</code>, cfdo): Upload builds a Worker from the app (its files as assets,
+  of instance config keys. <b>To Cloudflare and back</b> (Apps tab, <code>mgr/cloud.py</code> + <code>mgr/cfapi.py</code>, cfdo&#8217;s upload path in Python): Upload builds a Worker from the app (its files as assets,
   its Durable Object class from <code>celld/do/</code>, a router with a login &#8212; admin + <code>CF_APP_SECRET</code>), copies the state across
   (export/import, counts compared) and marks the app &#8220;cloud&#8221;: <code>/apps/&#8249;name&#8250;/</code> redirects there and the local <code>_api</code> refuses writes.
   Its <code>/api</code> calls reach the manager with a per-app Bearer token &#8212; valid only while in the cloud and only for the apps&#8217; API paths, never

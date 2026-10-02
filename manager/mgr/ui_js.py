@@ -207,9 +207,9 @@ async function loadAppsPanel(){
     :c.reachable?`${dot(true,'celld reachable')} <code>${escT(c.url)}</code> · ${c.ms} ms`
     :`${dot(false,'celld down')} <code>${escT(c.url)}</code> — the manager serves its own copy; apps with a server side cannot save state (${escT(c.error||'')})`;
   const cf=d.cloudflare||{};
-  document.getElementById('appsCf').innerHTML=cf.configured&&cf.cfdo
+  document.getElementById('appsCf').innerHTML=cf.configured
     ?'Cloudflare is set up — <b>Upload</b> sends an app (files + its state) there, <b>Restore</b> brings it back to celld; the worker stays deployed.'
-    :`Cloudflare: ${cf.cfdo?'':'<code>bin/cfdo</code> is missing · '}${cf.configured?'':'fill in <code>CF_ACCOUNT_ID</code>, <code>CF_API_TOKEN</code>, <code>CF_APP_SECRET</code> in <a href="#settings">Settings</a>'}`;
+    :'Cloudflare: fill in <code>CF_ACCOUNT_ID</code>, <code>CF_API_TOKEN</code>, <code>CF_APP_SECRET</code> in <a href="#settings">Settings</a>';
   const apps=d.apps||[];
   let busy=false;
   document.getElementById('appsRows').innerHTML=apps.length?apps.map(a=>{
@@ -221,7 +221,7 @@ async function loadAppsPanel(){
       :a.server?'⚠️ unreachable — this app keeps its state on celld':'<span class=text-muted>none — files only</span>';
     const btn=run?`<span class=text-muted>${escT(j.op)}: ${escT(j.step)}…</span>`
       :cl.where==='cloud'?`<button class="btn btn-secondary btn-sm" onclick="appCloud('${esc(a.name)}','restore')">Restore to celld</button>`
-      :`<button class="btn btn-primary btn-sm" ${cf.configured&&cf.cfdo?'':'disabled'} onclick="appCloud('${esc(a.name)}','upload')">Upload to Cloudflare</button>`;
+      :`<button class="btn btn-primary btn-sm" ${cf.configured?'':'disabled'} onclick="appCloud('${esc(a.name)}','upload')">Upload to Cloudflare</button>`;
     const last=!run&&j.step==='failed'?`<div style="font-size:11.5px;color:var(--color-danger,#c0392b)">${escT(j.op)} failed: ${escT(j.error)}</div>`
       :!run&&j.step==='done'?`<div class=text-muted style="font-size:11.5px">${escT(j.op)} done</div>`:'';
     const link=cl.where==='cloud'&&cl.url?`<a href="${esc(cl.url)}/" target=_blank>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`

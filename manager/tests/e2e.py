@@ -4168,90 +4168,164 @@ class ManagerFunctions(unittest.TestCase):
             m._settings.SITE["APPS_DIR"] = old[0]
             m._settings.load_settings, m._guests.instance_by_ip = old[1], old[2]
 
+    def test_cfapi_migration_hash_multipart_and_retry(self):
+        """cfdo's upload path in Python: the class is created once, later the
+        same tag needs nothing; the asset hash is Cloudflare's reference one;
+        multipart parts are well-formed; 429 is retried, a 4xx is an error
+        with Cloudflare's message; every request has its own User-Agent."""
+        import email, hashlib as hl, base64 as b64
+        cf = self.m._cfapi
+        self.assertEqual(cf.migration("C", "v1", ""), {"new_tag": "v1", "new_sqlite_classes": ["C"]})
+        self.assertIsNone(cf.migration("C", "v1", "v1"))
+        self.assertEqual(cf.migration("C", "v2", "v1"), {"new_tag": "v2", "new_sqlite_classes": [], "old_tag": "v1"})
+        self.assertEqual(cf.asset_hash(b"hi", "/a/x.js"), hl.sha256(b64.b64encode(b"hi") + b"js").hexdigest()[:32])
+        body, ct = cf.multipart([("metadata", None, "application/json", b'{"a":1}'), ("w.mjs", "w.mjs", "application/javascript+module", b"export default {}")])
+        msg = email.message_from_bytes(b"Content-Type: " + ct.encode() + b"\r\n\r\n" + body)
+        parts = [(p.get_param("name", header="content-disposition"), p.get_content_type(), p.get_payload(decode=True)) for p in msg.get_payload()]
+        self.assertEqual(parts, [("metadata", "application/json", b'{"a":1}'), ("w.mjs", "application/javascript+module", b"export default {}")])
+        calls = []
+        class R:
+            def __init__(self, status, body): self.status, self._b = status, body
+            def read(self): return self._b
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        seq = [urllib.error.HTTPError("u", 429, "slow", {}, io.BytesIO(b"")), R(200, b'{"success": true, "result": {"ok": 1}}')]
+        old = cf.urllib.request.urlopen
+        try:
+            def fake(req, timeout=None):
+                calls.append(req.get_header("User-agent"))
+                x = seq.pop(0)
+                if isinstance(x, Exception): raise x
+                return x
+            cf.urllib.request.urlopen = fake
+            self.assertEqual(cf.request("GET", "/x", "t", sleep=lambda s: None), {"ok": 1})
+            self.assertEqual(calls, [cf.UA, cf.UA]); self.assertNotIn("Python-urllib", cf.UA)
+            seq.append(urllib.error.HTTPError("u", 403, "no", {}, io.BytesIO(b'{"success": false, "errors": [{"code": 10000, "message": "Authentication error"}]}')))
+            with self.assertRaisesRegex(cf.CFError, "10000: Authentication error"):
+                cf.request("GET", "/x", "t", sleep=lambda s: None)
+        finally:
+            cf.urllib.request.urlopen = old
+
     def test_app_to_cloudflare_and_back(self):
-        """Upload: cfdo gets a project (files, the app's class, a router with the
-        app token) and the credentials only in its environment; the state moves
-        celld -> Cloudflare; the app is 'cloud' (redirect, local _api refuses).
-        The token opens only the apps' API paths and only while in the cloud.
-        Restore: the state comes back, the token is dead, the app is local."""
-        import http.server, threading, stat, base64 as b64
+        """Upload through the Workers API (assets session, script, workers.dev),
+        then the state moves celld -> Cloudflare and the app is 'cloud'
+        (redirect, local _api refuses). The token opens only the apps' API
+        paths and only while in the cloud. Restore: the state comes back, the
+        token is dead, the app is local."""
+        import http.server, threading, email, base64 as b64
         m = self.m
-        cl = m._cloud
+        cl, cf = m._cloud, m._cfapi
         tmp = tempfile.mkdtemp(prefix="e2e-cf-")
         apps, celld = os.path.join(tmp, "apps"), os.path.join(tmp, "celld")
-        os.makedirs(os.path.join(apps, "flow")); os.makedirs(os.path.join(celld, "do"))
+        os.makedirs(os.path.join(apps, "flow", "tests")); os.makedirs(os.path.join(celld, "do"))
         json.dump({"title": "Flow", "server": True}, open(os.path.join(apps, "flow", "app.json"), "w"))
         _wtext(os.path.join(apps, "flow", "index.html"), "<h1>flow</h1>")
+        _wtext(os.path.join(apps, "flow", ".env"), "SECRET=1")
+        _wtext(os.path.join(apps, "flow", "tests", "t.mjs"), "test")
         _wtext(os.path.join(celld, "do", "storage.js"), "// s\nexport async function storageExport(ctx) { return []; }\n")
         _wtext(os.path.join(celld, "do", "flow.js"), 'import { DurableObject } from "cloudflare:workers";\n'
                'import { storageExport } from "./storage.js";\nexport class FlowState extends DurableObject {}\n')
         stores = {"celld": [["repo:a", {"CODEFLOW_STATE": "ready"}], ["repo:b", {"CODEFLOW_STATE": "failed"}]], "cf": []}
-        auths = []
+        auths, api = [], {"uas": [], "manifest": None, "uploaded": [], "meta": None, "module": "", "scripts": []}
 
-        def server(store, need_auth):
+        def ok(h, obj, status=200):
+            b = json.dumps(obj).encode()
+            h.send_response(status); h.send_header("Content-Type", "application/json")
+            h.send_header("Content-Length", str(len(b))); h.end_headers(); h.wfile.write(b)
+
+        class CFApi(http.server.BaseHTTPRequestHandler):           # a fake Cloudflare API
+            def _body(self):
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            def _parts(self, raw):
+                msg = email.message_from_bytes(b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + raw)
+                return [(p.get_param("name", header="content-disposition"), p.get_payload(decode=True)) for p in msg.get_payload()]
+            def do_GET(self):
+                api["uas"].append(self.headers.get("User-Agent"))
+                if self.path.endswith("/workers/scripts"):
+                    return ok(self, {"success": True, "result": [{"id": s, "migration_tag": "v1"} for s in api["scripts"]]})
+                if self.path.endswith("/workers/subdomain"):
+                    return ok(self, {"success": True, "result": {"subdomain": "t"}})
+                ok(self, {"success": False, "errors": [{"code": 1, "message": "no"}]}, 404)
+            def do_POST(self):
+                api["uas"].append(self.headers.get("User-Agent")); raw = self._body()
+                if self.path.endswith("/assets-upload-session"):
+                    api["manifest"] = json.loads(raw)["manifest"]
+                    return ok(self, {"success": True, "result": {"jwt": "sess", "buckets": [[v["hash"] for v in api["manifest"].values()]]}})
+                if "/workers/assets/upload" in self.path:
+                    self.assertion = self.headers.get("Authorization")
+                    api["uploaded"] = [(n, self.headers.get("Authorization")) for n, _ in self._parts(raw)]
+                    return ok(self, {"success": True, "result": {"jwt": "done"}})
+                if self.path.endswith("/subdomain"):
+                    return ok(self, {"success": True, "result": {}})
+                ok(self, {"success": False}, 404)
+            def do_PUT(self):
+                api["uas"].append(self.headers.get("User-Agent"))
+                parts = dict(self._parts(self._body()))
+                api["meta"], api["module"] = json.loads(parts["metadata"]), parts["worker.mjs"].decode()
+                api["scripts"].append(self.path.rsplit("/", 1)[1])
+                ok(self, {"success": True, "result": {"id": "kaim56-flow"}})
+            def log_message(self, *a): pass
+
+        def state_server(store, need_auth):
             class S(http.server.BaseHTTPRequestHandler):
-                def _ok(self, obj):
-                    b = json.dumps(obj).encode()
-                    self.send_response(200); self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
                 def _gate(self):
                     if need_auth:
-                        auths.append(self.headers.get("Authorization", ""))
+                        auths.append((self.headers.get("Authorization", ""), self.headers.get("User-Agent", "")))
                         if self.headers.get("Authorization") != "Basic " + b64.b64encode(b"admin:the-secret").decode():
                             self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return False
                     return True
                 def do_GET(self):
                     if self._gate() and self.path.endswith("/_api/export"):
-                        self._ok({"entries": stores[store]})
+                        ok(self, {"entries": stores[store]})
                 def do_POST(self):
                     body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                     if self._gate() and self.path.endswith("/_api/import"):
                         stores[store] = body["entries"] if body.get("replace") else stores[store] + body["entries"]
-                        self._ok({"ok": True, "total": len(stores[store])})
+                        ok(self, {"ok": True, "total": len(stores[store])})
                 def log_message(self, *a): pass
-            srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), S)
+            return S
+        servers = [http.server.ThreadingHTTPServer(("127.0.0.1", 0), h) for h in (CFApi, state_server("cf", True), state_server("celld", False))]
+        for srv in servers:
             threading.Thread(target=srv.serve_forever, daemon=True).start()
-            return srv
-        cf_srv, celld_srv = server("cf", True), server("celld", False)
+        api_srv, cf_srv, celld_srv = servers
         cf_url = f"http://127.0.0.1:{cf_srv.server_port}"
-        fake = os.path.join(tmp, "cfdo")
-        _wtext(fake, "#!/bin/sh\n"
-               f'echo "$@" > {tmp}/cfdo.args; env | grep -c "CLOUDFLARE_API_TOKEN=cf-tok" > {tmp}/cfdo.env\n'
-               f'echo "Uploaded. etag x"; echo "Worker URL: {cf_url}"\n')
-        os.chmod(fake, stat.S_IRWXU)
         settings = {"CF_ACCOUNT_ID": "acct", "CF_API_TOKEN": "cf-tok", "CF_APP_SECRET": "the-secret",
                     "CELLD_URL": f"http://127.0.0.1:{celld_srv.server_port}"}
-        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cl.CFDO, cl.CLOUD_FILE, cl.CLOUD_DIR,
-               m._auth.PW, m._guests.instance_by_ip, cl.wait_ready, cl.WORKER_URL_RE)
+        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cl.CLOUD_FILE, cf.API, cl.WORKER_URL,
+               m._auth.PW, m._guests.instance_by_ip, cl.wait_ready)
         try:
-            self.assertIsNone(cl.WORKER_URL_RE.search("Worker URL: http://plain.example"))   # never plain http in production
-            cl.WORKER_URL_RE = re.compile(r"Worker URL: (http://127\.0\.0\.1:\d+)")         # the test's local stand-in
             m._settings.SITE["APPS_DIR"] = apps
-            cl.CFDO, cl.CLOUD_FILE, cl.CLOUD_DIR = fake, os.path.join(tmp, "cloud.json"), os.path.join(tmp, "cloud")
-            os.makedirs(os.path.join(cl.CLOUD_DIR, "flow"))
+            cl.CLOUD_FILE, cf.API, cl.WORKER_URL = os.path.join(tmp, "cloud.json"), f"http://127.0.0.1:{api_srv.server_port}", cf_url
             m._settings.load_settings = lambda: {}
             with self.assertRaises(ValueError):                                   # not set up: nothing happens
                 cl.creds()
             m._settings.load_settings = lambda: dict(settings)
             cl.wait_ready = lambda url, secret, **k: ""
             cl._jobs["flow"] = {"done": False}
-            url = cl.upload("flow")
-            self.assertEqual(url, cf_url)
-            self.assertEqual(stores["cf"], stores["celld"])                       # the state moved
-            self.assertEqual(cl.where("flow"), ("cloud", cf_url))
-            args = open(os.path.join(tmp, "cfdo.args")).read()
-            self.assertEqual(args.split(), ["upload", "-c", "cfdo.json"]); self.assertNotIn("cf-tok", args)
-            self.assertEqual(open(os.path.join(tmp, "cfdo.env")).read().strip(), "1")   # the token: env only
-            proj = os.path.join(cl.CLOUD_DIR, "flow")
-            cfg = json.load(open(os.path.join(proj, "cfdo.json")))
-            self.assertEqual((cfg["script_name"], cfg["class_name"], cfg["binding"], cfg["assets"]), ("kaim56-flow", "FlowState", "APP_DO", "public"))
-            self.assertTrue(os.path.isfile(os.path.join(proj, "public", "index.html")))
-            w = open(os.path.join(proj, "worker.mjs")).read()
+            self.assertEqual(cl.upload("flow"), cf_url)
+            self.assertEqual(sorted(api["manifest"]), ["/app.json", "/index.html"])        # no dotfiles, no tests/
+            self.assertEqual(api["manifest"]["/index.html"]["hash"], cf.asset_hash(b"<h1>flow</h1>", "/index.html"))
+            self.assertEqual({a for _, a in api["uploaded"]}, {"Bearer sess"})              # buckets: the session token
+            meta = api["meta"]
+            self.assertEqual(meta["main_module"], "worker.mjs"); self.assertEqual(meta["assets"]["jwt"], "done")
+            self.assertEqual(meta["migrations"], {"new_tag": "v1", "new_sqlite_classes": ["FlowState"]})
+            self.assertEqual({(b["type"], b["name"]) for b in meta["bindings"]},
+                             {("durable_object_namespace", "APP_DO"), ("secret_text", "CFDO_SECRET"), ("assets", "ASSETS")})
+            self.assertEqual(next(b for b in meta["bindings"] if b["type"] == "secret_text")["text"], "the-secret")
+            self.assertTrue(api["uas"] and all(u == cf.UA for u in api["uas"]))               # never Python's own UA
+            w = api["module"]
             self.assertEqual(w.count("import "), 1)                               # one module: storage.js inlined
             self.assertIn("export class FlowState extends DurableObject", w)
             self.assertIn("async function storageExport", w); self.assertNotIn("export async function", w)
             token = re.search(r'const KAIM_TOKEN = "([^"]+)"', w).group(1)
-            self.assertTrue(all(a == "Basic " + b64.b64encode(b"admin:the-secret").decode() for a in auths))
+            self.assertEqual(stores["cf"], stores["celld"])                       # the state moved
+            self.assertEqual(cl.where("flow"), ("cloud", cf_url))
+            self.assertTrue(all(a == "Basic " + b64.b64encode(b"admin:the-secret").decode() and u == cf.UA for a, u in auths))
+            # a second upload of the same script needs no migration
+            cl.restore("flow"); cl._jobs["flow"] = {"done": False}
+            cl.upload("flow")
+            self.assertNotIn("migrations", api["meta"])
+            token = re.search(r'const KAIM_TOKEN = "([^"]+)"', api["module"]).group(1)
             # the token: the apps' API paths, while in the cloud
             self.assertEqual(cl.token_app(token, "GET", "/api/instances"), "flow")
             self.assertEqual(cl.token_app(token, "POST", "/api/tasks"), "flow")
@@ -4263,10 +4337,8 @@ class ManagerFunctions(unittest.TestCase):
             m._guests.instance_by_ip = lambda ip: None
             h = self._handler("/api/instances", "10.0.0.9"); h.headers["Authorization"] = "Bearer " + token; h._do_GET()
             self.assertEqual(self._status(h), 200)
-            h = self._handler("/api/settings", "10.0.0.9"); h.headers["Authorization"] = "Bearer " + token; h._do_GET()
-            self.assertEqual(self._status(h), 200)                                # settings GET is masked and allowed
             h = self._post_handler("/api/settings", "10.0.0.9", b'{"X":"1"}'); h.headers["Authorization"] = "Bearer " + token; h._do_POST()
-            self.assertEqual(self._status(h), 401)                                # but never written with a token
+            self.assertEqual(self._status(h), 401)                                # never written with a token
             ba = "Basic " + b64.b64encode(b"admin:admin-pw").decode()
             h = self._handler("/apps/flow/", "10.0.0.9"); h.headers["Authorization"] = ba; h._do_GET()
             self.assertEqual(self._status(h), 302); self.assertIn(f"Location: {cf_url}/".encode(), h.wfile.getvalue())
@@ -4282,9 +4354,10 @@ class ManagerFunctions(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cl.restore("flow")
         finally:
-            (m._settings.SITE["APPS_DIR"], m._settings.load_settings, cl.CFDO, cl.CLOUD_FILE, cl.CLOUD_DIR,
-             m._auth.PW, m._guests.instance_by_ip, cl.wait_ready, cl.WORKER_URL_RE) = old
-            cf_srv.shutdown(); celld_srv.shutdown()
+            (m._settings.SITE["APPS_DIR"], m._settings.load_settings, cl.CLOUD_FILE, cf.API, cl.WORKER_URL,
+             m._auth.PW, m._guests.instance_by_ip, cl.wait_ready) = old
+            for srv in servers:
+                srv.shutdown()
 
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed

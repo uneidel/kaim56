@@ -317,7 +317,7 @@ def _rt_apps(h):
     except ValueError:
         cf_ready = False
     return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager", "celld": st,
-                    "cloudflare": {"configured": cf_ready, "cfdo": os.path.isfile(_cloud.CFDO)}})
+                    "cloudflare": {"configured": cf_ready}})
 
 
 @_routes.ROUTER.post("/api/apps/", prefix=True, admin=True)

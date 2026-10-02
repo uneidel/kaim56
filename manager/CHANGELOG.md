@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-02
 
+- Cloudflare without cfdo: its upload path ported to `mgr/cfapi.py` (assets session, script with DO/secret/assets bindings, migrations from the tag Cloudflare reports, workers.dev); every request carries its own User-Agent. Cause of the hanging upload: Cloudflare's bot protection answers Python's default User-Agent with 403 "error code: 1010", so the manager never saw the worker answer.
 - Apps to Cloudflare and back (Apps tab: Upload / Restore; `mgr/cloud.py` with cfdo): the app's files, its Durable Object (classes now in `celld/do/`, each with `/export` + `/import`) and its state move to a Worker with a login (admin + `CF_APP_SECRET`); its `/api` calls use a per-app token valid only while in the cloud and only for the apps' API paths; restore copies the state back and revokes the token. Settings: `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `CF_APP_SECRET`; `install.sh --with-cfdo`.
 - Security: the manager was reachable from the internet without a login (the unit carried an empty `MANAGER_PASS=`, the reverse proxy did not enforce a login). Password now in `/etc/firecracker-manager.env` via a unit drop-in; `install.sh` no longer treats an empty `MANAGER_PASS=` as set; the manager warns at every start without a password (log + notification).
 
