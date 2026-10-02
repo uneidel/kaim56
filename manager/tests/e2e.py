@@ -4359,6 +4359,50 @@ class ManagerFunctions(unittest.TestCase):
             for srv in servers:
                 srv.shutdown()
 
+    def test_cloudflare_lists_every_worker(self):
+        """cloud.cf_workers: every script on the account — the ones deployed
+        from here carry their app, the others (wrangler, cfdo, dashboard) app
+        None; workers.dev URL only when on; cached; a failing API is an error
+        text, not an exception; no settings -> not configured, no call."""
+        m = self.m
+        cl, cf = m._cloud, m._cfapi
+        tmp = tempfile.mkdtemp(prefix="e2e-cflist-")
+        os.makedirs(os.path.join(tmp, "corewar"))
+        json.dump({"title": "Core War"}, open(os.path.join(tmp, "corewar", "app.json"), "w"))
+        _wtext(os.path.join(tmp, "corewar", "index.html"), "x")
+        calls = []
+        def fake(method, path, token, *a, **k):
+            calls.append(path)
+            if path.endswith("/workers/scripts"):
+                return [{"id": "shipsinker", "has_assets": True, "modified_on": "2026-10-01T19:00:53Z"},
+                        {"id": "kaim56-corewar", "has_assets": True}, {"id": "hidden"}]
+            if path.endswith("/workers/subdomain"):
+                return {"subdomain": "kat56"}
+            if path.endswith("/hidden/subdomain"):
+                return {"enabled": False}
+            return {"enabled": True}
+        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cf.request, dict(cl._cf_list))
+        try:
+            m._settings.SITE["APPS_DIR"] = tmp
+            m._settings.load_settings = lambda: {}
+            cf.request = fake
+            self.assertFalse(cl.cf_workers(force=True)["configured"]); self.assertEqual(calls, [])
+            m._settings.load_settings = lambda: {"CF_ACCOUNT_ID": "acct", "CF_API_TOKEN": "t", "CF_APP_SECRET": "s"}
+            d = cl.cf_workers(force=True)
+            self.assertEqual(d["error"], "")
+            w = {x["name"]: x for x in d["workers"]}
+            self.assertEqual(sorted(w), ["hidden", "kaim56-corewar", "shipsinker"])
+            self.assertEqual(w["kaim56-corewar"]["app"], "corewar"); self.assertIsNone(w["shipsinker"]["app"])
+            self.assertEqual(w["shipsinker"]["url"], "https://shipsinker.kat56.workers.dev")
+            self.assertEqual(w["hidden"]["url"], "")
+            n = len(calls); cl.cf_workers(); self.assertEqual(len(calls), n)          # cached
+            def boom(*a, **k): raise cf.CFError(403, [{"code": 10000, "message": "Authentication error"}])
+            cf.request = boom
+            self.assertIn("Authentication error", cl.cf_workers(force=True)["error"])
+        finally:
+            m._settings.SITE["APPS_DIR"], m._settings.load_settings, cf.request = old[:3]
+            cl._cf_list.clear(); cl._cf_list.update(old[3])
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/

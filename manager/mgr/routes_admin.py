@@ -320,6 +320,13 @@ def _rt_apps(h):
                     "cloudflare": {"configured": cf_ready}})
 
 
+@_routes.ROUTER.get("/api/apps/cloudflare", admin=True)
+def _rt_apps_cloudflare(h):
+    # every Worker on the Cloudflare account, also those not deployed from here;
+    # its own call so /api/apps stays fast (?refresh=1 skips the 60 s cache)
+    return h._json(_cloud.cf_workers(force="refresh=1" in h.path))
+
+
 @_routes.ROUTER.post("/api/apps/", prefix=True, admin=True)
 def _rt_app_cloud(h):
     # POST /api/apps/<name>/upload | /restore — to Cloudflare and back (mgr/cloud.py), in the background

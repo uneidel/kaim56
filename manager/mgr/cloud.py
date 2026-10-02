@@ -359,3 +359,45 @@ def start(app, op):
 def job(app):
     with _lock:
         return dict(_jobs.get(app) or {})
+
+
+# ---- every Worker on the account ---------------------------------------------
+CF_LIST_TTL = 60
+_cf_list = {"ts": 0.0, "data": None}
+
+
+def cf_workers(force=False):
+    """{"workers": [...], "error": ""} — every Worker script on the account,
+    also those deployed outside the manager (wrangler, cfdo, the dashboard).
+    Each: name, url (workers.dev, when on), created, modified, assets, and
+    `app` = the local app it belongs to (script kaim56-<app>), else None.
+    Cached CF_LIST_TTL seconds: one list call plus one subdomain call per script."""
+    now = time.time()
+    with _lock:
+        if not force and _cf_list["data"] is not None and now - _cf_list["ts"] < CF_LIST_TTL:
+            return _cf_list["data"]
+    try:
+        account, token, _ = creds()
+    except ValueError as e:
+        return {"workers": [], "error": str(e), "configured": False}
+    out = {"workers": [], "error": "", "configured": True, "account": account}
+    try:
+        scripts = _cfapi.request("GET", f"/accounts/{_cfapi._q(account)}/workers/scripts", token) or []
+        sub = _cfapi.workers_dev_subdomain(account, token)
+        local = {script_name(a["name"]): a["name"] for a in _apps.load_apps()}
+        for s in sorted(scripts, key=lambda s: s.get("id", "")):
+            name = s.get("id", "")
+            try:
+                on = bool((_cfapi.request("GET", f"/accounts/{_cfapi._q(account)}/workers/scripts/"
+                                          f"{_cfapi._q(name)}/subdomain", token) or {}).get("enabled"))
+            except _cfapi.CFError:
+                on = False
+            out["workers"].append({"name": name, "app": local.get(name),
+                                   "url": f"https://{name}.{sub}.workers.dev" if on and sub else "",
+                                   "created": s.get("created_on", ""), "modified": s.get("modified_on", ""),
+                                   "assets": bool(s.get("has_assets"))})
+    except (_cfapi.CFError, OSError, ValueError) as e:
+        out["error"] = str(e)[:300]
+    with _lock:
+        _cf_list.update(ts=now, data=out)
+    return out

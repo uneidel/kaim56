@@ -346,6 +346,7 @@ HTML_TOP = """</head><body>
       lives in its Durable Object there.</p>
     <div id=appsHost class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
     <div id=appsCf class=text-muted style="font-size:12.5px;margin-bottom:10px"></div>
+    <div id=appsCfList class=text-muted style="font-size:12.5px;margin:-4px 0 10px"></div>
     <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side</th><th style="width:220px">Cloudflare</th></tr></thead><tbody id=appsRows></tbody></table>
   </div>
 </section>

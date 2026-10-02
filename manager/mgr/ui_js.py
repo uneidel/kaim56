@@ -232,6 +232,25 @@ async function loadAppsPanel(){
     :'<tr><td colspan=4 class=text-muted>No apps (a folder with app.json + index.html under apps/).</td></tr>';
   clearTimeout(window.APPS_POLL);
   if(busy)window.APPS_POLL=setTimeout(loadAppsPanel,3000);            // follow a running upload/restore
+  if(cf.configured)loadCfWorkers(apps.length);
+}
+/* every Worker on the Cloudflare account — also those created outside the manager */
+async function loadCfWorkers(nLocal,refresh){
+  let d; try{d=await (await fetch('/api/apps/cloudflare'+(refresh?'?refresh=1':''))).json()}catch(e){return}
+  const ws=d.workers||[], ext=ws.filter(w=>!w.app), info=document.getElementById('appsCfList');
+  if(info)info.innerHTML=d.error?`⚠️ Cloudflare list: ${escT(d.error)}`
+    :`On Cloudflare: ${ws.length} worker${ws.length===1?'':'s'} — ${ws.length-ext.length} from here, ${ext.length} created elsewhere · <a href="#" onclick="loadCfWorkers(0,1);return false">refresh</a>`;
+  const tb=document.getElementById('appsRows');
+  tb.querySelectorAll('tr[data-cfext]').forEach(r=>r.remove());
+  if(!nLocal&&ext.length)tb.innerHTML='';
+  const day=t=>t?new Date(t).toLocaleString():'';
+  const dash=n=>d.account?` · <a href="https://dash.cloudflare.com/${encodeURIComponent(d.account)}/workers/services/view/${encodeURIComponent(n)}/production" target=_blank rel=noopener>dashboard ↗</a>`:'';
+  tb.insertAdjacentHTML('beforeend',ext.map(w=>
+    `<tr data-cfext=1><td>${w.url?`<a href="${esc(w.url)}/" target=_blank rel=noopener>${escT(w.name)}</a>`:escT(w.name)}`+
+    `<div class=text-muted style="font-size:11.5px">${w.url?`<a href="${esc(w.url)}/" target=_blank rel=noopener>${escT(w.url.replace(/^https:\/\//,''))} ↗</a>`:'no workers.dev URL'}</div></td>`+
+    `<td><span class="tag tag-accent">Cloudflare only</span></td>`+
+    `<td style="font-size:12.5px"><span class=text-muted>created outside the manager${w.assets?' · static files':''} · updated ${escT(day(w.modified))}</span></td>`+
+    `<td style="font-size:12.5px"><span class=text-muted>not managed here</span>${dash(w.name)}</td></tr>`).join(''));
 }
 async function appCloud(name,op){
   if(op==='upload'&&!confirm(`Send ${name} to Cloudflare? Its files and its state move there; here it redirects to the cloud until you restore it.`))return;

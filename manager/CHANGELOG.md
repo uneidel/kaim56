@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-02
 
+- Apps tab lists every Worker on the Cloudflare account, also those created outside the manager (`GET /api/apps/cloudflare`, 60 s cache).
 - Apps tab: the Cloudflare address is a link that opens in a new tab (also after a restore — the worker stays deployed). Voice client 1.1.1: a rejected login (401) and the lockout after ten wrong logins (429) say what to fix (`pass` in `~/.config/kaim56-voice.json`).
 - Cloudflare without cfdo: its upload path ported to `mgr/cfapi.py` (assets session, script with DO/secret/assets bindings, migrations from the tag Cloudflare reports, workers.dev); every request carries its own User-Agent. Cause of the hanging upload: Cloudflare's bot protection answers Python's default User-Agent with 403 "error code: 1010", so the manager never saw the worker answer.
 - Apps to Cloudflare and back (Apps tab: Upload / Restore; `mgr/cloud.py` with cfdo): the app's files, its Durable Object (classes now in `celld/do/`, each with `/export` + `/import`) and its state move to a Worker with a login (admin + `CF_APP_SECRET`); its `/api` calls use a per-app token valid only while in the cloud and only for the apps' API paths; restore copies the state back and revokes the token. Settings: `CF_ACCOUNT_ID`, `CF_API_TOKEN`, `CF_APP_SECRET`; `install.sh --with-cfdo`.
