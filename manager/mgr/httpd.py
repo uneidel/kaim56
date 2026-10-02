@@ -14,6 +14,7 @@ import hmac
 import json
 
 from mgr import auth as _auth
+from mgr import cloud as _cloud
 from mgr import guestproxy as _guestproxy
 from mgr import guests as _guests
 from mgr import llmproxy as _llmproxy
@@ -89,6 +90,11 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             self._send(b'{"error":"too many failed logins, try again later"}', "application/json", 429)
             return False
         hdr = self.headers.get("Authorization", "")
+        # An app on Cloudflare calls the API with its own token (mgr/cloud.py):
+        # only while it is in the cloud, only for the API paths apps use.
+        if hdr.startswith("Bearer ") and _cloud.token_app(hdr[7:].strip(), self.command, self.path):
+            _auth.auth_succeeded(key)
+            return True
         if hdr.startswith("Basic "):
             try:
                 u, p = base64.b64decode(hdr[6:]).decode().split(":", 1)

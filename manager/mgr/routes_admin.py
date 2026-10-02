@@ -20,6 +20,7 @@ import urllib.request
 from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
+from mgr import cloud as _cloud
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
 from mgr import checkout as _checkout
@@ -301,8 +302,30 @@ def _rt_apps(h):
     # fallback) and its server side's summary (celld's /_status)
     st = _apps.celld_status()
     via = "celld" if st["reachable"] else "manager"
-    apps = [{**a, "served_by": via, "server_side": st["apps"].get(a["name"])} for a in _apps.load_apps()]
-    return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager", "celld": st})
+    cloud = _cloud.load()
+    apps = []
+    for a in _apps.load_apps():
+        c = cloud.get(a["name"]) or {}
+        on_cf = c.get("where") == "cloud"
+        apps.append({**a, "served_by": "cloudflare" if on_cf else via,
+                     "server_side": None if on_cf else st["apps"].get(a["name"]),
+                     "cloud": {"where": "cloud" if on_cf else "local", "url": c.get("url", ""),
+                               "since": c.get("since"), "deployed": bool(c.get("url"))},
+                     "job": _cloud.job(a["name"])})
+    try:
+        _cloud.creds(); cf_ready = True
+    except ValueError:
+        cf_ready = False
+    return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager", "celld": st,
+                    "cloudflare": {"configured": cf_ready, "cfdo": os.path.isfile(_cloud.CFDO)}})
+
+
+@_routes.ROUTER.post("/api/apps/", prefix=True, admin=True)
+def _rt_app_cloud(h):
+    # POST /api/apps/<name>/upload | /restore — to Cloudflare and back (mgr/cloud.py), in the background
+    name, _, op = h.path.split("?", 1)[0][len("/api/apps/"):].strip("/").partition("/")
+    ok, job = _cloud.start(name, op)
+    return h._json({"ok": ok, **job}, 200 if ok else 400)
 
 
 @_routes.ROUTER.get("/apps/", prefix=True, admin=True)
@@ -313,6 +336,11 @@ def _rt_app_file(h):
     name, slash, rel = path[len("/apps/"):].partition("/")
     if name and not slash:
         h.send_response(302); h.send_header("Location", f"/apps/{name}/"); h.end_headers(); return
+    state, url = _cloud.where(name)
+    if state == "cloud":                        # the app runs on Cloudflare: there, not here
+        if _apps.is_api(rel):
+            return h._json({"error": f"{name} runs on Cloudflare — its state is there ({url})"}, 409)
+        h.send_response(302); h.send_header("Location", f"{url}/{rel}"); h.end_headers(); return
     if _apps.is_api(rel):                       # the app's own server side on celld
         st, ct, data = _apps.api_forward("GET", name, rel)
         return h._send(data, ct, st)
@@ -333,6 +361,8 @@ def _rt_app_api(h):
     name, _, rel = path[len("/apps/"):].partition("/")
     if not _apps.is_api(rel):
         return h._json({"error": "only /apps/<name>/_api/ takes a POST"}, 405)
+    if _cloud.where(name)[0] == "cloud":       # one copy changes: the one on Cloudflare
+        return h._json({"error": f"{name} runs on Cloudflare — restore it before changing its state here"}, 409)
     body = h._raw(_apps.API_MAX_BODY)
     st, ct, data = _apps.api_forward("POST", name, rel, body)
     return h._send(data, ct, st)

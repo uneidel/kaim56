@@ -21,6 +21,8 @@
 #   --with-jev         also run Jev, the model router's classifier (OpenJev 2B, CPU;
 #                      ~5 GB image + ~4.4 GB model; container on 127.0.0.1:8891;
 #                      switch it on with JEV_URL=http://127.0.0.1:8891 in Settings)
+#   --with-cfdo        also build cfdo (github.com/uneidel/cfdo, pinned) into firecracker/bin —
+#                      the Apps tab then sends an app to Cloudflare and back (CF_* in Settings)
 #   --with-celld       also run celld (self-hosted Workers/Durable Objects) as the apps'
 #                      host: dev mode, loopback 127.0.0.1:9876, behind the manager login;
 #                      switch it on with CELLD_URL=http://127.0.0.1:9876 in Settings)
@@ -42,7 +44,7 @@ REPO_URL="${REPO_URL:-https://github.com/uneidel/kaim56.git}"
 BASE="${KAIM56_BASE:-$HOME}"
 FC_DIR="$BASE/firecracker"
 GUEST_DNS="${GUEST_DNS:-1.1.1.1}"
-CHECK_ONLY=0; NO_BUILD=0; WITH_VOICE=0; WITH_AGENTS=0; FILES_ONLY=0; RELEASE=0; WITH_HINDSIGHT=0; WITH_JEV=0; WITH_CELLD=0
+CHECK_ONLY=0; NO_BUILD=0; WITH_VOICE=0; WITH_AGENTS=0; FILES_ONLY=0; RELEASE=0; WITH_HINDSIGHT=0; WITH_JEV=0; WITH_CELLD=0; WITH_CFDO=0
 for a in "$@"; do case "$a" in
   --check) CHECK_ONLY=1;;
   --release) RELEASE=1;;
@@ -53,6 +55,7 @@ for a in "$@"; do case "$a" in
   --with-hindsight) WITH_HINDSIGHT=1;;
   --with-jev) WITH_JEV=1;;
   --with-celld) WITH_CELLD=1;;
+  --with-cfdo) WITH_CFDO=1;;
   *) echo "unknown option: $a"; exit 2;;
 esac; done
 
@@ -197,6 +200,16 @@ if [ "$NO_BUILD" = "0" ]; then
         -w /project kaim56-celld dev /project --host 0.0.0.0 )
     echo "  celld on 127.0.0.1:9876 — enable it in Settings: CELLD_URL=http://127.0.0.1:9876"
   fi
+  if [ "$WITH_CFDO" = "1" ]; then
+    # cfdo, pinned to the reviewed commit, built in a throwaway Go container.
+    CFDO_REV=f483cd75efb8c91d499b8dd2a39145f4cd18f9b4
+    T="$(mktemp -d)"
+    git clone -q https://github.com/uneidel/cfdo.git "$T/cfdo" && git -C "$T/cfdo" checkout -q "$CFDO_REV" \
+      && docker run --rm -v "$T/cfdo":/src -w /src -e CGO_ENABLED=0 -e GOFLAGS=-buildvcs=false golang:1.26-alpine \
+           go build -trimpath -ldflags="-s -w" -o /src/cfdo-bin . \
+      && install -m 755 "$T/cfdo/cfdo-bin" "$FC_DIR/bin/cfdo" && echo "  cfdo @ ${CFDO_REV:0:7} -> $FC_DIR/bin/cfdo"
+    rm -rf "$T"
+  fi
 else
   say "[5/7] Builds skipped (--no-build)"
 fi
@@ -251,7 +264,7 @@ echo net.ipv4.ip_forward=1 | $SUDO tee /etc/sysctl.d/99-kaim56.conf >/dev/null
 # The update unit: root, oneshot, this installer again with the same options
 # plus --release; the manager starts it from the Settings tab (/api/update)
 # and shows its log (run/update.log).
-FLAGS="--release"; [ "$WITH_VOICE" = 1 ] && FLAGS="$FLAGS --with-voice"; [ "$WITH_AGENTS" = 1 ] && FLAGS="$FLAGS --with-agents"; [ "$WITH_HINDSIGHT" = 1 ] && FLAGS="$FLAGS --with-hindsight"; [ "$WITH_JEV" = 1 ] && FLAGS="$FLAGS --with-jev"; [ "$WITH_CELLD" = 1 ] && FLAGS="$FLAGS --with-celld"
+FLAGS="--release"; [ "$WITH_VOICE" = 1 ] && FLAGS="$FLAGS --with-voice"; [ "$WITH_AGENTS" = 1 ] && FLAGS="$FLAGS --with-agents"; [ "$WITH_HINDSIGHT" = 1 ] && FLAGS="$FLAGS --with-hindsight"; [ "$WITH_JEV" = 1 ] && FLAGS="$FLAGS --with-jev"; [ "$WITH_CELLD" = 1 ] && FLAGS="$FLAGS --with-celld"; [ "$WITH_CFDO" = 1 ] && FLAGS="$FLAGS --with-cfdo"
 $SUDO tee /etc/systemd/system/kaim56-update.service >/dev/null <<UNIT
 [Unit]
 Description=kAIm56 update (install.sh --release, started from the web UI)

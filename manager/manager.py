@@ -23,6 +23,7 @@ else lives in mgr/, one concern per module:
     projects      one folder set joined by instances with a role (shared / worktree)
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
     router        model router: per-turn model choice via Jev (opt-in per instance)
+    cloud         apps to Cloudflare and back (cfdo), the app tokens
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
   the VMs
@@ -59,6 +60,7 @@ from mgr import auth as _auth
 from mgr import browse as _browse            # noqa: F401
 from mgr import checkout as _checkout        # noqa: F401
 from mgr import chats as _chats              # noqa: F401
+from mgr import cloud as _cloud              # noqa: F401
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat      # noqa: F401
 from mgr import guestproxy as _guestproxy    # noqa: F401

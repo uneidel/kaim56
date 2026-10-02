@@ -345,7 +345,8 @@ HTML_TOP = """</head><body>
       <code>CELLD_URL</code> is set (the manager forwards behind its login and serves its own copy when celld is down); an app&#8217;s own state
       lives in its Durable Object there.</p>
     <div id=appsHost class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
-    <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side (celld)</th></tr></thead><tbody id=appsRows></tbody></table>
+    <div id=appsCf class=text-muted style="font-size:12.5px;margin-bottom:10px"></div>
+    <table class=table><thead><tr><th>App</th><th>Served by</th><th>Server side</th><th style="width:220px">Cloudflare</th></tr></thead><tbody id=appsRows></tbody></table>
   </div>
 </section>
 
@@ -799,7 +800,11 @@ HTML_BOTTOM = """
   path is checked (known app, no traversal, no dotfiles) before it is forwarded (<code>CELLD_URL</code>), the apps keep calling <code>/api</code> on the same
   origin; celld down &#8594; the manager serves its own copy. An app&#8217;s own server side is <code>/apps/&#8249;name&#8250;/_api/&#8230;</code> (GET/POST, same login and
   CSRF check, no fallback): Code flow&#8217;s state machine lives in a Durable Object there &#8212; atomic updates and a real compare-and-set lock instead
-  of instance config keys.</p></div>
+  of instance config keys. <b>To Cloudflare and back</b> (Apps tab, <code>mgr/cloud.py</code>, cfdo): Upload builds a Worker from the app (its files as assets,
+  its Durable Object class from <code>celld/do/</code>, a router with a login &#8212; admin + <code>CF_APP_SECRET</code>), copies the state across
+  (export/import, counts compared) and marks the app &#8220;cloud&#8221;: <code>/apps/&#8249;name&#8250;/</code> redirects there and the local <code>_api</code> refuses writes.
+  Its <code>/api</code> calls reach the manager with a per-app Bearer token &#8212; valid only while in the cloud and only for the apps&#8217; API paths, never
+  settings, secrets or terminals. Restore copies the state back and revokes the token; the worker stays deployed.</p></div>
 
   <div class="card blueprint"><span class=card-title>Model router (Jev)</span>
   <p class=card-body>Opt-in per instance (<code>MODEL_ROUTER=&#8249;policy&#8250;</code>, a runtime key; off by default). On the first LLM call of a turn the key proxy
