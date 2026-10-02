@@ -56,6 +56,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -1269,6 +1271,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 onNew = { newChat(); scope.launch { drawerState.close() } },
                 onDelete = { deleteChat(it) },
                 onTasks = { screen = "tasks"; scope.launch { drawerState.close() } },
+                onApps = { screen = "apps"; scope.launch { drawerState.close() } },
                 onMissions = { screen = "missions"; scope.launch { drawerState.close() } },
                 onSkills = { screen = "skills"; scope.launch { drawerState.close() } },
                 onNotifications = { screen = "notifications"; scope.launch { drawerState.close() } },
@@ -1680,6 +1683,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             }
 
             AnimatedVisibility(
+                screen == "apps",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                AppsScreen(prefs, onClose = { screen = null }, onStatus = { status = it })
+            }
+
+            AnimatedVisibility(
                 screen == "notifications",
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
             ) {
@@ -2075,6 +2085,7 @@ fun KatDrawer(
     onNew: () -> Unit,
     onDelete: (Conversation) -> Unit,
     onTasks: () -> Unit,
+    onApps: () -> Unit,
     onMissions: () -> Unit,
     onSkills: () -> Unit,
     onNotifications: () -> Unit,
@@ -2165,6 +2176,7 @@ fun KatDrawer(
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
             DrawerAction("Missions", Icons.Outlined.Flag, onMissions)
+            DrawerAction("Apps", Icons.Outlined.Apps, onApps)
             DrawerAction("Skills", Icons.Outlined.Lightbulb, onSkills)
             DrawerAction("Notifications", Icons.Outlined.Notifications, onNotifications)
             DrawerAction("Settings", Icons.Outlined.Settings, onSettings)
@@ -2210,6 +2222,88 @@ private fun ScreenHeader(title: String, onClose: () -> Unit) {
             )
         }
         Hairline()
+    }
+}
+
+// ── Apps ────────────────────────────────────────────────────────────────────
+
+/** The manager's apps (like its Apps tab): local ones open in AppWebActivity
+ *  through the manager, Cloudflare ones (moved there or created elsewhere) in
+ *  the browser. */
+@Composable
+private fun AppsScreen(prefs: Prefs, onClose: () -> Unit, onStatus: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var apps by remember { mutableStateOf<List<AppsCatalog.Entry>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf("") }
+
+    fun load(refresh: Boolean) {
+        scope.launch {
+            loading = true
+            var failed = ""
+            val (a, c) = withContext(Dispatchers.IO) {
+                val a = ManagerSync.listApps(prefs.serverUrl, prefs.user, prefs.pass)
+                if (a == null) failed = ManagerSync.lastStatus
+                Pair(a ?: "", ManagerSync.listCfWorkers(prefs.serverUrl, prefs.user, prefs.pass, refresh))
+            }
+            loading = false
+            error = if (a.isEmpty()) "Could not load apps: $failed" else ""
+            apps = AppsCatalog.parse(a, c)
+        }
+    }
+    LaunchedEffect(Unit) { load(false) }
+
+    Column(Modifier.fillMaxSize().background(Kat.bg)) {
+        ScreenHeader("Apps", onClose)
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (error.isNotEmpty()) Text("⚠️ $error", fontSize = 13.sp, fontFamily = Plex, color = Kat.red)
+            if (apps.isEmpty() && !loading && error.isEmpty()) Text(
+                "No apps on the manager.", fontSize = 13.sp, fontFamily = Plex, color = Kat.textFaint)
+            apps.forEach { app ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Kat.surface)
+                        .border(1.dp, Kat.hairlineStrong, RoundedCornerShape(14.dp))
+                        .tap {
+                            if (app.where == "local") {
+                                ctx.startActivity(Intent(ctx, AppWebActivity::class.java)
+                                    .putExtra("app", app.name).putExtra("title", app.title))
+                            } else if (app.url.isNotBlank()) {
+                                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(app.url + "/"))) }
+                            } else onStatus("${app.name} has no workers.dev address")
+                        }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(app.icon.ifBlank { if (app.where == "local") "▣" else "☁" }, fontSize = 20.sp)
+                    Column(Modifier.weight(1f)) {
+                        Text(app.title, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium,
+                            color = Kat.textStrong, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (app.url.isNotBlank()) app.url.removePrefix("https://") else app.detail,
+                            Modifier.padding(top = 2.dp), fontSize = 12.sp, fontFamily = PlexMono,
+                            color = Kat.textFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    when (app.where) {
+                        "cloud" -> MiniTag("Active · cloud", Kat.chipSel, Kat.accentText)
+                        "cfonly" -> MiniTag("Cloudflare only", Kat.tile, Kat.textDim)
+                        else -> MiniTag("local", Kat.tile, Kat.green)
+                    }
+                    if (app.where != "local") Icon(Icons.AutoMirrored.Outlined.OpenInNew, "Open in browser",
+                        Modifier.size(16.dp), tint = Kat.textSubtle)
+                }
+            }
+            Text(
+                "Local apps open here, through the manager (also via iroh). Cloudflare apps open in the browser.",
+                fontSize = 11.5.sp, lineHeight = 17.sp, fontFamily = Plex, color = Kat.textSubtle,
+            )
+            OutlinePill("Refresh", { load(true) }, Modifier.fillMaxWidth())
+        }
     }
 }
 

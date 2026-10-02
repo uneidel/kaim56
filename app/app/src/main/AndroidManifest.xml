@@ -69,6 +69,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
         <activity
+            android:name=".AppWebActivity"
+            android:exported="false"
+            android:label="App"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".TerminalActivity"
             android:exported="false"
             android:label="Terminal"

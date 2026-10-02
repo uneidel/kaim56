@@ -5,6 +5,13 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.45
+
+- New **Apps** entry in the drawer: every app of the manager, like its Apps tab.
+  Local apps (Code flow, Core War, …) open right in the app, through the manager —
+  also when you connect via iroh. Apps on Cloudflare, including Workers created
+  outside the manager, are listed too and open in the browser.
+
 ## 5.44
 
 - Replies are no longer lost. If the app is closed, the screen goes away or the

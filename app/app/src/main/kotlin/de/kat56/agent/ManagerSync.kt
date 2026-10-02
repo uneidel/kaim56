@@ -360,6 +360,14 @@ object ManagerSync {
         request("POST", "${baseUrl.trimEnd('/')}/api/gateway", user, pass,
             JSONObject().put("chat", chatId).put("on", on).toString()) != null
 
+    /** The manager's apps (GET /api/apps) and every Worker on its Cloudflare
+     *  account (GET /api/apps/cloudflare) — see AppsCatalog. */
+    fun listApps(baseUrl: String, user: String, pass: String): String? =
+        request("GET", "${baseUrl.trimEnd('/')}/api/apps", user, pass, null)
+
+    fun listCfWorkers(baseUrl: String, user: String, pass: String, refresh: Boolean = false): String? =
+        request("GET", "${baseUrl.trimEnd('/')}/api/apps/cloudflare" + if (refresh) "?refresh=1" else "", user, pass, null)
+
     fun listInstances(baseUrl: String, user: String, pass: String): String? =
         request("GET", "${baseUrl.trimEnd('/')}/api/instances", user, pass, null)
 
