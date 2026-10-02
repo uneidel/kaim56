@@ -45,7 +45,7 @@ func (m *Manager) req(method, path, ctype string, body []byte) (*http.Response, 
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, path, b)
+		return nil, statusError(resp.StatusCode, path, b)
 	}
 	return resp, nil
 }
@@ -164,3 +164,24 @@ func speakable(text string) string {
 	text = reNL.ReplaceAllString(text, "\n")
 	return strings.TrimSpace(text)
 }
+
+// statusError turns the two answers a user can fix into instructions: a wrong
+// login (the manager has a password now — "user"/"pass" in the config must be
+// its login) and the lockout it triggers after ten wrong logins. Over iroh
+// every client arrives through the same gateway, so this client's wrong
+// password also locks out the phone app.
+func statusError(code int, path string, body []byte) error {
+	switch code {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("the manager refused the login (HTTP 401 from %s) — set \"user\"/\"pass\" in %s "+
+			"to the manager's login (admin + its password) and restart; ten wrong logins lock "+
+			"this route out for 15 minutes", path, configPath())
+	case http.StatusTooManyRequests:
+		if strings.Contains(string(body), "too many failed logins") {
+			return fmt.Errorf("the manager has locked this route out after too many wrong logins "+
+				"(HTTP 429 from %s) — fix \"pass\" in %s, it unlocks after 15 minutes", path, configPath())
+		}
+	}
+	return fmt.Errorf("HTTP %d from %s: %s", code, path, body)
+}
+

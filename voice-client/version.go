@@ -6,4 +6,4 @@ package main
 // pipeline (.github/workflows/voice.yml) tags voice-v<version>, attaches the
 // binary and the running clients update themselves from it (update.go).
 // Every version needs its section in RELEASE_NOTES.md first.
-const version = "1.1.0"
+const version = "1.1.1"

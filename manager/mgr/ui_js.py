@@ -224,9 +224,10 @@ async function loadAppsPanel(){
       :`<button class="btn btn-primary btn-sm" ${cf.configured?'':'disabled'} onclick="appCloud('${esc(a.name)}','upload')">Upload to Cloudflare</button>`;
     const last=!run&&j.step==='failed'?`<div style="font-size:11.5px;color:var(--color-danger,#c0392b)">${escT(j.op)} failed: ${escT(j.error)}</div>`
       :!run&&j.step==='done'?`<div class=text-muted style="font-size:11.5px">${escT(j.op)} done</div>`:'';
-    const link=cl.where==='cloud'&&cl.url?`<a href="${esc(cl.url)}/" target=_blank>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`
-      :`<a href="/apps/${encodeURIComponent(a.name)}/" target=_blank>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`;
-    return `<tr><td>${link}<div class=text-muted style="font-size:11.5px">${escT(a.name)}${cl.where==='cloud'?' · '+escT(cl.url):''}</div></td>`+
+    const link=cl.where==='cloud'&&cl.url?`<a href="${esc(cl.url)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`
+      :`<a href="/apps/${encodeURIComponent(a.name)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`;
+    const cfLink=cl.url?` · <a href="${esc(cl.url)}/" target=_blank rel=noopener title="open on Cloudflare (new tab)">${escT(cl.url.replace(/^https:\/\//,''))} ↗</a>`:'';
+    return `<tr><td>${link}<div class=text-muted style="font-size:11.5px">${escT(a.name)}${cfLink}</div></td>`+
       `<td>${served}</td><td style="font-size:12.5px">${side}</td><td>${btn}${last}</td></tr>`}).join('')
     :'<tr><td colspan=4 class=text-muted>No apps (a folder with app.json + index.html under apps/).</td></tr>';
   clearTimeout(window.APPS_POLL);
