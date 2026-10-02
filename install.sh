@@ -209,12 +209,15 @@ HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
 # An existing unit may carry settings this installer does not know (a fixed
 # MANAGER_USER/MANAGER_PASS behind a reverse proxy, LLM_KEY_PROXY, …): every
 # Environment= line except the ones written below is carried over.
+# An EMPTY MANAGER_PASS= is not carried over: it means "no login" and once left
+# a manager open to the internet (2026-10-02) while looking like a setting.
 KEEP_ENV="$($SUDO cat /etc/systemd/system/firecracker-manager.service 2>/dev/null \
-  | grep '^Environment=' | grep -vE '^Environment=(PORT|HOSTIF|GUEST_DNS|AGENT_ROOT)=' || true)"
+  | grep '^Environment=' | grep -vE '^Environment=(PORT|HOSTIF|GUEST_DNS|AGENT_ROOT)=' \
+  | grep -vE '^Environment=MANAGER_PASS=\s*$' || true)"
 # The password lives in a root-only env file the unit always references;
 # it is generated once (an update run must not drop the login).
 PASS_LINE="EnvironmentFile=-/etc/firecracker-manager.env"
-if ! $SUDO test -f /etc/firecracker-manager.env && ! printf '%s' "$KEEP_ENV" | grep -q '^Environment=MANAGER_PASS='; then
+if ! $SUDO test -f /etc/firecracker-manager.env && ! printf '%s' "$KEEP_ENV" | grep -q '^Environment=MANAGER_PASS=.'; then
   PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
   printf 'MANAGER_PASS=%s\n' "$PW" | $SUDO install -m 600 -o root -g root /dev/stdin /etc/firecracker-manager.env
   echo "  web login: admin / $PW   (changeable in /etc/firecracker-manager.env)"

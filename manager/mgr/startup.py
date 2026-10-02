@@ -11,9 +11,11 @@ one place.
 import json
 import os
 
+from mgr import auth as _auth
 from mgr import host as _host
 from mgr import instances as _instances
 from mgr import mcp as _mcp
+from mgr import notify as _notify
 from mgr import paths as _paths
 from mgr import secrets as _secrets
 from mgr import settings as _settings
@@ -104,3 +106,22 @@ def harden_files(base=None):
     except OSError as e:
         print(f"[quiet] harden_files: {e!r}", flush=True)
     return n
+
+
+def warn_if_open():
+    """No MANAGER_PASS = no login: every request is an admin. Meant to sit
+    behind a reverse proxy that enforces one — on 2026-10-02 it did not, and
+    the admin API was open to the internet. Say so loudly at every start: in
+    the log and as a notification (bell, app). True when it warned."""
+    if _auth.PW:
+        return False
+    print("[SECURITY] MANAGER_PASS is empty: the manager accepts every request without a login. "
+          "Set it in /etc/firecracker-manager.env (unit EnvironmentFile) unless a proxy enforces one.", flush=True)
+    try:
+        _notify.notify_add("manager", "No login password",
+                           "MANAGER_PASS is empty — whoever reaches this manager controls the platform. "
+                           "Set it in /etc/firecracker-manager.env and restart.", link="settings")
+    except Exception as e:
+        print(f"[quiet] open-manager notification failed: {e!r}", flush=True)
+    return True
+

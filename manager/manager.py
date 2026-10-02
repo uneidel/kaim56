@@ -148,6 +148,7 @@ if __name__ == "__main__":
           flush=True)
     os.umask(0o077)                  # new files are root's; the few others read get a mode below
     _startup.harden_files()
+    _startup.warn_if_open()
     if _mounts.ensure_guest_user():
         _memfs.OWNER = (_mounts.GUEST_UID, _host.ADMIN_GID)
         _mounts.own_guest_dir(_mounts.AGENT_ROOT, 0o755)

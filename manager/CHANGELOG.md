@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-02
+
+- Security: the manager was reachable from the internet without a login (the unit carried an empty `MANAGER_PASS=`, the reverse proxy did not enforce a login). Password now in `/etc/firecracker-manager.env` via a unit drop-in; `install.sh` no longer treats an empty `MANAGER_PASS=` as set; the manager warns at every start without a password (log + notification).
+
 ## 2026-10-01
 
 - Apps tab (was a panel at the bottom of Settings, easy to miss): whether celld is set up and reachable (and how fast), per app who serves it right now (celld or the manager's fallback) and its server side's summary from celld's `/_status` (Code flow: repos per state, Core War: changes); an app declares a server side in `app.json` (`"server": true`), so celld down reads "unreachable", not "none".

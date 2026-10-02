@@ -1403,6 +1403,21 @@ class ManagerFunctions(unittest.TestCase):
         # the live projects.json (root-only) must not reach any mount test
         cls.m._projects.PROJECTS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-noproj-"), "projects.json")
 
+    def test_open_manager_warns_at_start(self):
+        """Without MANAGER_PASS every request is an admin: the start says so in
+        the log and as a notification; with a password it stays quiet."""
+        m = self.m
+        sent, old = [], (m._auth.PW, m._notify.notify_add)
+        try:
+            m._notify.notify_add = lambda *a, **k: sent.append(a)
+            m._auth.PW = ""
+            self.assertTrue(m._startup.warn_if_open())
+            self.assertEqual(sent[0][1], "No login password")
+            sent.clear(); m._auth.PW = "s3cret"
+            self.assertFalse(m._startup.warn_if_open()); self.assertEqual(sent, [])
+        finally:
+            m._auth.PW, m._notify.notify_add = old
+
     def test_resource_stats_shape(self):
         """resource_stats returns per instance size + live fields; an instance
         without a PID counts as not running (live values None)."""
