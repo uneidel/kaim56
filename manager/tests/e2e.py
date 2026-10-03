@@ -4403,6 +4403,86 @@ class ManagerFunctions(unittest.TestCase):
             m._settings.SITE["APPS_DIR"], m._settings.load_settings, cf.request = old[:3]
             cl._cf_list.clear(); cl._cf_list.update(old[3])
 
+    def test_apps_delete_and_rename(self):
+        """Delete: the worker on Cloudflare first (refused by Cloudflare ->
+        nothing changed), the entry (token) goes, the folder moves to
+        .trash/. Rename: folder + URL, the old unused worker is deleted; not
+        for apps with a server side, not while on Cloudflare, not onto an
+        existing name. A stray worker can be deleted, a local app's cannot."""
+        m = self.m
+        cl, cf, ap = m._cloud, m._cfapi, m._apps
+        tmp = tempfile.mkdtemp(prefix="e2e-appdel-")
+        apps, celld = os.path.join(tmp, "apps"), os.path.join(tmp, "celld")
+        os.makedirs(os.path.join(celld, "do"))
+        for n, server in (("board", False), ("flow", True), ("other", False)):
+            os.makedirs(os.path.join(apps, n))
+            json.dump({"title": n, "server": server}, open(os.path.join(apps, n, "app.json"), "w"))
+            _wtext(os.path.join(apps, n, "index.html"), n)
+        _wtext(os.path.join(celld, "do", "flow.js"), 'export class FlowState extends DurableObject {}\n')
+        deleted, refuse = [], {"on": False}
+        def fake(method, path, token, *a, **k):
+            if method == "DELETE":
+                if refuse["on"]:
+                    raise cf.CFError(403, [{"code": 10000, "message": "Authentication error"}])
+                name = path.split("/scripts/")[1].split("?")[0]
+                if name in ("kaim56-board", "kaim56-flow", "stray"):
+                    deleted.append(name); return None
+                raise cf.CFError(404, [])
+            return []
+        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cf.request, cl.CLOUD_FILE, dict(cl._jobs))
+        try:
+            cl._jobs.clear()
+            m._settings.SITE["APPS_DIR"] = apps
+            m._settings.load_settings = lambda: {"CF_ACCOUNT_ID": "a", "CF_API_TOKEN": "t", "CF_APP_SECRET": "s"}
+            cf.request, cl.CLOUD_FILE = fake, os.path.join(tmp, "cloud.json")
+            cl._save({"board": {"where": "local", "url": "https://kaim56-board.x", "token_sha": ""},
+                      "flow": {"where": "cloud", "url": "https://kaim56-flow.x", "token_sha": "abc"}})
+            # rename: refused for a server side, for an app on Cloudflare, onto an existing name, bad names
+            for app, new, msg in (("flow", "flow2", "Cloudflare"), ("board", "other", "exists"), ("board", "Bad Name", "a-z")):
+                with self.assertRaisesRegex(ValueError, msg):
+                    cl.rename(app, new)
+            cl._save({**cl.load(), "flow": {"where": "local", "url": "u"}})
+            with self.assertRaisesRegex(ValueError, "server side"):
+                cl.rename("flow", "flow2")
+            r = cl.rename("board", "jobs")
+            self.assertEqual(r, {"name": "jobs", "old_worker": "deleted"}); self.assertEqual(deleted, ["kaim56-board"])
+            self.assertTrue(os.path.isfile(os.path.join(apps, "jobs", "index.html")))
+            self.assertNotIn("board", cl.load())
+            # delete: Cloudflare refuses -> nothing changed
+            cl._save({**cl.load(), "flow": {"where": "cloud", "url": "u", "token_sha": "abc"}})
+            refuse["on"] = True
+            with self.assertRaises(cf.CFError):
+                cl.remove("flow")
+            self.assertTrue(os.path.isdir(os.path.join(apps, "flow"))); self.assertIn("flow", cl.load())
+            refuse["on"] = False
+            r = cl.remove("flow")
+            self.assertEqual(r["worker"], "deleted"); self.assertTrue(r["celld_state_kept"])
+            self.assertTrue(r["trashed"].startswith(os.path.join(apps, ".trash", "flow-")))
+            self.assertTrue(os.path.isfile(os.path.join(r["trashed"], "index.html")))
+            self.assertNotIn("flow", cl.load()); self.assertNotIn("flow", [a["name"] for a in ap.load_apps()])
+            self.assertEqual(cl.remove("other")["worker"], "none")                 # never deployed: fine
+            with self.assertRaises(ValueError):
+                cl.remove("nope")
+            # stray workers: deletable; a local app's worker only through the app
+            self.assertEqual(cl.delete_worker("stray"), {"deleted": "stray"})
+            with self.assertRaisesRegex(ValueError, "belongs to a local app"):
+                cl.delete_worker("kaim56-jobs")
+            for bad in ("../x", "", "Stray"):
+                with self.assertRaises(ValueError):
+                    cl.delete_worker(bad)
+            # in the cloud without Cloudflare settings: refused, nothing moved
+            cl._save({"jobs": {"where": "cloud", "url": "u"}})
+            m._settings.load_settings = lambda: {}
+            with self.assertRaisesRegex(ValueError, "not set up"):
+                cl.remove("jobs")
+            self.assertTrue(os.path.isdir(os.path.join(apps, "jobs")))
+            cl._jobs["jobs"] = {"done": False}                                    # a running upload: hands off
+            with self.assertRaisesRegex(ValueError, "still running"):
+                cl.rename("jobs", "x")
+        finally:
+            m._settings.SITE["APPS_DIR"], m._settings.load_settings, cf.request, cl.CLOUD_FILE = old[:4]
+            cl._jobs.clear(); cl._jobs.update(old[4])
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/

@@ -80,3 +80,6 @@ security_best_practices_report.md
 architecture_review.md
 apps/codeflow/tests/py-results.json
 celld/.celld/
+
+# deleted apps (Apps tab -> Delete), recoverable on the host
+apps/.trash/

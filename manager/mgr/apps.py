@@ -71,6 +71,37 @@ def load_apps():
     return out
 
 
+TRASH = ".trash"                                  # <APPS_DIR>/.trash/<name>-<stamp>: deleted apps, recoverable
+
+
+def _app_dir(name):
+    ad = apps_dir()
+    if not ad or not _NAME.match(name or "") or not os.path.isdir(os.path.join(ad, name)):
+        raise ValueError(f"unknown app {name!r}")
+    return ad, os.path.join(ad, name)
+
+
+def trash(name):
+    """Move the app's folder into <APPS_DIR>/.trash/ (a dot folder: never an
+    app) -> the path it went to. Nothing is deleted; it can be moved back."""
+    ad, src = _app_dir(name)
+    os.makedirs(os.path.join(ad, TRASH), exist_ok=True)
+    dst = os.path.join(ad, TRASH, f"{name}-{time.strftime('%Y%m%d-%H%M%S')}")
+    os.rename(src, dst)
+    return dst
+
+
+def rename_dir(old, new):
+    """Rename the app's folder (= its name and URL /apps/<name>/)."""
+    ad, src = _app_dir(old)
+    if not _NAME.match(new or ""):
+        raise ValueError("a name is a-z, 0-9, - and _, starting with a letter or digit, at most 41 characters")
+    dst = os.path.join(ad, new)
+    if os.path.exists(dst):
+        raise ValueError(f"{new!r} exists already")
+    os.rename(src, dst)
+
+
 CELLD_TIMEOUT = 5
 
 

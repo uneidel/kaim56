@@ -20,6 +20,7 @@ import urllib.request
 from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
+from mgr import cfapi as _cfapi
 from mgr import cloud as _cloud
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
@@ -330,9 +331,28 @@ def _rt_apps_cloudflare(h):
 @_routes.ROUTER.post("/api/apps/", prefix=True, admin=True)
 def _rt_app_cloud(h):
     # POST /api/apps/<name>/upload | /restore — to Cloudflare and back (mgr/cloud.py), in the background
+    # POST /api/apps/<name>/delete | /rename {"to": new} — right away
     name, _, op = h.path.split("?", 1)[0][len("/api/apps/"):].strip("/").partition("/")
+    if op in ("delete", "rename"):
+        try:
+            res = _cloud.remove(name) if op == "delete" else _cloud.rename(name, str((h._body() or {}).get("to") or "").strip())
+        except (ValueError, OSError, _cfapi.CFError) as e:
+            return h._json({"ok": False, "error": str(e)[:400]}, 400)
+        return h._json({"ok": True, **res})
     ok, job = _cloud.start(name, op)
     return h._json({"ok": ok, **job}, 200 if ok else 400)
+
+
+@_routes.ROUTER.post("/api/cfworkers/", prefix=True, admin=True)
+def _rt_cf_worker(h):
+    # POST /api/cfworkers/<script>/delete — a Worker created outside the manager
+    script, _, op = h.path.split("?", 1)[0][len("/api/cfworkers/"):].strip("/").partition("/")
+    if op != "delete":
+        return h._json({"ok": False, "error": "unknown operation"}, 400)
+    try:
+        return h._json({"ok": True, **_cloud.delete_worker(script)})
+    except (ValueError, _cfapi.CFError) as e:
+        return h._json({"ok": False, "error": str(e)[:400]}, 400)
 
 
 @_routes.ROUTER.get("/apps/", prefix=True, admin=True)

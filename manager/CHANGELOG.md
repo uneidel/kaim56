@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-03
 
+- Apps tab: Rename and Delete per row. Delete removes the Cloudflare worker first, then the folder goes to `apps/.trash/`; rename is refused for apps with a celld server side or while on Cloudflare. Workers created elsewhere can be deleted, not renamed (Cloudflare has no rename).
 - The service is now `kaim56` (was `firecracker-manager`); `install.sh` takes the old unit's settings over, stops and removes it.
 - The password file is now `/etc/kaim56.env` (was `/etc/firecracker-manager.env`); `install.sh` moves an existing one once.
 

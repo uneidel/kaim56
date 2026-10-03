@@ -185,3 +185,15 @@ def enable_workers_dev(account, script, token, **kw):
 
 def workers_dev_subdomain(account, token, **kw):
     return (request("GET", f"/accounts/{_q(account)}/workers/subdomain", token, **kw) or {}).get("subdomain", "")
+
+
+def delete_script(account, script, token, **kw):
+    """Delete a Worker (force: also with Durable Object bindings — their data
+    goes with it) -> False when there was none."""
+    try:
+        request("DELETE", f"/accounts/{_q(account)}/workers/scripts/{_q(script)}?force=true", token, **kw)
+        return True
+    except CFError as e:
+        if e.status == 404:
+            return False
+        raise

@@ -227,8 +227,12 @@ async function loadAppsPanel(){
     const link=cl.where==='cloud'&&cl.url?`<a href="${esc(cl.url)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`
       :`<a href="/apps/${encodeURIComponent(a.name)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`;
     const cfLink=cl.url?` · <a href="${esc(cl.url)}/" target=_blank rel=noopener title="open on Cloudflare (new tab)">${escT(cl.url.replace(/^https:\/\//,''))} ↗</a>`:'';
+    const noRen=cl.where==='cloud'?'runs on Cloudflare — restore it first':a.server?'has a server side on celld, which knows it by name':'';
+    const edit=run?'':`<div style="display:flex;gap:6px;margin-top:6px">`+
+      `<button class="btn btn-secondary btn-sm" ${noRen?`disabled title="${esc(noRen)}"`:''} onclick="appRename('${esc(a.name)}')">Rename</button>`+
+      `<button class="btn btn-secondary btn-sm" style="color:var(--color-danger,#c0392b)" onclick="appDelete('${esc(a.name)}',${cl.where==='cloud'},${!!a.server})">Delete</button></div>`;
     return `<tr><td>${link}<div class=text-muted style="font-size:11.5px">${escT(a.name)}${cfLink}</div></td>`+
-      `<td>${served}</td><td style="font-size:12.5px">${side}</td><td>${btn}${last}</td></tr>`}).join('')
+      `<td>${served}</td><td style="font-size:12.5px">${side}</td><td>${btn}${last}${edit}</td></tr>`}).join('')
     :'<tr><td colspan=4 class=text-muted>No apps (a folder with app.json + index.html under apps/).</td></tr>';
   clearTimeout(window.APPS_POLL);
   if(busy)window.APPS_POLL=setTimeout(loadAppsPanel,3000);            // follow a running upload/restore
@@ -250,7 +254,34 @@ async function loadCfWorkers(nLocal,refresh){
     `<div class=text-muted style="font-size:11.5px">${w.url?`<a href="${esc(w.url)}/" target=_blank rel=noopener>${escT(w.url.replace(/^https:\/\//,''))} ↗</a>`:'no workers.dev URL'}</div></td>`+
     `<td><span class="tag tag-accent">Cloudflare only</span></td>`+
     `<td style="font-size:12.5px"><span class=text-muted>created outside the manager${w.assets?' · static files':''} · updated ${escT(day(w.modified))}</span></td>`+
-    `<td style="font-size:12.5px"><span class=text-muted>not managed here</span>${dash(w.name)}</td></tr>`).join(''));
+    `<td style="font-size:12.5px"><span class=text-muted>not managed here</span>${dash(w.name)}`+
+    `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-secondary btn-sm" disabled title="Cloudflare cannot rename a worker, and its static files cannot be downloaded to redeploy it under a new name">Rename</button>`+
+    `<button class="btn btn-secondary btn-sm" style="color:var(--color-danger,#c0392b)" onclick="cfWorkerDelete('${esc(w.name)}')">Delete</button></div></td></tr>`).join(''));
+}
+async function appPost(url,body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  let d={};try{d=await r.json()}catch(e){}
+  if(!r.ok||!d.ok){alert(d.error||('HTTP '+r.status));return null}
+  return d;
+}
+async function appRename(name){
+  const to=(prompt(`New name for ${name} (a-z, 0-9, - and _). Its address becomes /apps/<new name>/.`,name)||'').trim();
+  if(!to||to===name)return;
+  const d=await appPost('/api/apps/'+encodeURIComponent(name)+'/rename',{to});
+  if(d&&d.old_worker&&d.old_worker!=='none'&&d.old_worker!=='not set up')alert(`Renamed. The old Cloudflare worker: ${d.old_worker}`);
+  loadAppsPanel();
+}
+async function appDelete(name,inCloud,server){
+  const what=`Delete the app ${name}?\\n\\n- its folder moves to apps/.trash/ (can be moved back)\\n- its Cloudflare worker is deleted`+
+    (inCloud?' — the app runs THERE, its state is lost':'')+(server&&!inCloud?'\\n- its state on celld stays':'')+`\\n\\nType the name to confirm:`;
+  if((prompt(what)||'').trim()!==name)return;
+  const d=await appPost('/api/apps/'+encodeURIComponent(name)+'/delete');
+  if(d)alert(`Deleted. Folder: ${d.trashed}\\nCloudflare worker: ${d.worker}`);
+  loadAppsPanel();
+}
+async function cfWorkerDelete(name){
+  if((prompt(`Delete the Cloudflare worker ${name}? Its Durable Object data goes with it — this cannot be undone.\\n\\nType the name to confirm:`)||'').trim()!==name)return;
+  if(await appPost('/api/cfworkers/'+encodeURIComponent(name)+'/delete'))loadCfWorkers(0,1);
 }
 async function appCloud(name,op){
   if(op==='upload'&&!confirm(`Send ${name} to Cloudflare? Its files and its state move there; here it redirects to the cloud until you restore it.`))return;

@@ -361,6 +361,84 @@ def job(app):
         return dict(_jobs.get(app) or {})
 
 
+# ---- delete and rename -----------------------------------------------------
+_SCRIPT = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
+def _idle(app):
+    if (job(app) or {}).get("done") is False:
+        raise ValueError("an upload/restore of this app is still running")
+
+
+def _forget(app):
+    with _lock:
+        d = load()
+        if d.pop(app, None) is not None:
+            _save(d)
+        _cf_list["data"] = None                           # the Cloudflare list changed
+
+
+def remove(app):
+    """Delete an app: its worker on Cloudflare (with the state there), its
+    entry here (the token dies), its folder into apps/.trash/. The worker goes
+    first — if Cloudflare refuses, nothing has changed."""
+    _idle(app)
+    state, _ = where(app)
+    try:
+        account, cf_token, _ = creds()
+    except ValueError:
+        if state == "cloud":
+            raise ValueError("the app runs on Cloudflare, but Cloudflare is not set up here — "
+                             "its worker cannot be deleted")
+        account = None
+    worker = "not set up"
+    if account:
+        worker = "deleted" if _cfapi.delete_script(account, script_name(app), cf_token) else "none"
+    _forget(app)
+    return {"trashed": _apps.trash(app), "worker": worker,
+            "celld_state_kept": do_class(app)[0] is not None}
+
+
+def rename(app, new):
+    """Rename a local app (folder, URL). Not for apps with a server side — celld
+    maps those by name (worker.js, wrangler.json, do/<name>.js, the object's
+    id) — nor while on Cloudflare. A deployed but unused worker of the old name
+    is deleted (best effort; it would show up as a stray worker otherwise)."""
+    _idle(app)
+    if where(app)[0] == "cloud":
+        raise ValueError("the app runs on Cloudflare — restore it first")
+    if do_class(app)[0] is not None or any(a["name"] == app and a.get("server") for a in _apps.load_apps()):
+        raise ValueError("the app has a server side on celld, which knows it by name — "
+                         "a rename would cut it off from its state")
+    _apps.rename_dir(app, new)
+    worker = "none"
+    try:
+        account, cf_token, _ = creds()
+        worker = "deleted" if _cfapi.delete_script(account, script_name(app), cf_token) else "none"
+    except ValueError:
+        worker = "not set up"
+    except _cfapi.CFError as e:
+        worker = f"left on Cloudflare: {e}"[:200]
+    _forget(app)
+    return {"name": new, "old_worker": worker}
+
+
+def delete_worker(script):
+    """Delete a Worker created outside the manager (with its Durable Object
+    data). A local app's worker goes through remove() instead."""
+    if not _SCRIPT.match(script or ""):
+        raise ValueError("bad worker name")
+    if any(script_name(a["name"]) == script for a in _apps.load_apps()):
+        raise ValueError("this worker belongs to a local app — delete the app instead")
+    account, cf_token, _ = creds()
+    found = _cfapi.delete_script(account, script, cf_token)
+    with _lock:
+        _cf_list["data"] = None
+    if not found:
+        raise ValueError(f"no worker {script!r} on Cloudflare")
+    return {"deleted": script}
+
+
 # ---- every Worker on the account ---------------------------------------------
 CF_LIST_TTL = 60
 _cf_list = {"ts": 0.0, "data": None}
