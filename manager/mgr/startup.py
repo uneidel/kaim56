@@ -116,11 +116,11 @@ def warn_if_open():
     if _auth.PW:
         return False
     print("[SECURITY] MANAGER_PASS is empty: the manager accepts every request without a login. "
-          "Set it in /etc/firecracker-manager.env (unit EnvironmentFile) unless a proxy enforces one.", flush=True)
+          "Set it in /etc/kaim56.env (unit EnvironmentFile) unless a proxy enforces one.", flush=True)
     try:
         _notify.notify_add("manager", "No login password",
                            "MANAGER_PASS is empty — whoever reaches this manager controls the platform. "
-                           "Set it in /etc/firecracker-manager.env and restart.", link="settings")
+                           "Set it in /etc/kaim56.env and restart.", link="settings")
     except Exception as e:
         print(f"[quiet] open-manager notification failed: {e!r}", flush=True)
     return True

@@ -216,11 +216,18 @@ KEEP_ENV="$($SUDO cat /etc/systemd/system/firecracker-manager.service 2>/dev/nul
   | grep -vE '^Environment=MANAGER_PASS=\s*$' || true)"
 # The password lives in a root-only env file the unit always references;
 # it is generated once (an update run must not drop the login).
-PASS_LINE="EnvironmentFile=-/etc/firecracker-manager.env"
-if ! $SUDO test -f /etc/firecracker-manager.env && ! printf '%s' "$KEEP_ENV" | grep -q '^Environment=MANAGER_PASS=.'; then
+# Before 2026-10-03 the file was /etc/firecracker-manager.env: moved once.
+ENV_FILE=/etc/kaim56.env
+if $SUDO test -f /etc/firecracker-manager.env && ! $SUDO test -f "$ENV_FILE"; then
+  $SUDO mv /etc/firecracker-manager.env "$ENV_FILE"
+  $SUDO rm -f /etc/systemd/system/firecracker-manager.service.d/password.conf
+  echo "  moved /etc/firecracker-manager.env -> $ENV_FILE"
+fi
+PASS_LINE="EnvironmentFile=-$ENV_FILE"
+if ! $SUDO test -f "$ENV_FILE" && ! printf '%s' "$KEEP_ENV" | grep -q '^Environment=MANAGER_PASS=.'; then
   PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
-  printf 'MANAGER_PASS=%s\n' "$PW" | $SUDO install -m 600 -o root -g root /dev/stdin /etc/firecracker-manager.env
-  echo "  web login: admin / $PW   (changeable in /etc/firecracker-manager.env)"
+  printf 'MANAGER_PASS=%s\n' "$PW" | $SUDO install -m 600 -o root -g root /dev/stdin "$ENV_FILE"
+  echo "  web login: admin / $PW   (changeable in $ENV_FILE)"
 fi
 $SUDO tee /etc/systemd/system/firecracker-manager.service >/dev/null <<UNIT
 [Unit]

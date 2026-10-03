@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-03
+
+- The password file is now `/etc/kaim56.env` (was `/etc/firecracker-manager.env`); `install.sh` moves an existing one once.
+
 ## 2026-10-02
 
 - Apps tab lists every Worker on the Cloudflare account, also those created outside the manager (`GET /api/apps/cloudflare`, 60 s cache).

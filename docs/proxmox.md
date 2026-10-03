@@ -82,7 +82,7 @@ git clone https://github.com/uneidel/kaim56 && cd kaim56
 About ten minutes the first time: Firecracker and the guest kernel are
 downloaded, the agent rootfs and the host containers built, the systemd
 service `firecracker-manager` installed and a smoke test run. The login for the
-web UI is printed at the end and kept in `/etc/firecracker-manager.env`.
+web UI is printed at the end and kept in `/etc/kaim56.env`.
 
 Then open `http://<address>:8700`, put an API key into *Settings* and create an
 instance from a template. A second `./install.sh` run updates.
@@ -92,7 +92,7 @@ instance from a template. A second `./install.sh` run updates.
 - The microVMs sit on a private `/30` each and reach the internet through NAT
   on the VM's default interface (`ens18` on Proxmox). The installer detects it from
   the default route and writes it into the service unit; a line `HOSTIF=<nic>` in
-  `/etc/firecracker-manager.env` overrides it and survives updates.
+  `/etc/kaim56.env` overrides it and survives updates.
   Nothing needs to change on the bridge, no promiscuous mode.
 - If the Proxmox VM firewall is on, allow **TCP 8700** in (the manager). The
   phone and the desktop client come in over iroh and need no port at all. For
@@ -113,6 +113,6 @@ persistent disks.
 | Symptom | Cause |
 |---|---|
 | `/dev/kvm missing` from `install.sh --check` | CPU type is not `host`, or nested virtualization is off on the Proxmox host |
-| microVMs start but have no internet | the VM's default route is not on the interface the manager detected — `ip route` in the VM, then `HOSTIF` in `/etc/firecracker-manager.env` |
+| microVMs start but have no internet | the VM's default route is not on the interface the manager detected — `ip route` in the VM, then `HOSTIF` in `/etc/kaim56.env` |
 | instances mount no workspace | NFS server not running: `systemctl status nfs-server` in the VM, rerun `sudo manager/setup-nfs-host.sh` |
 | everything is slow | ballooning or a shared host under memory pressure; give the VM fixed memory (`--balloon 0`) |
