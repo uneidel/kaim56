@@ -83,3 +83,7 @@ celld/.celld/
 
 # deleted apps (Apps tab -> Delete), recoverable on the host
 apps/.trash/
+
+# CLI build output (cli/build.sh)
+cli/kaim56
+cli/embedded/
