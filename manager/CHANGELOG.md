@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-03
 
+- The service is now `kaim56` (was `firecracker-manager`); `install.sh` takes the old unit's settings over, stops and removes it.
 - The password file is now `/etc/kaim56.env` (was `/etc/firecracker-manager.env`); `install.sh` moves an existing one once.
 
 ## 2026-10-02

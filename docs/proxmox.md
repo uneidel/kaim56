@@ -81,7 +81,7 @@ git clone https://github.com/uneidel/kaim56 && cd kaim56
 
 About ten minutes the first time: Firecracker and the guest kernel are
 downloaded, the agent rootfs and the host containers built, the systemd
-service `firecracker-manager` installed and a smoke test run. The login for the
+service `kaim56` installed and a smoke test run. The login for the
 web UI is printed at the end and kept in `/etc/kaim56.env`.
 
 Then open `http://<address>:8700`, put an API key into *Settings* and create an

@@ -10,7 +10,7 @@ firecracker/
 ├── run/           runtime (sock/pid/log/config) – automatic
 ├── manager.py     web UI + API (port 8700), runs as root
 ├── chatui.py      chat frontend (served by the manager under /chat)
-├── firecracker-manager.service   systemd autostart
+├── kaim56.service                systemd autostart
 └── traefik-firecracker.yml       exposure via manager.example.com
 ```
 
@@ -215,8 +215,8 @@ Guest writes appear on the host as `ulrich` (all_squash/anonuid=1000).
 ```
 **3) Start the manager** (root):
 ```
-sudo cp /home/ulrich/firecracker/firecracker-manager.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
+sudo cp /home/ulrich/firecracker/kaim56.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now kaim56
 ```
 → UI reachable at `http://10.0.0.10:8700` (on the LAN) and via Traefik at
 `https://manager.example.com` (after installing `traefik-firecracker.yml`).

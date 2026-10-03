@@ -211,7 +211,12 @@ HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
 # Environment= line except the ones written below is carried over.
 # An EMPTY MANAGER_PASS= is not carried over: it means "no login" and once left
 # a manager open to the internet (2026-10-02) while looking like a setting.
-KEEP_ENV="$($SUDO cat /etc/systemd/system/firecracker-manager.service 2>/dev/null \
+# The unit is kaim56.service; before 2026-10-03 it was firecracker-manager.service
+# (taken over below: its settings are read from it, then it is removed).
+UNIT_FILE=/etc/systemd/system/kaim56.service
+OLD_UNIT=/etc/systemd/system/firecracker-manager.service
+SRC_UNIT="$UNIT_FILE"; $SUDO test -f "$SRC_UNIT" || SRC_UNIT="$OLD_UNIT"
+KEEP_ENV="$($SUDO cat "$SRC_UNIT" 2>/dev/null \
   | grep '^Environment=' | grep -vE '^Environment=(PORT|HOSTIF|GUEST_DNS|AGENT_ROOT)=' \
   | grep -vE '^Environment=MANAGER_PASS=\s*$' || true)"
 # The password lives in a root-only env file the unit always references;
@@ -220,7 +225,8 @@ KEEP_ENV="$($SUDO cat /etc/systemd/system/firecracker-manager.service 2>/dev/nul
 ENV_FILE=/etc/kaim56.env
 if $SUDO test -f /etc/firecracker-manager.env && ! $SUDO test -f "$ENV_FILE"; then
   $SUDO mv /etc/firecracker-manager.env "$ENV_FILE"
-  $SUDO rm -f /etc/systemd/system/firecracker-manager.service.d/password.conf
+  $SUDO rm -f /etc/systemd/system/firecracker-manager.service.d/password.conf \
+             /etc/systemd/system/kaim56.service.d/password.conf
   echo "  moved /etc/firecracker-manager.env -> $ENV_FILE"
 fi
 PASS_LINE="EnvironmentFile=-$ENV_FILE"
@@ -229,7 +235,7 @@ if ! $SUDO test -f "$ENV_FILE" && ! printf '%s' "$KEEP_ENV" | grep -q '^Environm
   printf 'MANAGER_PASS=%s\n' "$PW" | $SUDO install -m 600 -o root -g root /dev/stdin "$ENV_FILE"
   echo "  web login: admin / $PW   (changeable in $ENV_FILE)"
 fi
-$SUDO tee /etc/systemd/system/firecracker-manager.service >/dev/null <<UNIT
+$SUDO tee "$UNIT_FILE" >/dev/null <<UNIT
 [Unit]
 Description=Firecracker Manager (kAIm56)
 After=network-online.target docker.service
@@ -276,17 +282,23 @@ StandardError=append:$FC_DIR/run/update.log
 ExecStart=/bin/sh $SRC/install.sh $FLAGS
 UNIT
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable firecracker-manager >/dev/null 2>&1 || true
+if $SUDO test -f "$OLD_UNIT"; then                  # the old name: stop it, so kaim56 gets :8700
+  $SUDO systemctl disable --now firecracker-manager >/dev/null 2>&1 || true
+  $SUDO rm -rf "$OLD_UNIT" /etc/systemd/system/firecracker-manager.service.d
+  $SUDO systemctl daemon-reload
+  echo "  service renamed: firecracker-manager -> kaim56 (sudoers rules naming the old unit need updating)"
+fi
+$SUDO systemctl enable kaim56 >/dev/null 2>&1 || true
 # Restart, not "start": on an update the running manager would keep the old
 # code and the old unit environment (it did on the deployment test VM).
-$SUDO systemctl restart firecracker-manager
+$SUDO systemctl restart kaim56
 
 # iroh gateway (only if the binary was built) — the app's P2P transport.
 if [ -x "$FC_DIR/bin/iroh-gw" ]; then
   $SUDO tee /etc/systemd/system/iroh-gw.service >/dev/null <<UNIT
 [Unit]
 Description=kAIm56 iroh gateway (app<->manager transport over iroh, P2P)
-After=network-online.target firecracker-manager.service
+After=network-online.target kaim56.service
 Wants=network-online.target
 
 [Service]
@@ -316,7 +328,7 @@ sleep 3
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8700/" || echo 000)
 case "$CODE" in
   200|401) echo "  manager responds (HTTP $CODE) ✓";;   # 401 = running, auth active
-  *) fail "manager not responding (HTTP $CODE) — journalctl -u firecracker-manager";;
+  *) fail "manager not responding (HTTP $CODE) — journalctl -u kaim56";;
 esac
 FC_DIR="$FC_DIR" AGENT_PATH="$BASE/openrouter-agent/agent.py" \
   python3 "$FC_DIR/tests/e2e.py" AgentLogic ManagerFunctions 2>&1 \

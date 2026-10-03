@@ -29,6 +29,6 @@ User=root
 WantedBy=multi-user.target
 
 # Installation:
-#   sudo cp firecracker-manager.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now firecracker-manager
-#   journalctl -u firecracker-manager -f
+#   sudo cp kaim56.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kaim56
+#   journalctl -u kaim56 -f

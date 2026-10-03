@@ -1,6 +1,6 @@
 [Unit]
 Description=kAIm56 iroh gateway (app<->manager transport over iroh, P2P)
-After=network-online.target firecracker-manager.service
+After=network-online.target kaim56.service
 Wants=network-online.target
 
 [Service]
