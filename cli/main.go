@@ -101,7 +101,8 @@ KAIM56_INSTANCE and the flags below override the file.`,
 	pf.BoolVar(&flagJSON, "json", false, "print the manager's raw JSON")
 	pf.BoolVarP(&flagVerbose, "verbose", "v", false, "show the tunnel's log")
 
-	root.AddCommand(versionCmd(), configCmd())
+	root.Version = version
+	root.AddCommand(versionCmd(), configCmd(), selfUpdateCmd())
 	for _, add := range commandGroups {
 		root.AddCommand(add()...)
 	}
@@ -110,8 +111,10 @@ KAIM56_INSTANCE and the flags below override the file.`,
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() { <-sig; stopTun(); os.Exit(130) }()
 
+	hint := startUpdateHint(len(os.Args) > 1 && (os.Args[1] == "self-update" || os.Args[1] == "completion"))
 	err := root.Execute()
 	stopTun()
+	hint()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

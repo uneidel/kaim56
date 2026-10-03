@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -397,5 +398,54 @@ func TestFailedMsgIsAnError(t *testing.T) {
 	_, err := run(t, &fakeManager{}, srv, "", "inst", "config", "set", "helper", "X", "1")
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Fatalf("a failing msg must fail the command, got %v", err)
+	}
+}
+
+func TestUpdateFindsNewestCLIRelease(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[{"tag_name":"cli-v0.10.0","assets":[{"name":"`+assetName()+`","browser_download_url":"u10","size":3}]},
+		  {"tag_name":"cli-v0.9.0","assets":[{"name":"`+assetName()+`","browser_download_url":"u9"}]},
+		  {"tag_name":"cli-v9.0.0","draft":true,"assets":[{"name":"`+assetName()+`"}]},
+		  {"tag_name":"voice-v9.0.0","assets":[{"name":"`+assetName()+`"}]},
+		  {"tag_name":"cli-v1.0.0","assets":[{"name":"kaim56-other-os"}]}]`)
+	}))
+	defer srv.Close()
+	r, err := latestRelease(srv.URL, srv.Client())
+	if err != nil || r == nil || r.Version != "0.10.0" || r.URL != "u10" {
+		t.Fatalf("want cli-v0.10.0 (not a draft, not voice, with our asset), got %+v %v", r, err)
+	}
+	if !newerVersion("0.10.0", "0.9.9") || newerVersion("0.2.0", "0.2") {
+		t.Fatal("version order")
+	}
+	// the hint remembers the latest version and checks again only after a day
+	p := t.TempDir() + "/latest"
+	if _, due := knownLatest(p, time.Now()); !due {
+		t.Fatal("no file: a check is due")
+	}
+	rememberLatest(p, "0.3.0")
+	if v, due := knownLatest(p, time.Now()); v != "0.3.0" || due {
+		t.Fatalf("fresh: %q due=%v", v, due)
+	}
+	if _, due := knownLatest(p, time.Now().Add(25*time.Hour)); !due {
+		t.Fatal("after a day a check is due")
+	}
+}
+
+func TestApplyUpdateReplacesOnlyWithACompleteDownload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "NEWBIN") }))
+	defer srv.Close()
+	exe := t.TempDir() + "/kaim56"
+	os.WriteFile(exe, []byte("OLD"), 0o755)
+	if err := applyUpdate(&release{URL: srv.URL, Size: 99}, exe); err == nil {
+		t.Fatal("a short download must fail")
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "OLD" {
+		t.Fatal("the old binary must stay")
+	}
+	if err := applyUpdate(&release{URL: srv.URL, Size: 6}, exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "NEWBIN" {
+		t.Fatal("not replaced")
 	}
 }

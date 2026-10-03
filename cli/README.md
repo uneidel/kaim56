@@ -43,6 +43,16 @@ show dimmed. Each message carries its own turn id: if the connection drops,
 the CLI fetches the finished answer from the trace. A stopped instance is
 started first (`--no-start` to refuse).
 
+## Update
+
+    kaim56 self-update            # install the latest release (cli-v*)
+    kaim56 self-update --check    # only look
+
+After a command the CLI prints a one-line hint when a newer release exists
+(checked at most once a day, in the background; `KAIM56_NO_UPDATE_CHECK=1` = off).
+Releases: bump `version.go`, add a `## <version>` section to `RELEASE_NOTES.md`,
+push to main — `.github/workflows/cli.yml` builds and publishes.
+
 ## Build
 
     ./build.sh              # tests, then ./kaim56 with the tunnel embedded
