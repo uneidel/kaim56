@@ -5,6 +5,17 @@ User-facing, one section per version, newest first. The release pipeline
 the body of the GitHub release. Write it BEFORE bumping `version.go` — no
 section, no release.
 
+## 1.2.0
+
+- New wake word: **"Hey Bender"**, detected on the desktop by openWakeWord
+  (a trained model, any voice). Only what you say after it goes to the server —
+  everything else never leaves the desktop. This is the new default; the old
+  text gate is `"wake_mode": "text"`, the own-voice model stays `"local"`.
+- "Hey Bender" alone gets a "Yes?", and the next sentence within 8 seconds
+  needs no wake word.
+- `"wake_threshold"` (default 0.5) makes it stricter or looser; `"wake_model"`
+  takes your own openWakeWord `.onnx` classifier instead of Hey Bender.
+
 ## 1.1.1
 
 - A rejected login now says what to do instead of a bare "HTTP 401": the manager

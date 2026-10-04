@@ -91,3 +91,6 @@ cli/embedded/
 # temporary export of the claude image build (build-rootfs.sh)
 agents/claude/rootfs/
 agents/claude/rootfs.ext4
+
+# wake-word sidecar build (wake/build.sh, named Docker volume)
+wake/target/

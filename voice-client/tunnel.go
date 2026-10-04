@@ -27,8 +27,13 @@ import (
 // itself and old versions do not collide. Written via temp file + rename so a
 // parallel start never executes a half-written file.
 func materializeTunnel(data []byte, dir string) (string, error) {
+	return materializeAs("kaim56-tunnel", data, dir)
+}
+
+// materializeAs: an embedded helper binary as <dir>/<name>-<hash> (kaim56-tunnel, kaim56-wake).
+func materializeAs(name string, data []byte, dir string) (string, error) {
 	sum := sha256.Sum256(data)
-	path := filepath.Join(dir, fmt.Sprintf("kaim56-tunnel-%x", sum[:6]))
+	path := filepath.Join(dir, fmt.Sprintf("%s-%x", name, sum[:6]))
 	if st, err := os.Stat(path); err == nil && st.Size() == int64(len(data)) {
 		return path, nil
 	}

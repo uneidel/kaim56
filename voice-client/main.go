@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -109,6 +110,23 @@ func main() {
 	}
 
 	client := NewVoiceClient(cfg, *headless || *once || *probe != "")
+	if cfg.WakeMode == "" {
+		cfg.WakeMode = "oww" // since 1.2.0; "text" = the STT text gate of before
+	}
+	if cfg.WakeMode == "oww" {
+		g, err := startOww(cfg.WakeThresh, cfg.WakeModel)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wake_mode \"oww\":", err)
+			os.Exit(1)
+		}
+		defer g.Close()
+		client.oww = g
+		if cfg.WakeModel == "" || strings.TrimSpace(client.wakeWord) == "" {
+			client.wakeWord = "Hey Bender, Bender" // only to strip it from the transcript
+		}
+		fmt.Fprintf(os.Stderr, "[kaim56-voice] openWakeWord gate active (threshold %.2f%s)\n",
+			g.threshold, map[bool]string{true: ", model " + cfg.WakeModel, false: ", Hey Bender"}[cfg.WakeModel != ""])
+	}
 	if cfg.WakeMode == "local" {
 		model, err := loadWakeModel(wakeModelPath())
 		if err != nil {

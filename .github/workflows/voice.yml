@@ -1,5 +1,5 @@
 # kAIm56 Voice release pipeline. Builds the Linux desktop voice client from
-# the repo (tunnel embedded) and publishes it:
+# the repo (tunnel and wake-word sidecar embedded) and publishes it:
 #
 #   * voice-v<version> tag -> GitHub release "kAIm56 Voice <version>" with
 #                             kaim56-voice-linux-amd64 attached
@@ -71,13 +71,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: iroh-gw
+          workspaces: |
+            iroh-gw
+            wake
       - name: tunnel (Rust, embedded into the client)
         run: |
           cd iroh-gw && cargo build --release --bin tunnel
           mkdir -p ../voice-client/embedded
           cp target/release/tunnel ../voice-client/embedded/kaim56-tunnel
           ../voice-client/embedded/kaim56-tunnel --help >/dev/null 2>&1 || true
+      - name: wake word sidecar (Rust/tract, embedded into the client)
+        run: |
+          cd wake && cargo build --release
+          cp target/release/kaim56-wake ../voice-client/embedded/kaim56-wake
+          ../voice-client/embedded/kaim56-wake --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: voice-client/go.mod

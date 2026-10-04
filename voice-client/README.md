@@ -100,9 +100,23 @@ template default: answer briefly and readably, without lists/links.
 `--prompt "…"` overrides the config for one run, `--prompt -` switches it off.
 Empty = the message goes out unchanged.
 
-## Hotword — two stages
+## Hotword
 
-**Stage 1, text gate** (default): `"wake_word": "Kati, Katharina"` — a comma
+**Default — openWakeWord** (`"wake_mode": "oww"` or unset, since 1.2.0): the
+wake word is **"Hey Bender"**, detected on the desktop by a trained
+openWakeWord model (any voice, no enrollment). The sidecar `kaim56-wake`
+(Rust/tract, `wake/`, embedded in the binary) scores the microphone every
+80 ms (~3 % of one core); an utterance goes to STT only if the word scored
+above `"wake_threshold"` (default 0.5) while it was spoken — nothing else
+leaves the desktop. "Hey Bender" alone gets "Yes?", and the next sentence
+within 8 s passes without the word. Another word: train one with
+openWakeWord and set `"wake_model": "/path/to/word.onnx"`. `--headless` prints
+the best score of every dropped utterance (for tuning the threshold).
+
+The older stages:
+
+
+**Stage 1, text gate** (`"wake_mode": "text"`): `"wake_word": "Kati, Katharina"` — a comma
 list of variants; empty = every utterance passes. Only transcripts that start
 with a variant reach the agent. Per variant of 4+ letters one typo is allowed
 (Levenshtein 1; not at 3 — otherwise "hat" wakes the word "Kat"), the word

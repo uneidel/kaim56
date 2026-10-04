@@ -7,3 +7,5 @@ package main
 // Without -tags embedtunnel (dev/gate): no embedded tunnel, findTunnel looks
 // for it next to the binary or in the PATH.
 var embeddedTunnel []byte
+
+var embeddedWake []byte

@@ -1,0 +1,17 @@
+[package]
+name = "kaim56-wake"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "openWakeWord inference for the kAIm56 voice client: 16 kHz s16le PCM on stdin, one score per 80 ms on stdout"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+tract-onnx = "0.21"
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

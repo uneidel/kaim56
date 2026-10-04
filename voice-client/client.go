@@ -25,8 +25,9 @@ type Config struct {
 	Instance   string    `json:"instance"`
 	Prompt     string    `json:"prompt,omitempty"`         // prepended to every spoken message
 	WakeWord   string    `json:"wake_word"`                // empty = every utterance passes
-	WakeMode   string    `json:"wake_mode,omitempty"`      // "local" = MFCC/DTW gate BEFORE the upload
-	WakeThresh float64   `json:"wake_threshold,omitempty"` // override; 0 = from the enrollment
+	WakeMode   string    `json:"wake_mode,omitempty"`      // "oww" (default) = openWakeWord, "local" = MFCC/DTW gate, "text" = STT text gate
+	WakeThresh float64   `json:"wake_threshold,omitempty"` // override; 0 = default (oww 0.5) / from the enrollment (local)
+	WakeModel  string    `json:"wake_model,omitempty"`     // oww: own classifier .onnx; "" = the embedded Hey Bender
 	AutoUpdate bool      `json:"auto_update"`              // check GitHub Releases at start (update.go)
 	Vad        VadConfig `json:"vad"`
 }
@@ -117,22 +118,24 @@ const (
 const ackWord = "Yes?"
 
 type VoiceClient struct {
-	mu        sync.Mutex
-	mgr       *Manager
-	vad       *Vad
-	wakeWord  string
-	wakeModel *WakeModel // nil = no local gate
-	prompt    string     // prefix for every spoken message
-	instance  string
-	chatID    string
-	listening bool
-	state     string
-	lastHeard string
-	headless  bool
-	stopped   chan struct{}
-	stopOnce  sync.Once
-	playCmd   *exec.Cmd
-	OnState   func() // the tray hooks in here
+	mu         sync.Mutex
+	mgr        *Manager
+	vad        *Vad
+	wakeWord   string
+	wakeModel  *WakeModel // nil = no local gate
+	oww        *owwGate   // nil = no openWakeWord gate
+	armedUntil time.Time  // after the wake word alone: the next sentence passes without it
+	prompt     string     // prefix for every spoken message
+	instance   string
+	chatID     string
+	listening  bool
+	state      string
+	lastHeard  string
+	headless   bool
+	stopped    chan struct{}
+	stopOnce   sync.Once
+	playCmd    *exec.Cmd
+	OnState    func() // the tray hooks in here
 }
 
 func NewVoiceClient(cfg Config, headless bool) *VoiceClient {
@@ -212,6 +215,9 @@ func (c *VoiceClient) Run(once bool) error {
 			c.vad.Reset()
 			continue
 		}
+		if c.oww != nil {
+			c.oww.Feed(frame)
+		}
 		seg := c.vad.Feed(frame)
 		if seg == nil {
 			continue
@@ -235,6 +241,29 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 			c.setState(stateOff)
 		}
 	}()
+	// openWakeWord gate: the utterance goes to STT only if the wake word was
+	// heard while it was spoken (or we are armed after a bare "Hey Bender").
+	if c.oww != nil {
+		now := time.Now()
+		dur := time.Duration(len(pcm)/2) * time.Second / sampleRate
+		hit, peak := c.oww.Hit(now.Add(-dur - owwSlack))
+		c.mu.Lock()
+		armed := now.Before(c.armedUntil)
+		c.armedUntil = time.Time{}
+		c.mu.Unlock()
+		if !hit && !armed {
+			c.mu.Lock()
+			c.lastHeard = fmt.Sprintf("✕ wake %.2f (threshold %.2f)", peak, c.oww.threshold)
+			c.mu.Unlock()
+			if c.headless {
+				fmt.Printf("  (no wake word: best score %.3f, threshold %.2f)\n", peak, c.oww.threshold)
+			}
+			return
+		}
+		if c.headless {
+			fmt.Printf("  (wake: score %.3f%s)\n", peak, map[bool]string{true: ", armed", false: ""}[armed && !hit])
+		}
+	}
 	// Local wake gate first: NOT a single byte leaves the desktop when the
 	// start of the utterance does not sound like the enrolled word. On a hit
 	// the word is cut out of the AUDIO (DTW knows where the alignment ends) —
@@ -272,10 +301,8 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 		fmt.Printf("  (stt: %.1f s)\n", time.Since(tSTT).Seconds())
 	}
 	if len([]rune(text)) < 2 {
-		if c.wakeModel != nil { // woken, but no usable sentence
-			if err := c.Speak(ackWord); err != nil {
-				c.notify("Playback failed", err.Error())
-			}
+		if c.wakeModel != nil || c.oww != nil { // woken, but no usable sentence
+			c.ack()
 		}
 		return
 	}
@@ -283,7 +310,12 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	// microphone hears speech all the time — only what addresses the agent
 	// reaches it. The word alone ("Kati?") gets a short "Yes?".
 	msg, ok := text, true
-	if c.wakeModel == nil {
+	switch {
+	case c.oww != nil: // woken acoustically: only strip the word if STT wrote it
+		if m, hit := wakeMatch(text, c.wakeWord); hit {
+			msg = m
+		}
+	case c.wakeModel == nil:
 		msg, ok = wakeMatch(text, c.wakeWord)
 	}
 	if !ok {
@@ -298,9 +330,7 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 		return
 	}
 	if msg == "" {
-		if err := c.Speak(ackWord); err != nil {
-			c.notify("Playback failed", err.Error())
-		}
+		c.ack()
 		return
 	}
 	text = msg
@@ -336,6 +366,16 @@ func (c *VoiceClient) handleUtterance(pcm []byte) {
 	if err != nil {
 		c.notify("Chat failed", err.Error())
 	}
+}
+
+// ack answers a bare wake word ("Yes?") and arms the next sentence.
+func (c *VoiceClient) ack() {
+	if err := c.Speak(ackWord); err != nil {
+		c.notify("Playback failed", err.Error())
+	}
+	c.mu.Lock()
+	c.armedUntil = time.Now().Add(armedFor)
+	c.mu.Unlock()
 }
 
 // Speak synthesizes and plays. Via a temp file instead of stdin: paplay and

@@ -12,3 +12,6 @@ import _ "embed"
 //
 //go:embed embedded/kaim56-tunnel
 var embeddedTunnel []byte
+
+//go:embed embedded/kaim56-wake
+var embeddedWake []byte
