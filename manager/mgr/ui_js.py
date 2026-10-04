@@ -255,7 +255,8 @@ async function loadCfWorkers(nLocal,refresh){
     `<td><span class="tag tag-accent">Cloudflare only</span></td>`+
     `<td style="font-size:12.5px"><span class=text-muted>created outside the manager${w.assets?' · static files':''} · updated ${escT(day(w.modified))}</span></td>`+
     `<td style="font-size:12.5px"><span class=text-muted>not managed here</span>${dash(w.name)}`+
-    `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-secondary btn-sm" disabled title="Cloudflare cannot rename a worker, and its static files cannot be downloaded to redeploy it under a new name">Rename</button>`+
+    `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-secondary btn-sm" title="Download its Durable Objects as JSON (cfdo workers)" onclick="cfWorkerExport('${esc(w.name)}')">Download data</button>`+
+    `<button class="btn btn-secondary btn-sm" disabled title="Cloudflare cannot rename a worker, and its static files cannot be downloaded to redeploy it under a new name">Rename</button>`+
     `<button class="btn btn-secondary btn-sm" style="color:var(--color-danger,#c0392b)" onclick="cfWorkerDelete('${esc(w.name)}')">Delete</button></div></td></tr>`).join(''));
 }
 async function appPost(url,body){
@@ -278,6 +279,19 @@ async function appDelete(name,inCloud,server){
   const d=await appPost('/api/apps/'+encodeURIComponent(name)+'/delete');
   if(d)alert(`Deleted. Folder: ${d.trashed}\\nCloudflare worker: ${d.worker}`);
   loadAppsPanel();
+}
+async function cfWorkerExport(name){
+  // the worker's own CFDO_SECRET (Cloudflare never returns it); used once, not stored
+  const secret=prompt(`CFDO_SECRET of ${name} (empty = the default secret from Settings):`,'');
+  if(secret===null)return;
+  const d=await appPost('/api/cfworkers/'+encodeURIComponent(name)+'/export',{secret});
+  if(!d)return;
+  delete d.ok;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,1)],{type:'application/json'}));
+  a.download=`${name}-durable-objects-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  alert(`${d.objects.length} object${d.objects.length===1?'':'s'} of ${name} downloaded.`);
 }
 async function cfWorkerDelete(name){
   if((prompt(`Delete the Cloudflare worker ${name}? Its Durable Object data goes with it — this cannot be undone.\\n\\nType the name to confirm:`)||'').trim()!==name)return;

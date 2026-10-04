@@ -4515,6 +4515,48 @@ class ManagerFunctions(unittest.TestCase):
             m._settings.SITE["APPS_DIR"], m._settings.load_settings, cf.request, cl.CLOUD_FILE = old[:4]
             cl._jobs.clear(); cl._jobs.update(old[4])
 
+    def test_cfdo_worker_export(self):
+        """Download the Durable Objects of a worker built with cfdo: ping, list,
+        export per object, with that worker's own secret (or the default one);
+        a wrong secret and a non-cfdo worker say so."""
+        import http.server, threading
+        m = self.m
+        cl = m._cloud
+        seen = []
+        class W(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("User-Agent")))
+                if self.headers.get("x-cfdo-secret") != "own-secret":
+                    self.send_response(401); self.end_headers(); self.wfile.write(b"unauthorized"); return
+                body = {"/__cfdo/ping": {"ok": True, "class": "ChatRoom"},
+                        "/__cfdo/list": {"objects": [{"name": "default", "id": "aa11"}, {"name": "lobby", "id": "bb22"}]}}.get(
+                    self.path.split("?")[0], None)
+                if self.path.startswith("/__cfdo/export?id="):
+                    body = {"format": 1, "kv": [["k", self.path.rsplit("=", 1)[1]]]}
+                b = json.dumps(body).encode()
+                self.send_response(200 if body is not None else 404); self.end_headers(); self.wfile.write(b)
+            def log_message(self, *a): pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), W)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{srv.server_port}"
+        old = (cl.cf_workers, m._settings.load_settings)
+        try:
+            cl.cf_workers = lambda force=False: {"workers": [{"name": "chat-room", "app": None, "url": url},
+                                                             {"name": "nourl", "app": None, "url": ""}]}
+            m._settings.load_settings = lambda: {"CF_ACCOUNT_ID": "a", "CF_API_TOKEN": "t", "CF_APP_SECRET": "default-secret"}
+            with self.assertRaisesRegex(ValueError, "refused the secret"):      # empty -> default secret, refused
+                cl.cf_worker_export("chat-room")
+            d = cl.cf_worker_export("chat-room", "own-secret")
+            self.assertEqual((d["worker"], d["class"]), ("chat-room", "ChatRoom"))
+            self.assertEqual([(o["name"], o["data"]["kv"][0][1]) for o in d["objects"]], [("default", "aa11"), ("lobby", "bb22")])
+            self.assertTrue(all(ua == m._cfapi.UA for _, ua in seen))
+            for script, msg in (("nourl", "workers.dev"), ("missing", "no worker"), ("../x", "bad worker")):
+                with self.assertRaisesRegex(ValueError, msg):
+                    cl.cf_worker_export(script, "own-secret")
+        finally:
+            cl.cf_workers, m._settings.load_settings = old
+            srv.shutdown()
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/

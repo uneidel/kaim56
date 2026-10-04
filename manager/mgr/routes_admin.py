@@ -346,10 +346,13 @@ def _rt_app_cloud(h):
 @_routes.ROUTER.post("/api/cfworkers/", prefix=True, admin=True)
 def _rt_cf_worker(h):
     # POST /api/cfworkers/<script>/delete — a Worker created outside the manager
+    # POST /api/cfworkers/<script>/export {"secret"} — its Durable Objects (cfdo workers)
     script, _, op = h.path.split("?", 1)[0][len("/api/cfworkers/"):].strip("/").partition("/")
-    if op != "delete":
+    if op not in ("delete", "export"):
         return h._json({"ok": False, "error": "unknown operation"}, 400)
     try:
+        if op == "export":
+            return h._json({"ok": True, **_cloud.cf_worker_export(script, str((h._body() or {}).get("secret") or ""))})
         return h._json({"ok": True, **_cloud.delete_worker(script)})
     except (ValueError, _cfapi.CFError) as e:
         return h._json({"ok": False, "error": str(e)[:400]}, 400)

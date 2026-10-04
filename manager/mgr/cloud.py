@@ -38,6 +38,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from mgr import apps as _apps
@@ -437,6 +438,43 @@ def delete_worker(script):
     if not found:
         raise ValueError(f"no worker {script!r} on Cloudflare")
     return {"deleted": script}
+
+
+def cf_worker_export(script, secret=""):
+    """All Durable Objects of a Worker built with cfdo, through its admin
+    routes (/__cfdo/list, /__cfdo/export?id=, header x-cfdo-secret) ->
+    {"format", "worker", "class", "exported_at", "objects": [{name, id, data}]}.
+    The secret is that worker's CFDO_SECRET (Cloudflare never returns it);
+    empty = the default secret from Settings. Used once, never stored."""
+    if not _SCRIPT.match(script or ""):
+        raise ValueError("bad worker name")
+    w = next((x for x in cf_workers()["workers"] if x["name"] == script), None)
+    if w is None:
+        raise ValueError(f"no worker {script!r} on Cloudflare")
+    if not w["url"]:
+        raise ValueError("the worker has no workers.dev address — it cannot be reached")
+    secret = secret or creds()[2]
+
+    def get(path):
+        req = urllib.request.Request(w["url"] + path, headers={"x-cfdo-secret": secret, "User-Agent": _cfapi.UA})
+        try:
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise ValueError("the worker refused the secret — enter its CFDO_SECRET")
+            if e.code == 404 and path.endswith("ping"):
+                raise ValueError("the worker has no cfdo admin routes (/__cfdo/) — only cfdo workers can be exported")
+            raise ValueError(f"HTTP {e.code} from the worker ({path})")
+
+    info = get("/__cfdo/ping")
+    out = {"format": 1, "worker": script, "class": info.get("class", ""),
+           "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "objects": []}
+    for o in get("/__cfdo/list").get("objects", []):
+        oid = str(o.get("id", ""))
+        out["objects"].append({"name": o.get("name", ""), "id": oid,
+                               "data": get("/__cfdo/export?id=" + urllib.parse.quote(oid, safe=""))})
+    return out
 
 
 # ---- every Worker on the account ---------------------------------------------
