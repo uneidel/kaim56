@@ -931,6 +931,9 @@ function renderSkills(statsOnly){
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:8px">`+
     `<span class=card-title style="font-size:15px;font-family:var(--font-mono);font-weight:500">${escT(s.name)}</span>`+
+    `<button class="tag ${s.default?'tag-accent':'tag-neutral'}" style="border:0;cursor:pointer;font-size:11px" `+
+    `title="${s.default?'Standard: every agent is told about it each turn and loads it when it applies — click for on demand':'On demand: agents find it via list_skills — click to make it standard'}" `+
+    `onclick="skDefault('${esc(s.name)}',${!s.default})">${s.default?'standard':'on demand'}</button>`+
     `<span style="margin-left:auto;display:flex;gap:2px">`+
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px" title=Edit onclick="editSkill('${esc(s.name)}')">${I_EDIT}</button>`+
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px;color:var(--color-neutral-600)" title=Delete onclick="delSkill('${esc(s.name)}')">${I_DEL}</button>`+
@@ -951,6 +954,11 @@ function saveSkill(){
   if(!name)return alert('Name?');
   fetch('/api/skills',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description,content})})
     .then(()=>location.reload());
+}
+async function skDefault(n,on){
+  const d=await (await fetch('/api/skills/'+encodeURIComponent(n)+'/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on})})).json();
+  if(/unknown|error/.test(d.msg||''))return alert(d.msg);
+  const s=SKILLS.find(x=>x.name===n); if(s)s.default=on; renderSkills(true);
 }
 async function delSkill(n){if(confirm('Delete skill '+n+'?')){await fetch('/api/skills/'+encodeURIComponent(n)+'/delete',{method:'POST'});location.reload()}}
 

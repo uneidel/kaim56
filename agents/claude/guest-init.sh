@@ -165,6 +165,18 @@ Do not claim you have no memory — you do, via memory_store/memory_recall.
 EOF
   chown node:node "$PLATFORM_MD" 2>/dev/null
 fi
+# Standard skills (manager Skills tab: "standard"), refreshed at every boot:
+# Claude reads CLAUDE.md, so the list goes there between markers — replaced,
+# never piled up. The bodies stay on demand (load_skill).
+sed -i '/<!-- kaim56-standard-skills -->/,/<!-- \/kaim56-standard-skills -->/d' "$PLATFORM_MD" 2>/dev/null
+STD=$(curl -s -m 5 "http://${GW_IP}:8700/api/skills?default=1" | python3 -c '
+import json, sys
+for s in json.load(sys.stdin):
+    print("- " + s["name"] + ": " + s.get("description", "").replace("\n", " "))' 2>/dev/null)
+if [ -n "$STD" ]; then
+  printf '<!-- kaim56-standard-skills -->\n## Standard skills\n\nWhen a task matches one of these, load_skill it BEFORE you start and follow it:\n%s\n<!-- /kaim56-standard-skills -->\n' "$STD" >> "$PLATFORM_MD"
+  chown node:node "$PLATFORM_MD" 2>/dev/null
+fi
 
 echo "[init] agent=claude(node) transport=$TRANSPORT workdir=$WORKDIR"
 cd "$WORKDIR"

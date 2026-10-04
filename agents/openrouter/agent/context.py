@@ -143,6 +143,32 @@ def _inject_playbooks():
         _history.append({"role": "system", "content": block})
 
 
+STANDARD_SKILLS_TAG = "[Standard skills]"
+_std_cache = {"ts": 0.0, "items": []}
+
+
+def _inject_standard_skills():
+    """The operator's standard skills (Skills tab: "standard"), named every
+    turn so the agent loads them when they apply — the bodies stay out of the
+    prompt (security-audit alone is ~22 kB). Exactly ONE block."""
+    _history[:] = [m for m in _history
+                   if not (m.get("role") == "system"
+                           and str(m.get("content", "")).startswith(STANDARD_SKILLS_TAG))]
+    if time.time() - _std_cache["ts"] > 60:
+        try:
+            _std_cache["items"] = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(),
+                                                                 "/api/skills?default=1", timeout=6))
+            _std_cache["ts"] = time.time()
+        except Exception:
+            pass                                    # keep the last known list
+    items = [s for s in _std_cache["items"] if s.get("name")]
+    if items:
+        _history.append({"role": "system", "content": (
+            STANDARD_SKILLS_TAG + " Standard ways of working — when a task matches one of these, "
+            "load_skill it BEFORE you start and follow it:\n"
+            + "\n".join(f"- {s['name']}: {s.get('description', '')}" for s in items))})
+
+
 # --- prompt templates: /name -> prompt maintained in the manager ------------
 # Recurring assignments as a command (pi.dev idea "prompt templates").
 # Expansion happens HERE in the agent — so it works in web, app and

@@ -46,16 +46,39 @@ def save_skills(items):
         return -1
 
 
-def upsert_skill(name, description, content):
+def upsert_skill(name, description, content, default=None):
+    """`default`: a standard skill — every agent is told about it each turn and
+    loads it when it applies. None keeps the current flag."""
     name = re.sub(r"[^a-z0-9_-]", "", (name or "").lower())
     if not name:
         return "invalid name (only a-z 0-9 _ -)"
     prev = next((s for s in load_skills() if s.get("name") == name), {})
     items = [s for s in load_skills() if s.get("name") != name]
-    items.append({"name": name, "description": description or "", "content": content or "",
-                  "added": prev.get("added") or int(time.time())})
+    entry = {"name": name, "description": description or "", "content": content or "",
+             "added": prev.get("added") or int(time.time())}
+    if (prev.get("default") if default is None else default):
+        entry["default"] = True
+    items.append(entry)
     save_skills(items)
     return f"skill '{name}' saved"
+
+
+def set_default(name, on):
+    items = load_skills()
+    sk = next((s for s in items if s.get("name") == name), None)
+    if sk is None:
+        return f"unknown skill '{name}'"
+    sk.pop("default", None)
+    if on:
+        sk["default"] = True
+    save_skills(items)
+    return f"skill '{name}': {'standard' if on else 'on demand'}"
+
+
+def meta(items=None):
+    """name, description, default — what agents and the UI list."""
+    return [{"name": x.get("name", ""), "description": x.get("description", ""), "default": bool(x.get("default"))}
+            for x in (load_skills() if items is None else items)]
 
 
 def delete_skill(name):

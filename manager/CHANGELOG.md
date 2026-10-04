@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-04
+
+- Standard skills: a skill can be marked "standard" (Skills tab); every agent is told about the standard skills each turn (openrouter) or at boot (claude, CLAUDE.md) and loads them when they apply. Imported ponytail (+ review/audit/debt) and Cloudflare's security-audit (+ 13 reference skills); ponytail and security-audit are standard.
+
 ## 2026-10-03
 
 - CLI 0.2.0: `kaim56 self-update` plus a daily update hint; releases `cli-v*` from `.github/workflows/cli.yml`.

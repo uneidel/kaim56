@@ -812,7 +812,9 @@ def _rt_personas_delete(h):
 @_routes._msg_route("POST", "/api/skills")
 def _rt_skills_upsert(h):
     b = h._body()
-    return _skills.upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""))
+    d = b.get("default")
+    return _skills.upsert_skill(b.get("name", ""), b.get("description", ""), b.get("content", ""),
+                                default=None if d is None else bool(d))
 
 
 
@@ -843,6 +845,8 @@ def _rt_skills_delete(h):
     parts = h.path.split("?", 1)[0].strip("/").split("/")
     if len(parts) == 4 and parts[3] == "delete":
         return _skills.delete_skill(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
+    if len(parts) == 4 and parts[3] == "default":           # {"on": bool}: standard skill or on demand
+        return _skills.set_default(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()), bool((h._body() or {}).get("on")))
     return "unknown"
 
 

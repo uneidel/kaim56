@@ -57,9 +57,10 @@ def _rt_skills(h):
     # bodies — the agents call this on every list_skills and never need them.
     q = urllib.parse.parse_qs(h.path.partition("?")[2])
     items = _skills.load_skills()
-    if q.get("meta", ["0"])[0] == "1":
-        items = [{"name": x.get("name", ""), "description": x.get("description", "")}
-                 for x in items]
+    if q.get("default", ["0"])[0] == "1":                # the standard skills (agents, each turn)
+        items = [x for x in items if x.get("default")]
+    if q.get("meta", ["0"])[0] == "1" or q.get("default", ["0"])[0] == "1":
+        items = _skills.meta(items)
     return json.dumps(items, ensure_ascii=False).encode(), "application/json"
 
 

@@ -315,6 +315,15 @@ class AgentLogic(unittest.TestCase):
                 self.assertEqual(len(pbs), 1)
                 self.assertTrue(a._context._history[-1]["content"].startswith(a._context.PLAYBOOK_TAG))
                 self.assertEqual(a._context._history[0]["content"], "sys")
+                # standard skills: one block naming them, bodies stay out
+                a._mgrclient._mgr_get = lambda base, path, timeout=30: json.dumps(
+                    [{"name": "ponytail", "description": "lazy senior dev", "default": True}]) if "default=1" in path else "[]"
+                a._context._std_cache["ts"] = 0
+                a._context._inject_standard_skills(); a._context._inject_standard_skills()
+                sks = [m for m in a._context._history if m["role"] == "system" and m["content"].startswith(a._context.STANDARD_SKILLS_TAG)]
+                self.assertEqual(len(sks), 1)
+                self.assertIn("- ponytail: lazy senior dev", sks[0]["content"])
+                self.assertIn("load_skill", sks[0]["content"])
             finally:
                 a._mgrclient._mgr_get = old_get
             os.environ["TZ"] = "Not/AZone"
@@ -2120,6 +2129,29 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual([p for _, p, _ in source_routes(chain)], [],
                          "a path literal crept back into the handler chain")
         self.assertGreater(len(inv), 90)
+
+    def test_standard_skills_flag(self):
+        """A skill can be standard: the flag survives an edit without it, the
+        page and ?meta=1 carry it, ?default=1 lists only the standard ones
+        (what every agent is told each turn), set_default toggles it."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-stdsk-")
+        old = m._skills.SKILLS_FILE
+        try:
+            m._skills.SKILLS_FILE = os.path.join(tmp, "skills.json")
+            m._skills.upsert_skill("ponytail", "lazy", "body", default=True)
+            m._skills.upsert_skill("other", "x", "body")
+            m._skills.upsert_skill("ponytail", "lazier", "body2")              # an edit keeps the flag
+            self.assertEqual({s["name"]: s["default"] for s in m._skills.meta()}, {"ponytail": True, "other": False})
+            h = self._handler("/api/skills?default=1", "10.0.0.9"); h._do_GET()
+            body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual(body, [{"name": "ponytail", "description": "lazier", "default": True}])   # no bodies
+            self.assertIn('"default": true', m._ui.render().replace('"default":true', '"default": true'))
+            self.assertIn("on demand", m._skills.set_default("ponytail", False))
+            self.assertEqual([s["name"] for s in m._skills.meta() if s["default"]], [])
+            self.assertIn("unknown", m._skills.set_default("nope", True))
+        finally:
+            m._skills.SKILLS_FILE = old
 
     def test_skills_page_carries_no_contents(self):
         """Regression: the page inlined the COMPLETE skills.json. With the

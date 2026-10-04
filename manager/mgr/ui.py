@@ -197,9 +197,7 @@ def render():
                 # Only name + description into the page: with an imported
                 # catalog the contents are ~1 MB, and the UI needs them only
                 # when editing (then it fetches GET /api/skills/<name>).
-                .replace("__SKILLS__", _util.js_json(
-                    [{"name": x.get("name", ""), "description": x.get("description", "")}
-                     for x in _skills.load_skills()], ensure_ascii=False))
+                .replace("__SKILLS__", _util.js_json(_skills.meta(), ensure_ascii=False))
                 .replace("__HOSTIF__", _host.HOSTIF).replace("__POOL__", _netfw.POOL)
                 .replace("__PUBLIC_HOST__", _settings.PUBLIC_HOST)
                 .replace("__SIGNAL_HOST__", _settings.SIGNAL_HOST)
