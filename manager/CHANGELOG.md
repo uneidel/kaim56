@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-04
 
+- Prototype: agents as Durable Objects (app `agents`, celld): one object per agent, a turn returns an id at once and runs in the background (alarm + watchdog), the result is polled — no open connection; tools: web search, fetch, own memory; LLM via the manager's key proxy.
 - Apps tab: "Download data" for Cloudflare-only workers built with cfdo — all Durable Objects as JSON via their `/__cfdo/` admin routes, with the worker's own CFDO_SECRET (asked each time, never stored).
 - Voice client 1.2.0: wake word "Hey Bender" via openWakeWord (new default) — sidecar `kaim56-wake` (Rust/tract, `wake/`) embedded; only speech after the word leaves the desktop.
 - Standard skills: a skill can be marked "standard" (Skills tab); every agent is told about the standard skills each turn (openrouter) or at boot (claude, CLAUDE.md) and loads them when they apply. Imported ponytail (+ review/audit/debt) and Cloudflare's security-audit (+ 13 reference skills); ponytail and security-audit are standard.

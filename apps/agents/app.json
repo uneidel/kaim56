@@ -1,0 +1,6 @@
+{
+  "title": "Agents (Durable Objects)",
+  "icon": "🧩",
+  "description": "Leichte Agenten als Durable Objects: Auftrag abschicken, Verbindung zu, Ergebnis später abholen.",
+  "server": true
+}

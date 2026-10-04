@@ -10,12 +10,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export { CodeflowState } from "./do/codeflow.js";
 export { CorewarLog } from "./do/corewar.js";
+export { AgentState } from "./do/agents.js";
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
 // The apps with a server side, and their Durable Object namespace.
-const SERVER_SIDE = env => ({ codeflow: env.CODEFLOW, corewar: env.COREWAR });
+const SERVER_SIDE = env => ({ codeflow: env.CODEFLOW, corewar: env.COREWAR, agents: env.AGENTS });
 
 export default {
   async fetch(request, env) {
@@ -31,6 +32,7 @@ export default {
       return json({ ok: true, apps });
     }
     const m = url.pathname.match(/^\/apps\/([a-z0-9][a-z0-9_-]{0,40})\/_api(\/.*)?$/);
+    if (m && m[1] === "agents") return agentsRoute(env, url, request, m[2] || "/");
     if (m) {
       const ns = SERVER_SIDE(env)[m[1]];
       if (!ns) return json({ error: "this app has no server-side state" }, 404);
@@ -41,3 +43,31 @@ export default {
     return env.ASSETS.fetch(new Request(url, request));
   },
 };
+
+// /apps/agents/_api/...: one Durable Object per agent ("agent:<name>"), the
+// list in the object "agents". create/delete keep both in step.
+const AGENT_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+async function agentsRoute(env, url, request, path) {
+  const ns = env.AGENTS;
+  const list = ns.get(ns.idFromName("agents"));
+  const call = (stub, p, init = {}, name = "") =>
+    stub.fetch(new Request(new URL(p, url), { ...init, headers: { "Content-Type": "application/json", "x-agent-name": name } }));
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 0 || parts[0] === "summary") return call(list, "/" + parts.join("/"), { method: request.method });
+  if (parts[0] === "create" && request.method === "POST") {
+    const b = await request.json().catch(() => ({}));
+    if (!AGENT_NAME.test(b.name || "")) return json({ error: "name: a-z, 0-9, - and _, at most 32" }, 400);
+    const r = await call(ns.get(ns.idFromName("agent:" + b.name)), "/setup", { method: "POST", body: JSON.stringify(b) }, b.name);
+    const d = await r.json();
+    if (r.ok) await call(list, "/add", { method: "POST", body: JSON.stringify({ name: b.name, model: d.agent.model }) });
+    return json(d, r.status);
+  }
+  const name = parts[0];
+  if (!AGENT_NAME.test(name)) return json({ error: "bad agent name" }, 400);
+  const stub = ns.get(ns.idFromName("agent:" + name));
+  const init = { method: request.method };
+  if (request.method === "POST") init.body = await request.text();
+  const r = await call(stub, "/" + parts.slice(1).join("/"), init, name);
+  if (parts[1] === "delete" && r.ok) await call(list, "/remove", { method: "POST", body: JSON.stringify({ name }) });
+  return r;
+}

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --line:#262d36; --text:#e6e9ee; --muted:#8a94a3; --accent:#5b8def; --err:#e06c75; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); display:grid; grid-template-columns:260px 1fr; height:100vh; }
+  aside { border-right:1px solid var(--line); padding:14px; overflow:auto; }
+  main { display:flex; flex-direction:column; min-width:0; }
+  h1 { font-size:15px; margin:0 0 12px; }
+  .ag { padding:8px 10px; border-radius:8px; cursor:pointer; margin-bottom:4px; }
+  .ag:hover { background:var(--panel); } .ag.sel { background:#1f2a3a; }
+  .ag small { color:var(--muted); display:block; font-size:11.5px; }
+  input, textarea, select, button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 9px; width:100%; }
+  button { cursor:pointer; background:var(--accent); border:0; width:auto; } button.sec { background:var(--panel); border:1px solid var(--line); }
+  form { display:grid; gap:6px; margin-top:16px; }
+  #log { flex:1; overflow:auto; padding:16px 20px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:780px; white-space:pre-wrap; } .me { align-self:flex-end; background:#1f2a3a; padding:8px 12px; border-radius:12px; }
+  .steps { color:var(--muted); font-size:12px; font-family:ui-monospace, monospace; }
+  .err { color:var(--err); }
+  #bar { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); }
+  #head { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; color:var(--muted); font-size:12.5px; }
+  #head b { color:var(--text); font-size:14px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>🧩 Agents</h1>
+  <div id="list"></div>
+  <form id="create">
+    <b style="font-size:13px">Neuer Agent</b>
+    <input name="name" placeholder="name (a-z, 0-9, -)" required pattern="[a-z0-9][a-z0-9_-]{0,31}">
+    <input name="model" placeholder="model (default google/gemini-2.5-flash)">
+    <textarea name="system" rows="4" placeholder="System-Prompt (optional)"></textarea>
+    <button>Anlegen</button>
+  </form>
+</aside>
+<main>
+  <div id="head">Kein Agent gewählt</div>
+  <div id="log"></div>
+  <form id="bar"><input id="text" placeholder="Nachricht … (Enter)" autocomplete="off"><button>Senden</button><button type="button" class="sec" id="reset">Verlauf leeren</button></form>
+</main>
+<script>
+const api = (p, body) => fetch("_api/" + p, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; });
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+let cur = "";
+
+async function loadList() {
+  const all = await api("");
+  $("#list").innerHTML = all.map(a => `<div class="ag ${a.name === cur ? "sel" : ""}" onclick="pick('${a.name}')"><b>${esc(a.name)}</b><small>${esc(a.model || "")}</small></div>`).join("") || '<small style="color:var(--muted)">noch keine</small>';
+}
+async function pick(name) {
+  cur = name; loadList();
+  const s = await api(name);
+  $("#head").innerHTML = `<b>${esc(name)}</b> ${esc(s.agent.model)}`;
+  const h = await api(name + "/history");
+  $("#log").innerHTML = h.map(m => `<div class="msg ${m.role === "user" ? "me" : ""}">${esc(m.content)}</div>`).join("");
+  $("#log").scrollTop = 1e9;
+}
+async function send(text) {
+  if (!cur || !text) return;
+  $("#log").insertAdjacentHTML("beforeend", `<div class="msg me">${esc(text)}</div>`);
+  const box = document.createElement("div"); box.className = "msg"; box.innerHTML = '<span class="steps">wartet …</span>';
+  $("#log").append(box); $("#log").scrollTop = 1e9;
+  const { turn } = await api(cur + "/turn", { message: text });
+  // the connection is closed now — the agent works on; we poll
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1500));
+    const t = await api(cur + "/turn/" + turn);
+    const steps = t.steps.length ? `<div class="steps">${t.steps.map(s => "🔧 " + esc(s)).join("<br>")}</div>` : "";
+    if (t.status === "done") { box.innerHTML = steps + esc(t.text); break; }
+    if (t.status === "error") { box.innerHTML = steps + `<span class="err">⚠️ ${esc(t.error)}</span>`; break; }
+    box.innerHTML = steps + `<span class="steps">${t.status} …</span>`;
+    $("#log").scrollTop = 1e9;
+  }
+  $("#log").scrollTop = 1e9;
+}
+$("#bar").onsubmit = e => { e.preventDefault(); const t = $("#text").value.trim(); $("#text").value = ""; send(t).catch(err => alert(err.message)); };
+$("#reset").onclick = async () => { if (cur && confirm("Verlauf von " + cur + " leeren?")) { await api(cur + "/reset", {}); pick(cur); } };
+$("#create").onsubmit = async e => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  if (!f.model) delete f.model; if (!f.system) delete f.system;
+  try { await api("create", f); e.target.reset(); pick(f.name); } catch (err) { alert(err.message); }
+};
+loadList();
+</script>
+</body>
+</html>

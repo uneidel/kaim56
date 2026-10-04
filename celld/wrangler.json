@@ -17,6 +17,10 @@
       {
         "name": "COREWAR",
         "class_name": "CorewarLog"
+      },
+      {
+        "name": "AGENTS",
+        "class_name": "AgentState"
       }
     ]
   },
@@ -32,6 +36,16 @@
       "new_sqlite_classes": [
         "CorewarLog"
       ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "AgentState"
+      ]
     }
-  ]
+  ],
+  "vars": {
+    "LLM_URL": "http://172.17.0.1:8700/api/llm/openrouter/chat/completions",
+    "DEFAULT_MODEL": "google/gemini-2.5-flash"
+  }
 }
