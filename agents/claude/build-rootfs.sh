@@ -5,6 +5,8 @@
 FC_DIR="${FC_DIR:-$(cd "$(dirname "$0")/.." && pwd)/firecracker}"   # the manager tree next to this folder
 cd "$(dirname "$0")"
 INST="${FC_DIR}"/instances/claude-rootfs.ext4
+# mkfs.ext4 lives in /usr/sbin, which a normal user shell has not on its PATH.
+export PATH="$PATH:/usr/sbin:/sbin"
 fail(){ echo "❌ FEHLER in: $1"; exit 1; }
 
 echo "== [1] bridge.py + web_bridge.py bereitstellen =="
