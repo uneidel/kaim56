@@ -12,6 +12,7 @@ one place.
 from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
 from mgr import personas as _personas
+from mgr import plugins as _plugins
 from mgr import secrets as _secrets
 from mgr import store as _store
 from mgr import skills as _skills
@@ -68,6 +69,16 @@ AGENT_TOOLS_CATALOG = [
 AGENT_TOOL_NAMES = {t["name"] for t in AGENT_TOOLS_CATALOG}
 
 
+def tool_catalog():
+    """The built-in tools plus the plugin tools (marked plugin: True)."""
+    return AGENT_TOOLS_CATALOG + [p for p in _plugins.tool_entries() if p["name"] not in AGENT_TOOL_NAMES]
+
+
+def tool_names():
+    """Every tool name an allowlist (AGENT_TOOLS) may contain."""
+    return {t["name"] for t in tool_catalog()}
+
+
 SANDBOX_DEFAULT_TOOLS = ["bash", "read_file", "write_file", "list_dir", "offload_read",
                          "http_fetch", "web_search", "read_pdf"]
 SANDBOX_NEVER = {"spawn_subagent", "create_task", "send_signal", "send_mail", "notify", "get_secret", "list_secrets"}
@@ -98,7 +109,7 @@ def sandbox_config(caller, sandbox):
         want = list(SANDBOX_DEFAULT_TOOLS)
     cfg = {}
     if want:
-        unknown = sorted(set(want) - AGENT_TOOL_NAMES)
+        unknown = sorted(set(want) - tool_names())
         if unknown:
             return {}, True, f"unknown tools: {', '.join(unknown)}"
         if caller_tools is not None:

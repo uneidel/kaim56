@@ -97,7 +97,8 @@ async function loadPolicy(auto){
     const toolset=new Set(p.tools||[]);
     const tools=POL_TOOLS.map(t=>
       `<label class=radio style="font-size:12.5px"><input type=checkbox data-pt="${esc(p.name)}" value="${esc(t.name)}" ${p.tools_all||toolset.has(t.name)?'checked':''}>`+
-      `<span class=dot></span><span class=mono style="font-size:11.5px" title="${esc(t.desc)}">${escT(t.name)}</span></label>`).join('');
+      `<span class=dot></span><span class=mono style="font-size:11.5px" title="${esc(t.desc)}">${escT(t.name)}</span>`+
+      (t.plugin?`<span class=text-muted style="font-size:10.5px;margin-left:4px">plugin</span>`:'')+`</label>`).join('');
     const secrets=(p.secrets||[]).map(s=>`<span class="tag tag-neutral" style="font-size:11px">${escT(s)}</span>`).join(' ')||'<span class=text-muted style="font-size:12px">none</span>';
     /* MCP: assign from the catalog right here. A server that needs ${SECRET}
        placeholders shows them — released ones as a key, missing ones as a

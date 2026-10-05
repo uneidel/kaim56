@@ -1538,7 +1538,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(set(cfg["AGENT_TOOLS"].split(",")), set(picks))   # Subset bleibt
             self.assertFalse(m._policy.effective_policy(_readj(os.path.join(tmp, "toolinst.json")))["tools_all"])
 
-            m._instances.set_instance_tools("toolinst", list(m._policy.AGENT_TOOL_NAMES))
+            m._instances.set_instance_tools("toolinst", list(m._policy.tool_names()))   # built-in + plugins
             cfg2 = _readj(os.path.join(tmp, "toolinst.json"))["config"]
             self.assertNotIn("AGENT_TOOLS", cfg2)                              # alle -> Feld raus
             self.assertTrue(m._policy.effective_policy(_readj(os.path.join(tmp, "toolinst.json")))["tools_all"])
@@ -4591,6 +4591,37 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._status(h), 403)                          # read may not delete
         finally:
             m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps = old
+
+    def test_plugin_tools_are_in_the_tool_list(self):
+        """Plugins appear in the policy's tool list (DESC read with ast, the code
+        never runs in the manager) and a saved tool subset may contain them —
+        before, saving a subset dropped every plugin silently."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-plugtools-")
+        _wtext(os.path.join(tmp, "apps.py"), 'DESC = ("Control " "apps")\nraise SystemExit("must not run")\n')
+        os.makedirs(os.path.join(tmp, "multi")); _wtext(os.path.join(tmp, "multi", "tool.py"), 'DESC = "multi tool"\n')
+        os.makedirs(os.path.join(tmp, "__pycache__"))
+        old = m._plugins.PLUGINS_SRC
+        try:
+            m._plugins.PLUGINS_SRC = tmp
+            cat = {t["name"]: t for t in m._policy.tool_catalog()}
+            self.assertEqual((cat["apps"]["desc"], cat["apps"].get("plugin")), ("Control apps", True))
+            self.assertEqual(cat["multi"]["desc"], "multi tool")
+            self.assertNotIn("__pycache__", cat)
+            self.assertIn("bash", cat)
+            self.assertIn("apps", m._policy.tool_names())
+            inst = {"name": "pt", "config": {}}
+            old_li, old_si, old_run = m._instances.load_instances, m._instances.save_instance, m._instances.is_running
+            m._instances.load_instances = lambda: [inst]
+            m._instances.save_instance = lambda i: None
+            m._instances.is_running = lambda i: False
+            try:
+                m._instances.set_instance_tools("pt", ["bash", "apps"])
+                self.assertEqual(inst["config"]["AGENT_TOOLS"], "apps,bash")      # the plugin is kept
+            finally:
+                m._instances.load_instances, m._instances.save_instance, m._instances.is_running = old_li, old_si, old_run
+        finally:
+            m._plugins.PLUGINS_SRC = old
 
     def test_apps_and_cloudflare_plugins(self):
         """The agent tools talk to the manager API and explain a missing grant."""

@@ -194,9 +194,10 @@ def set_instance_tools(name, tools):
     inst = next((i for i in load_instances() if i["name"] == name), None)
     if not inst:
         return "unknown"
-    sel = [t for t in (tools or []) if t in _policy.AGENT_TOOL_NAMES]
+    names = _policy.tool_names()                       # built-in + plugin tools
+    sel = [t for t in (tools or []) if t in names]
     cfg = inst.setdefault("config", {})
-    if sel and set(sel) != _policy.AGENT_TOOL_NAMES:
+    if sel and set(sel) != names:
         cfg["AGENT_TOOLS"] = ",".join(sorted(sel))
     else:
         cfg.pop("AGENT_TOOLS", None)

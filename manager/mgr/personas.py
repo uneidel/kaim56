@@ -75,7 +75,7 @@ def upsert_persona(name, prompt, tools=None, model=None):
     else:
         tl = [t.strip() for t in tools if str(t).strip()] if isinstance(tools, (list, tuple)) else \
              [t.strip() for t in str(tools).split(",") if t.strip()]
-        keep = [t for t in tl if t in _policy.AGENT_TOOL_NAMES]
+        keep = [t for t in tl if t in _policy.tool_names()]
         if keep:
             ent["tools"] = keep
     if model is None:

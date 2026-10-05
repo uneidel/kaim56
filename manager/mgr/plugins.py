@@ -8,6 +8,7 @@ Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import ast
 import hashlib
 import io
 import json
@@ -218,3 +219,29 @@ def plugin_delete(name):
         os.remove(dfile)
         return True
     return False
+
+
+def _plugin_desc(name):
+    """DESC of a plugin, read with ast (the code is never executed here)."""
+    for p in (os.path.join(PLUGINS_SRC, name + ".py"), os.path.join(PLUGINS_SRC, name, "tool.py"),
+              os.path.join(PLUGINS_SRC, name, "__init__.py"), os.path.join(PLUGINS_SRC, name, name + ".py")):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                tree = ast.parse(fh.read())
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "DESC" for t in node.targets):
+                try:
+                    return str(ast.literal_eval(node.value))[:300]
+                except ValueError:
+                    return ""
+        return ""
+    return ""
+
+
+def tool_entries():
+    """[{name, desc, plugin: True}] — the tools the plugins add to every agent
+    (the policy's tool list and allowlist must know them, or a saved subset
+    would drop them silently)."""
+    return [{"name": e["name"], "desc": _plugin_desc(e["name"]), "plugin": True} for e in list_plugins()]

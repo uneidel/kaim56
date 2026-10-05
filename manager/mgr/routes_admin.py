@@ -862,8 +862,9 @@ def _rt_instance_create(h):
     if mcps:
         cfg["MCP_SERVERS"] = ",".join(mcps)
     # Tool allowlist only as a real subset (all selected -> omit = all).
-    tools = [t for t in (body.get("tools") or []) if t in _policy.AGENT_TOOL_NAMES]
-    if tools and set(tools) != _policy.AGENT_TOOL_NAMES:
+    names = _policy.tool_names()                       # built-in + plugin tools
+    tools = [t for t in (body.get("tools") or []) if t in names]
+    if tools and set(tools) != names:
         cfg["AGENT_TOOLS"] = ",".join(tools)
     return _instances.create_instance(body.get("name", ""), body.get("template", ""), cfg,
                            body.get("mounts", []), internet=body.get("internet", True))

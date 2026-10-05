@@ -225,7 +225,7 @@ def _rt_mcp_call(h):
 # ---- agents, tasks, missions, playbooks, memory (guest-scoped) --------------
 @_routes.ROUTER.get("/api/agent-tools")
 def _rt_agent_tools(h):
-    return h._json({"tools": _policy.AGENT_TOOLS_CATALOG})
+    return h._json({"tools": _policy.tool_catalog()})       # built-in + plugins (plugin: true)
 
 
 @_routes.ROUTER.get("/api/agents")

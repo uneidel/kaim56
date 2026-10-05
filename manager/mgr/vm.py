@@ -266,6 +266,8 @@ def make_config_disk(inst):
     if os.path.isdir(psrc):
         os.makedirs(pdst, exist_ok=True)
         for f0 in sorted(os.listdir(psrc)):
+            if f0.startswith((".", "__")):        # __pycache__, .pins.json: not tools
+                continue
             sp = os.path.join(psrc, f0)
             if os.path.isdir(sp):                 # multi-file tool: whole folder
                 shutil.copytree(sp, os.path.join(pdst, f0), dirs_exist_ok=True)
