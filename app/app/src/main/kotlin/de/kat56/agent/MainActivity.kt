@@ -673,14 +673,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 syncing = false; online = false
                 status = "⚠️ Sync: server unreachable"; return@launch
             }
-            val byId = LinkedHashMap<String, Conversation>()
-            for (c in conversations) byId[c.id] = c
-            for (r in store.fromJson(remoteJson)) {
-                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // tombstoned locally
-                val local = byId[r.id]
-                if (local == null || r.updatedAt > local.updatedAt) byId[r.id] = r
-            }
-            val merged = byId.values.sortedByDescending { it.updatedAt }
+            // same rules as the live poll (ChatMerge): fill, never replace — a reply
+            // may be streaming into the open chat right now (manual sync)
+            val merged = ChatMerge.merge(conversations, store.fromJson(remoteJson), tombs,
+                                         busyId = if (busy) currentId else null).conversations
             conversations.clear(); conversations.addAll(merged)
             if (conversations.none { it.id == currentId }) {
                 if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
@@ -736,46 +732,12 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             val remote = res.chats ?: continue           // timeout, nothing new
             var waited = 0
             while (busy && waited++ < 120) delay(500)
-            // IMPORTANT: existing Conversation objects are FILLED, not replaced.
-            // send() holds a reference to current.messages and streams the reply
-            // there — if you swap the object out, question and answer land in a
-            // detached list: invisible, unsaved, never pushed. The open
-            // conversation also stays untouched while a turn is running.
-            val byId = LinkedHashMap<String, Conversation>()
-            for (c in conversations) byId[c.id] = c
-            var changed = false
-            for (r in store.fromJson(remote)) {
-                if (tombs[r.id]?.let { r.updatedAt <= it } == true) continue   // tombstoned -> do not resurrect
-                val local = byId[r.id]
-                if (local == null) {                        // genuinely new
-                    byId[r.id] = r; changed = true
-                    continue
-                }
-                if (r.updatedAt <= local.updatedAt) continue   // local is newer
-                if (busy && local.id == currentId) continue    // turn in progress
-                // Only APPEND messages. Replacing would wipe out a just-typed,
-                // not-yet-pushed question - exactly the case where the other side
-                // (web/manager) has a newer clock. Only if the local list is a
-                // prefix of the remote one are we sure nothing of our own is lost;
-                // otherwise the next push reconciles it.
-                val lm = local.messages
-                val rm = r.messages
-                val isPrefix = rm.size >= lm.size && lm.indices.all { lm[it] == rm[it] }
-                if (isPrefix) {
-                    if (rm.size > lm.size) { for (i in lm.size until rm.size) lm.add(rm[i]); changed = true }
-                } else if (rm.size >= lm.size) {
-                    // DIVERGENCE (no prefix), remote is newer (checked above) and not
-                    // shorter -> adopt the server state as the merge point, instead of
-                    // letting the sync hang forever. Fill in place (don't swap the object!).
-                    lm.clear(); lm.addAll(rm); changed = true
-                } else continue    // local is longer -> keep it, our own push reconciles
-                if (local.title != r.title && r.title.isNotBlank()) { local.title = r.title; changed = true }
-                if (local.instance != r.instance && r.instance.isNotBlank()) local.instance = r.instance
-                local.updatedAt = r.updatedAt
-            }
+            // Existing Conversation objects are filled, not replaced, and the open
+            // chat stays untouched while a turn runs — see ChatMerge.
+            val (merged, changed) = ChatMerge.merge(conversations, store.fromJson(remote), tombs,
+                                                    busyId = if (busy) currentId else null)
             if (!changed) continue
             lastSync = nowHm()
-            val merged = byId.values.sortedByDescending { it.updatedAt }
             conversations.clear()
             conversations.addAll(merged)
             if (conversations.isNotEmpty() && conversations.none { it.id == currentId })

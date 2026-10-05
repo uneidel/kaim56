@@ -5,6 +5,12 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.46
+
+- Syncing chats by hand (Settings → Auto-sync) can no longer lose a reply that is
+  still arriving, or a question you had just typed. Both ways of syncing now use
+  the same careful merge.
+
 ## 5.45
 
 - New **Apps** entry in the drawer: every app of the manager, like its Apps tab.
