@@ -127,7 +127,7 @@ async function loadPolicy(auto){
       `<div class=kv><b>Auto-reset</b><span style="display:flex;gap:8px;align-items:center;font-size:12.5px"><input class="input mono" type=number min=0 step=5 data-ar="${esc(p.name)}" value="${esc(p.auto_reset||'0')}" style="width:80px;font-size:12.5px">`+
         `<span class=text-muted>min idle, then a fresh context (0 = never) · applies after a restart</span>`+
         `<button class="btn btn-secondary btn-sm" onclick="savePolAutoReset('${esc(p.name)}')">Save</button><span class=msg data-armsg="${esc(p.name)}"></span></span></div>`+
-      polBudgetRow(p)+polCtxRow(p)+polRouterRow(p)+
+      polBudgetRow(p)+polCtxRow(p)+polRouterRow(p)+polAppsRow(p)+
       (p.katfs_share?`<div class=kv><b>katfs</b><span class=mono style="font-size:12px">${escT(p.katfs_share)}</span></div>`:'')+
       `<div style="margin-top:8px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">`+
         `<b style="font-family:var(--font-heading);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Tools</b>`+
@@ -308,6 +308,27 @@ async function appCloud(name,op){
 }
 
 /* model router: a policy per instance, off by default (mgr/router.py) */
+/* apps + cloudflare tools: what this instance may do with the apps (mgr/guestgrants.py) */
+const APPS_LEVELS=[['','off','the tools apps/cloudflare are refused'],['read','read','list apps and workers, read app state, download Durable Objects'],
+  ['write','write','+ upload/restore to Cloudflare, rename, write app state'],['full','full','+ delete apps and Cloudflare workers']];
+function polAppsRow(p){
+  const cur=p.manage_apps||'';
+  return `<div class=kv><b>Apps &amp; Cloudflare</b><span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px">`+
+    `<select class=input data-ma="${esc(p.name)}" style="width:auto;font-size:12.5px" onchange="savePolApps('${esc(p.name)}')">`+
+    APPS_LEVELS.map(([v,l])=>`<option value="${v}"${v===cur?' selected':''}>${l}</option>`).join('')+`</select>`+
+    `<span class=text-muted>${escT((APPS_LEVELS.find(x=>x[0]===cur)||APPS_LEVELS[0])[2])} · applies at once</span>`+
+    `<span class=msg data-mamsg="${esc(p.name)}"></span></span></div>`;
+}
+function savePolApps(name){
+  const v=document.querySelector(`select[data-ma="${CSS.escape(name)}"]`).value;
+  if(v==='full'&&!confirm(`Let ${name} delete apps and Cloudflare workers?`)){loadPolicy();return;}
+  fetch(`/api/instances/${name}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:'MANAGE_APPS',value:v})}).then(async r=>{
+      let d={}; try{d=await r.json()}catch(e){}
+      const el=document.querySelector(`[data-mamsg="${CSS.escape(name)}"]`), m=d.msg||('HTTP '+r.status);
+      if(el)el.textContent=(!r.ok||/error/.test(m)?'⚠️ ':'✓ ')+m;
+    });
+}
 function polRouterRow(p){
   const pols=window.ROUTER_POLICIES||['default'], cur=p.model_router||'';
   const opts=['<option value="">off</option>'].concat(pols.map(n=>`<option${n===cur?' selected':''}>${escT(n)}</option>`));

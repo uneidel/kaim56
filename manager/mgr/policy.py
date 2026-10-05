@@ -186,6 +186,7 @@ def effective_policy(inst):
         "used_today": _llmproxy.used_today(inst["name"]),
         "context": _context_cost(inst["name"]),
         "model_router": cfg.get("MODEL_ROUTER", ""),                 # router policy, "" = off (mgr/router.py)
+        "manage_apps": cfg.get("MANAGE_APPS", ""),                   # apps/cloudflare tools: "" | read | write | full
     }
 
 

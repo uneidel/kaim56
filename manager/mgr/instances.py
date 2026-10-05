@@ -347,7 +347,7 @@ def session_info(inst):
 
 # Config keys the MANAGER reads per request (not the VM at start): a change
 # applies at once, no stop/start. Everything else rides the config disk.
-RUNTIME_KEYS = {"BUDGET_TOKENS", "LLM_RATE_MIN", "DELEGATE_TARGETS", "KATFS_SHARE", "MODEL_ROUTER"}
+RUNTIME_KEYS = {"BUDGET_TOKENS", "LLM_RATE_MIN", "DELEGATE_TARGETS", "KATFS_SHARE", "MODEL_ROUTER", "MANAGE_APPS"}
 
 
 def _set_config_key(name, key, val):
@@ -363,6 +363,8 @@ def _set_config_key(name, key, val):
         return "error: BUDGET_TOKENS must be a whole number of tokens (0 = no limit)"
     if key == "MODEL_ROUTER" and val not in ("", None) and not re.fullmatch(r"[a-z0-9_-]{1,32}", str(val)):
         return "error: MODEL_ROUTER must be a router policy name (a-z 0-9 _ -)"
+    if key == "MANAGE_APPS" and val not in ("", None, "read", "write", "full"):
+        return "error: MANAGE_APPS must be read, write or full (empty = off)"
     cfg = inst.setdefault("config", {})
     if val in ("", None):
         cfg.pop(key, None)

@@ -4625,6 +4625,25 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE = old, old_pins
 
+    def test_manage_apps_is_a_runtime_key_with_known_levels(self):
+        """MANAGE_APPS: only read/write/full (or empty = off), applies at once,
+        and the policy view reports it for the Apps & Cloudflare selector."""
+        m = self.m
+        inst = {"name": "ma", "config": {}}
+        old = (m._instances.load_instances, m._instances.save_instance, m._instances.is_running)
+        try:
+            m._instances.load_instances = lambda: [inst]
+            m._instances.save_instance = lambda i: None
+            m._instances.is_running = lambda i: True
+            self.assertIn("error", m._instances._set_config_key("ma", "MANAGE_APPS", "admin"))
+            self.assertIn("applies at once", m._instances._set_config_key("ma", "MANAGE_APPS", "write"))
+            self.assertEqual(inst["config"]["MANAGE_APPS"], "write")
+            self.assertEqual(m._policy.effective_policy(inst)["manage_apps"], "write")
+            m._instances._set_config_key("ma", "MANAGE_APPS", "")
+            self.assertNotIn("MANAGE_APPS", inst["config"])
+        finally:
+            m._instances.load_instances, m._instances.save_instance, m._instances.is_running = old
+
     def test_only_approved_plugins_reach_a_vm(self):
         """approved(): pinned AND the content still matches the pin, checked on
         whatever directory it is given (the VM's copy). Unapproved or modified
