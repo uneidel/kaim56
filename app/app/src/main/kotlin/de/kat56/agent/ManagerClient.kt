@@ -4,7 +4,6 @@
 package de.kat56.agent
 
 import org.json.JSONArray
-import android.net.Uri
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -233,11 +232,11 @@ class ManagerClient(baseUrl: String, private val user: String, private val pass:
 
     /** approve = add the skill to the library; false = discard the proposal. */
     fun decideSkillProposal(id: String, approve: Boolean): Boolean =
-        request("POST", "/api/skill-proposals/${Uri.encode(id)}/${if (approve) "approve" else "discard"}", "") != null
+        request("POST", "/api/skill-proposals/${enc(id)}/${if (approve) "approve" else "discard"}", "") != null
 
     /** Trace eines Turns: {turn:{…}, llm:[…], tools:[…]} vom Manager, null bei Fehler. */
     fun trace(instance: String, turn: String): JSONObject? {
-        val raw = request("GET", "/api/trace/${Uri.encode(instance)}?turn=${Uri.encode(turn)}", null) ?: return null
+        val raw = request("GET", "/api/trace/${enc(instance)}?turn=${enc(turn)}", null) ?: return null
         return try { JSONObject(raw) } catch (e: Exception) { null }
     }
 
@@ -427,6 +426,10 @@ class ManagerClient(baseUrl: String, private val user: String, private val pass:
                 }
             } catch (e: Exception) { emptyList() }
         }
+
+        /** A path segment / query value, encoded like Uri.encode (space = %20) — but
+         *  plain JVM, so the client runs in unit tests too. */
+        fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
         /** A manager msg route answers HTTP 200 even when it failed; the text says so. */
         fun msgFailed(m: String): Boolean {

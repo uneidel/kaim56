@@ -41,10 +41,11 @@ class Conversation(
 }
 
 /** Lokale Persistenz (JSON) fuer Konversationen + Registry der Modelle. */
-class ChatStore(context: Context) {
-    private val file = File(context.filesDir, "conversations.json")
-    val modelsDir: File = File(context.filesDir, "models").apply { mkdirs() }
-    private val tombFile = File(context.filesDir, "chat_tombstones.json")
+class ChatStore(dir: File) {
+    constructor(context: Context) : this(context.filesDir)
+    private val file = File(dir, "conversations.json")
+    val modelsDir: File = File(dir, "models").apply { mkdirs() }
+    private val tombFile = File(dir, "chat_tombstones.json")
     private val tombTtlMs = 60L * 24 * 3600 * 1000   // Loesch-Marker nach 60 Tagen verwerfen
 
     /** Loesch-Tombstones {id -> deletedAt} laden. */

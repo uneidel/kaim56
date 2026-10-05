@@ -4,11 +4,12 @@
 package de.kat56.agent
 
 import android.content.Context
+import android.content.SharedPreferences
 
 /** Simple settings persistence (SharedPreferences). */
-class Prefs(context: Context) {
-    val appContext: Context = context.applicationContext
-    private val sp = appContext.getSharedPreferences("katagent", Context.MODE_PRIVATE)
+class Prefs(private val sp: SharedPreferences) {
+    constructor(context: Context) :
+        this(context.applicationContext.getSharedPreferences("katagent", Context.MODE_PRIVATE))
 
     // Base URL for the manager. The app talks to the manager over iroh, so this
     // is "iroh://<manager-node-id>" (set from the Manager node-id in Settings);

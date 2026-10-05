@@ -122,14 +122,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// Speech-pause detection, everything in milliseconds. VAD_HANG is the one value
-// you feel: too short and it cuts off mid-sentence, too long and you wait after
-// every sentence. 1.8 s leaves room for a breath mid-sentence, without the end
-// of the recording feeling like a hang.
-private const val VAD_TICK = 100L
-private const val VAD_HANG = 3500L   // longer pauses for thought allowed (natural speech)
-private const val VAD_LEAD = 6000L      // never said anything -> abort
-private const val VAD_MAX = 120_000L    // emergency brake against an endless recording
 
 class MainActivity : ComponentActivity() {
     /** Counter instead of a flag: on the second assistant call the value is
@@ -332,7 +324,7 @@ private val PRESETS = listOf(
         "https://huggingface.co/litert-community/Qwen2-0.5B-Instruct/resolve/main/Qwen2-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.litertlm"),
 )
 
-private fun nowHm(): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date())
+internal fun nowHm(): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date())
 
 /** Short name of a chat's agent — in the prototype the line under the title. */
 private fun agentOf(c: Conversation): String =
@@ -346,20 +338,17 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    val conversations = remember { mutableStateListOf<Conversation>().also { it.addAll(store.load()) } }
-    val tombs = remember { store.loadTombs() }   // delete tombstones {id -> deletedAt}
-    if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
-    var currentId by remember {
-        mutableStateOf(prefs.currentChatId.takeIf { id -> conversations.any { it.id == id } } ?: conversations.first().id)
-    }
-    LaunchedEffect(currentId) { prefs.currentChatId = currentId }
-    val current = conversations.firstOrNull { it.id == currentId } ?: conversations.first()
-    val lastStreamSave = remember { longArrayOf(0L) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var input by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
+    // The chats and their turns, and voice in/out: modules with their own state
+    // (ChatSession, VoiceLoop); this composable only shows them and wires the UI.
+    val session = remember {
+        ChatSession(prefs, store, scope, gemma, post = { b -> mainHandler.post(b) }, onStatus = { status = it })
+    }
+    val conversations = session.conversations
+    val current = session.current
     // Status messages must not stay up forever (a DNS error used to stick in
     // the UI permanently): errors expire after 8 s, normal hints after 4 s.
     LaunchedEffect(status) {
@@ -436,9 +425,6 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
     var instances by remember { mutableStateOf<List<AgentInstance>>(emptyList()) }
     // Header and settings show the sync state ("Syncing …" / "Synced · N chats").
-    var syncing by remember { mutableStateOf(false) }
-    var lastSync by remember { mutableStateOf("") }
-    var online by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     fun loadInstances() {
@@ -551,109 +537,6 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if (bmp != null) pendingImage = bmp
     }
 
-    // Debounced background push to the manager, so new/changed chats land on the
-    // server live (and via it in the web UI) — not only at the next manual sync.
-    // The manager MERGES server-side, so it overwrites nothing.
-    val pushJob = remember { arrayOfNulls<kotlinx.coroutines.Job>(1) }
-    fun pushChats() {
-        if (prefs.serverUrl.isBlank()) return
-        pushJob[0]?.cancel()
-        pushJob[0] = scope.launch {
-            delay(1200)
-            withContext(Dispatchers.IO) {
-                ManagerClient(prefs).push(store.toPushJson(conversations, tombs))
-            }
-        }
-    }
-
-    fun persist() {
-        current.updatedAt = System.currentTimeMillis()
-        if (current.title == "New Chat") {
-            current.messages.firstOrNull { it.user }?.text?.trim()?.take(40)?.let {
-                if (it.isNotBlank()) current.title = it
-            }
-        }
-        store.save(conversations)
-        pushChats()
-    }
-
-    // Replies whose stream broke — app closed, screen gone, network lost: the
-    // bubble carries our turn id and the manager keeps the answer with the turn
-    // (/api/trace/<instance>?turn=), so the reply is filled in afterwards.
-    // Only empty bubbles and ones that ended in a transport error; a reply the
-    // user aborted stays aborted.
-    val recoverTried = remember { HashMap<String, Long>() }      // turn -> first attempt
-    suspend fun recoverReplies() {
-        if (prefs.serverUrl.isBlank()) return
-        val now = System.currentTimeMillis()
-        for (c in conversations.toList()) {
-            if (c.mode != "server") continue
-            val inst = c.instance.ifBlank { prefs.instance }
-            if (inst.isBlank()) continue
-            for (m in c.messages.toList()) {
-                val t = m.turn ?: continue
-                if (m.user || !ServerAgent.needsRecovery(m.text)) continue
-                if (busy && c.id == currentId && m.key == c.messages.lastOrNull()?.key) continue   // streaming right now
-                val first = recoverTried.getOrPut(t) { now }
-                if (now - first > 30 * 60_000L) continue                  // gave up on this one
-                val tr = withContext(Dispatchers.IO) {
-                    ManagerClient(prefs).trace(inst, t)
-                } ?: continue
-                val r = ServerAgent.recovered(tr)
-                when (r.state) {
-                    "unknown" -> { if (now - first > 2 * 60_000L) recoverTried[t] = 0L; continue }   // old agent / claude bridge
-                    "running" -> continue                                  // still thinking: next round
-                    "none" -> { recoverTried[t] = 0L; continue }           // nothing kept: give up
-                }
-                val i = c.messages.indexOfFirst { it.key == m.key }
-                if (i >= 0 && ServerAgent.needsRecovery(c.messages[i].text)) {
-                    c.messages[i] = c.messages[i].copy(text = r.answer)
-                    c.updatedAt = System.currentTimeMillis()
-                    store.save(conversations)
-                    pushChats()
-                }
-            }
-        }
-    }
-    LaunchedEffect(Unit) {
-        delay(2000)                                   // at start (and after the screen came back)
-        while (true) {
-            runCatching { recoverReplies() }
-            delay(10_000)
-        }
-    }
-
-    fun newChat() {
-        val c = Conversation(mode = prefs.mode)
-        conversations.add(0, c)
-        currentId = c.id
-        store.save(conversations)
-    }
-
-    // Switch agent = jump to THIS agent's history (one thread per agent), instead
-    // of silently rehoming the open chat. If the current chat is still empty, it
-    // is simply reassigned (no new empty thread).
-    fun switchToAgent(mode: String, instance: String) {
-        prefs.mode = mode; prefs.instance = instance
-        if (current.messages.isEmpty()) {
-            current.mode = mode; current.instance = instance; persist(); return
-        }
-        val existing = conversations
-            .filter { it.mode == mode && (mode == "local" || it.instance == instance) }
-            .maxByOrNull { it.updatedAt }
-        currentId = existing?.id ?: Conversation(mode = mode, instance = instance)
-            .also { conversations.add(0, it); store.save(conversations) }.id
-    }
-
-    fun deleteChat(c: Conversation) {
-        tombs[c.id] = System.currentTimeMillis()   // propagate the deletion (web + other devices)
-        store.saveTombs(tombs)
-        conversations.remove(c)
-        if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
-        if (currentId == c.id) currentId = conversations.first().id
-        store.save(conversations)
-        pushChats()
-    }
 
     fun selectModel(f: File) {
         prefs.activeModel = f.name
@@ -664,313 +547,26 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         }
     }
 
-    fun sync() {
-        if (prefs.serverUrl.isBlank()) { status = "⚠️ Server URL missing (Settings)"; return }
-        scope.launch {
-            syncing = true
-            status = "Sync…"
-            val remoteJson = withContext(Dispatchers.IO) { ManagerClient(prefs).pull() }
-            if (remoteJson == null) {
-                syncing = false; online = false
-                status = "⚠️ Sync: server unreachable"; return@launch
-            }
-            // same rules as the live poll (ChatMerge): fill, never replace — a reply
-            // may be streaming into the open chat right now (manual sync)
-            val merged = ChatMerge.merge(conversations, store.fromJson(remoteJson), tombs,
-                                         busyId = if (busy) currentId else null).conversations
-            conversations.clear(); conversations.addAll(merged)
-            if (conversations.none { it.id == currentId }) {
-                if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
-                currentId = conversations.first().id
-            }
-            store.save(conversations)
-            val ok = withContext(Dispatchers.IO) { ManagerClient(prefs).push(store.toPushJson(conversations, tombs)) }
-            syncing = false; online = ok; lastSync = nowHm()
-            status = if (ok) "" else "⚠️ Push failed"
-        }
-    }
-
-    // Live sync with the manager: do one full reconcile, then stay on the
-    // long-poll permanently (/api/chats?since=&wait=). The manager answers as soon
-    // as the web UI or another device writes — so new messages appear here within
-    // fractions of a second, without constant polling and without a restart.
-    // While a reply is streaming (busy) nothing is merged, otherwise the partial
-    // text would be overwritten.
-    val chatsRev = remember { longArrayOf(0L) }
-    LaunchedEffect(Unit) {
-        while (prefs.serverUrl.isBlank()) delay(3000)
-        sync()
-        while (true) {
-            val res = withContext(Dispatchers.IO) {
-                ManagerClient(prefs).pollChats(chatsRev[0], 25)
-            }
-            if (res == null) { online = false; delay(5000); continue }   // offline / old manager
-            online = true
-            chatsRev[0] = res.rev
-            // Apply incoming delete tombstones (even without new chats)
-            res.tombstones?.let { ts ->
-                try {
-                    val o = JSONObject(ts)
-                    var tchanged = false
-                    o.keys().forEach { id ->
-                        val dat = o.optLong(id)
-                        if ((tombs[id] ?: 0) < dat) tombs[id] = dat
-                        val idx = conversations.indexOfFirst { it.id == id }
-                        if (idx >= 0 && conversations[idx].updatedAt <= dat) {
-                            if (currentId == conversations[idx].id) currentId =
-                                conversations.firstOrNull { it.id != id }?.id ?: currentId
-                            conversations.removeAt(idx); tchanged = true
-                        }
-                    }
-                    store.saveTombs(tombs)
-                    if (tchanged) {
-                        if (conversations.isEmpty()) conversations.add(Conversation(mode = prefs.mode))
-                        if (conversations.none { it.id == currentId }) currentId = conversations.first().id
-                        store.save(conversations)
-                    }
-                } catch (_: Exception) {}
-            }
-            val remote = res.chats ?: continue           // timeout, nothing new
-            var waited = 0
-            while (busy && waited++ < 120) delay(500)
-            // Existing Conversation objects are filled, not replaced, and the open
-            // chat stays untouched while a turn runs — see ChatMerge.
-            val (merged, changed) = ChatMerge.merge(conversations, store.fromJson(remote), tombs,
-                                                    busyId = if (busy) currentId else null)
-            if (!changed) continue
-            lastSync = nowHm()
-            conversations.clear()
-            conversations.addAll(merged)
-            if (conversations.isNotEmpty() && conversations.none { it.id == currentId })
-                currentId = conversations.first().id
-            store.save(conversations)                    // local only, no push
-        }
-    }
-
-    // true  = the app handled the command itself (nothing to the agent).
-    // false = pass through: the message goes to the agent as normal text
-    //         (so its own commands like /reset take effect).
-    fun handleSlash(text: String, msgs: androidx.compose.runtime.snapshots.SnapshotStateList<Msg>): Boolean {
-        val body = text.removePrefix("/").trim()
-        val cmd = body.substringBefore(' ').lowercase()
-        val rest = body.substringAfter(' ', "").trim()
-        when (cmd) {
-            "help", "" -> msgs.add(Msg(false,
-                "App commands:\n" +
-                "/task <text> – background task on the current agent\n" +
-                "/task every 30m <text> – recurring (also: daily 08:00, hourly)\n" +
-                "/agents – open agent management\n" +
-                "/help – this help\n" +
-                "Other /-commands (e.g. /reset) go to the agent."))
-            "task" -> {
-                val inst = current.instance.ifBlank { prefs.instance }
-                if (inst.isBlank()) { msgs.add(Msg(false, "⚠️ No server agent selected (tap a chip above).")); return true }
-                val m = Regex("^(every\\s+\\d+[mhd]|daily\\s+\\d{1,2}:\\d{2}|hourly)\\s+(.*)", RegexOption.IGNORE_CASE).find(rest)
-                val schedule = m?.groupValues?.get(1)?.trim() ?: ""
-                val message = (m?.groupValues?.get(2) ?: rest).trim()
-                if (message.isBlank()) { msgs.add(Msg(false, "⚠️ Usage: /task <text>")); return true }
-                scope.launch {
-                    val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
-                    val r = withContext(Dispatchers.IO) { mc.createTask(inst, message, schedule) }
-                    msgs.add(Msg(false, if (r != null)
-                        "✅ Task created on @$inst${if (schedule.isNotBlank()) " ($schedule)" else " (background)"}. Drawer → Tasks."
-                        else "⚠️ ${mc.lastError}"))
-                    persist()
-                }
-            }
-            "agents" -> { msgs.add(Msg(false, "Opening server agents…")); showAgents = true }
-            // /login is moot: claudy signs in at boot via the host, and headless
-            // (claude -p) there is no interactive login. Intercept it instead of
-            // sending it to the agent, where it would only run into nothing.
-            "login" -> msgs.add(Msg(false, "No login needed – the agent is signed in via the host."))
-            else -> return false   // pass through to the agent
-        }
-        return true
-    }
+    LaunchedEffect(Unit) { session.runLiveSync() }
+    LaunchedEffect(Unit) { session.runRecovery() }
 
     // ── Voice control ──────────────────────────────────────────────────────
     // Record on the device, recognize and speak on the manager (Parakeet/Piper).
     // Only what was asked by voice is read aloud — reading a long explanation
     // aloud unprompted would be a nuisance.
-    var recording by remember { mutableStateOf(false) }
-    var transcribing by remember { mutableStateOf(false) }
     var voiceIn by remember { mutableStateOf(false) }
     // send() is declared further down; in Kotlin you can't call a local function
     // before it. This flag bridges that.
     var pendingVoiceSend by remember { mutableStateOf(false) }
-    // Which message is currently being spoken — the bubble shows it and stops via
-    // it. -1 means: no one is speaking.
-    var speakingIdx by remember { mutableStateOf(-1) }
-    val recorder = remember { arrayOfNulls<MediaRecorder>(1) }
-    val recFile = remember { arrayOfNulls<java.io.File>(1) }
-    val player = remember { arrayOfNulls<TtsPlayer>(1) }
-    // Barge-in: the echo-cancelled microphone that listens while the reply is spoken.
-    val echoMic = remember { arrayOfNulls<EchoMic>(1) }
-    var bargeListening by remember { mutableStateOf(false) }
-    // Counter instead of a flag: speech synthesis runs over the network, and a
-    // reply that trickles in after cancellation must not still blare out.
-    val speakGen = remember { intArrayOf(0) }
-    // Turn generation: another mic press increments it -> the running send is
-    // ignored and chatStream aborts (correcting the previous statement).
-    val turnGen = remember { intArrayOf(0) }
-    val cancelHandle = remember { arrayOfNulls<ServerAgent.CancelHandle>(1) }
     var traceOpen by remember { mutableStateOf<String?>(null) }     // turn id whose trace is shown
 
-    fun stopSpeak() {
-        speakGen[0]++
-        runCatching { player[0]?.stop() }
-        player[0] = null
-        speakingIdx = -1
-    }
-
-    fun stopBargeMic() {
-        echoMic[0]?.stop(); echoMic[0] = null
-        bargeListening = false
-    }
-
-    /** Recognize on the manager and send as a voice turn (hands-free). */
-    fun transcribeAndSend(audio: ByteArray, mime: String) {
-        transcribing = true
-        scope.launch {
-            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
-            val text = withContext(Dispatchers.IO) {
-                mc.stt(audio, mime)
-            }
-            transcribing = false
-            if (text.isNullOrBlank()) { status = "Didn't catch that (${mc.lastError})"; return@launch }
-            input = text
-            voiceIn = true
-            pendingVoiceSend = true      // hands-free: send right away
-        }
-    }
-
-    /** [bargeIn]: keep listening while speaking; talking over the reply cuts it
-     *  off and becomes the next input (voice turns only, never for read-aloud). */
-    fun speakText(text: String, idx: Int = -1, bargeIn: Boolean = false) {
-        if (text.isBlank() || prefs.serverUrl.isBlank()) return
-        stopSpeak()                       // never two voices at once
-        stopBargeMic()
-        val gen = speakGen[0]
-        speakingIdx = idx
-        scope.launch {
-            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
-            val wav = withContext(Dispatchers.IO) {
-                mc.tts(text.take(4000))
-            }
-            if (gen != speakGen[0]) return@launch          // cancelled in the meantime
-            if (wav == null) {
-                speakingIdx = -1
-                status = "⚠️ Speech: ${mc.lastError}"; return@launch
-            }
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    if (gen != speakGen[0]) return@runCatching
-                    val pcm = Wav.parse(wav)
-                    var tp: TtsPlayer? = null
-                    // The player reports on the main looper — safe for the Compose state.
-                    tp = TtsPlayer(onDone = {
-                        if (player[0] === tp) { player[0] = null; speakingIdx = -1 }
-                        echoMic[0]?.playbackEnded()
-                    })
-                    player[0]?.stop()
-                    player[0] = tp
-                    // Barge-in: the mic listens while we speak, with our own voice
-                    // taken out by the echo canceller (EchoMic / libkatecho).
-                    var mic: EchoMic? = null
-                    if (bargeIn && prefs.bargeIn && pcm != null && !recording &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED) {
-                        // Each callback checks it still is THE mic: a stopped one may
-                        // report a frame later, after the next reply started.
-                        mic = EchoMic(pcm.rate,
-                            onBargeIn = { if (echoMic[0] === mic) { stopSpeak(); bargeListening = true; status = "Listening…" } },
-                            onUtterance = { bytes -> if (echoMic[0] === mic) { echoMic[0] = null; bargeListening = false; transcribeAndSend(bytes, "audio/wav") } },
-                            onIdle = { if (echoMic[0] === mic) { echoMic[0] = null; bargeListening = false } })
-                        if (!mic.start()) mic = null
-                    }
-                    echoMic[0] = mic
-                    val farEnd: ((ShortArray, Int) -> Unit)? = mic?.let { m -> { buf, n -> m.feedFarEnd(buf, n) } }
-                    if (!tp.play(wav, farEnd)) {
-                        mic?.stop(); echoMic[0] = null; player[0] = null
-                        mainHandler.post { speakingIdx = -1; status = "⚠️ Speech: unsupported audio" }
-                    }
-                }
-            }
-        }
-    }
-
-    fun stopRec() {
-        val r = recorder[0] ?: return
-        recorder[0] = null; recording = false
-        // stop() throws if stopped too early (recording too short) — then there
-        // is simply nothing to recognize.
-        val ok = runCatching { r.stop() }.isSuccess
-        runCatching { r.release() }
-        val f = recFile[0]; recFile[0] = null
-        if (!ok || f == null || !f.exists() || f.length() < 2000) {
-            status = "Too short — try again"; f?.delete(); return
-        }
-        transcribing = true
-        scope.launch {
-            val bytes = withContext(Dispatchers.IO) { f.readBytes().also { f.delete() } }
-            transcribeAndSend(bytes, "audio/mp4")
-        }
-    }
-
-    fun startRec() {
-        if (prefs.serverUrl.isBlank()) { status = "⚠️ Server URL missing (Settings)"; return }
-        stopSpeak()                       // speaking over it means: the output is done
-        stopBargeMic()
-        val f = java.io.File(context.cacheDir, "rec.m4a")
-        val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
-        val ok = runCatching {
-            r.setAudioSource(MediaRecorder.AudioSource.MIC)
-            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            r.setAudioSamplingRate(16000)      // recognition needs no more
-            r.setAudioChannels(1)
-            r.setAudioEncodingBitRate(32000)
-            r.setOutputFile(f.absolutePath)
-            r.prepare(); r.start()
-        }.isSuccess
-        if (!ok) { runCatching { r.release() }; status = "⚠️ Cannot record"; return }
-        recorder[0] = r; recFile[0] = f; recording = true
-        status = "Listening… stops on its own"
-
-        // Stop by itself when it goes quiet. The threshold comes from the first
-        // tenths of a second of room noise: a fixed value won't do, a train is
-        // louder than an office. Stopping only happens after something was actually
-        // spoken — otherwise it would cut off the pause for thought at the start.
-        scope.launch {
-            // Measure the noise floor from the first ~0.6 s as a MINIMUM (not max):
-            // so it isn't skewed if the user starts talking immediately — otherwise
-            // the speech threshold would be unreachable and the recording would cut
-            // off MID-speech (exactly the bug). Additionally capped.
-            var floor = Int.MAX_VALUE; var probes = 0
-            var spoke = false; var quiet = 0L; var total = 0L
-            while (recorder[0] === r) {
-                delay(VAD_TICK)
-                total += VAD_TICK
-                val amp = runCatching { r.maxAmplitude }.getOrDefault(0)
-                if (probes < 6) { floor = minOf(floor, amp); probes++; continue }
-                val base = (if (floor == Int.MAX_VALUE) 0 else floor).coerceAtMost(3000)
-                // Hysteresis: the START of speech needs a clear margin, but once
-                // speaking IS happening a much lower threshold keeps the recording
-                // alive. This way the short amplitude dips between words/syllables do
-                // NOT count as silence — exactly what cut the recording off mid
-                // fluent speech after a few seconds.
-                val loud = if (spoke) amp > base + 350 else amp > base + 1500
-                if (loud) { spoke = true; quiet = 0L } else if (spoke) quiet += VAD_TICK
-                val done = (spoke && quiet >= VAD_HANG) ||
-                    (!spoke && total >= VAD_LEAD) ||       // said nothing at all
-                    total >= VAD_MAX                       // emergency brake
-                if (done) { if (recorder[0] === r) stopRec(); return@launch }
-            }
-        }
+    val voice = remember {
+        VoiceLoop(context, prefs, scope, post = { b -> mainHandler.post(b) }, onStatus = { status = it },
+            onHeard = { t -> input = t; voiceIn = true; pendingVoiceSend = true })   // hands-free: send right away
     }
 
     val micPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startRec() else status = "⚠️ Microphone permission needed"
+        if (granted) voice.startRec() else status = "⚠️ Microphone permission needed"
     }
 
     // ── Security gateway ───────────────────────────────────────────────────
@@ -1007,149 +603,46 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 
     fun cancelTurn() {
-        // Discard the running reply/send: increment the generation (the stream
-        // aborts, late chunks are ignored), turn off auto-send, mark the half
-        // reply as aborted.
-        turnGen[0]++
-        runCatching { cancelHandle[0]?.cancel() }   // drop the running stream immediately
         pendingVoiceSend = false
-        val msgs = current.messages
-        val li = msgs.lastIndex
-        if (li >= 0 && !msgs[li].user && msgs[li].text.isBlank())
-            msgs[li] = msgs[li].copy(text = "_(aborted)_")
-        busy = false
-        stopSpeak()
-        stopBargeMic()
-        persist()
+        session.cancelTurn()
+        voice.stopSpeak(); voice.stopBargeMic()
     }
 
     fun micToggle() {
-        if (recording) { stopRec(); return }
-        if (bargeListening) { stopBargeMic(); status = ""; return }   // abort the barge-in capture
+        if (voice.recording) { voice.stopRec(); return }
+        if (voice.bargeListening) { voice.stopBargeMic(); status = ""; return }   // abort the barge-in capture
         // Another press during reply/auto-send: cancel and record ANEW (correcting
         // the previous statement), instead of continuing the old send.
-        if (busy || pendingVoiceSend) cancelTurn()
-        if (speakingIdx >= 0) stopSpeak()   // first the output, then the ear
-        stopBargeMic()
+        if (session.busy || pendingVoiceSend) cancelTurn()
+        if (voice.speakingIdx >= 0) voice.stopSpeak()   // first the output, then the ear
+        voice.stopBargeMic()
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        if (granted) startRec() else micPerm.launch(Manifest.permission.RECORD_AUDIO)
+        if (granted) voice.startRec() else micPerm.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     fun send() {
         val typed = input.trim()
-        if ((typed.isEmpty() && pendingImage == null && pendingDoc == null) || busy) return
+        if ((typed.isEmpty() && pendingImage == null && pendingDoc == null) || session.busy) return
         val img = pendingImage
         val imgB64 = img?.let { bitmapToBase64(it) }
-        // Angehaengtes Dokument: der extrahierte Text wird VOR die Frage
-        // gestellt, klar markiert — das Modell bekommt Inhalt + Frage in einem
-        // Turn. In der Blase erscheint nur eine kompakte Kennzeichnung, nicht
-        // die 80k Zeichen (die Nachricht ans Modell traegt den Volltext).
+        // An attached document: its extracted text goes IN FRONT of the question,
+        // clearly marked; the bubble shows only a compact label, not the 80k chars.
         val doc = pendingDoc
         val text = if (doc != null)
             "[Attached document: ${doc.name}]\n${doc.text}\n[End of document]\n\n" +
                 typed.ifBlank { "Please read the attached document and summarize it." }
         else typed
-        val msgs = current.messages
-        msgs.add(Msg(true, if (doc != null)
-            "\uD83D\uDCC4 ${doc.name}" + (if (typed.isNotBlank()) "\n$typed" else "")
-        else typed, image = imgB64))
+        val shown = if (doc != null) "\uD83D\uDCC4 ${doc.name}" + (if (typed.isNotBlank()) "\n$typed" else "") else typed
         input = ""; pendingImage = null; pendingDoc = null
-        if (typed.startsWith("/") && handleSlash(typed, msgs)) { persist(); return }
-        busy = true
-        persist()
-
-        if (current.mode == "server") {
-            // the turn id is OURS and stored with the (still empty) bubble right away:
-            // if this stream dies (app closed, screen gone, network), the reply is
-            // recovered from the manager by it (recoverReplies)
-            val turnId = ServerAgent.newTurnId()
-            val botMsg = Msg(false, "", turn = turnId)
-            msgs.add(botMsg)
-            persist()                         // the bubble (with its turn id) survives a dying app
-            val botKey = botMsg.key           // address by key, NOT by index (interrupt/sync-safe)
-            val inst = current.instance.ifBlank { prefs.instance }
-            val myGen = ++turnGen[0]
-            val ch = ServerAgent.CancelHandle(); cancelHandle[0] = ch
-            fun appendBot(chunk: String) {
-                val i = msgs.indexOfFirst { it.key == botKey }
-                if (i >= 0) msgs[i] = msgs[i].copy(text = msgs[i].text + chunk)
-            }
-            scope.launch {
-                val err = withContext(Dispatchers.IO) {
-                    ServerAgent.chatStream(prefs.serverUrl, inst, prefs.user, prefs.pass, text, imgB64,
-                        chatId = current.id, turn = turnId, cancel = ch,
-                        onTurn = { t -> mainHandler.post {
-                            val i = msgs.indexOfFirst { it.key == botKey }
-                            if (i >= 0) msgs[i] = msgs[i].copy(turn = t)
-                        } }) { chunk ->
-                        if (myGen != turnGen[0]) return@chatStream
-                        mainHandler.post {
-                            if (myGen == turnGen[0]) {
-                                appendBot(chunk)
-                                val t = System.currentTimeMillis()
-                                if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
-                            }
-                        }
-                    }
-                }
-                if (myGen != turnGen[0]) return@launch          // aborted -> do nothing more
-                if (err != null) mainHandler.post { appendBot("\n$err") }
-                busy = false; persist(); listState.animateScrollToItem(msgs.size)
-                if (voiceIn) {
-                    voiceIn = false
-                    val bi = msgs.indexOfFirst { it.key == botKey }
-                    if (bi >= 0) speakText(splitThink(msgs[bi].text).answer, bi, bargeIn = true)
-                }
-            }
-        } else {
-            val botMsg = Msg(false, "")
-            msgs.add(botMsg)
-            val botKey = botMsg.key
-            fun appendBot(chunk: String) {
-                val i = msgs.indexOfFirst { it.key == botKey }
-                if (i >= 0) msgs[i] = msgs[i].copy(text = msgs[i].text + chunk)
-            }
-            fun setBot(txt: String) {
-                val i = msgs.indexOfFirst { it.key == botKey }
-                if (i >= 0) msgs[i] = msgs[i].copy(text = txt)
-            }
-            val useWeb = web
-            scope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        if (!gemma.isReady() && prefs.activeModel.isNotEmpty()) {
-                            try { gemma.load(store.modelFile(prefs.activeModel).absolutePath) } catch (_: Exception) {}
-                        }
-                        val prompt = if (useWeb && img == null) {
-                            mainHandler.post { status = "🌐 Web research…" }
-                            val ctx = try { WebSearch.buildContext(text) } catch (e: Exception) { "" }
-                            mainHandler.post { status = "" }
-                            if (ctx.isNotBlank())
-                                "Answer the following question using this current web information. " +
-                                "Cite the source (URL) if possible.\n\n$ctx\n\nQuestion: $text"
-                            else text
-                        } else text
-                        gemma.generateStreaming(prompt, img) { d ->
-                            mainHandler.post {
-                                appendBot(d)
-                                val t = System.currentTimeMillis()
-                                if (t - lastStreamSave[0] > 800) { lastStreamSave[0] = t; current.updatedAt = t; store.save(conversations) }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    mainHandler.post { setBot("⚠️ ${e.message}") }
-                } finally {
-                    busy = false; persist(); listState.animateScrollToItem(msgs.size)
-                if (voiceIn) { voiceIn = false; val bi = msgs.indexOfFirst { it.key == botKey }; if (bi >= 0) speakText(splitThink(msgs[bi].text).answer, bi, bargeIn = true) }
-                }
-            }
+        session.send(text, shown, imgB64, img, useWeb = web, onOpenAgents = { showAgents = true }) { bi, reply ->
+            scope.launch { listState.animateScrollToItem(session.current.messages.size) }
+            if (voiceIn) { voiceIn = false; voice.speak(splitThink(reply).answer, bi, bargeIn = true) }
         }
     }
 
     // As in the prototype (componentDidUpdate): the list sticks to the bottom edge.
-    LaunchedEffect(current.messages.size, currentId) {
+    LaunchedEffect(current.messages.size, session.currentId) {
         if (current.messages.isNotEmpty()) listState.animateScrollToItem(current.messages.size)
     }
 
@@ -1159,17 +652,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
 
     // Call via the power button (assistant): listen immediately. The reply is
-    // then spoken automatically — stopRec() sets voiceIn as soon as the input
+    // then spoken automatically — the VoiceLoop's onHeard sets voiceIn as soon as the input
     // really came by voice.
     LaunchedEffect(assistCalls) {
         if (assistCalls > 0) {
             val ai = prefs.assistInstance.trim()
-            if (ai.isNotBlank() && !(current.mode == "server" && current.instance == ai)) {
-                val existing = conversations.filter { it.mode == "server" && it.instance == ai }.maxByOrNull { it.updatedAt }
-                currentId = existing?.id ?: Conversation(mode = "server", instance = ai)
-                    .also { conversations.add(0, it); store.save(conversations) }.id
-            }
-            if (!recording && !busy) micToggle()
+            if (ai.isNotBlank() && !(current.mode == "server" && current.instance == ai)) session.openAgentChat(ai)
+            if (!voice.recording && !session.busy) micToggle()
         }
     }
     // Follow a notification link: from a tapped system notification and from
@@ -1179,22 +668,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             link == "missions" -> screen = "missions"
             link == "tasks" -> screen = "tasks"
             link == "skills" -> screen = "skills"
-            link.startsWith("chat:") -> {
-                val inst = link.removePrefix("chat:")
-                prefs.mode = "server"; prefs.instance = inst; screen = null
-                // Prefer the task chat (where task results/briefings land), else the
-                // most recent chat with this instance. If none exists locally yet,
-                // CREATE the task chat so the tap ALWAYS lands there — chat sync then
-                // fills it from the server (task-<instance>). Without this, tapping a
-                // notification for an instance you had never opened did nothing.
-                val existing = conversations.firstOrNull { it.id == "task-$inst" }
-                    ?: conversations.filter { it.instance == inst }.maxByOrNull { it.updatedAt }
-                currentId = existing?.id ?: run {
-                    val c = Conversation(id = "task-$inst", title = "Tasks \u00b7 $inst",
-                        mode = "server", instance = inst, updatedAt = System.currentTimeMillis())
-                    conversations.add(0, c); store.save(conversations); c.id
-                }
-            }
+            link.startsWith("chat:") -> { screen = null; session.openTaskChat(link.removePrefix("chat:")) }
         }
     }
     LaunchedEffect(notifNavCalls) { if (notifNavCalls > 0) navTo(notifNav) }
@@ -1202,7 +676,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // Fetch the gateway state: at startup, on server change and after every
     // finished reply (by then the counter has moved).
     LaunchedEffect(prefs.serverUrl) { gwLoad() }
-    LaunchedEffect(busy) { if (!busy) gwLoad() }
+    LaunchedEffect(session.busy) { if (!session.busy) gwLoad() }
 
     val serverModel = instances.firstOrNull { it.name == current.instance }?.model ?: ""
     val modelLabel = if (current.mode == "server")
@@ -1212,7 +686,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     // The counter visibly belongs here: being filtered silently is exactly what
     // you shouldn't let a filter get away with.
     val gwRemoved = (gwChars[current.id] ?: 0) + (gwImgs[current.id] ?: 0)
-    val syncLabel = (if (syncing) "Syncing …" else "Synced · ${conversations.size} chats") +
+    val syncLabel = (if (session.syncing) "Syncing …" else "Synced · ${conversations.size} chats") +
         (if (gwOn && gwRemoved > 0) " · ${gwChars[current.id] ?: 0} stripped" +
             (if ((gwImgs[current.id] ?: 0) > 0) " · ${gwImgs[current.id]} img" else "") else "")
 
@@ -1230,12 +704,12 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         drawerContent = {
             KatDrawer(
                 conversations.sortedByDescending { it.updatedAt },
-                currentId,
+                session.currentId,
                 agentCount = instances.size,
-                online = online,
-                onSelect = { currentId = it; scope.launch { drawerState.close() } },
-                onNew = { newChat(); scope.launch { drawerState.close() } },
-                onDelete = { deleteChat(it) },
+                online = session.online,
+                onSelect = { session.openChat(it); scope.launch { drawerState.close() } },
+                onNew = { session.newChat(); scope.launch { drawerState.close() } },
+                onDelete = { session.deleteChat(it) },
                 onTasks = { screen = "tasks"; scope.launch { drawerState.close() } },
                 onApps = { screen = "apps"; scope.launch { drawerState.close() } },
                 onMissions = { screen = "missions"; scope.launch { drawerState.close() } },
@@ -1266,7 +740,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Box(Modifier.size(6.dp).clip(CircleShape)
-                                .background(if (online) Kat.green else Kat.textGhost))
+                                .background(if (session.online) Kat.green else Kat.textGhost))
                             Text(
                                 syncLabel, fontSize = 12.sp, fontFamily = Plex, color = Kat.textFaint,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -1299,14 +773,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AgentChip("Device", current.mode == "local", { switchToAgent("local", "") }) {
+                    AgentChip("Device", current.mode == "local", { session.switchToAgent("local", "") }) {
                         Icon(Icons.Filled.PhoneAndroid, null, Modifier.size(13.dp), tint = it)
                     }
                     chips.forEach { inst ->
                         AgentChip(
                             inst.name,
                             current.mode == "server" && current.instance == inst.name,
-                            { switchToAgent("server", inst.name) },
+                            { session.switchToAgent("server", inst.name) },
                         ) {
                             Icon(
                                 if (inst.running) Icons.Filled.Cloud else Icons.Outlined.CloudOff,
@@ -1357,10 +831,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     } else {
                         itemsIndexed(current.messages) { i, m ->
                             Bubble(m, agentLabel, current.mode, bubbleMax,
-                                working = busy && !m.user && i == current.messages.lastIndex,
-                                speaking = speakingIdx == i,
-                                onSpeak = { t -> speakText(t, i) },
-                                onStopSpeak = { stopSpeak() },
+                                working = session.busy && !m.user && i == current.messages.lastIndex,
+                                speaking = voice.speakingIdx == i,
+                                onSpeak = { t -> voice.speak(t, i) },
+                                onStopSpeak = { voice.stopSpeak() },
                                 onTrace = if (current.mode == "server") ({ t -> traceOpen = t }) else null)
                         }
                     }
@@ -1505,25 +979,25 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             Modifier.fillMaxWidth().padding(top = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RoundIconButton({ attachOpen = true }, enabled = !busy) {
+                            RoundIconButton({ attachOpen = true }, enabled = !session.busy) {
                                 Icon(Icons.Filled.Add, "Attach", Modifier.size(20.dp), tint = Kat.textMuted)
                             }
                             Spacer(Modifier.weight(1f))
                             RoundIconButton(
-                                { micToggle() }, enabled = !transcribing,
-                                background = if (recording || bargeListening) Kat.accent else Kat.tile,
+                                { micToggle() }, enabled = !voice.transcribing,
+                                background = if (voice.recording || voice.bargeListening) Kat.accent else Kat.tile,
                             ) {
                                 Icon(
-                                    if (transcribing) Icons.Filled.HourglassEmpty else Icons.Filled.Mic,
-                                    if (recording || bargeListening) "Stop recording" else "Speak",
+                                    if (voice.transcribing) Icons.Filled.HourglassEmpty else Icons.Filled.Mic,
+                                    if (voice.recording || voice.bargeListening) "Stop recording" else "Speak",
                                     Modifier.size(18.dp),
-                                    tint = if (recording || bargeListening) Kat.onAccent else Kat.textMuted,
+                                    tint = if (voice.recording || voice.bargeListening) Kat.onAccent else Kat.textMuted,
                                 )
                             }
                             Spacer(Modifier.width(8.dp))
-                            val canSend = (input.isNotBlank() || pendingImage != null || pendingDoc != null) || !busy
+                            val canSend = (input.isNotBlank() || pendingImage != null || pendingDoc != null) || !session.busy
                             fun sendOrSteer() {
-                                if (busy && input.isNotBlank()) {
+                                if (session.busy && input.isNotBlank()) {
                                     // Steering: call into the running turn instead of waiting.
                                     val t = input.trim(); input = ""
                                     current.messages.add(current.messages.size - 1,
@@ -1537,7 +1011,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                 } else send()
                             }
                             RoundIconButton(
-                                { sendOrSteer() }, enabled = canSend && (input.isNotBlank() || pendingImage != null || pendingDoc != null || !busy),
+                                { sendOrSteer() }, enabled = canSend && (input.isNotBlank() || pendingImage != null || pendingDoc != null || !session.busy),
                                 background = if (canSend) Kat.accent else Kat.tile,
                             ) {
                                 Icon(
@@ -1583,10 +1057,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
                         .height(1.dp).background(Kat.hairlineStrong))
                     MenuRow("Clear conversation", Kat.textDim, Icons.Outlined.DeleteSweep) {
-                        current.messages.clear(); menuOpen = false; persist()
+                        current.messages.clear(); menuOpen = false; session.persist()
                     }
                     MenuRow("Delete chat", Kat.red, Icons.Outlined.DeleteOutline) {
-                        menuOpen = false; deleteChat(current)
+                        menuOpen = false; session.deleteChat(current)
                     }
                 }
             }
@@ -1684,7 +1158,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                             ))
                             store.save(conversations)
                         }
-                        currentId = cid
+                        session.openChat(cid)
                         prefs.mode = "server"
                         prefs.instance = instance
                         screen = null
@@ -1702,7 +1176,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     autoUpdate = autoUpdate, onAutoUpdate = { autoUpdate = it; prefs.autoUpdate = it },
                     update = updateInfo, updateReady = updateReady != null, updateBusy = updateBusy,
                     onCheckUpdate = { checkUpdate(true) }, onInstallUpdate = { installUpdate() },
-                    syncing = syncing, lastSync = lastSync, online = online,
+                    syncing = session.syncing, lastSync = session.lastSync, online = session.online,
                     onClose = { screen = null },
                     onSelectModel = { selectModel(it) },
                     onDeleteModel = { f -> f.delete(); if (prefs.activeModel == f.name) { prefs.activeModel = ""; gemma.close() } },
@@ -1711,7 +1185,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                         DownloadService.start(context, url, token); status = "Download starting… (background)"
                     },
                     onManageAgents = { showAgents = true },
-                    onSync = { sync() },
+                    onSync = { session.sync() },
                 )
             }
         }
@@ -2765,7 +2239,7 @@ fun SettingsScreen(
     }
     var url by remember { mutableStateOf(prefs.serverUrl.removePrefix("iroh://")) }
     var myNodeId by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { myNodeId = withContext(Dispatchers.IO) { IrohNet.myNodeId(prefs.appContext) } }
+    LaunchedEffect(Unit) { myNodeId = withContext(Dispatchers.IO) { IrohNet.myNodeId(ctx.applicationContext) } }
     var instance by remember { mutableStateOf(prefs.instance) }
     var assistInstance by remember { mutableStateOf(prefs.assistInstance) }
     var user by remember { mutableStateOf(prefs.user) }
