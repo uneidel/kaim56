@@ -17,6 +17,7 @@ from mgr import auth as _auth
 from mgr import cloud as _cloud
 from mgr import guestproxy as _guestproxy
 from mgr import guests as _guests
+from mgr import guestgrants as _grants
 from mgr import llmproxy as _llmproxy
 from mgr import routes as _routes
 from mgr import ui as _ui
@@ -143,7 +144,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if guest is None and not _auth.origin_allowed(self.headers.get("Origin", "")):
             return self._json({"error": "cross-site request refused"}, 403)
         if guest is not None and not (
-                p in _guests.GUEST_POST_PATHS or p.startswith(_guests.GUEST_POST_PREFIXES)):
+                p in _guests.GUEST_POST_PATHS or p.startswith(_guests.GUEST_POST_PREFIXES)
+                or _grants.allowed(guest, "POST", p)):             # MANAGE_APPS (mgr/guestgrants.py)
             return self._forbid()
         if self._dispatch("POST"):
             return
@@ -155,7 +157,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if hit is None:
             return False
         fn, admin_only = hit
-        if admin_only and _guests.instance_by_ip(self.client_address[0]) is not None:
+        guest = _guests.instance_by_ip(self.client_address[0]) if admin_only else None
+        if guest is not None and not _grants.allowed(guest, method, self.path):
             self._forbid()
             return True
         out = fn(self)

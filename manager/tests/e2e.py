@@ -4557,6 +4557,79 @@ class ManagerFunctions(unittest.TestCase):
             cl.cf_workers, m._settings.load_settings = old
             srv.shutdown()
 
+    def test_manage_apps_grants(self):
+        """MANAGE_APPS opens exactly the app/Cloudflare admin routes to a guest:
+        none without it, read = list/state/export, write = + upload/restore/
+        rename/app state POST, full = + delete; everything else stays admin-only."""
+        from mgr import guestgrants as g
+        m = self.m
+        inst = lambda lv: {"name": "a", "config": ({"MANAGE_APPS": lv} if lv else {})}
+        cases = [("GET", "/api/apps", "read"), ("GET", "/api/apps/cloudflare?refresh=1", "read"),
+                 ("GET", "/apps/corewar/_api/changes", "read"), ("POST", "/api/cfworkers/chat-room/export", "read"),
+                 ("POST", "/api/apps/corewar/upload", "write"), ("POST", "/api/apps/corewar/rename", "write"),
+                 ("POST", "/apps/corewar/_api/changes", "write"),
+                 ("POST", "/api/apps/corewar/delete", "full"), ("POST", "/api/cfworkers/x/delete", "full")]
+        order = ["", "read", "write", "full"]
+        for method, path, need in cases:
+            for lv in order:
+                self.assertEqual(g.allowed(inst(lv), method, path), order.index(lv) >= order.index(need), (method, path, lv))
+        for method, path in (("GET", "/api/settings"), ("POST", "/api/settings"), ("GET", "/apps/corewar/index.html"),
+                             ("POST", "/api/apps/corewar/../../settings"), ("POST", "/api/iroh"), ("GET", "/api/instances")):
+            self.assertFalse(g.allowed(inst("full"), method, path), path)
+        self.assertFalse(g.allowed(inst("FULL!"), "GET", "/api/apps"))            # unknown level = nothing
+        # through the real handler: a guest without the key is refused, with read it lists
+        old = (m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps)
+        try:
+            m._apps.celld_status = lambda: {"configured": False, "reachable": False, "apps": {}, "url": ""}
+            m._apps.load_apps = lambda: [{"name": "corewar", "title": "Core War", "server": True}]
+            for lv, want in (("", 403), ("read", 200)):
+                m._guests.instance_by_ip = lambda ip, lv=lv: inst(lv)
+                h = self._handler("/api/apps", "172.30.9.2"); h._do_GET()
+                self.assertEqual(self._status(h), want, lv)
+            m._guests.instance_by_ip = lambda ip: inst("read")
+            h = self._post_handler("/api/apps/corewar/delete", "172.30.9.2", b"{}"); h._do_POST()
+            self.assertEqual(self._status(h), 403)                          # read may not delete
+        finally:
+            m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps = old
+
+    def test_apps_and_cloudflare_plugins(self):
+        """The agent tools talk to the manager API and explain a missing grant."""
+        import http.server, threading, importlib.util
+        mods = {}
+        for n in ("apps", "cloudflare"):
+            spec = importlib.util.spec_from_file_location("plug_" + n, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", n + ".py"))
+            mods[n] = importlib.util.module_from_spec(spec); spec.loader.exec_module(mods[n])
+        grant = {"lv": "read"}
+        class M(http.server.BaseHTTPRequestHandler):
+            def _out(self, code, obj):
+                b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+            def do_GET(self):
+                if self.path.startswith("/api/apps/cloudflare"):
+                    return self._out(200, {"configured": True, "workers": [{"name": "stray", "app": None, "url": "https://stray.x"}]})
+                if self.path == "/api/apps":
+                    return self._out(200, {"apps": [{"name": "corewar", "title": "Core War", "served_by": "celld",
+                                                     "server_side": {"text": "3 changes"}, "cloud": {}, "job": {}}]})
+                self._out(404, {})
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if self.path.endswith("/delete") and grant["lv"] != "full":
+                    return self._out(403, {})
+                self._out(200, {"ok": True, "deleted": "stray"})
+            def log_message(self, *a): pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), M)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            for mod in mods.values():
+                mod._base = lambda: f"http://127.0.0.1:{srv.server_port}"
+            self.assertIn("corewar (Core War): celld /apps/corewar/ — 3 changes", mods["apps"].run("list"))
+            self.assertIn("stray: https://stray.x — created outside the manager", mods["cloudflare"].run("list"))
+            self.assertIn("needs MANAGE_APPS (full)", mods["cloudflare"].run("delete", worker="stray"))
+            self.assertIn("'app' is required", mods["apps"].run("upload"))
+            grant["lv"] = "full"
+            self.assertEqual(mods["cloudflare"].run("delete", worker="stray"), "worker stray deleted")
+        finally:
+            srv.shutdown()
+
     def test_apps_are_folders_served_behind_the_login(self):
         """mgr/apps: <APPS_DIR>/<name>/{app.json,index.html} is an app — listed
         by /api/apps and linked in the chat sidebar, served under /apps/<name>/
