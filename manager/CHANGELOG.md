@@ -8,6 +8,7 @@ commit messages.
 ## 2026-10-05
 
 - Agent tools `apps` (celld apps: list, state, upload/restore, rename, delete) and `cloudflare` (workers: list, Durable Object export, delete), opened per instance by config `MANAGE_APPS` = read | write | full (`mgr/guestgrants.py`); without it a guest gets 403 as before.
+
 ## 2026-10-04
 
 - Prototype: agents as Durable Objects (app `agents`, celld): one object per agent, a turn returns an id at once and runs in the background (alarm + watchdog), the result is polled — no open connection; tools: web search, fetch, own memory; LLM via the manager's key proxy.
