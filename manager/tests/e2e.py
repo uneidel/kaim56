@@ -4596,6 +4596,7 @@ class ManagerFunctions(unittest.TestCase):
         """The agent tools talk to the manager API and explain a missing grant."""
         import http.server, threading, importlib.util
         mods = {}
+        sys.dont_write_bytecode, old_dwb = True, sys.dont_write_bytecode   # no __pycache__ in the live plugins dir
         for n in ("apps", "cloudflare"):
             spec = importlib.util.spec_from_file_location("plug_" + n, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", n + ".py"))
             mods[n] = importlib.util.module_from_spec(spec); spec.loader.exec_module(mods[n])
@@ -4628,6 +4629,7 @@ class ManagerFunctions(unittest.TestCase):
             grant["lv"] = "full"
             self.assertEqual(mods["cloudflare"].run("delete", worker="stray"), "worker stray deleted")
         finally:
+            sys.dont_write_bytecode = old_dwb
             srv.shutdown()
 
     def test_apps_are_folders_served_behind_the_login(self):
