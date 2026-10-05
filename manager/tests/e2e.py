@@ -283,6 +283,48 @@ class AgentLogic(unittest.TestCase):
             a._mcp._mcp.clear(); a._mcp._mcp.update(old_mcp)
             a._observe.audit = old_audit
 
+    def test_context_brake_keeps_a_long_tool_turn_inside_the_window(self):
+        """fit_window: over LLM_CTX_FILL of the window, old tool outputs are cut
+        (oldest first, the newest few whole, tool_call/result pairs intact),
+        then earlier turns are folded into the summary; under it nothing
+        changes; without a known window (cloud) there is no brake."""
+        a = self.a
+        c = a._context
+        old = (list(c._history), c._ctx_window[0], c._summarize)
+        try:
+            c._summarize = lambda msgs, prior="", focus="": "earlier: user asked about apps"
+            big = "x" * 9000
+            hist = [{"role": "system", "content": "sys"},
+                    {"role": "user", "content": "old question"}, {"role": "assistant", "content": "old answer"},
+                    {"role": "user", "content": "read the manager"}]
+            for k in range(8):
+                hist.append({"role": "assistant", "content": "", "tool_calls": [{"id": f"t{k}", "type": "function",
+                             "function": {"name": "bash", "arguments": "{}"}}]})
+                hist.append({"role": "tool", "tool_call_id": f"t{k}", "content": big})
+            c._history[:] = [dict(m) for m in hist]
+            c._ctx_window[0] = 0
+            self.assertEqual(c.fit_window([]), "")                                # cloud: no brake
+            c._ctx_window[0] = 100000
+            self.assertEqual(c.fit_window([]), "")                                # fits: untouched
+            c._ctx_window[0] = 16000                                              # budget 12000 tokens ~ 40k chars
+            note = c.fit_window([])
+            self.assertIn("shortened", note)
+            tools = [m for m in c._history if m["role"] == "tool"]
+            self.assertEqual(len(tools), 8)                                       # nothing removed: pairs intact
+            self.assertTrue(all(len(m["content"]) == 9000 for m in tools[-4:]))   # newest stay whole
+            self.assertTrue(tools[0]["content"].endswith("model's window]"))
+            self.assertLessEqual(c.ctx_tokens(c._history, []), 12000)
+            # still too big even after cutting -> earlier turns go into the summary
+            c._history[:] = [dict(m) for m in hist]
+            c._ctx_window[0] = 9000
+            note = c.fit_window([])
+            self.assertIn("earlier turns summarized", note)
+            self.assertNotIn("old question", [m.get("content") for m in c._history])
+            self.assertTrue(c._history[1]["content"].startswith(c.SUMMARY_TAG))
+            self.assertEqual(c._history[2]["content"], "read the manager")        # the current turn stays
+        finally:
+            c._history[:], c._ctx_window[0], c._summarize = old
+
     def test_now_line_gives_the_model_a_clock(self):
         """Every turn carries exactly one [Now] system line in the instance's
         timezone; a second injection replaces, never duplicates."""

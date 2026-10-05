@@ -354,6 +354,9 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
                 on_token("\n\n⏱️ (time budget exhausted — partial result)")
                 outcome = "deadline"
                 return
+            note = _context.fit_window(_tools.TOOLS)     # stay inside the model's window
+            if note:
+                _config.log(note)
             msg = _llm.or_chat_stream(_context._history, _tools.TOOLS, on_token)
             _context._history.append(msg)
             tcs = msg.get("tool_calls")

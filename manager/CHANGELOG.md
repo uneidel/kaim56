@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-05
 
+- Agent context brake: before every LLM call of a tool turn the context is checked against 75 % of the model's window (llama.cpp: per-slot n_ctx from /props, or LLM_CTX); old tool outputs are cut first, then earlier turns summarized — a 58-step turn had filled a 64K slot and been truncated.
 - Policy card: "Apps & Cloudflare" selector (off/read/write/full) sets `MANAGE_APPS`; the key is validated and applies at once.
 - Security: only approved, unmodified plugins reach a VM — checked on the copy on the config disk (no swap between check and delivery); the Plugins tab says "delivered" / "not delivered".
 - Plugin tools appear in the policy's tool list (marked "plugin") and may be part of a saved tool selection — before, saving a subset dropped every plugin silently; `__pycache__`/hidden entries no longer go onto the config disk.

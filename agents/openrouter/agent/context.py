@@ -462,3 +462,81 @@ def ctx_sizes(hist, tools):
             out["conversation"] += n
     return out
 
+
+
+# --- context brake: stay inside the model's window during a long tool turn ---
+# _trim_history works BETWEEN turns and by message count; a single tool turn
+# (58 steps of bash output, live 2026-10-05) still filled a llama.cpp slot to
+# its 64K limit and got truncated. Before every LLM call in the tool loop the
+# estimate is checked against LLM_CTX_FILL of the window: first old tool
+# outputs are cut to their beginning (no extra model call, tool_call/result
+# pairs stay intact), then earlier turns are folded into the summary.
+CTX_FILL = float(os.environ.get("LLM_CTX_FILL", "0.75"))
+CTX_KEEP_TOOL_OUTPUTS = int(os.environ.get("LLM_CTX_KEEP_TOOLS", "4"))
+_CTX_CUT_HEAD = 400
+_CTX_CUT_NOTE = "\n[… tool output shortened to keep the context inside the model's window]"
+_ctx_window = [None]                    # cached: tokens of the model's window, 0 = unknown/unbounded
+
+
+def ctx_window():
+    """The model's context window in tokens: LLM_CTX, else (llama.cpp) the
+    server's per-slot n_ctx from /props, else 0 = no brake (cloud models)."""
+    if _ctx_window[0] is None:
+        n = int(os.environ.get("LLM_CTX", "0") or 0)
+        if not n and _config.LLAMA_ENDPOINT:
+            try:
+                import urllib.request
+                with urllib.request.urlopen(_config.LLAMA_ENDPOINT.rstrip("/") + "/props", timeout=5) as r:
+                    n = int(json.load(r).get("default_generation_settings", {}).get("n_ctx") or 0)
+            except Exception:
+                n = 0
+        _ctx_window[0] = n
+    return _ctx_window[0]
+
+
+def ctx_tokens(hist, tools):
+    """A cautious token estimate (chars/3.3 — German and code tokenize denser
+    than chars/4) of what one call sends."""
+    chars = len(json.dumps(tools or [], ensure_ascii=False))
+    for m in hist:
+        chars += len(_msg_text(m)) + len(json.dumps(m.get("tool_calls") or [], ensure_ascii=False))
+    return int(chars / 3.3)
+
+
+def fit_window(tools):
+    """Shrink _history in place until a call fits LLM_CTX_FILL of the window.
+    Returns what it did ("" = nothing needed)."""
+    win = ctx_window()
+    if not win:
+        return ""
+    budget = int(win * CTX_FILL)
+    if ctx_tokens(_history, tools) <= budget:
+        return ""
+    did = []
+    # 1) cut old tool outputs, oldest first; the newest few stay whole
+    tool_idx = [i for i, m in enumerate(_history) if m.get("role") == "tool"]
+    for i in tool_idx[:max(0, len(tool_idx) - CTX_KEEP_TOOL_OUTPUTS)]:
+        c = str(_history[i].get("content") or "")
+        if len(c) > _CTX_CUT_HEAD + len(_CTX_CUT_NOTE):
+            _history[i] = {**_history[i], "content": c[:_CTX_CUT_HEAD] + _CTX_CUT_NOTE}
+            did.append("cut")
+            if ctx_tokens(_history, tools) <= budget:
+                return f"context: shortened {len(did)} old tool output(s)"
+    # 2) fold the turns before the current one into the summary
+    last_user = max((i for i, m in enumerate(_history) if m.get("role") == "user"), default=0)
+    head = _history[0]
+    prior, older = "", []
+    for m in _history[1:last_user]:
+        c = str(m.get("content") or "")
+        if m.get("role") == "system":
+            if c.startswith(SUMMARY_TAG):
+                prior = c[len(SUMMARY_TAG):].strip()
+            continue
+        older.append(m)
+    if older:
+        summary = _summarize(older, prior) or prior
+        rest = [m for m in _history[last_user:]]
+        _history[:] = [head] + ([{"role": "system", "content": SUMMARY_TAG + " " + summary}] if summary else []) + rest
+        did.append("summary")
+    return (f"context: shortened {did.count('cut')} old tool output(s)" +
+            (", earlier turns summarized" if "summary" in did else "")) if did else ""
