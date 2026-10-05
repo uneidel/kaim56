@@ -7,7 +7,7 @@ import org.junit.Test
 
 class NotifSyncTest {
     private fun n(id: String, ts: Long, read: Boolean = false) =
-        ManagerSync.NotifItem(id, ts, "t$id", "b", "inst", read)
+        ManagerClient.NotifItem(id, ts, "t$id", "b", "inst", read)
 
     @Test
     fun `unread entries newer than the watermark are shown, oldest first`() {

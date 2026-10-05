@@ -34,14 +34,14 @@ object NotifSync {
     /** Which entries to show now: unread, newer than the watermark; on the
      *  very first run (no watermark) only the last day, so an old backlog does
      *  not flood the shade. Pure, so it is unit-tested. */
-    fun pick(items: List<ManagerSync.NotifItem>, lastTs: Long, nowS: Long): List<ManagerSync.NotifItem> {
+    fun pick(items: List<ManagerClient.NotifItem>, lastTs: Long, nowS: Long): List<ManagerClient.NotifItem> {
         val floor = if (lastTs > 0) lastTs else nowS - FIRST_RUN_WINDOW_S
         return items.filter { !it.read && it.ts > floor }.sortedBy { it.ts }
     }
 
     /** Show what is new and move the watermark. Returns how many were shown. */
     @Synchronized
-    fun handle(ctx: Context, prefs: Prefs, items: List<ManagerSync.NotifItem>?,
+    fun handle(ctx: Context, prefs: Prefs, items: List<ManagerClient.NotifItem>?,
                nowS: Long = System.currentTimeMillis() / 1000): Int {
         if (items == null) return 0
         val fresh = pick(items, prefs.notifLastTs, nowS)
@@ -58,7 +58,7 @@ object NotifSync {
     fun checkOnce(ctx: Context, prefs: Prefs): Int {
         if (prefs.serverUrl.isBlank()) return 0
         IrohNet.register(ctx)
-        val res = ManagerSync.pollNotifications(prefs.serverUrl, prefs.user, prefs.pass, 0, 0)
+        val res = ManagerClient(prefs).pollNotifications(0, 0)
             ?: return 0
         return handle(ctx, prefs, res.items)
     }

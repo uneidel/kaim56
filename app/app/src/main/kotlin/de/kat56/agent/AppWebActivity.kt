@@ -18,7 +18,6 @@ import android.webkit.WebViewClient
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * One of the manager's apps (/apps/<name>/) in a WebView.
@@ -67,18 +66,8 @@ class AppWebActivity : Activity() {
         web.loadUrl("https://$HOST/apps/${Uri.encode(name)}/")
     }
 
-    private fun open(path: String, method: String): HttpURLConnection {
-        val conn = URL(prefs.serverUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
-        conn.requestMethod = method
-        conn.instanceFollowRedirects = false
-        conn.connectTimeout = 15000
-        conn.readTimeout = 60000
-        if (prefs.user.isNotEmpty()) {
-            val cred = Base64.encodeToString("${prefs.user}:${prefs.pass}".toByteArray(), Base64.NO_WRAP)
-            conn.setRequestProperty("Authorization", "Basic $cred")
-        }
-        return conn
-    }
+    private fun open(path: String, method: String): HttpURLConnection =
+        ManagerClient(prefs).connect(path, method, 60000).apply { instanceFollowRedirects = false }
 
     private fun page(code: Int, html: String) = WebResourceResponse(
         "text/html", "utf-8", code, if (code < 400) "OK" else "Error",

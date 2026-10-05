@@ -3,11 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
-import android.util.Base64
 import org.json.JSONObject
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
-import java.net.URL
 
 /** Server-Modus: chattet mit dem laufenden Agenten ueber den Manager-Proxy
  *  ({base}/i/{instance}/api/chat, Body {"message":..}, Antwort {"reply":..}). */
@@ -20,18 +17,10 @@ object ServerAgent {
         message: String,
         chatId: String = "",
     ): String {
-        val url = URL("${baseUrl.trimEnd('/')}/i/$instance/api/chat")
-        val conn = url.openConnection() as HttpURLConnection
+        val conn = ManagerClient(baseUrl, user, pass).connect("/i/$instance/api/chat", "POST", 300000)
         return try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 300000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
-            if (user.isNotEmpty()) {
-                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-                conn.setRequestProperty("Authorization", "Basic $cred")
-            }
             conn.outputStream.use {
                 // chat: nur fuer das Security Gateway im Manager — der Gast
                 // sieht das Feld nie, es wird dort herausgenommen.
@@ -77,21 +66,13 @@ object ServerAgent {
         onTurn: (String) -> Unit = {},      // turn id from the X-Kaim-Turn header (trace)
         onPartial: (String) -> Unit,
     ): String? {
-        val url = URL("${baseUrl.trimEnd('/')}/i/$instance/api/chat/stream")
-        val conn = url.openConnection() as HttpURLConnection
+        // long read timeout: models pause long; aborting goes through
+        // cancel.disconnect(), NOT a short read timeout (that closes the socket)
+        val conn = ManagerClient(baseUrl, user, pass).connect("/i/$instance/api/chat/stream", "POST", 600000)
         cancel?.disconnect = { runCatching { conn.disconnect() } }   // Abbruch = Verbindung trennen
         return try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 600000      // lange Modell-Pausen tolerieren; Abbruch laeuft
-            // ueber cancel.disconnect(), NICHT ueber ein kurzes Read-Timeout
-            // (ein Timeout schliesst den Socket -> "Socket is closed").
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
-            if (user.isNotEmpty()) {
-                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-                conn.setRequestProperty("Authorization", "Basic $cred")
-            }
             val payload = JSONObject().put("message", message)
             if (image != null) payload.put("image", image)   // Base64 JPEG (ohne data:-Präfix)
             if (chatId.isNotEmpty()) payload.put("chat", chatId)

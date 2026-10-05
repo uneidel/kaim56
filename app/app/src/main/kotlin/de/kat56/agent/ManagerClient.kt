@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package de.kat56.agent
 
-import android.util.Base64
 import org.json.JSONArray
 import android.net.Uri
 import org.json.JSONObject
@@ -33,125 +32,90 @@ data class AgentTask(
 /** Eine Persona (benannter System-Prompt). */
 data class Persona(val name: String, val prompt: String)
 
-/** Chat-Sync mit dem Manager: GET/POST {base}/api/chats (Basic-Auth). */
-object ManagerSync {
+/**
+ * The manager's API, as one module: address and login live in the instance,
+ * HTTP + Basic auth happen in connect() (also used by AppWebActivity), and the
+ * error of a failed call is in [lastError] of THAT instance — one client per
+ * call site, so parallel calls can no longer overwrite each other's error.
+ * iroh:// works the same: IrohNet hangs it behind java.net.URL.
+ */
+class ManagerClient(baseUrl: String, private val user: String, private val pass: String) {
+    constructor(prefs: Prefs) : this(prefs.serverUrl, prefs.user, prefs.pass)
 
-    fun listPersonas(baseUrl: String, user: String, pass: String): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/personas", user, pass, null)
+    private val base = baseUrl.trimEnd('/')
 
-    fun parsePersonas(json: String?): List<Persona> {
-        if (json == null) return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                Persona(o.optString("name"), o.optString("prompt"))
-            }
-        } catch (e: Exception) { emptyList() }
-    }
-
-    fun listTasks(baseUrl: String, user: String, pass: String): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/tasks", user, pass, null)
-
-    fun createTask(baseUrl: String, user: String, pass: String,
-                   instance: String, message: String, schedule: String): String? =
-        request("POST", "${baseUrl.trimEnd('/')}/api/tasks", user, pass,
-            JSONObject().put("instance", instance).put("message", message).put("schedule", schedule).toString())
-
-    fun deleteTask(baseUrl: String, user: String, pass: String, id: String): String? =
-        request("POST", "${baseUrl.trimEnd('/')}/api/tasks/$id/delete", user, pass, "")
-
-    fun parseTasks(json: String?): List<AgentTask> {
-        if (json == null) return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                AgentTask(
-                    id = o.optString("id"), instance = o.optString("instance"),
-                    message = o.optString("message"), status = o.optString("status"),
-                    result = o.optString("result"), schedule = o.optString("schedule"),
-                    updated = o.optLong("updated"),
-                )
-            }.reversed()
-        } catch (e: Exception) { emptyList() }
-    }
-
-    /** Ergebnis des letzten request() – für aussagekräftige Fehlermeldungen. */
-    var lastStatus: String = ""
+    /** Why the last call on this client failed ("" after a success). */
+    var lastError: String = ""
         private set
 
-    fun parseInstances(json: String?): List<AgentInstance> {
-        if (json == null) return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                val cfg = o.optJSONObject("config") ?: JSONObject()
-                AgentInstance(
-                    name = o.optString("name"),
-                    running = o.optBoolean("running"),
-                    template = o.optString("template", ""),
-                    transport = cfg.optString("TRANSPORT", ""),
-                    model = cfg.optString("OPENROUTER_MODEL", cfg.optString("PI_MODEL", cfg.optString("PRIME_MODEL", ""))),
-                )
-            }
-        } catch (e: Exception) { emptyList() }
+    /** An authenticated connection to `path` (already including any query). */
+    fun connect(path: String, method: String = "GET", readTimeoutMs: Int = 30000): HttpURLConnection {
+        val conn = URL(base + path).openConnection() as HttpURLConnection
+        conn.requestMethod = method
+        conn.connectTimeout = 15000
+        conn.readTimeout = readTimeoutMs
+        if (user.isNotEmpty()) {
+            val cred = java.util.Base64.getEncoder().encodeToString("$user:$pass".toByteArray())
+            conn.setRequestProperty("Authorization", "Basic $cred")
+        }
+        return conn
     }
+
+    fun listPersonas(): String? =
+        request("GET", "/api/personas", null)
+
+
+    fun listTasks(): String? =
+        request("GET", "/api/tasks", null)
+
+    fun createTask(instance: String, message: String, schedule: String): String? =
+        request("POST", "/api/tasks",
+            JSONObject().put("instance", instance).put("message", message).put("schedule", schedule).toString())
+
+    fun deleteTask(id: String): String? =
+        request("POST", "/api/tasks/$id/delete", "")
+
+
 
     /**
      * Aufnahme zum Manager schicken und den erkannten Text holen.
      * Der Manager reicht an den Sprachdienst durch (Parakeet); das Format ist
      * egal, dort wandelt ffmpeg auf 16-kHz-Mono.
      */
-    fun stt(baseUrl: String, user: String, pass: String, audio: ByteArray, mime: String): String? {
-        val conn = URL("${baseUrl.trimEnd('/')}/api/stt").openConnection() as HttpURLConnection
+    fun stt(audio: ByteArray, mime: String): String? {
+        val conn = connect("/api/stt", "POST", 120000)
         return try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 120000
-            if (user.isNotEmpty()) {
-                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-                conn.setRequestProperty("Authorization", "Basic $cred")
-            }
             conn.setRequestProperty("Content-Type", mime)
             conn.doOutput = true
             conn.outputStream.use { it.write(audio) }
             val code = conn.responseCode
-            if (code !in 200..299) { lastStatus = "HTTP $code"; return null }
-            lastStatus = "OK"
+            if (code !in 200..299) { lastError = "HTTP $code"; return null }
+            lastError = ""
             JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 .optString("text").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
-            lastStatus = e.message ?: e.toString(); null
+            lastError = e.message ?: e.toString(); null
         } finally { conn.disconnect() }
     }
 
     /** Text sprechen lassen; liefert die WAV-Daten oder null. */
-    fun tts(baseUrl: String, user: String, pass: String, text: String): ByteArray? {
-        val conn = URL("${baseUrl.trimEnd('/')}/api/tts").openConnection() as HttpURLConnection
+    fun tts(text: String): ByteArray? {
+        val conn = connect("/api/tts", "POST", 120000)
         return try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 120000
-            if (user.isNotEmpty()) {
-                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-                conn.setRequestProperty("Authorization", "Basic $cred")
-            }
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
             conn.outputStream.use { it.write(JSONObject().put("text", text).toString().toByteArray()) }
             val code = conn.responseCode
-            if (code !in 200..299) { lastStatus = "HTTP $code"; return null }
-            lastStatus = "OK"
+            if (code !in 200..299) { lastError = "HTTP $code"; return null }
+            lastError = ""
             conn.inputStream.readBytes()
         } catch (e: Exception) {
-            lastStatus = e.message ?: e.toString(); null
+            lastError = e.message ?: e.toString(); null
         } finally { conn.disconnect() }
     }
 
-    fun pull(baseUrl: String, user: String, pass: String): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/chats", user, pass, null)
+    fun pull(): String? =
+        request("GET", "/api/chats", null)
 
     /** Ergebnis eines Chat-Long-Polls: `chats` ist null, wenn sich nichts getan hat. */
     data class ChatPoll(val rev: Long, val chats: String?, val tombstones: String?)
@@ -163,9 +127,8 @@ object ManagerSync {
      * Dauer-Polling. Aeltere Manager ohne `since`/`wait` liefern die blanke
      * Liste; das faengt der Parser ab und der Aufrufer faellt auf Warten zurueck.
      */
-    fun pollChats(baseUrl: String, user: String, pass: String, since: Long, waitSec: Int): ChatPoll? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/chats?since=$since&wait=$waitSec",
-            user, pass, null, waitSec * 1000 + 15000) ?: return null
+    fun pollChats(since: Long, waitSec: Int): ChatPoll? {
+        val raw = request("GET", "/api/chats?since=$since&wait=$waitSec", null, waitSec * 1000 + 15000) ?: return null
         return try {
             val o = JSONObject(raw)
             ChatPoll(o.optLong("rev"), o.optJSONArray("chats")?.toString(),
@@ -179,23 +142,21 @@ object ManagerSync {
     /**
      * PDF/DOCX/Text zum Manager schicken; zurueck kommt der reine TEXT.
      * Das Modell sieht nie die Binaerdatei — in den Chat wandert der Text.
-     * Null = fehlgeschlagen (Grund in lastStatus).
+     * Null = fehlgeschlagen (Grund in lastError).
      */
-    fun extract(baseUrl: String, user: String, pass: String,
-                name: String, data: ByteArray): Extracted? {
+    fun extract(name: String, data: ByteArray): Extracted? {
         val enc = java.net.URLEncoder.encode(name, "UTF-8")
-        val raw = request("POST", "${'$'}{baseUrl.trimEnd('/')}/api/extract?name=${'$'}enc",
-            user, pass, null, rawBody = data) ?: return null
+        val raw = request("POST", "/api/extract?name=$enc", null, rawBody = data) ?: return null
         return try {
             val o = JSONObject(raw)
             val err = o.optString("error")
-            if (err.isNotBlank()) { lastStatus = err; return null }
+            if (err.isNotBlank()) { lastError = err; return null }
             Extracted(o.optString("name", name), o.optString("text"), o.optString("note"))
-        } catch (e: Exception) { lastStatus = e.message ?: "parse error"; null }
+        } catch (e: Exception) { lastError = e.message ?: "parse error"; null }
     }
 
-    fun push(baseUrl: String, user: String, pass: String, json: String): Boolean =
-        request("POST", "${baseUrl.trimEnd('/')}/api/chats", user, pass, json) != null
+    fun push(json: String): Boolean =
+        request("POST", "/api/chats", json) != null
 
     /** Ein Schritt einer Mission. target = Instanz, an die der Schritt
      *  delegiert wurde (create_task-Ziel) — Plan und Ausfuehrung koennen auf
@@ -225,8 +186,8 @@ object ManagerSync {
     /** Missionen ALLER Agenten (Admin-Sicht): der Manager liefert sie nach
      *  Eigentuemer gruppiert (by_instance). `missions` ist der Fallback fuer
      *  aeltere Manager, die nur die des Orchestrators kannten. */
-    fun listMissions(baseUrl: String, user: String, pass: String): List<Mission>? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/missions", user, pass, null)
+    fun listMissions(): List<Mission>? {
+        val raw = request("GET", "/api/missions", null)
             ?: return null
         return try {
             val o = JSONObject(raw)
@@ -247,9 +208,9 @@ object ManagerSync {
 
     /** pause | resume | abort einer Mission (Admin). Die Instanz muss mit, weil
      *  Missionen jedem Agenten gehoeren koennen (leer = Manager sucht selbst). */
-    fun missionAction(baseUrl: String, user: String, pass: String, id: String,
+    fun missionAction(id: String,
                       action: String, instance: String = ""): Boolean =
-        request("POST", "${baseUrl.trimEnd('/')}/api/mission-admin", user, pass,
+        request("POST", "/api/mission-admin",
             JSONObject().put("id", id).put("action", action)
                 .put("instance", instance).toString()) != null
 
@@ -258,8 +219,8 @@ object ManagerSync {
                              val description: String, val content: String, val update: Boolean)
 
     /** Pending skill proposals (admin view). null on error. */
-    fun listSkillProposals(baseUrl: String, user: String, pass: String): List<SkillProposal>? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/skill-proposals", user, pass, null) ?: return null
+    fun listSkillProposals(): List<SkillProposal>? {
+        val raw = request("GET", "/api/skill-proposals", null) ?: return null
         return try {
             val arr = JSONObject(raw).optJSONArray("proposals") ?: return emptyList()
             (0 until arr.length()).map {
@@ -271,20 +232,18 @@ object ManagerSync {
     }
 
     /** approve = add the skill to the library; false = discard the proposal. */
-    fun decideSkillProposal(baseUrl: String, user: String, pass: String, id: String, approve: Boolean): Boolean =
-        request("POST", "${baseUrl.trimEnd('/')}/api/skill-proposals/${Uri.encode(id)}/${if (approve) "approve" else "discard"}",
-            user, pass, "") != null
+    fun decideSkillProposal(id: String, approve: Boolean): Boolean =
+        request("POST", "/api/skill-proposals/${Uri.encode(id)}/${if (approve) "approve" else "discard"}", "") != null
 
     /** Trace eines Turns: {turn:{…}, llm:[…], tools:[…]} vom Manager, null bei Fehler. */
-    fun trace(baseUrl: String, user: String, pass: String, instance: String, turn: String): JSONObject? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/trace/${Uri.encode(instance)}?turn=${Uri.encode(turn)}",
-            user, pass, null) ?: return null
+    fun trace(instance: String, turn: String): JSONObject? {
+        val raw = request("GET", "/api/trace/${Uri.encode(instance)}?turn=${Uri.encode(turn)}", null) ?: return null
         return try { JSONObject(raw) } catch (e: Exception) { null }
     }
 
     /** Prompt-Templates (Slash-Kommandos) vom Manager. */
-    fun listPrompts(baseUrl: String, user: String, pass: String): List<Pair<String, String>> {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/prompts", user, pass, null)
+    fun listPrompts(): List<Pair<String, String>> {
+        val raw = request("GET", "/api/prompts", null)
             ?: return emptyList()
         return try {
             val arr = JSONObject(raw).optJSONArray("prompts") ?: return emptyList()
@@ -296,8 +255,8 @@ object ManagerSync {
     }
 
     /** Nachricht in einen LAUFENDEN Turn einspeisen (Steering). true = queued. */
-    fun steer(baseUrl: String, user: String, pass: String, instance: String, message: String): Boolean {
-        val raw = request("POST", "${baseUrl.trimEnd('/')}/i/$instance/api/steer", user, pass,
+    fun steer(instance: String, message: String): Boolean {
+        val raw = request("POST", "/i/$instance/api/steer",
             JSONObject().put("message", message).toString()) ?: return false
         return try { JSONObject(raw).optBoolean("queued") } catch (e: Exception) { false }
     }
@@ -311,10 +270,8 @@ object ManagerSync {
     data class NotifPoll(val rev: Long, val items: List<NotifItem>?, val unread: Int)
 
     /** Long-Poll auf /api/notifications — analog zu pollChats. */
-    fun pollNotifications(baseUrl: String, user: String, pass: String,
-                          since: Long, waitSec: Int): NotifPoll? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/notifications?since=$since&wait=$waitSec",
-            user, pass, null, waitSec * 1000 + 15000) ?: return null
+    fun pollNotifications(since: Long, waitSec: Int): NotifPoll? {
+        val raw = request("GET", "/api/notifications?since=$since&wait=$waitSec", null, waitSec * 1000 + 15000) ?: return null
         return try {
             val o = JSONObject(raw)
             val arr = o.optJSONArray("notifications")
@@ -329,8 +286,8 @@ object ManagerSync {
     }
 
     /** Alle Benachrichtigungen als gelesen quittieren. */
-    fun markNotifRead(baseUrl: String, user: String, pass: String): Boolean =
-        request("POST", "${baseUrl.trimEnd('/')}/api/notifications/read", user, pass, "{\"all\":true}") != null
+    fun markNotifRead(): Boolean =
+        request("POST", "/api/notifications/read", "{\"all\":true}") != null
 
     /** Security Gateway: welche Chats gefiltert werden und wieviel bisher
      *  entfernt wurde. Der Zustand liegt am Manager, nicht im Geraet — sonst
@@ -338,8 +295,8 @@ object ManagerSync {
     data class Gateway(val on: Set<String>, val chars: Map<String, Int>, val images: Map<String, Int>,
                        val available: Boolean)
 
-    fun gatewayGet(baseUrl: String, user: String, pass: String): Gateway? {
-        val raw = request("GET", "${baseUrl.trimEnd('/')}/api/gateway", user, pass, null) ?: return null
+    fun gatewayGet(): Gateway? {
+        val raw = request("GET", "/api/gateway", null) ?: return null
         return try {
             val o = JSONObject(raw)
             val on = mutableSetOf<String>()
@@ -356,54 +313,46 @@ object ManagerSync {
         } catch (e: Exception) { null }
     }
 
-    fun gatewaySet(baseUrl: String, user: String, pass: String, chatId: String, on: Boolean): Boolean =
-        request("POST", "${baseUrl.trimEnd('/')}/api/gateway", user, pass,
+    fun gatewaySet(chatId: String, on: Boolean): Boolean =
+        request("POST", "/api/gateway",
             JSONObject().put("chat", chatId).put("on", on).toString()) != null
 
     /** The manager's apps (GET /api/apps) and every Worker on its Cloudflare
      *  account (GET /api/apps/cloudflare) — see AppsCatalog. */
-    fun listApps(baseUrl: String, user: String, pass: String): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/apps", user, pass, null)
+    fun listApps(): String? =
+        request("GET", "/api/apps", null)
 
-    fun listCfWorkers(baseUrl: String, user: String, pass: String, refresh: Boolean = false): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/apps/cloudflare" + if (refresh) "?refresh=1" else "", user, pass, null)
+    fun listCfWorkers(refresh: Boolean = false): String? =
+        request("GET", "/api/apps/cloudflare" + if (refresh) "?refresh=1" else "", null)
 
-    fun listInstances(baseUrl: String, user: String, pass: String): String? =
-        request("GET", "${baseUrl.trimEnd('/')}/api/instances", user, pass, null)
+    fun listInstances(): String? =
+        request("GET", "/api/instances", null)
 
-    fun action(baseUrl: String, user: String, pass: String, name: String, act: String): String? =
-        request("POST", "${baseUrl.trimEnd('/')}/api/instances/$name/$act", user, pass, "")
+    fun action(name: String, act: String): String? =
+        request("POST", "/api/instances/$name/$act", "")
 
     /** Server-Agent (Manager-Instanz) anlegen + starten. Gibt eine Status-Meldung. */
     fun createAndStart(
-        baseUrl: String, user: String, pass: String,
         name: String, template: String, config: JSONObject,
     ): String {
-        val base = baseUrl.trimEnd('/')
         val cBody = JSONObject().put("name", name).put("template", template).put("config", config).toString()
-        val c = request("POST", "$base/api/create", user, pass, cBody)
-            ?: return "⚠️ Anlegen fehlgeschlagen: $lastStatus"
+        val c = request("POST", "/api/create", cBody)
+            ?: return "⚠️ Anlegen fehlgeschlagen: $lastError"
         val cMsg = try { JSONObject(c).optString("msg", c) } catch (e: Exception) { c }
-        // Der Manager antwortet auch bei Fehlern mit HTTP 200 + {msg:"…fehlgeschlagen/existiert…"}
-        if (cMsg.contains("existiert") || cMsg.contains("ungültig") || cMsg.contains("unbekannt"))
-            return "⚠️ $cMsg"
-        val s = request("POST", "$base/api/instances/$name/start", user, pass, "")
-            ?: return "$cMsg · ⚠️ Start fehlgeschlagen: $lastStatus"
+        // The manager answers failures with HTTP 200 + {msg}: "'x' already exists",
+        // "invalid name", "unknown template 'y'" (it switched to English; the old
+        // German check let a failed create go on to start)
+        if (msgFailed(cMsg)) return "⚠️ $cMsg"
+        val s = request("POST", "/api/instances/$name/start", "")
+            ?: return "$cMsg · ⚠️ Start fehlgeschlagen: $lastError"
         val sMsg = try { JSONObject(s).optString("msg", s) } catch (e: Exception) { s }
         return "$cMsg · $sMsg"
     }
 
-    private fun request(method: String, url: String, user: String, pass: String, body: String?,
+    private fun request(method: String, path: String, body: String?,
                         readTimeoutMs: Int = 30000, rawBody: ByteArray? = null): String? {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = connect(path, method, readTimeoutMs)
         return try {
-            conn.requestMethod = method
-            conn.connectTimeout = 15000
-            conn.readTimeout = readTimeoutMs
-            if (user.isNotEmpty()) {
-                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-                conn.setRequestProperty("Authorization", "Basic $cred")
-            }
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -416,20 +365,74 @@ object ManagerSync {
             }
             val code = conn.responseCode
             if (code !in 200..299) {
-                lastStatus = "HTTP $code" + when (code) {
+                lastError = "HTTP $code" + when (code) {
                     401 -> " (Benutzer/Passwort prüfen)"
                     404 -> " (Endpunkt/Instanz nicht gefunden)"
                     else -> ""
                 }
                 return null
             }
-            lastStatus = "OK"
+            lastError = ""
             conn.inputStream.bufferedReader().use { it.readText() }
         } catch (e: Exception) {
-            lastStatus = e.message ?: e.toString()
+            lastError = e.message ?: e.toString()
             null
         } finally {
             conn.disconnect()
+        }
+    }
+
+    companion object {
+        fun parsePersonas(json: String?): List<Persona> {
+            if (json == null) return emptyList()
+            return try {
+                val arr = JSONArray(json)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    Persona(o.optString("name"), o.optString("prompt"))
+                }
+            } catch (e: Exception) { emptyList() }
+        }
+
+        fun parseTasks(json: String?): List<AgentTask> {
+            if (json == null) return emptyList()
+            return try {
+                val arr = JSONArray(json)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    AgentTask(
+                        id = o.optString("id"), instance = o.optString("instance"),
+                        message = o.optString("message"), status = o.optString("status"),
+                        result = o.optString("result"), schedule = o.optString("schedule"),
+                        updated = o.optLong("updated"),
+                    )
+                }.reversed()
+            } catch (e: Exception) { emptyList() }
+        }
+
+        fun parseInstances(json: String?): List<AgentInstance> {
+            if (json == null) return emptyList()
+            return try {
+                val arr = JSONArray(json)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    val cfg = o.optJSONObject("config") ?: JSONObject()
+                    AgentInstance(
+                        name = o.optString("name"),
+                        running = o.optBoolean("running"),
+                        template = o.optString("template", ""),
+                        transport = cfg.optString("TRANSPORT", ""),
+                        model = cfg.optString("OPENROUTER_MODEL", cfg.optString("PI_MODEL", cfg.optString("PRIME_MODEL", ""))),
+                    )
+                }
+            } catch (e: Exception) { emptyList() }
+        }
+
+        /** A manager msg route answers HTTP 200 even when it failed; the text says so. */
+        fun msgFailed(m: String): Boolean {
+            val l = m.trim().lowercase()
+            return listOf("error", "unknown", "invalid", "??", "cannot ").any { l.startsWith(it) } ||
+                listOf(" missing", "not allowed", "already exists").any { l.contains(it) }
         }
     }
 }

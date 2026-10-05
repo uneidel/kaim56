@@ -376,7 +376,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     var pendingImage by remember { mutableStateOf<Bitmap?>(null) }
     // Angehaengtes Dokument: der Manager hat den Text schon extrahiert; in die
     // Nachricht wandert NUR der Text, nie die Binaerdatei.
-    var pendingDoc by remember { mutableStateOf<ManagerSync.Extracted?>(null) }
+    var pendingDoc by remember { mutableStateOf<ManagerClient.Extracted?>(null) }
     // Vorschau des extrahierten Texts, per Tipp auf den Chip: VOR dem Senden
     // sehen, was die Extraktion wirklich hergibt (PDF-Extraktion ohne Poppler
     // ist nicht perfekt — besser hier pruefen als das Modell raten lassen).
@@ -444,8 +444,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     fun loadInstances() {
         if (prefs.serverUrl.isBlank()) return
         scope.launch {
-            val j = withContext(Dispatchers.IO) { ManagerSync.listInstances(prefs.serverUrl, prefs.user, prefs.pass) }
-            if (j != null) instances = ManagerSync.parseInstances(j)
+            val j = withContext(Dispatchers.IO) { ManagerClient(prefs).listInstances() }
+            if (j != null) instances = ManagerClient.parseInstances(j)
         }
     }
     // Load at startup and again after the agent management is closed.
@@ -465,7 +465,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         while (prefs.serverUrl.isBlank()) delay(3000)
         while (true) {
             withContext(Dispatchers.IO) {
-                ManagerSync.listPrompts(prefs.serverUrl, prefs.user, prefs.pass)
+                ManagerClient(prefs).listPrompts()
             }.let { promptCmds = it.map { (n, t) -> SlashCmd("/$n", t.take(60), arg = true) } }
             delay(60000)
         }
@@ -481,7 +481,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         while (prefs.serverUrl.isBlank()) delay(3000)
         while (true) {
             val res = withContext(Dispatchers.IO) {
-                ManagerSync.pollNotifications(prefs.serverUrl, prefs.user, prefs.pass, nrev, 25)
+                ManagerClient(prefs).pollNotifications(nrev, 25)
             }
             if (res == null) { delay(5000); continue }
             nrev = res.rev
@@ -522,6 +522,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             status = "Extracting…"
+            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
             val r = withContext(Dispatchers.IO) {
                 runCatching {
                     val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
@@ -531,11 +532,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: return@runCatching null
                     if (bytes.size > 50 * 1024 * 1024) null
-                    else ManagerSync.extract(prefs.serverUrl, prefs.user, prefs.pass, name, bytes)
+                    else mc.extract(name, bytes)
                 }.getOrNull()
             }
             if (r != null) { pendingDoc = r; docPreviewOpen = false; status = "" }
-            else status = "⚠️ ${ManagerSync.lastStatus}"
+            else status = "⚠️ ${mc.lastError}"
         }
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -560,7 +561,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         pushJob[0] = scope.launch {
             delay(1200)
             withContext(Dispatchers.IO) {
-                ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toPushJson(conversations, tombs))
+                ManagerClient(prefs).push(store.toPushJson(conversations, tombs))
             }
         }
     }
@@ -596,7 +597,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 val first = recoverTried.getOrPut(t) { now }
                 if (now - first > 30 * 60_000L) continue                  // gave up on this one
                 val tr = withContext(Dispatchers.IO) {
-                    ManagerSync.trace(prefs.serverUrl, prefs.user, prefs.pass, inst, t)
+                    ManagerClient(prefs).trace(inst, t)
                 } ?: continue
                 val r = ServerAgent.recovered(tr)
                 when (r.state) {
@@ -668,7 +669,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         scope.launch {
             syncing = true
             status = "Sync…"
-            val remoteJson = withContext(Dispatchers.IO) { ManagerSync.pull(prefs.serverUrl, prefs.user, prefs.pass) }
+            val remoteJson = withContext(Dispatchers.IO) { ManagerClient(prefs).pull() }
             if (remoteJson == null) {
                 syncing = false; online = false
                 status = "⚠️ Sync: server unreachable"; return@launch
@@ -683,7 +684,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 currentId = conversations.first().id
             }
             store.save(conversations)
-            val ok = withContext(Dispatchers.IO) { ManagerSync.push(prefs.serverUrl, prefs.user, prefs.pass, store.toPushJson(conversations, tombs)) }
+            val ok = withContext(Dispatchers.IO) { ManagerClient(prefs).push(store.toPushJson(conversations, tombs)) }
             syncing = false; online = ok; lastSync = nowHm()
             status = if (ok) "" else "⚠️ Push failed"
         }
@@ -701,7 +702,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         sync()
         while (true) {
             val res = withContext(Dispatchers.IO) {
-                ManagerSync.pollChats(prefs.serverUrl, prefs.user, prefs.pass, chatsRev[0], 25)
+                ManagerClient(prefs).pollChats(chatsRev[0], 25)
             }
             if (res == null) { online = false; delay(5000); continue }   // offline / old manager
             online = true
@@ -769,10 +770,11 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 val message = (m?.groupValues?.get(2) ?: rest).trim()
                 if (message.isBlank()) { msgs.add(Msg(false, "⚠️ Usage: /task <text>")); return true }
                 scope.launch {
-                    val r = withContext(Dispatchers.IO) { ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, inst, message, schedule) }
+                    val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+                    val r = withContext(Dispatchers.IO) { mc.createTask(inst, message, schedule) }
                     msgs.add(Msg(false, if (r != null)
                         "✅ Task created on @$inst${if (schedule.isNotBlank()) " ($schedule)" else " (background)"}. Drawer → Tasks."
-                        else "⚠️ ${ManagerSync.lastStatus}"))
+                        else "⚠️ ${mc.lastError}"))
                     persist()
                 }
             }
@@ -830,11 +832,12 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     fun transcribeAndSend(audio: ByteArray, mime: String) {
         transcribing = true
         scope.launch {
+            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
             val text = withContext(Dispatchers.IO) {
-                ManagerSync.stt(prefs.serverUrl, prefs.user, prefs.pass, audio, mime)
+                mc.stt(audio, mime)
             }
             transcribing = false
-            if (text.isNullOrBlank()) { status = "Didn't catch that (${ManagerSync.lastStatus})"; return@launch }
+            if (text.isNullOrBlank()) { status = "Didn't catch that (${mc.lastError})"; return@launch }
             input = text
             voiceIn = true
             pendingVoiceSend = true      // hands-free: send right away
@@ -850,13 +853,14 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         val gen = speakGen[0]
         speakingIdx = idx
         scope.launch {
+            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
             val wav = withContext(Dispatchers.IO) {
-                ManagerSync.tts(prefs.serverUrl, prefs.user, prefs.pass, text.take(4000))
+                mc.tts(text.take(4000))
             }
             if (gen != speakGen[0]) return@launch          // cancelled in the meantime
             if (wav == null) {
                 speakingIdx = -1
-                status = "⚠️ Speech: ${ManagerSync.lastStatus}"; return@launch
+                status = "⚠️ Speech: ${mc.lastError}"; return@launch
             }
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -984,7 +988,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         if (prefs.serverUrl.isBlank()) return
         scope.launch {
             val g = withContext(Dispatchers.IO) {
-                ManagerSync.gatewayGet(prefs.serverUrl, prefs.user, prefs.pass)
+                ManagerClient(prefs).gatewayGet()
             } ?: return@launch
             gwIds = g.on; gwAvailable = g.available; gwChars = g.chars; gwImgs = g.images
         }
@@ -996,7 +1000,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
         gwIds = if (on) gwIds + id else gwIds - id      // visible immediately
         scope.launch {
             withContext(Dispatchers.IO) {
-                ManagerSync.gatewaySet(prefs.serverUrl, prefs.user, prefs.pass, id, on)
+                ManagerClient(prefs).gatewaySet(id, on)
             }
             gwLoad()                                     // and then the real state
         }
@@ -1526,8 +1530,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                                         Msg(user = true, text = t))
                                     scope.launch {
                                         val ok = withContext(Dispatchers.IO) {
-                                            ManagerSync.steer(prefs.serverUrl, prefs.user, prefs.pass,
-                                                prefs.instance, t)
+                                            ManagerClient(prefs).steer(prefs.instance, t)
                                         }
                                         if (!ok) status = "No running turn — please send normally."
                                     }
@@ -2205,9 +2208,10 @@ private fun AppsScreen(prefs: Prefs, onClose: () -> Unit, onStatus: (String) -> 
             loading = true
             var failed = ""
             val (a, c) = withContext(Dispatchers.IO) {
-                val a = ManagerSync.listApps(prefs.serverUrl, prefs.user, prefs.pass)
-                if (a == null) failed = ManagerSync.lastStatus
-                Pair(a ?: "", ManagerSync.listCfWorkers(prefs.serverUrl, prefs.user, prefs.pass, refresh))
+                val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+                val a = mc.listApps()
+                if (a == null) failed = mc.lastError
+                Pair(a ?: "", ManagerClient(prefs).listCfWorkers(refresh))
             }
             loading = false
             error = if (a.isEmpty()) "Could not load apps: $failed" else ""
@@ -2278,24 +2282,26 @@ private fun SkillsScreen(
     onStatus: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var proposals by remember { mutableStateOf<List<ManagerSync.SkillProposal>>(emptyList()) }
+    var proposals by remember { mutableStateOf<List<ManagerClient.SkillProposal>>(emptyList()) }
     var reload by remember { mutableStateOf(0) }
     var expanded by remember { mutableStateOf("") }
 
     LaunchedEffect(reload) {
-        withContext(Dispatchers.IO) { ManagerSync.listSkillProposals(prefs.serverUrl, prefs.user, prefs.pass) }
+        val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+        withContext(Dispatchers.IO) { mc.listSkillProposals() }
             ?.let { proposals = it }
-            ?: onStatus("⚠️ Could not load proposals: ${ManagerSync.lastStatus}")
+            ?: onStatus("⚠️ Could not load proposals: ${mc.lastError}")
     }
     LaunchedEffect(Unit) { while (true) { delay(8000); reload++ } }
 
-    fun decide(p: ManagerSync.SkillProposal, approve: Boolean) {
+    fun decide(p: ManagerClient.SkillProposal, approve: Boolean) {
         scope.launch {
+            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
             val ok = withContext(Dispatchers.IO) {
-                ManagerSync.decideSkillProposal(prefs.serverUrl, prefs.user, prefs.pass, p.id, approve)
+                mc.decideSkillProposal(p.id, approve)
             }
             onStatus(if (ok) (if (approve) "Skill added: ${p.name}" else "Discarded: ${p.name}")
-                     else "⚠️ ${ManagerSync.lastStatus}")
+                     else "⚠️ ${mc.lastError}")
             reload++
         }
     }
@@ -2358,22 +2364,23 @@ private fun NotificationsScreen(
     onOpen: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var items by remember { mutableStateOf<List<ManagerSync.NotifItem>>(emptyList()) }
+    var items by remember { mutableStateOf<List<ManagerClient.NotifItem>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
     val fmt = remember { java.text.SimpleDateFormat("EEE dd.MM. HH:mm", java.util.Locale.getDefault()) }
 
     LaunchedEffect(reload) {
+        val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
         val res = withContext(Dispatchers.IO) {
-            ManagerSync.pollNotifications(prefs.serverUrl, prefs.user, prefs.pass, 0, 0)
+            mc.pollNotifications(0, 0)
         }
         if (res?.items != null) { items = res.items.sortedByDescending { it.ts }; loaded = true }
-        else onStatus("⚠️ Could not load notifications: ${ManagerSync.lastStatus}")
+        else onStatus("⚠️ Could not load notifications: ${mc.lastError}")
     }
     // Seen = read: the list is the review, so what you looked at stops counting as new.
     LaunchedEffect(loaded) {
         if (loaded && items.any { !it.read }) {
-            withContext(Dispatchers.IO) { ManagerSync.markNotifRead(prefs.serverUrl, prefs.user, prefs.pass) }
+            withContext(Dispatchers.IO) { ManagerClient(prefs).markNotifRead() }
             prefs.notifLastTs = maxOf(prefs.notifLastTs, items.maxOfOrNull { it.ts } ?: 0L)
         }
     }
@@ -2431,19 +2438,20 @@ private fun MissionsScreen(
     onStatus: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var missions by remember { mutableStateOf<List<ManagerSync.Mission>>(emptyList()) }
+    var missions by remember { mutableStateOf<List<ManagerClient.Mission>>(emptyList()) }
     var reload by remember { mutableStateOf(0) }
     var mExpanded by remember { mutableStateOf("") }
 
     LaunchedEffect(reload) {
-        withContext(Dispatchers.IO) { ManagerSync.listMissions(prefs.serverUrl, prefs.user, prefs.pass) }
+        val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+        withContext(Dispatchers.IO) { mc.listMissions() }
             ?.let { missions = it }
-            ?: onStatus("⚠️ Could not load missions: ${ManagerSync.lastStatus}")
+            ?: onStatus("⚠️ Could not load missions: ${mc.lastError}")
     }
     LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
 
     @Composable
-    fun MissionCard(m: ManagerSync.Mission) {
+    fun MissionCard(m: ManagerClient.Mission) {
         val total = m.steps.size.coerceAtLeast(1)
         val done = m.steps.count { it.status == "done" }
         val cur = m.steps.firstOrNull { it.status == "doing" }
@@ -2508,8 +2516,7 @@ private fun MissionsScreen(
                     fun act(a: String) {
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                ManagerSync.missionAction(prefs.serverUrl, prefs.user, prefs.pass,
-                                    m.id, a, m.instance)
+                                ManagerClient(prefs).missionAction(m.id, a, m.instance)
                             }
                             reload++
                         }
@@ -2571,10 +2578,11 @@ fun TasksScreen(
 
     LaunchedEffect(reload) {
         loading = true
-        val j = withContext(Dispatchers.IO) { ManagerSync.listTasks(prefs.serverUrl, prefs.user, prefs.pass) }
+        val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+        val j = withContext(Dispatchers.IO) { mc.listTasks() }
         loading = false
-        if (j == null) onStatus("⚠️ Could not load tasks: ${ManagerSync.lastStatus}")
-        else { tasks = ManagerSync.parseTasks(j); onStatus("") }
+        if (j == null) onStatus("⚠️ Could not load tasks: ${mc.lastError}")
+        else { tasks = ManagerClient.parseTasks(j); onStatus("") }
     }
     LaunchedEffect(Unit) { while (true) { delay(5000); reload++ } }
 
@@ -2611,11 +2619,12 @@ fun TasksScreen(
                             if (m.isNotBlank() && target.isNotBlank()) {
                                 onStatus("Creating task…")
                                 scope.launch {
+                                    val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
                                     val r = withContext(Dispatchers.IO) {
-                                        ManagerSync.createTask(prefs.serverUrl, prefs.user, prefs.pass, target, m, schedule.trim())
+                                        mc.createTask(target, m, schedule.trim())
                                     }
                                     message = ""
-                                    onStatus(r?.let { "" } ?: "⚠️ ${ManagerSync.lastStatus}")
+                                    onStatus(r?.let { "" } ?: "⚠️ ${mc.lastError}")
                                     reload++
                                 }
                             }
@@ -2682,7 +2691,7 @@ fun TasksScreen(
                         StatusBadge(t.status, bg, fg, bd)
                         RoundIconButton({
                             scope.launch {
-                                withContext(Dispatchers.IO) { ManagerSync.deleteTask(prefs.serverUrl, prefs.user, prefs.pass, t.id) }
+                                withContext(Dispatchers.IO) { ManagerClient(prefs).deleteTask(t.id) }
                                 reload++
                             }
                         }, size = 32.dp) {
@@ -2970,7 +2979,7 @@ fun SettingsScreen(
                     val c = HaloController(
                         luaSource = ::luaFromAssets,
                         transcribe = { wav ->
-                            fakeHeard ?: ManagerSync.stt(prefs.serverUrl, prefs.user, prefs.pass, wav, "audio/wav")
+                            fakeHeard ?: ManagerClient(prefs).stt(wav, "audio/wav")
                         },
                         ask = { question ->
                             ServerAgent.chat(prefs.serverUrl, prefs.instance, prefs.user, prefs.pass, question)
@@ -3246,7 +3255,7 @@ fun TraceDialog(prefs: Prefs, instance: String, turn: String, onDismiss: () -> U
     var loading by remember { mutableStateOf(true) }
     LaunchedEffect(turn) {
         loading = true
-        data = withContext(Dispatchers.IO) { ManagerSync.trace(prefs.serverUrl, prefs.user, prefs.pass, instance, turn) }
+        data = withContext(Dispatchers.IO) { ManagerClient(prefs).trace(instance, turn) }
         loading = false
     }
     fun ms(v: Any?): String {
@@ -3332,16 +3341,17 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
     fun refresh() {
         scope.launch {
             loading = true
-            val j = withContext(Dispatchers.IO) { ManagerSync.listInstances(prefs.serverUrl, prefs.user, prefs.pass) }
+            val mc = ManagerClient(prefs)   // its own client: the error belongs to this call
+            val j = withContext(Dispatchers.IO) { mc.listInstances() }
             loading = false
-            if (j == null) { onStatus("⚠️ Server unreachable: ${ManagerSync.lastStatus}"); return@launch }
-            instances = ManagerSync.parseInstances(j)
+            if (j == null) { onStatus("⚠️ Server unreachable: ${mc.lastError}"); return@launch }
+            instances = ManagerClient.parseInstances(j)
         }
     }
     LaunchedEffect(Unit) {
         refresh()
-        val pj = withContext(Dispatchers.IO) { ManagerSync.listPersonas(prefs.serverUrl, prefs.user, prefs.pass) }
-        personas = ManagerSync.parsePersonas(pj)
+        val pj = withContext(Dispatchers.IO) { ManagerClient(prefs).listPersonas() }
+        personas = ManagerClient.parsePersonas(pj)
     }
 
     AlertDialog(
@@ -3389,7 +3399,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                                 val act = if (inst.running) "stop" else "start"
                                 busyName = inst.name
                                 scope.launch {
-                                    withContext(Dispatchers.IO) { ManagerSync.action(prefs.serverUrl, prefs.user, prefs.pass, inst.name, act) }
+                                    withContext(Dispatchers.IO) { ManagerClient(prefs).action(inst.name, act) }
                                     busyName = ""; refresh()
                                 }
                             }, contentPadding = PaddingValues(horizontal = 10.dp)) {
@@ -3398,7 +3408,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                             IconButton({
                                 busyName = inst.name
                                 scope.launch {
-                                    withContext(Dispatchers.IO) { ManagerSync.action(prefs.serverUrl, prefs.user, prefs.pass, inst.name, "delete") }
+                                    withContext(Dispatchers.IO) { ManagerClient(prefs).action(inst.name, "delete") }
                                     busyName = ""
                                     if (active == inst.name) { active = ""; prefs.instance = "" }
                                     refresh()
@@ -3442,7 +3452,7 @@ fun ServerAgentsDialog(prefs: Prefs, onDismiss: () -> Unit, onStatus: (String) -
                             }
                             personas.firstOrNull { it.name == persona }?.let { cfg.put("AGENT_SYSTEM", it.prompt) }
                             val res = withContext(Dispatchers.IO) {
-                                ManagerSync.createAndStart(prefs.serverUrl, prefs.user, prefs.pass, n, template, cfg)
+                                ManagerClient(prefs).createAndStart(n, template, cfg)
                             }
                             prefs.instance = n; active = n; name = ""; onStatus(res); busyName = ""; refresh()
                         }

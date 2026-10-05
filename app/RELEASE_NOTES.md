@@ -5,6 +5,15 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.47
+
+- Attaching a document (PDF, DOCX, text) works again — the upload never reached
+  the server.
+- Creating a server agent that the server refuses (name taken, invalid name,
+  unknown template) now shows the reason instead of trying to start it anyway.
+- Error messages belong to the action that failed: two things loading at the
+  same time can no longer show each other's error.
+
 ## 5.46
 
 - Syncing chats by hand (Settings → Auto-sync) can no longer lose a reply that is
