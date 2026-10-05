@@ -29,6 +29,7 @@ from mgr import host as _host
 from mgr import mcp as _mcp
 from mgr import mounts as _mounts
 from mgr import netfw as _netfw
+from mgr import plugins as _plugins
 
 
 def mkfs_image(path, size_mb, label=None, srcdir=None):
@@ -259,7 +260,9 @@ def make_config_disk(inst):
     d = os.path.join(_paths.RUN_DIR, f"{inst['name']}.cfgdir")
     os.makedirs(d, exist_ok=True)
     # Put tool plugins (firecracker/plugins/*.py) on the disk too — the agent
-    # loads them at start from /config/plugins. New plugin = file + stop/start.
+    # loads them at start from /config/plugins. New plugin = file + Approve in
+    # the Plugins tab + stop/start: only approved, unmodified plugins go on the
+    # disk (checked on the copy, see plugins.approved).
     pdst = os.path.join(d, "plugins")
     shutil.rmtree(pdst, ignore_errors=True)
     psrc = os.path.join(_paths.BASE, "plugins")
@@ -271,8 +274,17 @@ def make_config_disk(inst):
             sp = os.path.join(psrc, f0)
             if os.path.isdir(sp):                 # multi-file tool: whole folder
                 shutil.copytree(sp, os.path.join(pdst, f0), dirs_exist_ok=True)
+                name = f0
             elif f0.endswith(".py"):              # single .py (backwards compatible)
                 shutil.copy2(sp, os.path.join(pdst, f0))
+                name = f0[:-3]
+            else:
+                continue
+            if not _plugins.approved(name, pdst):
+                dp = os.path.join(pdst, f0)
+                shutil.rmtree(dp, ignore_errors=True) if os.path.isdir(dp) else os.remove(dp)
+                print(f"[plugins] {inst['name']}: '{name}' not delivered — not approved or modified "
+                      f"since (Plugins tab → Approve)", flush=True)
     with open(os.path.join(d, "config.env"), "w") as f:
         for k, v in cfg.items():
             # quote values (EXTRA_MOUNTS and others contain shell metacharacters like | and ;)

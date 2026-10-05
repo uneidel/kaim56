@@ -57,11 +57,13 @@ def _safe_tool_name(name):
 PLUGIN_PINS_FILE = os.path.join(PLUGINS_SRC, ".pins.json")
 
 
-def _plugin_hash(name):
-    """SHA-256 over (relpath\0content\0) of all a tool's files, sorted."""
+def _plugin_hash(name, src=None):
+    """SHA-256 over (relpath\0content\0) of all a tool's files, sorted.
+    `src`: another plugins directory with the same layout (a VM's copy)."""
     name = _safe_tool_name(name)
-    folder = os.path.join(PLUGINS_SRC, name)
-    single = os.path.join(PLUGINS_SRC, name + ".py")
+    src = src or PLUGINS_SRC
+    folder = os.path.join(src, name)
+    single = os.path.join(src, name + ".py")
     if os.path.isdir(folder):
         files, base = [], folder
         for root, _d, fs in os.walk(folder):
@@ -69,7 +71,7 @@ def _plugin_hash(name):
                 files.append(os.path.join(root, f))
         files.sort()
     elif os.path.isfile(single):
-        files, base = [single], PLUGINS_SRC
+        files, base = [single], src
     else:
         return None
     h = hashlib.sha256()
@@ -240,8 +242,18 @@ def _plugin_desc(name):
     return ""
 
 
+def approved(name, src=None):
+    """Is this plugin (in `src`, default the plugins dir) exactly what the
+    operator approved? Only such plugins reach a VM (vm.make_config_disk checks
+    the COPY, so nothing can be swapped between check and delivery)."""
+    pin = load_plugin_pins().get(_safe_tool_name(name))
+    return bool(pin) and _plugin_hash(name, src) == pin
+
+
 def tool_entries():
-    """[{name, desc, plugin: True}] — the tools the plugins add to every agent
-    (the policy's tool list and allowlist must know them, or a saved subset
-    would drop them silently)."""
-    return [{"name": e["name"], "desc": _plugin_desc(e["name"]), "plugin": True} for e in list_plugins()]
+    """[{name, desc, plugin: True}] — the tools the approved plugins add to
+    every agent (the policy's tool list and allowlist must know them, or a saved
+    subset would drop them silently). Unapproved or modified plugins are not
+    delivered, so they are not listed either."""
+    return [{"name": e["name"], "desc": _plugin_desc(e["name"]), "plugin": True}
+            for e in list_plugins() if e["pinned"] and not e["modified"]]

@@ -39,10 +39,10 @@ async function loadPlugins(){
     `<div class=mono style="font-size:11px;color:var(--color-neutral-600);word-break:break-all">${p.files.map(f=>(p.links||{})[f]?`<a href="${esc(p.links[f])}" target="_blank" rel="noopener noreferrer" title="open in VS Code">${escT(f)}</a>`:escT(f)).join(', ')}</div>`+
     `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">`+
       (p.modified
-        ? `<span class="tag" style="background:#c0392b;color:#fff;font-size:11px">\u26a0 ge\u00e4ndert seit Approve</span>`
+        ? `<span class="tag" style="background:#c0392b;color:#fff;font-size:11px">\u26a0 changed since Approve \u2014 not delivered</span>`
         : p.pinned
-          ? `<span class="tag tag-accent" style="font-size:11px">\u2713 pinned ${escT(p.sha||'')}</span>`
-          : `<span class="tag tag-neutral" style="font-size:11px">not pinned</span>`)+
+          ? `<span class="tag tag-accent" style="font-size:11px">\u2713 approved ${escT(p.sha||'')} \u2014 delivered</span>`
+          : `<span class="tag tag-neutral" style="font-size:11px">not approved \u2014 not delivered</span>`)+
       ((p.modified||!p.pinned)?`<button class="btn btn-secondary" style="font-size:12px;margin-left:auto" onclick="plugApprove('${esc(p.name)}')">Approve</button>`:``)+
     `</div></div>`
   ).join('') : '<div class=text-muted>No plugins yet.</div>';

@@ -4602,8 +4602,10 @@ class ManagerFunctions(unittest.TestCase):
         os.makedirs(os.path.join(tmp, "multi")); _wtext(os.path.join(tmp, "multi", "tool.py"), 'DESC = "multi tool"\n')
         os.makedirs(os.path.join(tmp, "__pycache__"))
         old = m._plugins.PLUGINS_SRC
+        old_pins = m._plugins.PLUGIN_PINS_FILE
         try:
-            m._plugins.PLUGINS_SRC = tmp
+            m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE = tmp, os.path.join(tmp, ".pins.json")
+            m._plugins.plugin_pin("apps"); m._plugins.plugin_pin("multi")
             cat = {t["name"]: t for t in m._policy.tool_catalog()}
             self.assertEqual((cat["apps"]["desc"], cat["apps"].get("plugin")), ("Control apps", True))
             self.assertEqual(cat["multi"]["desc"], "multi tool")
@@ -4621,7 +4623,30 @@ class ManagerFunctions(unittest.TestCase):
             finally:
                 m._instances.load_instances, m._instances.save_instance, m._instances.is_running = old_li, old_si, old_run
         finally:
-            m._plugins.PLUGINS_SRC = old
+            m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE = old, old_pins
+
+    def test_only_approved_plugins_reach_a_vm(self):
+        """approved(): pinned AND the content still matches the pin, checked on
+        whatever directory it is given (the VM's copy). Unapproved or modified
+        plugins are neither delivered nor offered in the tool list."""
+        m = self.m
+        tmp, vmcopy = tempfile.mkdtemp(prefix="e2e-plugpin-"), tempfile.mkdtemp(prefix="e2e-plugvm-")
+        _wtext(os.path.join(tmp, "ok.py"), 'DESC = "fine"\n')
+        _wtext(os.path.join(tmp, "new.py"), 'DESC = "never approved"\n')
+        old = (m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE)
+        try:
+            m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE = tmp, os.path.join(tmp, ".pins.json")
+            m._plugins.plugin_pin("ok")
+            self.assertTrue(m._plugins.approved("ok"))
+            self.assertFalse(m._plugins.approved("new"))
+            self.assertEqual([t["name"] for t in m._plugins.tool_entries()], ["ok"])
+            _wtext(os.path.join(vmcopy, "ok.py"), 'DESC = "fine"\nimport os; os.system("evil")\n')   # swapped copy
+            self.assertFalse(m._plugins.approved("ok", vmcopy))
+            _wtext(os.path.join(tmp, "ok.py"), 'DESC = "changed"\n')                              # edited after Approve
+            self.assertFalse(m._plugins.approved("ok"))
+            self.assertEqual(m._plugins.tool_entries(), [])
+        finally:
+            m._plugins.PLUGINS_SRC, m._plugins.PLUGIN_PINS_FILE = old
 
     def test_apps_and_cloudflare_plugins(self):
         """The agent tools talk to the manager API and explain a missing grant."""

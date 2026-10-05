@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-05
 
+- Security: only approved, unmodified plugins reach a VM — checked on the copy on the config disk (no swap between check and delivery); the Plugins tab says "delivered" / "not delivered".
 - Plugin tools appear in the policy's tool list (marked "plugin") and may be part of a saved tool selection — before, saving a subset dropped every plugin silently; `__pycache__`/hidden entries no longer go onto the config disk.
 - Agent tools `apps` (celld apps: list, state, upload/restore, rename, delete) and `cloudflare` (workers: list, Durable Object export, delete), opened per instance by config `MANAGE_APPS` = read | write | full (`mgr/guestgrants.py`); without it a guest gets 403 as before.
 
