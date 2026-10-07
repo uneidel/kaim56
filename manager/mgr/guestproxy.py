@@ -23,6 +23,13 @@ from mgr import instances as _instances
 from mgr import katfs as _katfs
 
 
+def _speaker(h):
+    """The name of the person behind this request when OIDC identifies one
+    (chat/task attribution); "" for Basic, guests, the open manager."""
+    p = getattr(h, "principal", None)
+    return p.name if p is not None and p.sub != _auth.BASIC.sub else ""
+
+
 class GuestProxyMixin:
     """Handler methods (`self` is the HTTP handler) that relay the admin to a VM."""
 
@@ -66,6 +73,10 @@ class GuestProxyMixin:
             raw_emit, emit = emit, lambda t: raw_emit(guard.feed(t))
         else:
             guard = None
+        said = msg                                # for the chat record, without the name tag
+        by = _speaker(self)
+        if by and isinstance(msg, str) and msg and not msg.startswith("/"):
+            msg = f"[{by}] {msg}"                 # the agent sees who speaks
         try:
             _guestchat.guest_stream(inst, msg, img, emit)
         except Exception as e:
@@ -75,14 +86,14 @@ class GuestProxyMixin:
                 raw_emit(guard.flush())
         # Mirror voice turns into the shared chat store (see voice_session).
         try:
-            text = str(msg or "").strip()
+            text = str(said or "").strip()
             src = self.client_address[0]
             if text == "/reset":
                 _chats.voice_session(name, src, chat_id or "", reset=True)
             elif text and not text.startswith("/"):
                 sid = _chats.voice_session(name, src, chat_id or "")
                 if sid:
-                    _chats.chat_log_append(name, sid, text, "".join(parts).strip(), kind="voice")
+                    _chats.chat_log_append(name, sid, text, "".join(parts).strip(), kind="voice", by=by)
         except Exception as e:
             print(f"[quiet] voice chat mirror failed: {e!r}", flush=True)
 

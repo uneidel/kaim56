@@ -460,7 +460,7 @@ def with_tasks(mutator):
         return result
 
 
-def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0):
+def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0, by=""):
     schedule = (schedule or "").strip()
     t = {"id": uuid.uuid4().hex[:12], "instance": instance, "message": message,
          "schedule": schedule, "status": "scheduled" if schedule else "pending",
@@ -472,6 +472,8 @@ def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0
         t["sandbox"] = sandbox                     # ephemeral target: the narrower cage (manager.sandbox_config)
     if max_steps:
         t["max_steps"] = int(max_steps)            # ephemeral target: the agent's tool-round cap
+    if by:
+        t["by"] = str(by)                          # who asked (OIDC user); the agent sees it in the prompt
 
     def mut(tasks):
         tasks.append(t)

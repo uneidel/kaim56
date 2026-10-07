@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-07
+
+- Multi-user login via OIDC (Rauthy), off unless `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` are set: web code+PKCE, device flow for native clients (`/api/auth/device`), manager-issued sessions (cookie or Bearer), roles admin|user with a user route table (default deny), speaker name on chats/tasks, access log `audit/access.log`, admin session list; Basic auth keeps working.
+
 ## 2026-10-05
 
 - Agent context brake: before every LLM call of a tool turn the context is checked against 75 % of the model's window (llama.cpp: per-slot n_ctx from /props, or LLM_CTX); old tool outputs are cut first, then earlier turns summarized — a 58-step turn had filled a 64K slot and been truncated.

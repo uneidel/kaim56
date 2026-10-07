@@ -3,6 +3,8 @@
 # Offline-Tests immer; HTTP-/Live-Tests nur, wenn Manager/Orchestrator laufen
 # (sonst sauber uebersprungen). Exit != 0 bei Fehlern -> als Gate nutzbar.
 cd "$(dirname "$0")" || exit 1
+# The suite tests the tree it sits in (live or repo checkout), not a fixed path.
+export FC_DIR="${FC_DIR:-$(pwd)}"
 # The agent sources live next to this tree ($HOME/openrouter-agent, …) in
 # the layout the installer creates; only what exists is checked.
 HOME_DIR="$(cd .. && pwd)"

@@ -69,3 +69,19 @@ def audit_read(inst_name, limit=200):
         except ValueError:
             pass
     return list(reversed(out))   # newest first
+
+
+# ---- Access log: who changed what (logins, every non-GET by a person) -------
+# One append-only JSONL next to the instance trails; ".log", not ".jsonl", so
+# nothing that walks the instance trails (audit_read, saddler) picks it up.
+def access_append(p, method, path, status, event=""):
+    rec = {"ts": int(time.time()), "sub": p.sub, "name": p.name, "role": p.role,
+           "method": method, "path": str(path).split("?", 1)[0][:300], "status": int(status or 0)}
+    if event:
+        rec["event"] = event
+    try:
+        os.makedirs(AUDIT_DIR, exist_ok=True)
+        with open(os.path.join(AUDIT_DIR, "access.log"), "a") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"[quiet] access log failed: {e!r}", flush=True)
