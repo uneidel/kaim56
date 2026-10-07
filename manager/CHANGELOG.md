@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-07
+- Claude guest: the kaim56 MCP server relays the instance's catalog MCPs (MCP_SERVERS) through the hub as `<server>__<tool>`.
+
 ## 2026-10-05
 
 - Agent context brake: before every LLM call of a tool turn the context is checked against 75 % of the model's window (llama.cpp: per-slot n_ctx from /props, or LLM_CTX); old tool outputs are cut first, then earlier turns summarized — a 58-step turn had filled a 64K slot and been truncated.

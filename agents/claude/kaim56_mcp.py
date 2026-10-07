@@ -7,6 +7,10 @@ typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
 notify. The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
+It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
+/api/mcp-config, calls go through the manager's MCP hub (/api/mcp), exposed as
+"<server>__<tool>". Secrets and LAN access stay on the host.
+
 Stdlib only, newline-delimited JSON-RPC as the MCP stdio transport demands.
 """
 import json
@@ -33,10 +37,10 @@ def _get(path):
     return urllib.request.urlopen(BASE + path, timeout=30).read().decode("utf-8", "replace")
 
 
-def _post(path, payload):
+def _post(path, payload, timeout=30):
     req = urllib.request.Request(BASE + path, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
-    return urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "replace")
+    return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
 
 
 def t_memory_store(key, value):
@@ -100,6 +104,51 @@ TOOLS = {
 }
 
 
+# --- catalog MCPs via the manager's hub -------------------------------------
+_hub_tools = None   # exposed name -> (server, tool, description, schema)
+
+
+def _hub(server, method, params, rid=1):
+    out = json.loads(_post("/api/mcp", {"server": server, "payload": {
+        "jsonrpc": "2.0", "id": rid, "method": method, "params": params}}, timeout=120) or "{}")
+    if out.get("error"):
+        raise RuntimeError(str(out["error"])[:300])
+    return out.get("result", {})
+
+
+def hub_tools():
+    """Tools of the MCPs assigned to this instance; fetched once, a failing
+    server is skipped (logged to stderr) so the platform tools keep working."""
+    global _hub_tools
+    if _hub_tools is not None:
+        return _hub_tools
+    found = {}
+    try:
+        cfg = json.loads(_get("/api/mcp-config"))
+    except Exception as e:
+        print(f"kaim56_mcp: mcp-config unavailable: {e!r}", file=sys.stderr)
+        return found                      # not cached: retried on the next tools/list
+    if cfg.get("unresolved"):
+        print("kaim56_mcp: secrets not released: " + ", ".join(cfg["unresolved"]), file=sys.stderr)
+    for server in (cfg.get("mcpServers") or {}):
+        try:
+            _hub(server, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                        "clientInfo": {"name": "kaim56-claude", "version": "1"}})
+            for t in _hub(server, "tools/list", {}).get("tools", []):
+                found[f"{server}__{t['name']}"[:64]] = (
+                    server, t["name"], t.get("description") or t["name"],
+                    t.get("inputSchema") or {"type": "object", "properties": {}})
+        except Exception as e:
+            print(f"kaim56_mcp: MCP '{server}' unavailable: {e!r}", file=sys.stderr)
+    _hub_tools = found
+    return found
+
+
+def call_hub(name, args):
+    server, tool, _d, _s = hub_tools()[name]
+    return _hub(server, "tools/call", {"name": tool, "arguments": args})
+
+
 def reply(mid, result=None, error=None):
     out = {"jsonrpc": "2.0", "id": mid}
     if error is not None:
@@ -129,15 +178,20 @@ def main():
         elif method == "tools/list":
             reply(mid, {"tools": [
                 {"name": n, "description": d, "inputSchema": schema}
-                for n, (_f, d, schema) in TOOLS.items()]})
+                for n, (_f, d, schema) in TOOLS.items()] + [
+                {"name": n, "description": d, "inputSchema": schema}
+                for n, (_srv, _t, d, schema) in hub_tools().items()]})
         elif method == "tools/call":
             p = msg.get("params", {})
             name = p.get("name", "")
             args = p.get("arguments") or {}
-            if name not in TOOLS:
+            if name not in TOOLS and name not in hub_tools():
                 reply(mid, error=f"unknown tool: {name}")
                 continue
             try:
+                if name not in TOOLS:
+                    reply(mid, call_hub(name, args))   # hub result is already MCP content
+                    continue
                 out = TOOLS[name][0](**args)
                 reply(mid, {"content": [{"type": "text", "text": str(out)}]})
             except Exception as e:

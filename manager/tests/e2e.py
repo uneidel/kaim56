@@ -6329,6 +6329,45 @@ class ManagerFunctions(unittest.TestCase):
 # ===========================================================================
 # HTTP: against the running manager
 # ===========================================================================
+class ClaudeGuest(unittest.TestCase):
+    def test_claude_mcp_relays_catalog_mcps_through_the_hub(self):
+        """The claude guest's kaim56 MCP server also exposes the instance's
+        MCP_SERVERS (names from /api/mcp-config, calls via /api/mcp) as
+        <server>__<tool>; a failing server is skipped, platform tools stay."""
+        from unittest import mock
+        src = next((p for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py"),
+                                "/home/ulrich/claude-signal-firecracker/kaim56_mcp.py") if os.path.exists(p)), None)
+        if not src:
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_hub", src)
+        sent = []
+        km._get = lambda path: json.dumps({"mcpServers": {"portainer": {}, "broken": {}}})
+        def post(path, payload, timeout=30):
+            sent.append((path, payload["server"], payload["payload"]["method"]))
+            if payload["server"] == "broken":
+                return json.dumps({"error": "hub down"})
+            m = payload["payload"]["method"]
+            if m == "tools/list":
+                return json.dumps({"result": {"tools": [{"name": "list_stacks", "description": "d"}]}})
+            if m == "tools/call":
+                return json.dumps({"result": {"content": [{"type": "text", "text": "3 stacks"}]}})
+            return json.dumps({"result": {}})
+        km._post = post
+        out = io.StringIO()
+        with mock.patch.object(km.sys, "stdin", io.StringIO(
+                '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"portainer__list_stacks","arguments":{}}}\n')), \
+             mock.patch.object(km.sys, "stdout", out), mock.patch.object(km.sys, "stderr", io.StringIO()):
+            km.main()
+        lst, call = [json.loads(x) for x in out.getvalue().splitlines()]
+        names = [t["name"] for t in lst["result"]["tools"]]
+        self.assertIn("memory_store", names)
+        self.assertIn("portainer__list_stacks", names)
+        self.assertFalse(any(n.startswith("broken__") for n in names))
+        self.assertEqual(call["result"]["content"][0]["text"], "3 stacks")
+        self.assertIn(("/api/mcp", "portainer", "tools/call"), sent)
+
+
 @unittest.skipUnless(_manager_up(), "manager on 127.0.0.1:8700 not reachable")
 class ManagerHTTP(unittest.TestCase):
     def test_root_page(self):
