@@ -9,21 +9,11 @@ HTML_TOP = """</head><body>
 <header class=topbar><div class=topbar-in>
   <div class=brand>__LOGO__<b>kAIm56</b></div>
   <nav class=tabs id=tabs>
-    <a href="#instances">Instances</a>
-    <a href="#personas">Personas</a>
-    <a href="#skills">Skills</a>
-    <a href="#plugins">Plugins</a>
-    <a href="#mcp">MCP</a>
-    <a href="#tasks">Tasks</a>
-    <a href="#missions">Missions</a>
-    <a href="#projects">Projects</a>
-    <a href="#apps">Apps</a>
-    <a href="#policy">Policy</a>
-    <a href="#models">Models</a>
-    <a href="#resources">Resources</a>
-    <a href="#sharing">Sharing</a>
-    <a href="#secrets">Secrets</a>
-    <a href="#settings">Settings</a>
+    <a href="#instances" data-g=agents>Agents</a>
+    <a href="#personas" data-g=knowledge>Knowledge</a>
+    <a href="#tasks" data-g=work>Work</a>
+    <a href="#apps" data-g=apps>Apps</a>
+    <a href="#models" data-g=system>System</a>
   </nav>
   <button class=nbell id=nbell onclick=notifToggle() title="Benachrichtigungen" aria-label=Benachrichtigungen>
     <svg width=19 height=19 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.7 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
@@ -36,6 +26,7 @@ HTML_TOP = """</head><body>
   <button class=nbell id=whoami style="font-size:13px;font-weight:600" onclick=whoLogout() hidden></button>
 </div></header>
 <main>
+<nav class=subtabs id=subtabs aria-label=Section></nav>
 
 <section class="screen" id=s-instances>
   <div class=sec-head>

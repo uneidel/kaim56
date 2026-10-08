@@ -205,6 +205,11 @@ footer{border-top:1px solid var(--color-divider)}
 .foot-in{max-width:1160px;margin:0 auto;padding:14px 28px;display:flex;gap:24px;
   flex-wrap:wrap;font-size:12px}
 .screen{display:none}.screen.on{display:block}
+.subtabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:0 0 18px;border-bottom:1px solid var(--color-divider)}
+.subtabs::-webkit-scrollbar{display:none}
+.subtabs a{padding:8px 12px;font-size:13px;color:var(--color-neutral-600);text-decoration:none;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.subtabs a:hover{color:var(--color-accent-700)}
+.subtabs a[aria-current=page]{color:var(--color-accent-700);border-bottom-color:var(--color-accent);font-weight:600}
 .fbrow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:1px solid var(--color-divider);font-size:13.5px}
 .fbrow:hover{background:var(--color-neutral-100)}
 .fbrow.dir{cursor:pointer}

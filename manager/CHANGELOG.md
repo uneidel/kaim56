@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-08
+- UI: 15 tabs grouped into 5 (Agents · Knowledge · Work · Apps · System) with a second row for the pages; page hashes unchanged.
+
 ## 2026-10-07
 - Multi-user login via OIDC (Rauthy), off unless `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` are set: web code+PKCE, device flow for native clients (`/api/auth/device`), manager-issued sessions (cookie or Bearer), roles admin|user with a user route table (default deny), speaker name on chats/tasks, access log `audit/access.log`, admin session list; Basic auth keeps working.
 - Claude guest: the kaim56 MCP server relays the instance's catalog MCPs (MCP_SERVERS) through the hub as `<server>__<tool>`.

@@ -701,10 +701,20 @@ async function refreshUsage(){
 
 /* — tabs (hash-routed, so a reload after an action keeps the screen) — */
 const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','projects','apps','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
+/* 5 groups in the top bar, the pages of the active group as a second row;
+   the hashes stay per page, so old links and bookmarks keep working. */
+const GROUPS={agents:['instances','policy','resources'],knowledge:['personas','skills','plugins','mcp'],
+  work:['tasks','missions','projects'],apps:['apps','sharing'],system:['models','secrets','settings','changelog','architecture']};
+const TAB_LABEL={mcp:'MCP'};
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
-  document.querySelectorAll('#tabs a,.af-nav a').forEach(a=>{
+  const g=Object.keys(GROUPS).find(k=>GROUPS[k].includes(t));
+  document.querySelectorAll('#tabs a').forEach(a=>{
+    if(a.dataset.g===g)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  document.getElementById('subtabs').innerHTML=GROUPS[g].map(x=>
+    `<a href="#${x}"${x===t?' aria-current=page':''}>${TAB_LABEL[x]||x[0].toUpperCase()+x.slice(1)}</a>`).join('');
+  document.querySelectorAll('.af-nav a').forEach(a=>{
     if(a.getAttribute('href')==='#'+t)a.setAttribute('aria-current','page');
     else a.removeAttribute('aria-current');});
   /* the row scrolls without a visible bar: keep the active tab in view */
