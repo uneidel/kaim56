@@ -65,3 +65,15 @@ HOST_TZ = os.environ.get("GUEST_TZ") or _host_tz()
 
 
 ADMIN_GID = os.stat(_paths.BASE).st_gid      # the operator's group: may read what the guests write
+
+
+def mem_total_mib():
+    """Host RAM (MemTotal from /proc/meminfo) in MiB; 0 when unknown."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0

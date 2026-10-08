@@ -6,36 +6,104 @@
 
 HTML_TOP = """</head><body>
 <div class=shell>
-<header class=topbar><div class=topbar-in>
-  <div class=brand>__LOGO__<b>kAIm56</b></div>
-  <nav class=tabs id=tabs>
-    <a href="#instances" data-g=agents>Agents</a>
-    <a href="#personas" data-g=knowledge>Knowledge</a>
-    <a href="#tasks" data-g=work>Work</a>
-    <a href="#apps" data-g=apps>Apps</a>
-    <a href="#models" data-g=system>System</a>
+<div class=mbar>
+  <button class=iconbtn onclick=navToggle(true) aria-label=Menu><svg width=20 height=20 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M4 6h16M4 12h16M4 18h16"></path></svg></button><b>kAIm56</b>
+</div>
+<div class=navshade onclick=navToggle(false)></div>
+<aside class=side id=side>
+  <div class=brand><div class=brand-mark><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 2 2 7l10 5 10-5-10-5Z"></path><path d="m2 17 10 5 10-5"></path><path d="m2 12 10 5 10-5"></path></svg></div>
+    <div class=brand-txt><b>kAIm56</b><span>Agent cloud</span></div></div>
+  <nav class=nav id=nav aria-label=Pages>
+    <div class=navgrp><div class=navlbl>Agents</div>
+      <a href="#instances"><span>Instances</span> <span class=navcnt id=navcnt></span></a>
+      <a href="#policy"><span>Policy</span></a>
+      <a href="#resources"><span>Resources</span></a>
+    </div>
+    <div class=navgrp><div class=navlbl>Knowledge</div>
+      <a href="#personas"><span>Personas</span></a>
+      <a href="#skills"><span>Skills</span></a>
+      <a href="#plugins"><span>Plugins</span></a>
+      <a href="#mcp"><span>MCP</span></a>
+    </div>
+    <div class=navgrp><div class=navlbl>Work</div>
+      <a href="#tasks"><span>Tasks</span></a>
+      <a href="#missions"><span>Missions</span></a>
+      <a href="#projects"><span>Projects</span></a>
+    </div>
+    <div class=navgrp><div class=navlbl>Apps</div>
+      <a href="#apps"><span>Apps</span></a>
+      <a href="#sharing"><span>Sharing</span></a>
+    </div>
+    <div class=navgrp><div class=navlbl>System</div>
+      <a href="#models"><span>Models</span></a>
+      <a href="#secrets"><span>Secrets</span></a>
+      <a href="#settings"><span>Settings</span></a>
+      <a href="#changelog"><span>Changelog</span></a>
+      <a href="#architecture"><span>Architecture</span></a>
+    </div>
   </nav>
-  <button class=nbell id=nbell onclick=notifToggle() title="Benachrichtigungen" aria-label=Benachrichtigungen>
-    <svg width=19 height=19 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.7 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
-    <span class=nbadge id=nbadge hidden>0</span>
-  </button>
-  <div class=npanel id=npanel hidden>
-    <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
-    <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
+  <div class=user>
+    <div class=avatar id=uavatar>A</div>
+    <div class=uinfo><span id=uname>Admin</span><span id=urole>basic</span></div>
+    <button class=iconbtn id=nbell onclick=notifToggle() title="Benachrichtigungen" aria-label=Benachrichtigungen>
+      <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+      <span class=nbadge id=nbadge hidden>0</span>
+    </button>
+    <button class=iconbtn id=whoami onclick=whoLogout() title="Log out" aria-label="Log out" hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5M21 12H9"></path></svg></button>
   </div>
-  <button class=nbell id=whoami style="font-size:13px;font-weight:600" onclick=whoLogout() hidden></button>
-</div></header>
+</aside>
+<div class=npanel id=npanel hidden>
+  <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
+  <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
+</div>
 <main>
-<nav class=subtabs id=subtabs aria-label=Section></nav>
+<header class=phead>
+  <div><div class=peyebrow id=pgroup>Agents</div><h1 id=ptitle>Instances</h1></div>
+  <button class="btn btn-primary" id=newinst onclick=newInstance()><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New instance</button>
+</header>
 
 <section class="screen" id=s-instances>
-  <div class=sec-head>
-    <div><h6>microVM</h6><h3>Instances</h3></div>
-    <span class="note text-muted">💬 Chat opens <a href="/chat">/chat</a> for every <code>TRANSPORT=web</code> instance · a stopped instance starts on the first prompt</span>
+  <p class=lede>Chat opens <a href="/chat">/chat</a> for every <code>TRANSPORT=web</code> instance · a stopped instance starts on the first prompt</p>
+  <div class=kpis>
+    <div class="kpi ring">
+      <svg width=84 height=84 viewBox="0 0 84 84"><circle cx=42 cy=42 r=34 stroke="var(--app-line)"></circle>
+        <circle cx=42 cy=42 r=34 stroke="var(--color-accent-600)" stroke-linecap=round id=kring stroke-dasharray="0 214"></circle></svg>
+      <div><div class=klbl>Running</div>
+        <div class=kval style="margin-top:4px"><span id=krun>0</span><small> / <span id=ktot>0</span></small></div>
+        <div class=ksub style="margin-top:6px" id=krsub></div></div>
+    </div>
+    <div class=kpi><div class=klbl>Tokens today</div><div class=kval id=ktok>0</div>
+      <div class=ksub><span><b id=ktin>0</b> in</span><span><b id=ktout>0</b> out</span></div></div>
+    <div class=kpi><div class=khead><span class=klbl>Spend · 14 days</span><span id=kspendt></span></div>
+      <div class=kval id=kspend>$0.00</div><div class=kbars id=kbars></div></div>
+    <div class=kpi><div class=klbl>Allocated</div>
+      <div class=kval><span id=kcpu>0</span><small id=kram> vCPU</small></div>
+      <div class=track><i id=kmembar></i></div><div class=ksub id=kmemsub></div></div>
   </div>
-  <div class=ilist>__ROWS__</div>
+  <section class=chart>
+    <div class=chart-head>
+      <div><div class=klbl>Token throughput</div><div class=chart-tot><b id=ctot>0</b><span id=cscope></span></div></div>
+      <div class=seg id=crange><button data-r=24h class=on>24h</button><button data-r=7d>7d</button><button data-r=30d>30d</button></div>
+    </div>
+    <div class=cchips id=cchips></div>
+    <div class=cplot><div class=cyt id=cyt></div>
+      <div><svg viewBox="0 0 1000 200" preserveAspectRatio=none>
+        <defs><linearGradient id=cfill x1=0 y1=0 x2=0 y2=1><stop offset=0 stop-color="var(--color-accent-600)" stop-opacity=".55"></stop>
+          <stop offset=1 stop-color="var(--color-accent-600)" stop-opacity=".04"></stop></linearGradient></defs>
+        <g stroke="var(--app-line)"><line x1=0 x2=1000 y1=50 y2=50></line><line x1=0 x2=1000 y1=100 y2=100></line><line x1=0 x2=1000 y1=150 y2=150></line></g>
+        <g id=cplot></g></svg>
+        <div class=cxl id=cxl></div></div>
+    </div>
+  </section>
+  <div class=fhead><h3>Fleet</h3>
+    <div class=seg id=ffilt><button data-f=all class=on>All <span></span></button><button data-f=run>Running <span></span></button>
+      <button data-f=off>Stopped <span></span></button><button data-f=old>Outdated <span></span></button></div></div>
+  <div class=obanner id=obanner hidden><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4M12 17h.01"></path></svg>
+    <span><b id=ocount></b> run on an outdated image.</span>
+    <button class="btn btn-primary" onclick=restartAll()>Restart all</button></div>
+  <div class=fleet id=fleet>__ROWS__</div>
 
-  <div style="margin-top:44px">
+  <div style="margin-top:44px" id=newform>
     <h6 style="color:var(--color-accent);margin:0 0 2px">Provision</h6>
     <h3 style="margin:0 0 18px">New instance from template</h3>
     <div class="panel blueprint">
@@ -77,10 +145,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-personas>
-  <div class=sec-head>
-    <div><h6>System prompts</h6><h3>Personas</h3></div>
-    <span class="note text-muted">Selectable as "Persona" when creating an instance → sets <code>AGENT_SYSTEM</code> (applied at start, no rebuild)</span>
-  </div>
+  <p class=lede>Selectable as "Persona" when creating an instance → sets <code>AGENT_SYSTEM</code> (applied at start, no rebuild)</p>
   <div class=grid2 id=personas></div>
   <div class="panel blueprint" style="margin-top:32px">
     
@@ -122,10 +187,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-skills>
-  <div class=sec-head>
-    <div><h6>Expert knowledge</h6><h3>Skills</h3></div>
-    <span class="note text-muted">Loaded into context on demand via <code>load_skill("name")</code> · <code>list_skills</code> shows them · central, no rebuild</span>
-  </div>
+  <p class=lede>Loaded into context on demand via <code>load_skill("name")</code> · <code>list_skills</code> shows them · central, no rebuild</p>
   <div id=skprops></div>
   <div class=grid3 id=skills></div>
   <div class="panel blueprint" style="margin-top:32px">
@@ -141,10 +203,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-plugins>
-  <div class=sec-head>
-    <div><h6>Custom tools</h6><h3>Plugins</h3></div>
-    <span class="note text-muted">Drag a <code>.py</code> file or a <code>.zip</code> (multi-file &#8594; its own folder) here. Convention: <code>DESC / PARAMS / REQUIRED / run()</code>. Runs in the agent VM (sandbox, stdlib) &#183; restart the instance to activate.</span>
-  </div>
+  <p class=lede>Drag a <code>.py</code> file or a <code>.zip</code> (multi-file &#8594; its own folder) here. Convention: <code>DESC / PARAMS / REQUIRED / run()</code>. Runs in the agent VM (sandbox, stdlib) &#183; restart the instance to activate.</p>
   <div id=plugdrop class=plugdrop>
     <b>.py</b> or <b>.zip</b> — drag here &#8212; or <label class=pluglnk>browse<input type=file id=plugfile accept=".py,.zip" hidden></label>
   </div>
@@ -157,10 +216,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-mcp>
-  <div class=sec-head>
-    <div><h6>Catalog</h6><h3>MCP servers</h3></div>
-    <span class="note text-muted">Attachable per instance · use <code>${SECRET_NAME}</code> in args to inject from the secret store at create time</span>
-  </div>
+  <p class=lede>Attachable per instance · use <code>${SECRET_NAME}</code> in args to inject from the secret store at create time</p>
   <div class=grid2 id=mcps></div>
   <div class="panel blueprint" style="margin-top:32px">
     
@@ -177,10 +233,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-resources>
-  <div class=sec-head>
-    <div><h6>Sizing &amp; live usage</h6><h3>Resources</h3></div>
-    <span class="note text-muted">Configured size (vCPU/RAM) and live usage per instance &#183; CPU% is relative to ONE core (a 2-vCPU guest goes up to ~200%) &#183; Disk = written overlay layer.</span>
-  </div>
+  <p class=lede>Configured size (vCPU/RAM) and live usage per instance &#183; CPU% is relative to ONE core (a 2-vCPU guest goes up to ~200%) &#183; Disk = written overlay layer.</p>
   <table class=table id=restable>
     <thead><tr><th style="width:22%">Instance</th><th>Status</th><th>vCPU</th><th>RAM (config.)</th><th>RAM (used)</th><th>CPU</th><th>Disk (Overlay)</th></tr></thead>
     <tbody id=resrows><tr><td colspan=7 class=text-muted style="padding:14px">…</td></tr></tbody>
@@ -199,10 +252,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-models>
-  <div class=sec-head>
-    <div><h6>OpenRouter</h6><h3>Models</h3></div>
-    <span class="note text-muted">The full catalog, fetched live · ticked models are the shortlist offered when creating an instance</span>
-  </div>
+  <p class=lede>The full catalog, fetched live · ticked models are the shortlist offered when creating an instance</p>
   <div class="banner blueprint">
     
     <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke="var(--color-accent-700)" stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><circle cx=12 cy=12 r=10></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
@@ -234,18 +284,12 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-policy>
-  <div class=sec-head>
-    <div><h6>What each instance may do & does</h6><h3>Policy</h3></div>
-    <span class="note text-muted">Network, tools, secrets and MCP in one place · per instance the tools and URLs called most recently</span>
-  </div>
+  <p class=lede>Network, tools, secrets and MCP in one place · per instance the tools and URLs called most recently</p>
   <div id=policycards style="display:flex;flex-direction:column;gap:18px"></div>
 </section>
 
 <section class="screen" id=s-tasks>
-  <div class=sec-head>
-    <div><h6>Scheduled work</h6><h3>Tasks</h3></div>
-    <span class="note text-muted">One message runs on one instance — once or recurring · a stopped instance is started for it</span>
-  </div>
+  <p class=lede>One message runs on one instance — once or recurring · a stopped instance is started for it</p>
   <table class=table>
     <thead><tr><th style="width:20%">Instance</th><th>Job</th><th>Schedule</th><th>Status</th><th>Last result</th><th></th></tr></thead>
     <tbody id=taskrows></tbody>
@@ -267,10 +311,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-missions>
-  <div class=sec-head>
-    <div><h6>Multi-step work</h6><h3>Missions</h3></div>
-    <span class="note text-muted">Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step · every mission can be edited or deleted here, whatever its status</span>
-  </div>
+  <p class=lede>Multi-step jobs from the orchestrator — plan + progress survive restart and context reset · a finished task immediately triggers the next step · every mission can be edited or deleted here, whatever its status</p>
   <div id=missions class="panel blueprint">
     <span class=text-muted style="font-size:13px">…</span>
   </div>
@@ -278,10 +319,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-projects>
-  <div class=sec-head>
-    <div><h6>One folder, many agents</h6><h3>Projects</h3></div>
-    <span class="note text-muted">Name a folder once, let instances join it with a role · lead and reader see it read-only, writers read-write · mounted at <code>/project/&#8249;name&#8250;</code>, joins and leaves apply live</span>
-  </div>
+  <p class=lede>Name a folder once, let instances join it with a role · lead and reader see it read-only, writers read-write · mounted at <code>/project/&#8249;name&#8250;</code>, joins and leaves apply live</p>
   <table class=table>
     <thead><tr><th style="width:18%">Project</th><th>Source</th><th>Members</th><th style="width:1%"></th></tr></thead>
     <tbody id=projrows></tbody>
@@ -323,10 +361,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-apps>
-  <div class=sec-head>
-    <div><h6>Browser apps</h6><h3>Apps</h3></div>
-    <span class="note text-muted">Front-ends under <code>/apps/&#8249;name&#8250;/</code> on top of the platform · hosted by celld, the manager as the fallback · an app&#8217;s own state in its Durable Object</span>
-  </div>
+  <p class=lede>Front-ends under <code>/apps/&#8249;name&#8250;/</code> on top of the platform · hosted by celld, the manager as the fallback · an app&#8217;s own state in its Durable Object</p>
   <div class="panel blueprint" >
     <div style="display:flex;align-items:baseline;gap:10px"><h4 style="margin:0">Hosting</h4>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=loadAppsPanel()>Refresh</button></div>
@@ -341,10 +376,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-sharing>
-  <div class=sec-head>
-    <div><h6>Browser → Agent</h6><h3>katfs sharing</h3></div>
-    <span class="note text-muted">A folder from the browser you are sitting at, handed to the agents over P2P (iroh) · nothing is mounted into the microVM</span>
-  </div>
+  <p class=lede>A folder from the browser you are sitting at, handed to the agents over P2P (iroh) · nothing is mounted into the microVM</p>
   <div class="panel blueprint">
     
     <div id=katfs-status><span class=text-muted style="font-size:13px">checking…</span></div>
@@ -432,10 +464,7 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-secrets>
-  <div class=sec-head>
-    <div><h6>Runtime access</h6><h3>Secrets</h3></div>
-    <span class="note text-muted">Per template/instance: which keys the host may substitute into that agent's MCP servers · <b>raw to guest</b>: which of those an agent may fetch via <code>get_secret(name)</code> — default none, since the hub and the LLM key proxy exist · values never written to disk</span>
-  </div>
+  <p class=lede>Per template/instance: which keys the host may substitute into that agent's MCP servers · <b>raw to guest</b>: which of those an agent may fetch via <code>get_secret(name)</code> — default none, since the hub and the LLM key proxy exist · values never written to disk</p>
   <div class="banner blueprint" style="background:var(--color-neutral-100);margin:16px 0 20px;padding:9px 14px">
     
     <svg width=15 height=15 viewBox="0 0 24 24" fill=none stroke="var(--color-neutral-700)" stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
@@ -469,10 +498,7 @@ HTML_TOP = """</head><body>
 
 
 <section class="screen" id=s-architecture>
-  <div class=sec-head>
-    <div><h6>System</h6><h3>Architecture</h3></div>
-    <span class="note text-muted">every box below runs on this host, except the phone, the Halo glasses, the Linux desktop, the user PC and the external services &#183; app and desktop reach the manager over iroh (P2P), no public port</span>
-  </div>
+  <p class=lede>every box below runs on this host, except the phone, the Halo glasses, the Linux desktop, the user PC and the external services &#183; app and desktop reach the manager over iroh (P2P), no public port</p>
 
   <div class="panel blueprint" style="padding:18px">
     
@@ -864,8 +890,7 @@ HTML_BOTTOM = """
 </section>
 
 <section class="screen" id=s-settings style="max-width:640px">
-  <div style="margin-bottom:18px"><h6 style="color:var(--color-accent);margin:0 0 2px">Shared, persisted</h6><h3 style="margin:0">Settings</h3></div>
-  <p class=text-muted style="font-size:13px;margin-bottom:22px">Values apply to all new instances; empty template fields are pre-filled from here.</p>
+  <p class=lede>Shared and persisted · values apply to all new instances; empty template fields are pre-filled from here.</p>
   <div class="panel blueprint">
     
     <div class="banner blueprint" style="margin:0 0 16px;padding:9px 14px"><span id=voicestat class=text-muted style="font-size:12.5px">Voice: …</span></div>
@@ -883,20 +908,15 @@ HTML_BOTTOM = """
   </div>
 </section>
 
-</main>
-
 <footer class=appfoot>
   <span class=af-brand>kAIm56</span>
   <span class=af-stat>NAT via __HOSTIF__</span>
   <span class=af-stat>Pool __POOL__</span>
   <span class=af-stat id=spend></span>
   <span class=af-stat id=version></span>
-  <nav class=af-nav>
-    <a href="#changelog">Changelog</a>
-    <a href="#architecture">Architecture</a>
-    __CODE_LINK__
-  </nav>
+  __CODE_LINK__
 </footer>
+</main>
 </div>
 
 <div id=picker class=dialog-backdrop style="display:none;z-index:60">

@@ -6,6 +6,7 @@
 semantic vectors), the flat agent memory (memory.json) and the embedding
 client. Part of the mgr package; only needs BASE.
 """
+import bisect
 import json
 import os
 import re
@@ -364,6 +365,48 @@ def usage_by_model(since=0):
     for r in out:
         r["cost"] = round(r["cost"], 4)
     return out
+
+
+USAGE_RANGES = {"24h": 24, "7d": 7, "30d": 30}
+
+
+def _day_starts(n, now):
+    """Local midnights of the last n days, oldest first (today last)."""
+    y, mo, d = time.localtime(now)[:3]
+    return [int(time.mktime((y, mo, d - k, 0, 0, 0, 0, 0, -1))) for k in range(n - 1, -1, -1)]
+
+
+def usage_series(rng="24h", now=None):
+    """The Instances chart: tokens (in+out) per instance per bucket — hourly
+    for 24h, per local day for 7d/30d — plus the cost per day of the last 14
+    days. Task VMs fold into "tasks" like usage_by_model."""
+    now = int(now or time.time())
+    if rng == "24h":
+        hour = now - now % 3600
+        starts = [hour - 3600 * k for k in range(23, -1, -1)]
+    else:
+        starts = _day_starts(USAGE_RANGES[rng], now)
+    days = _day_starts(14, now)
+    series, cost = {}, [0.0] * len(days)
+    try:
+        with _hist_lock, _hist_conn() as c:
+            rows = c.execute(
+                "SELECT instance, CAST(ts/3600 AS INTEGER)*3600, "
+                "SUM(COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)), SUM(cost) "
+                "FROM llm_usage WHERE ts >= ? GROUP BY instance, CAST(ts/3600 AS INTEGER)",
+                (min(starts[0], days[0]),)).fetchall()
+    except Exception:
+        rows = []
+    for inst, hour, tok, cst in rows:
+        i = bisect.bisect_right(starts, hour) - 1
+        if i >= 0 and tok:
+            name = "tasks" if _EPHEMERAL_RE.match(inst or "") else (inst or "?")
+            series.setdefault(name, [0] * len(starts))[i] += tok
+        j = bisect.bisect_right(days, hour) - 1
+        if j >= 0:
+            cost[j] += cst or 0.0
+    return {"range": rng, "buckets": starts, "series": series,
+            "days": days, "cost": [round(x, 4) for x in cost]}
 
 
 def usage_for(instance, since=0):

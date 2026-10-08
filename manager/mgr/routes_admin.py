@@ -131,6 +131,12 @@ def _rt_usage_by_model(h):
     return h._json({"rows": _store.usage_by_model(since)})
 
 
+@_routes.ROUTER.get("/api/usage-series", admin=True)
+def _rt_usage_series(h):
+    rng = _routes._qs(h).get("range", ["24h"])[0]
+    return h._json(_store.usage_series(rng if rng in _store.USAGE_RANGES else "24h"))
+
+
 @_routes.ROUTER.get("/api/version", admin=True)
 def _rt_version(h):
     u = _about.update_check(force="force" in _routes._qs(h))

@@ -2195,6 +2195,38 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._skills.SKILLS_FILE = old
 
+    def test_usage_series_buckets(self):
+        """The Instances chart's data: tokens per instance per bucket (hourly for
+        24h, per day for 7d/30d), task VMs folded into "tasks", 14 days of cost;
+        an unknown range falls back to 24h; admin only (not in the user role)."""
+        m = self.m
+        import mgr.store as st
+        old = st.HISTORY_DB, st._migrated[0], st._turns_migrated[0]
+        tmp = tempfile.mkdtemp(prefix="e2e-useries-")
+        try:
+            st.HISTORY_DB, st._migrated[0], st._turns_migrated[0] = os.path.join(tmp, "history.db"), False, None
+            now = int(time.time())
+            for inst, pt, ct, cost, ts in (("orch", 100, 10, 0.5, now), ("orch", 1, 1, 0.0, now - 2 * 3600),
+                                           ("task-0a1b2c", 20, 2, 0.25, now), ("orch", 7, 0, 1.0, now - 40 * 86400)):
+                with st._hist_lock, st._hist_conn() as c:
+                    c.execute("INSERT INTO llm_usage(ts,instance,model,prompt_tokens,completion_tokens,cost) VALUES(?,?,?,?,?,?)",
+                              (ts, inst, "a/x", pt, ct, cost))
+            d = st.usage_series("24h", now)
+            self.assertEqual(len(d["buckets"]), 24)
+            self.assertEqual(d["series"]["orch"][-1], 110)
+            self.assertEqual(d["series"]["orch"][-3], 2)
+            self.assertEqual(d["series"]["tasks"][-1], 22)
+            self.assertEqual((len(d["days"]), d["cost"][-1]), (14, 0.75))       # the 40-day-old row is outside
+            d = st.usage_series("30d", now)
+            self.assertEqual(len(d["buckets"]), 30)
+            self.assertEqual(sum(d["series"]["orch"]), 112)
+            h = self._handler("/api/usage-series?range=bogus", "10.0.0.9"); h._do_GET()
+            body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual((body["range"], len(body["buckets"])), ("24h", 24))
+            self.assertFalse(m._auth.user_allowed("GET", "/api/usage-series"))
+        finally:
+            st.HISTORY_DB, st._migrated[0], st._turns_migrated[0] = old
+
     def test_skills_page_carries_no_contents(self):
         """Regression: the page inlined the COMPLETE skills.json. With the
         imported catalog (~870 KB) that would ship on every page load — only

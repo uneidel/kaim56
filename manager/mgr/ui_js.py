@@ -684,49 +684,141 @@ async function delTask(id){if(confirm('Delete task?')){await fetch('/api/tasks/'
 function fmtTok(n){n=n||0;
   return n>=1e6?(n/1e6).toFixed(1).replace(/\\.0$/,'')+'M'
        : n>=1000?(n/1000).toFixed(1).replace(/\\.0$/,'')+'k' : String(n)}
-function fmtCost(c){c=c||0; return '$'+(c>=0.01?c.toFixed(2):c.toFixed(4))}
+function fmtCost(c){c=c||0; return '$'+(c>=0.01||!c?c.toFixed(2):c.toFixed(4))}
 async function refreshUsage(){
   let u; try{u=await (await fetch('/api/usage')).json()}catch(e){return}
-  let day=0,all=0;
-  document.querySelectorAll('[data-usage]').forEach(el=>{
-    const v=u[el.dataset.usage]; if(!v)return;
-    el.textContent='Today '+fmtTok(v.today.in+v.today.out)+' tokens · '+fmtCost(v.today.cost)+
-      ' · Total '+fmtTok(v.total.in+v.total.out)+' · '+fmtCost(v.total.cost);
+  let day=0,all=0,tin=0,tout=0;
+  Object.values(u).forEach(v=>{const d=v.today||{},t=v.total||{};
+    day+=d.cost||0; all+=t.cost||0; tin+=d.in||0; tout+=d.out||0});
+  const cards=[...document.querySelectorAll('.icard')];
+  const tot=n=>{const t=(u[n]||{}).total||{};return (t.in||0)+(t.out||0)};
+  const mx=Math.max(1,...cards.map(c=>tot(c.dataset.name)));
+  cards.forEach(c=>{
+    const v=u[c.dataset.name]||{},d=v.today||{},t=v.total||{};
+    c.querySelector('.ic-today').textContent='Today '+fmtTok(d.in)+' / '+fmtTok(d.out);
+    c.querySelector('.ic-total').textContent='Total '+fmtTok(t.in)+' / '+fmtTok(t.out);
+    c.querySelector('.ic-cost').textContent=fmtCost(t.cost);
+    c.querySelector('.ic-bar').style.width=Math.round(tot(c.dataset.name)/mx*100)+'%';
+    c.querySelector('.ic-use').title=(t.calls||0)+' LLM calls · today '+fmtCost(d.cost);
   });
-  Object.values(u).forEach(v=>{day+=(v.today||{}).cost||0; all+=(v.total||{}).cost||0});
-  const f=document.getElementById('spend');
-  if(f)f.textContent='LLM today '+fmtCost(day)+' · total '+fmtCost(all);
+  document.getElementById('ktok').textContent=fmtTok(tin+tout);
+  document.getElementById('ktin').textContent=fmtTok(tin);
+  document.getElementById('ktout').textContent=fmtTok(tout);
+  document.getElementById('spend').textContent='LLM today '+fmtCost(day)+' · total '+fmtCost(all);
 }
 
-/* — tabs (hash-routed, so a reload after an action keeps the screen) — */
-const TABS=['instances','personas','skills','plugins','mcp','tasks','missions','projects','apps','policy','models','resources','sharing','secrets','settings','changelog','architecture'];
-/* 5 groups in the top bar, the pages of the active group as a second row;
-   the hashes stay per page, so old links and bookmarks keep working. */
-const GROUPS={agents:['instances','policy','resources'],knowledge:['personas','skills','plugins','mcp'],
-  work:['tasks','missions','projects'],apps:['apps','sharing'],system:['models','secrets','settings','changelog','architecture']};
-const TAB_LABEL={mcp:'MCP'};
+/* — Instances dashboard: fleet counts from the server-rendered cards — */
+const HOST_MEM_MIB=__HOSTMEM__;
+let FLEET_F='all';
+function fleetInit(){
+  const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
+  const run=n('run')+n('old'), off=n('off'), old=n('old'), on=cards.filter(c=>c.dataset.state!=='off');
+  const circ=2*Math.PI*34;
+  document.getElementById('kring').setAttribute('stroke-dasharray',
+    (cards.length?run/cards.length*circ:0).toFixed(1)+' '+circ.toFixed(1));
+  document.getElementById('krun').textContent=run;
+  document.getElementById('ktot').textContent=cards.length;
+  document.getElementById('navcnt').textContent=cards.length;
+  document.getElementById('krsub').textContent=off+' stopped · '+old+' outdated';
+  const cpu=on.reduce((a,c)=>a+(+c.dataset.cpu||0),0), mem=on.reduce((a,c)=>a+(+c.dataset.mem||0),0);
+  const pct=HOST_MEM_MIB?Math.min(100,Math.round(mem/HOST_MEM_MIB*100)):0;
+  document.getElementById('kcpu').textContent=cpu;
+  document.getElementById('kram').textContent=' vCPU · '+(mem/1024).toFixed(1)+' GiB';
+  document.getElementById('kmembar').style.width=pct+'%';
+  document.getElementById('kmemsub').textContent=HOST_MEM_MIB
+    ?pct+'% of '+(HOST_MEM_MIB/1024).toFixed(0)+' GiB host RAM':'host RAM unknown';
+  const cnt={all:cards.length,run,off,old};
+  document.querySelectorAll('#ffilt button').forEach(b=>b.lastElementChild.textContent=cnt[b.dataset.f]);
+  document.getElementById('ocount').textContent=old+(old===1?' instance':' instances');
+  document.getElementById('obanner').hidden=!old;
+}
+function fleetFilter(f){
+  FLEET_F=f;
+  document.querySelectorAll('#ffilt button').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
+  document.querySelectorAll('.icard').forEach(c=>{const st=c.dataset.state;
+    c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'));});
+}
+async function restartAll(){
+  for(const c of document.querySelectorAll('.icard[data-state=old]'))
+    await fetch('/api/instances/'+encodeURIComponent(c.dataset.name)+'/restart',{method:'POST'});
+  location.reload();
+}
+function newInstance(){
+  document.getElementById('newform').scrollIntoView({behavior:'smooth',block:'start'});
+  document.getElementById('nm').focus({preventScroll:true});
+}
+
+/* — token throughput: /api/usage-series, one area for the selection — */
+let SERIES=null, SERIES_RANGE='24h', CHART_SEL=[];
+const CHART_PAL=['var(--color-accent-800)','var(--color-accent-500)','var(--color-neutral-800)','var(--color-accent-400)'];
+async function loadSeries(r){
+  if(r)SERIES_RANGE=r;
+  try{SERIES=await (await fetch('/api/usage-series?range='+SERIES_RANGE)).json()}catch(e){return}
+  document.querySelectorAll('#crange button').forEach(b=>b.classList.toggle('on',b.dataset.r===SERIES_RANGE));
+  const c=SERIES.cost||[], mx=Math.max(0,...c)||1;
+  document.getElementById('kspend').textContent=fmtCost(c.reduce((a,b)=>a+b,0));
+  document.getElementById('kspendt').textContent='+'+fmtCost(c[c.length-1])+' today';
+  document.getElementById('kbars').innerHTML=c.map(v=>`<i style="height:${Math.round(v/mx*100)}%" title="${fmtCost(v)}"></i>`).join('');
+  renderChart();
+}
+function renderChart(){
+  if(!SERIES)return;
+  const W=1000,H=200,ser=SERIES.series||{},bk=SERIES.buckets||[],len=bk.length;
+  const sum=a=>a.reduce((x,y)=>x+y,0);
+  const names=Object.keys(ser).sort((a,b)=>sum(ser[b])-sum(ser[a]));
+  CHART_SEL=CHART_SEL.filter(n=>names.includes(n));
+  const sel=CHART_SEL.length?CHART_SEL:names;
+  const tot=bk.map((_,k)=>sel.reduce((a,n)=>a+ser[n][k],0));
+  const max=Math.max(1,...tot)*1.15;
+  const path=arr=>'M'+arr.map((v,k)=>(k*W/Math.max(1,len-1)).toFixed(1)+','+(H-v/max*H).toFixed(1)).join(' L');
+  const col=n=>CHART_PAL[names.indexOf(n)%CHART_PAL.length];
+  const line=path(tot);
+  document.getElementById('cplot').innerHTML=
+    `<path d="${line} L${W},${H} L0,${H} Z" fill="url(#cfill)"></path>`+
+    `<path d="${line}" fill=none stroke="var(--color-accent-700)" stroke-width=2 vector-effect=non-scaling-stroke></path>`+
+    (CHART_SEL.length&&sel.length>1?sel.map(n=>`<path d="${path(ser[n])}" fill=none stroke="${col(n)}" stroke-width=1.25 stroke-dasharray="4 3" vector-effect=non-scaling-stroke></path>`).join(''):'');
+  const chip=(on,n,label,color)=>`<button data-n="${esc(n)}"${on?' class=on':''}><i style="background:${color}"></i>${escT(label)}</button>`;
+  document.getElementById('cchips').innerHTML=chip(!CHART_SEL.length,'','All instances','var(--color-accent-700)')+
+    names.map(n=>chip(CHART_SEL.includes(n),n,n,col(n))).join('');
+  document.getElementById('ctot').textContent=fmtTok(sum(tot));
+  document.getElementById('cscope').textContent=CHART_SEL.length?'tokens · '+CHART_SEL.join(', '):'tokens across all instances';
+  document.getElementById('cyt').innerHTML=[3,2,1,0].map(q=>`<span>${fmtTok(Math.round(max*q/3))}</span>`).join('');
+  /* x labels at real bucket positions: every 6h / every day / every week, plus the newest */
+  const day=SERIES_RANGE!=='24h', step={'24h':6,'7d':1,'30d':7}[SERIES_RANGE]||1, idx=[];
+  for(let k=0;k<=len-1-step/2;k+=step)idx.push(k);
+  if(len)idx.push(len-1);
+  const lbl=k=>{if(k===len-1)return day?'today':'now';const d=new Date(bk[k]*1000);
+    return !day?String(d.getHours()).padStart(2,'0')+':00'
+      :SERIES_RANGE==='7d'?d.toLocaleDateString(undefined,{weekday:'short'}):d.toLocaleDateString(undefined,{day:'numeric',month:'short'})};
+  document.getElementById('cxl').innerHTML=idx.map(k=>`<span style="left:${(k/Math.max(1,len-1)*100).toFixed(2)}%">${escT(lbl(k))}</span>`).join('');
+}
+function chartPick(n){
+  CHART_SEL=!n?[]:CHART_SEL.includes(n)?CHART_SEL.filter(x=>x!==n):CHART_SEL.concat([n]);
+  renderChart();
+}
+
+/* — navigation: hash-routed pages in the sidebar (a reload after an action keeps the page) — */
+const NAV=[...document.querySelectorAll('#nav a')];
+const TABS=NAV.map(a=>a.hash.slice(1));
 function showTab(t){
   if(TABS.indexOf(t)<0)t='instances';
   TABS.forEach(x=>document.getElementById('s-'+x).classList.toggle('on',x===t));
-  const g=Object.keys(GROUPS).find(k=>GROUPS[k].includes(t));
-  document.querySelectorAll('#tabs a').forEach(a=>{
-    if(a.dataset.g===g)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  document.getElementById('subtabs').innerHTML=GROUPS[g].map(x=>
-    `<a href="#${x}"${x===t?' aria-current=page':''}>${TAB_LABEL[x]||x[0].toUpperCase()+x.slice(1)}</a>`).join('');
-  document.querySelectorAll('.af-nav a').forEach(a=>{
-    if(a.getAttribute('href')==='#'+t)a.setAttribute('aria-current','page');
-    else a.removeAttribute('aria-current');});
-  /* the row scrolls without a visible bar: keep the active tab in view */
-  const cur=document.querySelector('#tabs a[aria-current=page]');
-  if(cur&&cur.scrollIntoView)cur.scrollIntoView({inline:'nearest',block:'nearest'});
-  tabsFade();
+  NAV.forEach(a=>{
+    if(a.hash!=='#'+t){a.removeAttribute('aria-current');return;}
+    a.setAttribute('aria-current','page');
+    document.getElementById('ptitle').textContent=a.firstElementChild.textContent;
+    document.getElementById('pgroup').textContent=a.closest('.navgrp').firstElementChild.textContent;
+  });
+  document.getElementById('newinst').hidden=t!=='instances';
+  navToggle(false);
 }
-/* a faded right edge says "more tabs" while the row overflows */
-function tabsFade(){const n=document.getElementById('tabs');if(!n)return;
-  n.classList.toggle('more',n.scrollWidth-n.clientWidth>2&&n.scrollLeft+n.clientWidth<n.scrollWidth-2);}
-window.addEventListener('resize',tabsFade);
-document.getElementById('tabs').addEventListener('scroll',tabsFade,{passive:true});
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
+/* below 860px the sidebar is a drawer */
+function navToggle(on){document.body.classList.toggle('navopen',!!on)}
+/* several pages hold an element whose id equals the hash: start a page at its top, not there */
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);scrollTo(0,0);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
+document.getElementById('crange').onclick=e=>{const b=e.target.closest('[data-r]');if(b)loadSeries(b.dataset.r)};
+document.getElementById('cchips').onclick=e=>{const b=e.target.closest('[data-n]');if(b)chartPick(b.dataset.n)};
+document.getElementById('ffilt').onclick=e=>{const b=e.target.closest('[data-f]');if(b)fleetFilter(b.dataset.f)};
 
 /* — Projects: one folder set, joined by instances with a role (mgr/projects.py) — */
 let PROJECTS=[], PJ_EDIT='', PJ_INSTS=[];
@@ -1569,8 +1661,6 @@ function copyKey(){
   if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(inp.value).then(done,()=>{inp.select()});
   else{inp.select();try{document.execCommand('copy');done()}catch(e){h.textContent='select + copy manually'}}
 }
-/* one ⋮ menu open at a time; a click elsewhere closes it */
-document.addEventListener('click',e=>document.querySelectorAll('details.imenu[open]').forEach(d=>{if(!d.contains(e.target))d.open=false}));
 async function act(n,a){await fetch(`/api/instances/${n}/${a}`,{method:'POST'});location.reload()}
 async function togglePersist(n,on){
   const r=await fetch(`/api/instances/${n}/persist`,{method:'POST',
@@ -1650,7 +1740,7 @@ function saveSecrets(){
 window.onload=()=>{
   showTab(location.hash.slice(1));
   renderSettings();renderParams();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
-  refreshUsage();
+  fleetInit();refreshUsage();loadSeries();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a
   // long-fixed problem was current). Refresh every 15s, but only for the
@@ -1663,7 +1753,7 @@ window.onload=()=>{
     else if(t==='projects'&&!PJ_EDIT)loadProjects();
     else if(t==='policy')loadPolicy(true);
     else if(t==='resources')loadResources();
-    else if(t==='instances')refreshUsage();
+    else if(t==='instances'){refreshUsage();loadSeries();}
   },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};
   // Remember ticks without rebuilding the whole table on every click.
@@ -1758,13 +1848,14 @@ document.addEventListener('click',e=>{
 notifPoll();
 /* — who is logged in (OIDC only) and, for the admin, the session list — */
 function whoLogout(){const w=document.getElementById('whoami');if(confirm(`${w.dataset.who}\n\nLog out?`))location.href='/auth/logout'}
+/* The sidebar shows "Admin · basic" unless an OIDC login says who it is. */
 async function loadMe(){
   let d={};try{d=await (await fetch('/api/auth/me')).json()}catch(e){return}
   if(!d.oidc||!d.name)return;
-  /* One bell-sized button, not a text block: the tab bar keeps its width. */
-  const w=document.getElementById('whoami');w.hidden=false;
-  w.textContent=(d.name.trim()[0]||'?').toUpperCase();
-  w.title=w.dataset.who=`${d.name} · ${d.role}`;w.setAttribute('aria-label',w.title+' — log out');
+  document.getElementById('uname').textContent=d.name;
+  document.getElementById('urole').textContent=d.role||'';
+  document.getElementById('uavatar').textContent=(d.name.trim()[0]||'?').toUpperCase();
+  const w=document.getElementById('whoami');w.hidden=false;w.dataset.who=`${d.name} · ${d.role}`;
   if(d.role==='admin')loadSessions();
 }
 async function loadSessions(){

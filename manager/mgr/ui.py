@@ -22,7 +22,6 @@ from mgr import paths as _paths
 from mgr import personas as _personas
 from mgr import settings as _settings
 from mgr import skills as _skills
-from mgr import store as _store
 from mgr import util as _util
 from mgr import vm as _vm
 
@@ -30,9 +29,8 @@ PAGE = CSS + HTML_TOP + ARCH_SVG + HTML_BOTTOM + JS
 
 
 # ---- Brand ------------------------------------------------------------------
-# logo.svg is kept as a file (favicon, shared elsewhere). For the header mark
-# the navy inherits the text color so it carries in both the light and the dark
-# theme; the turquoise stays the accent.
+# logo.svg is kept as a file (favicon, the chat page's header mark). The navy
+# inherits the text color so it carries on any ground; the turquoise stays the accent.
 BRAND = "kAIm56"
 LOGO_FILE = os.path.join(_paths.BASE, "logo.svg")
 try:
@@ -45,22 +43,17 @@ LOGO_INLINE = (LOGO_SVG.replace("#1D2A4D", "currentColor")
                                 'width="26" height="26" class=mark')
                        .replace("\n", "").strip())
 
-# Icons for the server-side rendered instance rows (Feather style, 14px).
-_SVG = ('<svg width=14 height=14 viewBox="0 0 24 24" fill=none stroke=currentColor '
+# Icons for the server-side rendered instance cards (Feather style).
+_SVG = ('<svg width=%d height=%d viewBox="0 0 24 24" fill=none stroke=currentColor '
         'stroke-width=1.5 stroke-linecap=round stroke-linejoin=round>%s</svg>')
-IC_TERM = _SVG % '<polyline points="4 17 10 11 4 5"></polyline><line x1=12 y1=19 x2=20 y2=19></line>'
-IC_CHAT = _SVG % '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>'
-IC_FILES = _SVG % ('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9'
+IC_TERM = _SVG % (14, 14, '<path d="m4 17 6-6-6-6M12 19h8"></path>')
+IC_CHAT = _SVG % (14, 14, '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>')
+IC_UPD = _SVG % (14, 14, '<path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M8 16H3v5"></path>')
+IC_AUDIT = _SVG % (16, 16, '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>'
+                   '<path d="M14 2v5h6M16 13H8M16 17H8M10 9H8"></path>')
+IC_FILES = _SVG % (16, 16, '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9'
                    'A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>')
-IC_DEL = _SVG % ('<path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>'
-                 '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>')
-# small folder icon (12px) for the mount rows — instead of 📁 (emoji tofus without an emoji font)
-IC_AUDIT = _SVG % ('<path d="M4 5h16M4 12h16M4 19h10"></path>'
-                   '<circle cx="19" cy="19" r="2.4"></circle><path d="M22 22l-1.3-1.3"></path>')
-IC_FILES2 = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.6 '
-             'stroke-linecap=round stroke-linejoin=round style="vertical-align:-1px"><path d="M4 20h16a2 '
-             '2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 '
-             '2v13a2 2 0 0 0 2 2Z"></path></svg>')
+IC_DEL = _SVG % (16, 16, '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>')
 
 
 def h(v):
@@ -72,112 +65,77 @@ def h(v):
     return html.escape(str(v if v is not None else ""), quote=True)
 
 
-def _fmt_tok(n):
-    n = int(n or 0)
-    if n >= 1_000_000:
-        return f"{n/1_000_000:.1f}M".replace(".0M", "M")
-    if n >= 1000:
-        return f"{n/1000:.1f}k".replace(".0k", "k")
-    return str(n)
-
-
-def _fmt_cost(c):
-    c = float(c or 0.0)
-    return f"${c:.2f}" if c >= 0.01 else f"${c:.4f}"
+def _card(inst):
+    """One fleet card. Usage numbers (today/total, spend, bar) are filled by
+    refreshUsage() in the page script, which also keeps them live."""
+    name = inst["name"]
+    cfg = inst.get("config") or {}
+    run = _instances.is_running(inst)
+    stale, built, started = _vm.image_state(inst)
+    state = "old" if run and stale else "run" if run else "off"
+    if state == "old":
+        pill = ("<span class=ipill title='started " + time.strftime("%d.%m. %H:%M", time.localtime(started))
+                + ", image rebuilt " + time.strftime("%d.%m. %H:%M", time.localtime(built))
+                + " — runs the old agent until restarted'>Outdated</span>")
+    else:
+        pill = f"<span class=ipill>{'Running' if run else 'Stopped'}</span>"
+    transport = cfg.get("TRANSPORT", "signal")
+    tpl = inst.get("template", "")
+    desc = inst.get("description") or " · ".join(x for x in (tpl, transport) if x)
+    model = next((cfg[k] for k in _instances.MODEL_KEYS if cfg.get(k)), "")
+    prov = h(" / ".join(x for x in (tpl, model) if x))
+    # The model box opens the model-switch dialog (editModel in the page script).
+    model_box = (f"<button class=ic-model title='Change model' onclick=\"editModel('{name}')\">{prov}</button>"
+                 if model else f"<div class=ic-model>{prov}</div>")
+    net = inst.get("internet", True)
+    chips = (f"<button class=chip title='Toggle internet access' "
+             f"onclick=\"toggleNet('{name}',{str(not net).lower()})\">{'Internet on' if net else 'Offline'}</button>")
+    if _vm.is_overlay(inst):
+        pers = bool(inst.get("persist_disk"))
+        chips += (f"<button class=chip title='{'Persistent disk: installations survive stop/start — right-click: reset disk' if pers else 'Fresh disk on every start — click: make persistent'}' "
+                  f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
+                  f"oncontextmenu=\"return diskReset('{name}')\">{'Persistent' if pers else 'Fresh per start'}</button>")
+    tools = cfg.get("AGENT_TOOLS", "")
+    if tools:
+        chips += f"<span class=chip title='{h(tools)}'>{len(tools.split(','))} tools</span>"
+    mounts = "".join(
+        f"<div class=ic-mnt>{h(m.get('host'))} → {h(m.get('guest'))}{' (ro)' if m.get('readonly') else ''}</div>"
+        for m in inst.get("mounts", []) or [])
+    acts = ""
+    if state == "old":
+        acts += f"<button class='btn btn-primary' onclick=\"act('{name}','restart')\">{IC_UPD}Update</button>"
+    if transport == "web":
+        acts += f"<a class='btn btn-secondary' href=\"/chat?i={name}\" title='Chat with the agent'>{IC_CHAT}Chat</a>"
+    if run:
+        acts += (f"<a class='btn btn-secondary' href=\"/i/{name}/term/\" target=_blank title='Browser terminal'>"
+                 f"{IC_TERM}Terminal</a>")
+    acts += (f"<button class='btn btn-{'secondary' if run else 'primary'}' "
+             f"onclick=\"act('{name}','{'stop' if run else 'start'}')\">{'Stop' if run else 'Start'}</button>")
+    acts += (f"<div class=ic-icons>"
+             f"<button class='btn btn-icon' title=Activity aria-label=Activity onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>"
+             f"<button class='btn btn-icon' title=Folders aria-label=Folders onclick=\"editMounts('{name}')\">{IC_FILES}</button>"
+             f"<button class='btn btn-icon' title=Delete aria-label=Delete onclick=\"del('{name}')\">{IC_DEL}</button></div>")
+    return (f"<article class=icard data-name='{h(name)}' data-state={state} "
+            f"data-cpu='{int(inst.get('vcpus', 2))}' data-mem='{int(inst.get('mem_mib', 1024))}'>"
+            f"<div class=ic-body><div class=ic-head><div class=ic-id><div class=ic-av>{h(name[:1].upper())}</div>"
+            f"<div style='min-width:0'><div class=ic-name>{h(name)}</div><div class=ic-desc>{h(desc)}</div></div></div>{pill}</div>"
+            f"{model_box}"
+            f"<div class=ic-stats><div><div class=ic-k>vCPU / RAM</div><div class=ic-v>{int(inst.get('vcpus', 2))} / {int(inst.get('mem_mib', 1024))} MiB</div></div>"
+            f"<div><div class=ic-k>Guest IP</div><div class='ic-v mono'>{h(_instances.net_of(inst)['guest'])}</div></div>"
+            f"<div><div class=ic-k>Spend</div><div class='ic-v ic-cost'>—</div></div></div>"
+            f"<div class=ic-use><div class=ic-usel><span class=ic-today>Today 0</span><span class=ic-total>Total 0</span></div>"
+            f"<div class=track><i class=ic-bar></i></div></div>"
+            f"<div class=ic-chips>{chips}</div>{mounts}</div>"
+            f"<div class=ic-acts>{acts}</div></article>")
 
 
 def render():
-    rows = ""
-    usage = _store.usage_summary()
-    for inst in _instances.load_instances():
-        n = _instances.net_of(inst)
-        run = _instances.is_running(inst)
-        name = inst["name"]
-        transport = (inst.get("config") or {}).get("TRANSPORT", "signal")
-        cfgm = inst.get("config") or {}
-        model = next((cfgm[k] for k in _instances.MODEL_KEYS if cfgm.get(k)), "")
-        sub = " · ".join(x for x in (inst.get("template", ""), transport) if x)
-        _chip = ('<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor '
-                 'stroke-width=1.6 stroke-linecap=round stroke-linejoin=round style="vertical-align:-1px">'
-                 '<rect x=6 y=6 width=12 height=12 rx="1"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2'
-                 'M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>')
-        # The chip is clickable: opens the model-switch dialog (editModel in PAGE JS).
-        model_line = (f"<button class='mono' style=\"font-size:12px;color:var(--color-accent-700);"
-                      f"display:inline-flex;align-items:center;gap:5px;background:none;border:none;"
-                      f"padding:0;cursor:pointer;text-align:left\" title=\"Change model\" "
-                      f"onclick=\"editModel('{name}')\">{_chip}{h(model)}</button>"
-                      if model else "")
-        u = usage.get(name) or {}
-        ut, ud = u.get("total") or {}, u.get("today") or {}
-        usage_line = (f"<span class=imeta data-usage='{name}' title='LLM usage reported by this agent "
-                      f"({ut.get('calls', 0)} calls; in / out today {_fmt_tok(ud.get('in'))} / {_fmt_tok(ud.get('out'))}, "
-                      f"total {_fmt_tok(ut.get('in'))} / {_fmt_tok(ut.get('out'))})'>"
-                      + (f"Today {_fmt_tok((ud.get('in') or 0) + (ud.get('out') or 0))} tokens · {_fmt_cost(ud.get('cost'))}"
-                         f" · Total {_fmt_tok((ut.get('in') or 0) + (ut.get('out') or 0))} · {_fmt_cost(ut.get('cost'))}"
-                         if ut.get("calls") else "") + "</span>")
-        # Hierarchy: name + state first, then resources, usage, actions. Colour
-        # only for state: running = accent, an outdated image = warn (with the
-        # fix next to it); red stays reserved for real errors.
-        stale, built, started = _vm.image_state(inst)
-        st = ("<span class='ipill on'>● Running</span>" if run else "<span class=ipill>○ Stopped</span>")
-        upd = ""
-        if run and stale:
-            upd = ("<button class='ichip warn' title='started "
-                   + time.strftime("%d.%m. %H:%M", time.localtime(started))
-                   + ", image rebuilt " + time.strftime("%d.%m. %H:%M", time.localtime(built))
-                   + f" — runs the old agent until restarted. Click: restart with the update' "
-                     f"onclick=\"act('{name}','restart')\">↻ Update available</button>")
-        net = inst.get("internet", True)
-        tools_cfg = (inst.get("config") or {}).get("AGENT_TOOLS", "")
-        chips = (f"<button class=ichip title='Toggle internet access' "
-                 f"onclick=\"toggleNet('{name}',{str(not net).lower()})\">{'Internet' if net else 'Offline'}</button>")
-        if _vm.is_overlay(inst):
-            pers = bool(inst.get("persist_disk"))
-            chips += (f"<button class=ichip title='{'Persistent disk: installations survive stop/start — right-click: reset disk' if pers else 'Fresh disk on every start — click: make persistent'}' "
-                      f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
-                      f"oncontextmenu=\"return diskReset('{name}')\">{'Persistent' if pers else 'Fresh per start'}</button>")
-        if tools_cfg:
-            chips += f"<span class=ichip title='{h(tools_cfg)}'>{len(tools_cfg.split(','))} tools</span>"
-        mem = inst.get("mem_mib", 1024)
-        res = (f"{inst.get('vcpus', 2)} CPU · {mem / 1024:.1f}".rstrip("0").rstrip(".") + f" GB · {n['guest']}")
-        # Two direct actions (Chat first: it is what the instance is for), the
-        # rest in the ⋮ menu. A stopped instance shows Start instead of Terminal.
-        btn = ""
-        if transport == "web":
-            btn += (f"<a href=\"/chat?i={name}\" class=\"btn btn-primary btn-sm\" title=\"Chat with the agent\">"
-                    f"{IC_CHAT}Chat</a>")
-        if run:
-            btn += (f"<a href=\"/i/{name}/term/\" target=_blank class=\"btn btn-ghost btn-sm\" title=\"Browser terminal\">"
-                    f"{IC_TERM}Terminal</a>")
-        else:
-            btn += f"<button class=\"btn btn-secondary btn-sm\" onclick=\"act('{name}','start')\">Start</button>"
-        menu = ""
-        if run:
-            menu += f"<button onclick=\"act('{name}','stop')\">Stop instance</button>"
-            menu += (f"<button onclick=\"act('{name}','restart')\">"
-                     f"{'Restart with update' if stale else 'Restart'}</button>")
-        menu += f"<button onclick=\"openActivity('{name}')\">{IC_AUDIT}Activity</button>"
-        menu += f"<button onclick=\"editMounts('{name}')\">{IC_FILES}Folders</button>"
-        menu += f"<button class=danger onclick=\"del('{name}')\">{IC_DEL}Delete</button>"
-        btn += (f"<details class=imenu><summary class=\"btn btn-ghost btn-sm\" aria-label=\"More actions\" "
-                f"title=\"More actions\">⋮</summary><div class=imenu-pop>{menu}</div></details>")
-        mtxt = "".join(
-            f"<span class=imeta>{IC_FILES2} {h(m.get('host'))} → {h(m.get('guest'))}{' (ro)' if m.get('readonly') else ''}</span>"
-            for m in inst.get("mounts", []) or [])
-        rows += (f"<article class=irow>"
-                 f"<div class=imain>"
-                 f"<div class=ititle><span class=iname>{name}</span>{st}{upd}</div>"
-                 f"<div class=isub>{h(inst.get('description', '') or sub)}"
-                 f"{(' · ' + h(sub)) if inst.get('description') else ''}</div>"
-                 f"<div class=ichips>{chips}{model_line}</div>"
-                 f"{usage_line}{mtxt}</div>"
-                 f"<div class=iside><span class='ires mono'>{res}</span>"
-                 f"<div class=acts>{btn}</div></div></article>")
+    rows = "".join(_card(i) for i in _instances.load_instances())
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
     empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — create one below</p>"
-    return (PAGE.replace("__LOGO__", LOGO_INLINE)
-                .replace("__ROWS__", rows or empty)
+    return (PAGE.replace("__ROWS__", rows or empty)
+                .replace("__HOSTMEM__", str(_host.mem_total_mib()))
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
                 .replace("__TPLJSON__", _util.js_json(_instances.load_templates()))
                 .replace("__SETTINGS__", _util.js_json(_settings.settings_for_ui()))

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-08
+- UI: new dark design — left sidebar (5 groups, user + bell + logout), page header, Instances as a dashboard (KPI tiles, token chart from new admin-only `GET /api/usage-series`, filterable fleet cards, restart-all for outdated images).
 - UI: instances as rows (name + state → resources → usage → Chat/Terminal + ⋮ menu); outdated image = orange "Update available" with restart.
 - UI: 15 tabs grouped into 5 (Agents · Knowledge · Work · Apps · System) with a second row for the pages; page hashes unchanged.
 
