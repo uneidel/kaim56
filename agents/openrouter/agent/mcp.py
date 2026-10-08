@@ -8,13 +8,37 @@ Part of the openrouter agent package (runs inside the VM): no import from the pa
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import base64
 import json
 import os
 import subprocess
+import time
 import urllib.error
 
 from . import config as _config
 from . import mgrclient as _mgrclient
+
+
+def _content_text(r):
+    """An MCP tool result as text for the model. Images (a browser screenshot)
+    become files in the workspace — base64 would only flood the context — and
+    the text names the path, so the agent can send or embed it."""
+    parts = []
+    for c in r.get("content", []):
+        if c.get("type") == "text":
+            parts.append(c.get("text", ""))
+        elif c.get("type") == "image" and c.get("data"):
+            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(c.get("mimeType"), "bin")
+            d = os.path.join(_config.WORKDIR, "screenshots")
+            try:
+                os.makedirs(d, exist_ok=True)
+                path = os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}-{len(os.listdir(d))}.{ext}")
+                with open(path, "wb") as fh:
+                    fh.write(base64.b64decode(c["data"]))
+                parts.append(f"[image saved: {path}]")
+            except (OSError, ValueError) as e:
+                parts.append(f"[image not saved: {e!r}]")
+    return "\n".join(parts) or json.dumps(r)[:_config.MAX_TOOL_OUT]
 
 
 # --- MCP (stdio) ------------------------------------------------------------
@@ -55,9 +79,7 @@ class MCP:
         return self._rpc("tools/list", {}).get("tools", [])
 
     def call(self, tool, args):
-        r = self._rpc("tools/call", {"name": tool, "arguments": args})
-        parts = [c.get("text", "") for c in r.get("content", []) if c.get("type") == "text"]
-        return "\n".join(parts) or json.dumps(r)[:_config.MAX_TOOL_OUT]
+        return _content_text(self._rpc("tools/call", {"name": tool, "arguments": args}))
 
 
 class HubMCP:
@@ -93,9 +115,7 @@ class HubMCP:
         return self._rpc("tools/list", {}).get("tools", [])
 
     def call(self, tool, args):
-        r = self._rpc("tools/call", {"name": tool, "arguments": args})
-        parts = [c.get("text", "") for c in r.get("content", []) if c.get("type") == "text"]
-        return "\n".join(parts) or json.dumps(r)[:_config.MAX_TOOL_OUT]
+        return _content_text(self._rpc("tools/call", {"name": tool, "arguments": args}))
 
 
 _mcp = {}      # server-name -> MCP

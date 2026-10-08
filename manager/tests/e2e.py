@@ -252,6 +252,27 @@ class AgentLogic(unittest.TestCase):
         exec(block, g)
         return g
 
+    def test_mcp_image_result_becomes_a_workspace_file(self):
+        """A browser screenshot from an MCP server (image content) is written
+        to <workspace>/screenshots/ and the model gets the path, not base64."""
+        a = self.a
+        tmp = tempfile.mkdtemp(prefix="e2e-mcpimg-")
+        old = a._config.WORKDIR
+        a._config.WORKDIR = tmp
+        try:
+            png = base64.b64encode(b"\x89PNG fake").decode()
+            out = a._mcp._content_text({"content": [{"type": "text", "text": "shot"},
+                                                     {"type": "image", "mimeType": "image/png", "data": png}]})
+            path = re.search(r"\[image saved: (.+?)\]", out).group(1)
+            self.assertTrue(out.startswith("shot\n"))
+            self.assertTrue(path.startswith(os.path.join(tmp, "screenshots")) and path.endswith(".png"))
+            self.assertEqual(open(path, "rb").read(), b"\x89PNG fake")
+            self.assertNotIn(png, out)
+            self.assertIn("not saved", a._mcp._content_text({"content": [{"type": "image", "data": "!!notb64"}]}))
+        finally:
+            a._config.WORKDIR = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_bare_mcp_tool_name_resolves_when_unique(self):
         """gemini dropped the 'mrmusic__' prefix and got 'unknown tool'. A bare
         name resolves when exactly one MCP tool matches; two candidates stay

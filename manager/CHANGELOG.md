@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-08
+- MCP `browser`: headless Chromium (Playwright MCP 0.0.83) in the hub; agents store MCP images as `workspace/screenshots/*.png`.
 - OIDC: web login stays 30 days (persistent cookie, sliding); an unreachable IdP no longer ends sessions; no refresh token = no re-check.
 - UI: new dark design — left sidebar (5 groups, user + bell + logout), page header, Instances as a dashboard (KPI tiles, token chart from new admin-only `GET /api/usage-series`, filterable fleet cards, restart-all for outdated images).
 - UI: instances as rows (name + state → resources → usage → Chat/Terminal + ⋮ menu); outdated image = orange "Update available" with restart.
