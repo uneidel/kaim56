@@ -5766,7 +5766,7 @@ class ManagerFunctions(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="e2e-oidc-")
         o = m._oidc
         old = (o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET, m._sessions.DB, m._audit.AUDIT_DIR,
-               m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._store.TASKS_FILE)
+               m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._chats.TOMBSTONES_FILE, m._store.TASKS_FILE)
         o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET = st["iss"], "kaim56", "csecret"
         o._disc.update(ts=0.0, doc=None); o._pending.clear(); o._devices.clear()
         m._sessions.DB = os.path.join(tmp, "sessions.db")
@@ -5775,13 +5775,14 @@ class ManagerFunctions(unittest.TestCase):
         m._guests.instance_by_ip = lambda ip: None
         m._auth.PW = ""
         m._chats.CHATS_FILE = os.path.join(tmp, "chats.json")
+        m._chats.TOMBSTONES_FILE = os.path.join(tmp, "tombs.json")
         m._store.TASKS_FILE = os.path.join(tmp, "tasks.json")
         m._auth._auth_fails.clear(); m._auth._rate.clear()
 
         def cleanup():
             srv.shutdown(); srv.server_close()
             (o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET, m._sessions.DB, m._audit.AUDIT_DIR,
-             m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._store.TASKS_FILE) = old
+             m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._chats.TOMBSTONES_FILE, m._store.TASKS_FILE) = old
             o._disc.update(ts=0.0, doc=None)
             m._auth._auth_fails.clear(); m._auth._rate.clear()
         self.addCleanup(cleanup)
