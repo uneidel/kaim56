@@ -33,7 +33,7 @@ HTML_TOP = """</head><body>
     <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
     <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
   </div>
-  <span id=whoami class=text-muted style="flex:none;margin-left:14px;font-size:12.5px" hidden></span>
+  <button class=nbell id=whoami style="font-size:13px;font-weight:600" onclick=whoLogout() hidden></button>
 </div></header>
 <main>
 

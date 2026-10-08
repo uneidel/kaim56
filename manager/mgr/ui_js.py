@@ -1746,11 +1746,14 @@ document.addEventListener('click',e=>{
 });
 notifPoll();
 /* — who is logged in (OIDC only) and, for the admin, the session list — */
+function whoLogout(){const w=document.getElementById('whoami');if(confirm(`${w.dataset.who}\n\nLog out?`))location.href='/auth/logout'}
 async function loadMe(){
   let d={};try{d=await (await fetch('/api/auth/me')).json()}catch(e){return}
   if(!d.oidc||!d.name)return;
+  /* One bell-sized button, not a text block: the tab bar keeps its width. */
   const w=document.getElementById('whoami');w.hidden=false;
-  w.innerHTML=`${escT(d.name)} · ${escT(d.role)} · <a href="/auth/logout">Logout</a>`;
+  w.textContent=(d.name.trim()[0]||'?').toUpperCase();
+  w.title=w.dataset.who=`${d.name} · ${d.role}`;w.setAttribute('aria-label',w.title+' — log out');
   if(d.role==='admin')loadSessions();
 }
 async function loadSessions(){

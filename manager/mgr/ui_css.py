@@ -148,6 +148,7 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .af-nav a{color:var(--color-neutral-600);text-decoration:none;font-size:13px}
 .af-nav a:hover,.af-nav a[aria-current=page]{color:var(--color-accent)}
 .nbell{position:relative;flex:none;margin-left:14px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:1px solid var(--color-divider);border-radius:10px;background:var(--color-surface);color:var(--color-neutral-700);cursor:pointer}
+#whoami[hidden]{display:none}
 .nbell:hover{border-color:var(--color-accent);color:var(--color-accent)}
 .nbadge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--color-accent-700);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center}
 ::-webkit-scrollbar{width:9px;height:9px}

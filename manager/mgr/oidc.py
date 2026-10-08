@@ -62,7 +62,8 @@ def _call(url, form=None, bearer=None):
             err = f"http {e.code}"
         raise OIDCError(str(err)[:80]) from None
     except (OSError, ValueError) as e:
-        raise OIDCError(f"idp unreachable ({type(e).__name__})") from None
+        why = getattr(e, "reason", None) or e           # URLError: the socket/DNS/TLS cause
+        raise OIDCError(f"idp unreachable ({type(e).__name__}: {str(why)[:80]})") from None
 
 
 def _client():
