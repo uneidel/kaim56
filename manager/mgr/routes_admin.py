@@ -29,6 +29,7 @@ from mgr import browse as _browse
 from mgr import chats as _chats
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat
+from mgr import guestproxy as _guestproxy
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
 from mgr import katfs as _katfs
@@ -730,7 +731,7 @@ def _rt_models_save(h):
 
 @_routes._msg_route("POST", "/api/chats")
 def _rt_chats_merge(h):
-    n = _chats.merge_chats(h._body(default=[]))
+    n = _chats.merge_chats(h._body(default=[]), by=_guestproxy._speaker(h))
     try:
         _tasks.orchestrator_ping()   # new app/web message -> orchestrator immediately
     except Exception:
@@ -757,7 +758,8 @@ def _rt_tasks_create(h):
         return "model/max_steps apply to ephemeral tasks only"
     if not 0 <= max_steps <= 50:
         return "max_steps must be 1-50"
-    t = _store.add_task(target, b.get("message", ""), b.get("schedule", ""), model=model, max_steps=max_steps)
+    t = _store.add_task(target, b.get("message", ""), b.get("schedule", ""), model=model, max_steps=max_steps,
+                        by=_guestproxy._speaker(h))
     return f"task {t['id']} created ({t['status']})"
 
 

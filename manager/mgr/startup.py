@@ -16,6 +16,7 @@ from mgr import host as _host
 from mgr import instances as _instances
 from mgr import mcp as _mcp
 from mgr import notify as _notify
+from mgr import oidc as _oidc
 from mgr import paths as _paths
 from mgr import secrets as _secrets
 from mgr import settings as _settings
@@ -113,7 +114,7 @@ def warn_if_open():
     behind a reverse proxy that enforces one — on 2026-10-02 it did not, and
     the admin API was open to the internet. Say so loudly at every start: in
     the log and as a notification (bell, app). True when it warned."""
-    if _auth.PW:
+    if _auth.PW or _oidc.enabled():
         return False
     print("[SECURITY] MANAGER_PASS is empty: the manager accepts every request without a login. "
           "Set it in /etc/kaim56.env (unit EnvironmentFile) unless a proxy enforces one.", flush=True)

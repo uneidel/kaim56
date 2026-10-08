@@ -1745,4 +1745,27 @@ document.addEventListener('click',e=>{
   if(p&&!p.hidden&&!p.contains(e.target)&&b&&!b.contains(e.target))p.hidden=true;
 });
 notifPoll();
+/* — who is logged in (OIDC only) and, for the admin, the session list — */
+async function loadMe(){
+  let d={};try{d=await (await fetch('/api/auth/me')).json()}catch(e){return}
+  if(!d.oidc||!d.name)return;
+  const w=document.getElementById('whoami');w.hidden=false;
+  w.innerHTML=`${escT(d.name)} · ${escT(d.role)} · <a href="/auth/logout">Logout</a>`;
+  if(d.role==='admin')loadSessions();
+}
+async function loadSessions(){
+  let d={};try{d=await (await fetch('/api/auth/sessions')).json()}catch(e){return}
+  document.getElementById('sesspanel').hidden=false;
+  document.getElementById('sesslist').innerHTML=(d.sessions||[]).map(s=>
+    `<div style="display:flex;gap:10px;align-items:center;font-size:13px"><b>${escT(s.name)}</b>`+
+    `<span class="tag tag-neutral">${escT(s.kind)}</span><span>${escT(s.device_name||'')}</span>`+
+    `<span class=text-muted style="margin-left:auto">${new Date(s.last_use*1000).toLocaleString()}</span>`+
+    `<button class="btn btn-ghost btn-sm" onclick="revokeSession(${+s.id})">Revoke</button></div>`).join('')
+    ||'<span class=text-muted>none</span>';
+}
+async function revokeSession(id){
+  await fetch('/api/auth/sessions/revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  loadSessions();
+}
+loadMe();
 </script></body></html>"""

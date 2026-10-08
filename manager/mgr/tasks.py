@@ -382,7 +382,8 @@ def _execute(t):
         # (bug Aug 20: exception in the follow-up -> outer except ->
         # the task never fired again and the chat entry was missing).
         try:
-            ok, res = _run_task_now(t["instance"], t["message"], t.get("model"), timeout=TASK_TIMEOUT,
+            msg = f"[{t['by']}] {t['message']}" if t.get("by") else t["message"]   # who asked (OIDC user)
+            ok, res = _run_task_now(t["instance"], msg, t.get("model"), timeout=TASK_TIMEOUT,
                                     sandbox=t.get("sandbox"), **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}))
         except Exception as e:
             ok, res = False, f"worker-exception (run): {e!r}"

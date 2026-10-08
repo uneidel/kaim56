@@ -2,7 +2,7 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""The HTTP handler: authentication (admin Basic-auth, guests by their source IP), the guest allow and deny lists, dispatch through the route table (mgr/routes), the admin page as fallback, and the small helpers every route uses (_json, _body, _raw, _guest).
+"""The HTTP handler: authentication (Basic-auth or OIDC sessions with roles, guests by their source IP), the guest allow and deny lists, dispatch through the route table (mgr/routes), the admin page as fallback, and the small helpers every route uses (_json, _body, _raw, _guest).
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -13,12 +13,14 @@ import base64
 import hmac
 import json
 
+from mgr import audit as _audit
 from mgr import auth as _auth
 from mgr import cloud as _cloud
 from mgr import guestproxy as _guestproxy
 from mgr import guests as _guests
 from mgr import guestgrants as _grants
 from mgr import llmproxy as _llmproxy
+from mgr import oidc as _oidc
 from mgr import routes as _routes
 from mgr import ui as _ui
 from mgr import util as _util
@@ -32,6 +34,10 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
     # connection down hard (the agent would otherwise see "RemoteDisconnected").
     # If no header has been sent yet, we respond cleanly with HTTP 500; otherwise
     # the response is just ended. The error lands in the journal.
+    def send_response(self, code, message=None):
+        self._status = code
+        return super().send_response(code, message)
+
     def end_headers(self):
         self._sent = True
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -63,6 +69,9 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self._sent = False
         try:
             self._do_POST()
+            p = getattr(self, "principal", None)
+            if p is not None:                # a person changed something: the access log
+                _audit.access_append(p, "POST", self.path, getattr(self, "_status", 0))
         except _util.BodyTooLarge as e:
             self.close_connection = True          # the body was never read
             if not getattr(self, "_sent", False):
@@ -77,10 +86,15 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self.wfile.write(b'{"error":"forbidden"}')
 
     def _auth(self):
+        # Who is asking lands in self.principal (mgr/oidc.Principal): an OIDC
+        # session, or BASIC for the MANAGER_PASS login. None for guests, app
+        # tokens, host services and the open (no password, no OIDC) manager.
+        self.principal = None
+        oidc = _oidc.enabled()
         # Guests (VMs) carry no credentials: they are identified by source IP
         # and gated by the guest allow/deny lists. Without this exemption a set
         # MANAGER_PASS would lock every agent out of its own manager.
-        if not _auth.PW or _guests.instance_by_ip(self.client_address[0]) is not None:
+        if (not _auth.PW and not oidc) or _guests.instance_by_ip(self.client_address[0]) is not None:
             return True
         # Host services (containers on the docker bridge, e.g. Hindsight) may
         # use the key proxy without a login — only that path, only from there.
@@ -96,19 +110,36 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if hdr.startswith("Bearer ") and _cloud.token_app(hdr[7:].strip(), self.command, self.path):
             _auth.auth_succeeded(key)
             return True
-        if hdr.startswith("Basic "):
+        if oidc:
+            if self.path.split("?", 1)[0] in _auth.PUBLIC_PATHS:
+                return True                  # the login itself (rate-limited in mgr/routes_auth.py)
+            tok = hdr[7:].strip() if hdr.startswith("Bearer ") else \
+                _auth.cookie(self.headers.get("Cookie", ""), _auth.SID_COOKIE)
+            if tok:
+                self.principal = _auth.session_principal(tok)
+                if self.principal is not None:
+                    _auth.auth_succeeded(key)
+                    return True
+        if hdr.startswith("Basic ") and _auth.PW:
             try:
                 u, p = base64.b64decode(hdr[6:]).decode().split(":", 1)
                 if hmac.compare_digest(u.encode(), str(_auth.USER).encode()) and \
                         hmac.compare_digest(p.encode(), str(_auth.PW).encode()):
                     _auth.auth_succeeded(key)
+                    self.principal = _auth.BASIC if oidc else None
                     return True
             except Exception:
                 pass
             if _auth.auth_failed(key):
                 print(f"[auth] {key}: {_auth.AUTH_FAILS_MAX} failed logins, locked for {_auth.AUTH_LOCK // 60} min", flush=True)
+        # A browser asking for a page goes to the OIDC login; API clients get 401.
+        if oidc and self.command == "GET" and not self.path.startswith("/api/"):
+            self.send_response(302)
+            self.send_header("Location", "/auth/login")
+            self.end_headers()
+            return False
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="kAIm56"')
+        self.send_header("WWW-Authenticate", 'Basic realm="kAIm56"' if _auth.PW else 'Bearer realm="kAIm56"')
         self.end_headers()
         return False
 
@@ -160,6 +191,10 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         guest = _guests.instance_by_ip(self.client_address[0]) if admin_only else None
         if guest is not None and not _grants.allowed(guest, method, self.path):
             self._forbid()
+            return True
+        p = getattr(self, "principal", None)
+        if p is not None and p.role != "admin" and not _auth.user_allowed(method, self.path):
+            self._forbid()                   # role "user": only the routes in mgr/auth._USER_ROUTES
             return True
         out = fn(self)
         if out is not None:

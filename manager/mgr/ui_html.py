@@ -33,6 +33,7 @@ HTML_TOP = """</head><body>
     <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
     <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
   </div>
+  <span id=whoami class=text-muted style="flex:none;margin-left:14px;font-size:12.5px" hidden></span>
 </div></header>
 <main>
 
@@ -590,7 +591,7 @@ HTML_BOTTOM = """
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px">
 
   <div class="card blueprint"><span class=card-title>manager.py &#8212; the core</span>
-  <p class=card-body>One concern per module in <code>mgr/</code>; manager.py is only the composition root (imports, wiring, main). The security boundaries are their own short files: <code>auth</code> (admin login), <code>guests</code> (a VM is its source IP; what it may reach), <code>secrets</code>, <code>policy</code> (tool gating), <code>llmproxy</code> (keys never enter a VM), <code>guestproxy</code> (admin&#8594;VM relays), <code>netfw</code> (egress), <code>mounts</code> (NFS), and the HTTP surface split by who may call it: <code>routes_guest</code> vs <code>routes_admin</code>. The route table (<code>mgr/routes.py</code>): exact paths beat prefixes, every route carries whether a guest VM may call it, the inventory is enumerable for audits. mgr modules never import back (no cycles); siblings are used as modules. Single-file Python service (stdlib only), runs as root under systemd
+  <p class=card-body>One concern per module in <code>mgr/</code>; manager.py is only the composition root (imports, wiring, main). The security boundaries are their own short files: <code>auth</code> (login: Basic, or OIDC sessions from <code>oidc</code>/<code>sessions</code> with roles admin|user &#8212; a user gets only the routes in its table, default deny), <code>guests</code> (a VM is its source IP; what it may reach), <code>secrets</code>, <code>policy</code> (tool gating), <code>llmproxy</code> (keys never enter a VM), <code>guestproxy</code> (admin&#8594;VM relays), <code>netfw</code> (egress), <code>mounts</code> (NFS), and the HTTP surface split by who may call it: <code>routes_guest</code> vs <code>routes_admin</code>. The route table (<code>mgr/routes.py</code>): exact paths beat prefixes, every route carries whether a guest VM may call it, the inventory is enumerable for audits. mgr modules never import back (no cycles); siblings are used as modules. Single-file Python service (stdlib only), runs as root under systemd
   (<code>kaim56</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
   the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
   per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up
@@ -887,6 +888,10 @@ HTML_BOTTOM = """
     <pre id=updlog hidden class=mono style="font-size:11.5px;max-height:180px;overflow:auto;margin:-8px 0 16px;padding:8px 12px;border:1px solid var(--color-divider);white-space:pre-wrap"></pre>
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
+  </div>
+  <div class="panel blueprint" id=sesspanel hidden style="margin-top:18px">
+    <h6 style="margin:0 0 10px">Sessions (OIDC logins)</h6>
+    <div class=stack id=sesslist></div>
   </div>
 </section>
 

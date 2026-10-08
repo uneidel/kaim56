@@ -4784,7 +4784,12 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._status(h), 302); self.assertIn(b"Location: /apps/board/", h.wfile.getvalue())
             h = self._handler("/apps/board/../outside.txt", "10.0.0.9"); h._do_GET()
             self.assertEqual(self._status(h), 404)
-            h = self._handler("/apps/board/", "172.30.1.2"); h._do_GET()            # a VM is not the operator
+            old_ip = m._guests.instance_by_ip
+            m._guests.instance_by_ip = lambda ip: {"name": "g", "config": {}} if ip == "172.30.1.2" else None
+            try:
+                h = self._handler("/apps/board/", "172.30.1.2"); h._do_GET()        # a VM is not the operator
+            finally:
+                m._guests.instance_by_ip = old_ip
             self.assertNotEqual(self._status(h), 200)
             h = self._handler("/api/apps", "10.0.0.9"); h._do_GET()
             self.assertIn(b'"name": "board"', h.wfile.getvalue())
@@ -4808,7 +4813,7 @@ class ManagerFunctions(unittest.TestCase):
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-aic-")
         fetched = []
-        old = m._paths.RUN_DIR, m._aicheck.fetch
+        old = m._paths.RUN_DIR, m._aicheck.fetch, m._guests.instance_by_ip
         try:
             m._paths.RUN_DIR = tmp
             m._aicheck.fetch = lambda name: (fetched.append(name), b"export const x=1;" if name.endswith(".mjs") else b'{"k":1}')[1]
@@ -4829,10 +4834,11 @@ class ManagerFunctions(unittest.TestCase):
             m._aicheck.fetch = lambda name: (_ for _ in ()).throw(OSError("down"))
             h = self._handler("/aic/extract.mjs", "10.0.0.9"); h._do_GET()
             self.assertEqual(self._status(h), 502)
+            m._guests.instance_by_ip = lambda ip: {"name": "g", "config": {}} if ip == "172.30.1.2" else None
             h = self._handler("/aic/model.json", "172.30.1.2"); h._do_GET()      # a guest may not pull it
             self.assertNotEqual(self._status(h), 200)
         finally:
-            m._paths.RUN_DIR, m._aicheck.fetch = old
+            m._paths.RUN_DIR, m._aicheck.fetch, m._guests.instance_by_ip = old
         import chatui
         page = chatui.render([{"name": "a", "running": True}], "a", "")
         self.assertIn('class=aib data-ai=', page); self.assertIn("/aic/classifier.mjs", page); self.assertIn("aiSchedule", page)
@@ -5429,10 +5435,11 @@ class ManagerFunctions(unittest.TestCase):
         only; the task keeps them and _run_task_now hands them to the VM."""
         m = self.m
         tmp = tempfile.mkdtemp(prefix="e2e-tkm-")
-        old = m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral
+        old = m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral, m._instances.load_instances
         try:
             m._store.TASKS_FILE = os.path.join(tmp, "tasks.json")
             m._guests.instance_by_ip = lambda ip: None
+            m._instances.load_instances = lambda: [{"name": "orchestrator", "config": {}}]
             def post(body):
                 h = self._post_handler("/api/tasks", "127.0.0.1", json.dumps(body).encode(), origin="http://127.0.0.1:8700")
                 h._do_POST()
@@ -5448,7 +5455,7 @@ class ManagerFunctions(unittest.TestCase):
             m._tasks._run_task_now("ephemeral", "m", "x/y", max_steps=6)
             self.assertEqual(got, [("x/y", 6)])
         finally:
-            m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral = old
+            m._store.TASKS_FILE, m._guests.instance_by_ip, m._tasks._run_ephemeral, m._instances.load_instances = old
 
     # ---- model router (Jev) ------------------------------------------------------------
     def _router_env(self, running):
@@ -5687,6 +5694,270 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(m._mounts.guest_can_write(tmp))           # owner = guest user
         finally:
             m._mounts.GUEST_UID, m._mounts.GUEST_GID, m._mounts.GUEST_USER = old
+
+    # ---- OIDC login (mgr/oidc.py, mgr/sessions.py, mgr/routes_auth.py) ------------
+    def _oidc_env(self):
+        """A fake IdP (stdlib http.server, Rauthy-shaped issuer with a path and
+        a trailing slash) plus OIDC switched on against it; temp sessions DB and
+        audit dir. Returns (idp state dict, cleanup)."""
+        import http.server, hashlib
+        m = self.m
+        st = {"codes": {}, "roles": ["kaim56_admin"], "rt": "rt-1", "n": 0, "refresh_fail": False,
+              "device_ok": False, "sub": "u-1", "name": "alice"}
+
+        def jwt(claims):
+            enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+            return enc({"alg": "RS256"}) + "." + enc(claims) + ".sig"
+
+        class IdP(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _out(self, obj, code=200):
+                b = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+
+            def _tokens(self, nonce=None):
+                st["n"] += 1
+                st["rt"] = f"rt-{st['n'] + 1}"            # rotation: every grant hands out a new one
+                claims = {"iss": st["iss"], "aud": "kaim56", "sub": st["sub"]}
+                if nonce:
+                    claims["nonce"] = nonce
+                return {"access_token": f"at-{st['n']}", "id_token": jwt(claims), "refresh_token": st["rt"]}
+
+            def do_GET(self):
+                if self.path == "/auth/v1/.well-known/openid-configuration":
+                    b = st["iss"].rstrip("/")
+                    return self._out({"issuer": st["iss"], "authorization_endpoint": b + "/oidc/authorize",
+                                      "token_endpoint": b + "/oidc/token", "userinfo_endpoint": b + "/oidc/userinfo",
+                                      "device_authorization_endpoint": b + "/oidc/device",
+                                      "end_session_endpoint": b + "/oidc/logout"})
+                if self.path == "/auth/v1/oidc/userinfo" and self.headers.get("Authorization", "").startswith("Bearer at-"):
+                    return self._out({"sub": st["sub"], "preferred_username": st["name"], "roles": st["roles"]})
+                self._out({"error": "nope"}, 401)
+
+            def do_POST(self):
+                f = dict(urllib.parse.parse_qsl(self.rfile.read(int(self.headers["Content-Length"])).decode()))
+                if (f.get("client_id"), f.get("client_secret")) != ("kaim56", "csecret"):
+                    return self._out({"error": "invalid_client"}, 401)
+                if self.path == "/auth/v1/oidc/device":
+                    return self._out({"device_code": "dc-1", "user_code": "WXYZ", "verification_uri": "u",
+                                      "verification_uri_complete": "u?c=WXYZ", "expires_in": 600, "interval": 1})
+                g = f.get("grant_type")
+                if g == "authorization_code":
+                    c = st["codes"].pop(f.get("code"), None)
+                    ok = c and f.get("redirect_uri") == c["redirect"] and base64.urlsafe_b64encode(
+                        hashlib.sha256(f.get("code_verifier", "").encode()).digest()).rstrip(b"=").decode() == c["challenge"]
+                    return self._out(self._tokens(c["nonce"])) if ok else self._out({"error": "invalid_grant"}, 400)
+                if g == "refresh_token":
+                    if st["refresh_fail"] or f.get("refresh_token") != st["rt"]:
+                        return self._out({"error": "invalid_grant"}, 400)
+                    return self._out(self._tokens())
+                if g == "urn:ietf:params:oauth:grant-type:device_code":
+                    if f.get("device_code") != "dc-1":
+                        return self._out({"error": "invalid_grant"}, 400)
+                    return self._out(self._tokens()) if st["device_ok"] else self._out({"error": "authorization_pending"}, 400)
+                self._out({"error": "unsupported_grant_type"}, 400)
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), IdP)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        st["iss"] = f"http://127.0.0.1:{srv.server_port}/auth/v1/"
+        tmp = tempfile.mkdtemp(prefix="e2e-oidc-")
+        o = m._oidc
+        old = (o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET, m._sessions.DB, m._audit.AUDIT_DIR,
+               m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._store.TASKS_FILE)
+        o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET = st["iss"], "kaim56", "csecret"
+        o._disc.update(ts=0.0, doc=None); o._pending.clear(); o._devices.clear()
+        m._sessions.DB = os.path.join(tmp, "sessions.db")
+        m._audit.AUDIT_DIR = os.path.join(tmp, "audit")
+        m._settings.PUBLIC_HOST = "agents.example.com"
+        m._guests.instance_by_ip = lambda ip: None
+        m._auth.PW = ""
+        m._chats.CHATS_FILE = os.path.join(tmp, "chats.json")
+        m._store.TASKS_FILE = os.path.join(tmp, "tasks.json")
+        m._auth._auth_fails.clear(); m._auth._rate.clear()
+
+        def cleanup():
+            srv.shutdown(); srv.server_close()
+            (o.ISSUER, o.CLIENT_ID, o.CLIENT_SECRET, m._sessions.DB, m._audit.AUDIT_DIR,
+             m._settings.PUBLIC_HOST, m._guests.instance_by_ip, m._auth.PW, m._chats.CHATS_FILE, m._store.TASKS_FILE) = old
+            o._disc.update(ts=0.0, doc=None)
+            m._auth._auth_fails.clear(); m._auth._rate.clear()
+        self.addCleanup(cleanup)
+        st["tmp"] = tmp
+        return st
+
+    def _oidc_req(self, path, method="GET", cookie=None, bearer=None, body=None):
+        h = self._post_handler(path, "10.0.0.9", json.dumps(body or {}).encode()) if method == "POST" \
+            else self._handler(path, "10.0.0.9")
+        h.headers["Host"] = "agents.example.com"
+        if cookie:
+            h.headers["Cookie"] = cookie
+        if bearer:
+            h.headers["Authorization"] = f"Bearer {bearer}"
+        (h.do_POST if method == "POST" else h.do_GET)()
+        raw = h.wfile.getvalue()
+        head, _, data = raw.partition(b"\r\n\r\n")
+        return self._status(h), head.decode(), data
+
+    def _oidc_web_login(self, st):
+        """Run the browser part: /auth/login -> (fake authorize) -> /auth/callback."""
+        code, head, _ = self._oidc_req("/auth/login")
+        self.assertEqual(code, 302)
+        loc = re.search(r"Location: (\S+)", head).group(1)
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(loc).query))
+        self.assertEqual((q["code_challenge_method"], q["scope"], q["response_type"]), ("S256", "openid profile email", "code"))
+        self.assertTrue(loc.startswith(st["iss"].rstrip("/") + "/oidc/authorize?"))
+        bind = re.search(r"Set-Cookie: kaim56_login=([^;]+);[^\r\n]*", head)
+        self.assertIn("HttpOnly", bind.group(0)); self.assertIn("SameSite=Lax", bind.group(0))
+        self.assertEqual(bind.group(1), q["state"])
+        st["codes"]["c-1"] = {"challenge": q["code_challenge"], "nonce": q["nonce"], "redirect": q["redirect_uri"]}
+        return q, self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")
+
+    def test_oidc_off_keeps_basic_auth(self):
+        """Without OIDC_* nothing changes: no principal, Basic challenge, the
+        /auth routes are 404."""
+        m = self.m
+        self.assertFalse(m._oidc.enabled())
+        old = m._guests.instance_by_ip, m._auth.PW
+        try:
+            m._guests.instance_by_ip = lambda ip: None
+            m._auth.PW = "s3cret"; m._auth._auth_fails.clear()
+            h = self._handler("/api/auth/me", "10.0.0.9"); self.assertFalse(h._auth())
+            self.assertEqual(self._status(h), 401); self.assertIn(b'Basic realm="kAIm56"', h.wfile.getvalue())
+            h = self._handler("/api/auth/me", "10.0.0.9", auth="Basic " + base64.b64encode(b"admin:s3cret").decode())
+            self.assertTrue(h._auth()); self.assertIsNone(h.principal)
+            m._auth.PW = ""
+            h = self._handler("/auth/login", "10.0.0.9"); h.do_GET()
+            self.assertEqual(self._status(h), 404)
+        finally:
+            m._guests.instance_by_ip, m._auth.PW = old
+            m._auth._auth_fails.clear()
+
+    def test_oidc_web_login_code_pkce_and_cookie(self):
+        """Discovery (issuer with path), code + PKCE S256 + nonce, the state bound
+        to the browser, single-use; the session cookie is HttpOnly, Secure,
+        SameSite=Strict; the login is in the access log; logout ends the session."""
+        import hashlib, sqlite3
+        from contextlib import closing
+        m = self.m
+        st = self._oidc_env()
+        code, head, _ = self._oidc_req("/api/instances")
+        self.assertEqual(code, 401)                                       # API: no redirect
+        code, head, _ = self._oidc_req("/")
+        self.assertEqual((code, "Location: /auth/login" in head), (302, True))   # page: to the login
+        q, (code, head, body) = self._oidc_web_login(st)
+        self.assertEqual(code, 200, body)
+        sid = re.search(r"Set-Cookie: kaim56_sid=([^;]+);([^\r\n]*)", head)
+        for flag in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/"):
+            self.assertIn(flag, sid.group(2))
+        tok = sid.group(1)
+        code, _, body = self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")
+        self.assertEqual(json.loads(body), {"oidc": True, "name": "alice", "role": "admin"})
+        # replay of the callback, and a callback without the binding cookie: refused
+        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")[0], 400)
+        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1")[0], 400)
+        with closing(sqlite3.connect(m._sessions.DB)) as c:                  # the token is stored as its hash only
+            self.assertEqual(c.execute("SELECT hash FROM sessions").fetchone()[0], hashlib.sha256(tok.encode()).hexdigest())
+        with open(os.path.join(m._audit.AUDIT_DIR, "access.log")) as fh:
+            log = [json.loads(ln) for ln in fh]
+        self.assertEqual((log[0]["event"], log[0]["name"], log[0]["sub"]), ("login", "alice", "u-1"))
+        code, head, _ = self._oidc_req("/auth/logout", cookie=f"kaim56_sid={tok}")
+        self.assertEqual(code, 302); self.assertIn("/oidc/logout", head); self.assertIn("kaim56_sid=;", head)
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 401)
+
+    def test_oidc_login_without_role_is_refused(self):
+        m = self.m
+        st = self._oidc_env()
+        st["roles"] = ["other_app"]
+        _, (code, head, _) = self._oidc_web_login(st)
+        self.assertEqual(code, 403); self.assertNotIn("kaim56_sid=", head)
+        self.assertEqual(m._sessions.list_all(), [])
+
+    def test_oidc_device_flow(self):
+        """POST /api/auth/device -> user_code + handle (the device_code stays in
+        the manager); poll is pending until approved, then the token once."""
+        m = self.m
+        st = self._oidc_env()
+        code, _, body = self._oidc_req("/api/auth/device", "POST", body={"device_name": "pixel"})
+        d = json.loads(body)
+        self.assertEqual(code, 200); self.assertEqual(d["user_code"], "WXYZ"); self.assertNotIn("dc-1", body.decode())
+        poll = lambda: self._oidc_req("/api/auth/device/poll", "POST", body={"handle": d["handle"]})
+        self.assertEqual(json.loads(poll()[2]), {"status": "pending"})
+        st["device_ok"] = True
+        self.assertEqual(json.loads(poll()[2]), {"status": "pending"})          # faster than the interval: not asked
+        m._oidc._devices[d["handle"]]["next"] = 0
+        code, _, body = poll()
+        r = json.loads(body)
+        self.assertEqual((code, r["status"], r["name"], r["role"]), (200, "ok", "alice", "admin"))
+        self.assertEqual(poll()[0], 400)                                         # once
+        self.assertEqual(self._oidc_req("/api/auth/me", bearer=r["token"])[0], 200)
+        s = m._sessions.list_all()[0]
+        self.assertEqual((s["kind"], s["device_name"]), ("device", "pixel"))
+        self.assertEqual(self._oidc_req("/api/auth/device/poll", "POST", body={"handle": "guess"})[0], 400)
+
+    def test_oidc_refresh_rotates_and_ends_session(self):
+        """After CHECK_EVERY the session is re-checked at the IdP: the refresh
+        token rotates; a lost role or a failed refresh is a 401 and the
+        session is gone."""
+        import sqlite3
+        from contextlib import closing
+        m = self.m
+        st = self._oidc_env()
+        _, (_, head, _) = self._oidc_web_login(st)
+        tok = re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        def age():                                                               # the last check lies 1000 s back
+            with closing(sqlite3.connect(m._sessions.DB)) as c, c:
+                c.execute("UPDATE sessions SET last_check=last_check-1000")
+        rt_before = st["rt"]
+        age()
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 200)
+        with closing(sqlite3.connect(m._sessions.DB)) as c:
+            self.assertEqual(c.execute("SELECT refresh FROM sessions").fetchone()[0], st["rt"])
+        self.assertNotEqual(st["rt"], rt_before)
+        st["roles"] = []                                                          # role taken away
+        age()
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 401)
+        self.assertEqual(m._sessions.list_all(), [])
+        st["roles"] = ["kaim56_user"]
+        _, (_, head, _) = self._oidc_web_login(st)
+        tok = re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        st["refresh_fail"] = True
+        age()
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 401)
+        self.assertEqual(m._sessions.list_all(), [])
+
+    def test_oidc_user_role_table_and_attribution(self):
+        """Role user: use, not configure (default deny); a write by a person is
+        in the access log; chat pushes and tasks carry the speaker's name."""
+        m = self.m
+        st = self._oidc_env()
+        st["roles"] = ["kaim56_user"]
+        _, (_, head, _) = self._oidc_web_login(st)
+        ck = "kaim56_sid=" + re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        ua = m._auth.user_allowed
+        for meth, p in (("POST", "/api/instances/a1/start"), ("POST", "/api/chat/a1"), ("GET", "/api/instances"),
+                        ("POST", "/api/tasks"), ("GET", "/i/a1/"), ("POST", "/apps/board/_api/x"), ("GET", "/api/auth/me")):
+            self.assertTrue(ua(meth, p), p)
+        for meth, p in (("POST", "/api/settings"), ("POST", "/api/create"), ("POST", "/api/instances/a1/delete"),
+                        ("POST", "/api/instances/a1/config"), ("GET", "/i/a1/term"), ("GET", "/i/a1/te%72m/ws"),
+                        ("POST", "/api/plugins/x/approve"), ("GET", "/api/secret-keys"), ("POST", "/api/apps/x/delete"),
+                        ("GET", "/api/auth/sessions"), ("GET", "/api/new-route-nobody-listed")):
+            self.assertFalse(ua(meth, p), p)
+        self.assertEqual(self._oidc_req("/api/auth/sessions", cookie=ck)[0], 403)
+        self.assertEqual(self._oidc_req("/api/settings", "POST", cookie=ck, body={})[0], 403)
+        code, _, body = self._oidc_req("/api/tasks", "POST", cookie=ck, body={"instance": "ephemeral", "message": "m"})
+        self.assertIn("created", body.decode())
+        self.assertEqual(m._store.load_tasks()[-1]["by"], "alice")
+        self._oidc_req("/api/chats", "POST", cookie=ck, body=[{"id": "c1", "updatedAt": 1, "messages": [{"user": True, "text": "hi"}]}])
+        self.assertEqual(m._chats.load_chats()[0]["messages"][0]["by"], "alice")
+        with open(os.path.join(m._audit.AUDIT_DIR, "access.log")) as fh:
+            log = [json.loads(ln) for ln in fh]
+        w = [r for r in log if r["method"] == "POST"]
+        self.assertEqual([(r["path"], r["status"], r["role"]) for r in w],
+                         [("/api/settings", 403, "user"), ("/api/tasks", 200, "user"), ("/api/chats", 200, "user")])
+
 
     def test_login_lockout(self):
         """Ten wrong passwords in a row lock the client for a while — the right

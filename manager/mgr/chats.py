@@ -157,7 +157,7 @@ def inbox_since(peek=False):
     return items
 
 
-def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
+def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal", by=""):
     """Append a turn (question + answer) to the shared chat history so it shows
     up in the app and web. `kind`='signal' -> one conversation per
     (instance, sender); 'task' -> one task conversation per instance;
@@ -187,7 +187,7 @@ def chat_log_append(inst_name, sender, user_text, reply_text, kind="signal"):
                     "instance": inst_name, "messages": [], "updatedAt": now}
             chats.append(conv)
         if user_text:
-            conv["messages"].append({"user": True, "text": str(user_text)})
+            conv["messages"].append({"user": True, "text": str(user_text), **({"by": by} if by else {})})
         if reply_text:
             conv["messages"].append({"user": False, "text": str(reply_text)})
         conv["messages"] = conv["messages"][-500:]
@@ -239,7 +239,21 @@ def voice_session(inst_name, src, client_id="", reset=False):
         return sid
 
 
-def merge_chats(incoming):
+def _stamp_by(conv, cur, by):
+    """User messages beyond what the server already had get `by`; the ones
+    it had keep theirs (a client copy may not carry the field back)."""
+    old = (cur or {}).get("messages") or []
+    for i, m in enumerate(conv.get("messages") or []):
+        if not isinstance(m, dict) or not m.get("user") or m.get("by"):
+            continue
+        if i < len(old):
+            if isinstance(old[i], dict) and old[i].get("by") and old[i].get("text") == m.get("text"):
+                m["by"] = old[i]["by"]
+        else:
+            m["by"] = by
+
+
+def merge_chats(incoming, by=""):
     """MERGE chats (newer updatedAt wins) plus DELETION TOMBSTONES:
     `incoming` is either a bare list (old: chats only) or an object
     {chats:[...], tombstones:{id:deletedAt}}. A tombstoned chat does not come
@@ -272,6 +286,8 @@ def merge_chats(incoming):
             cid = str(c["id"])
             cur = by_id.get(cid)
             if cur is None or c.get("updatedAt", 0) >= cur.get("updatedAt", 0):
+                if by:                      # attribution: user turns this push adds carry the speaker
+                    _stamp_by(c, cur, by)
                 by_id[cid] = c
 
         # Apply tombstones. A chat only resurrects when it was GENUINELY edited

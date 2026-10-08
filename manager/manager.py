@@ -12,7 +12,9 @@ themselves, and starts the worker threads and the HTTP server. Everything
 else lives in mgr/, one concern per module:
 
   security boundaries
-    auth          admin login, lockout after failed logins, trusted Origins
+    auth          login (Basic, OIDC sessions), the user-role route table, lockout, trusted Origins
+    oidc          OIDC client (Rauthy): web code+PKCE, device flow, refresh; off unless OIDC_* set
+    sessions      login sessions after an OIDC login (SQLite, token hashes only)
     guests        a VM is identified by its source IP; what a guest may reach
     secrets       the host secret store and the per-instance release policy
     policy        tool catalog, per-instance tool gating, sandbox config
@@ -27,6 +29,7 @@ else lives in mgr/, one concern per module:
     cfapi         the Cloudflare Workers API (cfdo's upload path in Python)
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
+    routes_auth   /auth/* login and logout, device flow, who-am-I, session list
   the VMs
     instances     instances/<name>.json, templates, network, running state
     vm            images, harness drive, write layer, start and stop
@@ -82,6 +85,7 @@ from mgr import models as _models            # noqa: F401
 from mgr import mounts as _mounts
 from mgr import netfw as _netfw              # noqa: F401
 from mgr import notify as _notify
+from mgr import oidc as _oidc
 from mgr import paths as _paths
 from mgr import personas as _personas        # noqa: F401
 from mgr import plugins as _plugins          # noqa: F401
@@ -92,10 +96,12 @@ from mgr import resources as _resources      # noqa: F401
 from mgr import router as _router            # noqa: F401
 from mgr import routes as _routes            # noqa: F401
 from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its routes in ROUTER on import)
+from mgr import routes_auth as _routes_auth  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_guest as _routes_guest  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import rules as _rules
 from mgr import saddler as _saddler_mod
 from mgr import secrets as _secrets
+from mgr import sessions as _sessions        # noqa: F401
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import mail as _mail
@@ -148,7 +154,7 @@ def _ha_ws_target():
 _haalias.configure(_ha_ws_target, lambda: _secrets.secret_store().get("HA_TOKEN"))
 
 if __name__ == "__main__":
-    print(f"kAIm56 on http://{_host.LISTEN[0]}:{_host.LISTEN[1]}  (auth={'on' if _auth.PW else 'OFF'})",
+    print(f"kAIm56 on http://{_host.LISTEN[0]}:{_host.LISTEN[1]}  (auth={'oidc' if _oidc.enabled() else 'on' if _auth.PW else 'OFF'})",
           flush=True)
     os.umask(0o077)                  # new files are root's; the few others read get a mode below
     _startup.harden_files()
