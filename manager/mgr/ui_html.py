@@ -33,10 +33,7 @@ HTML_TOP = """</head><body>
     <div><h6>microVM</h6><h3>Instances</h3></div>
     <span class="note text-muted">💬 Chat opens <a href="/chat">/chat</a> for every <code>TRANSPORT=web</code> instance · a stopped instance starts on the first prompt</span>
   </div>
-  <table class=table>
-    <thead><tr><th style="width:32%">Instance</th><th>Status</th><th>vCPU / RAM</th><th>Guest IP</th><th style="text-align:right">Actions</th></tr></thead>
-    <tbody>__ROWS__</tbody>
-  </table>
+  <div class=ilist>__ROWS__</div>
 
   <div style="margin-top:44px">
     <h6 style="color:var(--color-accent);margin:0 0 2px">Provision</h6>

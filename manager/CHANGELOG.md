@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-08
+- UI: instances as rows (name + state → resources → usage → Chat/Terminal + ⋮ menu); outdated image = orange "Update available" with restart.
 - UI: 15 tabs grouped into 5 (Agents · Knowledge · Work · Apps · System) with a second row for the pages; page hashes unchanged.
 
 ## 2026-10-07

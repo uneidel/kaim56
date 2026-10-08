@@ -690,9 +690,8 @@ async function refreshUsage(){
   let day=0,all=0;
   document.querySelectorAll('[data-usage]').forEach(el=>{
     const v=u[el.dataset.usage]; if(!v)return;
-    el.innerHTML='Tokens today '+fmtTok(v.today.in)+'&nbsp;/&nbsp;'+fmtTok(v.today.out)+
-      ' · '+fmtCost(v.today.cost)+' &nbsp;·&nbsp; total '+fmtTok(v.total.in)+
-      '&nbsp;/&nbsp;'+fmtTok(v.total.out)+' · '+fmtCost(v.total.cost);
+    el.textContent='Today '+fmtTok(v.today.in+v.today.out)+' tokens · '+fmtCost(v.today.cost)+
+      ' · Total '+fmtTok(v.total.in+v.total.out)+' · '+fmtCost(v.total.cost);
   });
   Object.values(u).forEach(v=>{day+=(v.today||{}).cost||0; all+=(v.total||{}).cost||0});
   const f=document.getElementById('spend');
@@ -1570,6 +1569,8 @@ function copyKey(){
   if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(inp.value).then(done,()=>{inp.select()});
   else{inp.select();try{document.execCommand('copy');done()}catch(e){h.textContent='select + copy manually'}}
 }
+/* one ⋮ menu open at a time; a click elsewhere closes it */
+document.addEventListener('click',e=>document.querySelectorAll('details.imenu[open]').forEach(d=>{if(!d.contains(e.target))d.open=false}));
 async function act(n,a){await fetch(`/api/instances/${n}/${a}`,{method:'POST'});location.reload()}
 async function togglePersist(n,on){
   const r=await fetch(`/api/instances/${n}/persist`,{method:'POST',

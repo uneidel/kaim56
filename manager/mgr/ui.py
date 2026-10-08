@@ -109,84 +109,73 @@ def render():
                       if model else "")
         u = usage.get(name) or {}
         ut, ud = u.get("total") or {}, u.get("today") or {}
-        usage_line = f"<span class='text-muted' style='font-size:12px' data-usage='{name}'></span>"
-        if ut.get("calls"):
-            usage_line = (
-                f"<span class='text-muted' style='font-size:12px' data-usage='{name}' "
-                f"title='LLM usage reported by this agent "
-                f"({ut['calls']} calls total)'>"
-                f"Tokens today {_fmt_tok(ud.get('in'))}&nbsp;/&nbsp;{_fmt_tok(ud.get('out'))}"
-                f" · {_fmt_cost(ud.get('cost'))}"
-                f" &nbsp;·&nbsp; total {_fmt_tok(ut['in'])}&nbsp;/&nbsp;{_fmt_tok(ut['out'])}"
-                f" · {_fmt_cost(ut['cost'])}</span>")
+        usage_line = (f"<span class=imeta data-usage='{name}' title='LLM usage reported by this agent "
+                      f"({ut.get('calls', 0)} calls; in / out today {_fmt_tok(ud.get('in'))} / {_fmt_tok(ud.get('out'))}, "
+                      f"total {_fmt_tok(ut.get('in'))} / {_fmt_tok(ut.get('out'))})'>"
+                      + (f"Today {_fmt_tok((ud.get('in') or 0) + (ud.get('out') or 0))} tokens · {_fmt_cost(ud.get('cost'))}"
+                         f" · Total {_fmt_tok((ut.get('in') or 0) + (ut.get('out') or 0))} · {_fmt_cost(ut.get('cost'))}"
+                         if ut.get("calls") else "") + "</span>")
+        # Hierarchy: name + state first, then resources, usage, actions. Colour
+        # only for state: running = accent, an outdated image = warn (with the
+        # fix next to it); red stays reserved for real errors.
         stale, built, started = _vm.image_state(inst)
+        st = ("<span class='ipill on'>● Running</span>" if run else "<span class=ipill>○ Stopped</span>")
+        upd = ""
         if run and stale:
-            st = ("<span class='tag' style='background:#c0392b;color:#fff' title='started "
-                  + time.strftime("%d.%m. %H:%M", time.localtime(started))
-                  + ", image rebuilt " + time.strftime("%d.%m. %H:%M", time.localtime(built))
-                  + " — still runs the OLD agent until restarted'>● running · old image</span>")
-        else:
-            st = ("<span class='tag tag-accent'>● running</span>" if run
-                  else "<span class='tag tag-neutral'>○ off</span>")
+            upd = ("<button class='ichip warn' title='started "
+                   + time.strftime("%d.%m. %H:%M", time.localtime(started))
+                   + ", image rebuilt " + time.strftime("%d.%m. %H:%M", time.localtime(built))
+                   + f" — runs the old agent until restarted. Click: restart with the update' "
+                     f"onclick=\"act('{name}','restart')\">↻ Update available</button>")
         net = inst.get("internet", True)
         tools_cfg = (inst.get("config") or {}).get("AGENT_TOOLS", "")
-        ntag = (f"<button class='tag {'tag-accent' if net else 'tag-neutral'}' "
-                f"style='border:none;cursor:pointer' title='Toggle internet access' "
-                f"onclick=\"toggleNet('{name}',{str(not net).lower()})\">"
-                f"{'🌐 internet on' if net else '🚫 offline'}</button>")
-        ttag = (f"<span class='tag tag-neutral' title='{h(tools_cfg)}'>🔧 {len(tools_cfg.split(','))} Tools</span>"
-                if tools_cfg else "")
-        ptag = ""
+        chips = (f"<button class=ichip title='Toggle internet access' "
+                 f"onclick=\"toggleNet('{name}',{str(not net).lower()})\">{'Internet' if net else 'Offline'}</button>")
         if _vm.is_overlay(inst):
             pers = bool(inst.get("persist_disk"))
-            ptag = (f"<button class='tag {'tag-accent' if pers else 'tag-neutral'}' "
-                    f"style='border:none;cursor:pointer' "
-                    f"title='Persistent disk: installations survive stop/start"
-                    f"{' — right-click: reset disk' if pers else ''}' "
-                    f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
-                    f"oncontextmenu=\"return diskReset('{name}')\">"
-                    f"{'💾 persistent' if pers else '↺ fresh per start'}</button>")
+            chips += (f"<button class=ichip title='{'Persistent disk: installations survive stop/start — right-click: reset disk' if pers else 'Fresh disk on every start — click: make persistent'}' "
+                      f"onclick=\"togglePersist('{name}',{str(not pers).lower()})\" "
+                      f"oncontextmenu=\"return diskReset('{name}')\">{'Persistent' if pers else 'Fresh per start'}</button>")
+        if tools_cfg:
+            chips += f"<span class=ichip title='{h(tools_cfg)}'>{len(tools_cfg.split(','))} tools</span>"
+        mem = inst.get("mem_mib", 1024)
+        res = (f"{inst.get('vcpus', 2)} CPU · {mem / 1024:.1f}".rstrip("0").rstrip(".") + f" GB · {n['guest']}")
+        # Two direct actions (Chat first: it is what the instance is for), the
+        # rest in the ⋮ menu. A stopped instance shows Start instead of Terminal.
         btn = ""
-        if run:
-            btn += (f"<a href=\"/i/{name}/term/\" target=_blank class=\"btn btn-secondary btn-sm\""
-                    f" title=\"Browser terminal\">{IC_TERM}Terminal</a>")
         if transport == "web":
-            btn += (f"<a href=\"/chat?i={name}\" class=\"btn btn-secondary btn-sm\""
-                    f" title=\"Chat with the agent\">{IC_CHAT}Chat</a>")
-        btn += (f"<button class=\"btn {'btn-secondary' if run else 'btn-primary'} btn-sm\""
-                f" style=\"min-width:64px\" onclick=\"act('{name}','{'stop' if run else 'start'}')\">"
-                f"{'Stop' if run else 'Start'}</button>")
-        if run and stale:
-            btn += (f"<button class=\"btn btn-primary btn-sm\" title=\"Stop + start on the current image\""
-                    f" onclick=\"act('{name}','restart')\">Restart on new image</button>")
-        btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px\""
-                f" title=\"Audit / activity (tools & URLs called)\""
-                f" onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>")
-        btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px\""
-                f" title=\"Folders: host folders and katfs share\" onclick=\"editMounts('{name}')\">{IC_FILES}</button>")
-        btn += (f"<button class=\"btn btn-icon btn-secondary\" style=\"width:32px;height:32px;"
-                f"color:var(--color-neutral-600)\" title=Delete onclick=\"del('{name}')\">{IC_DEL}</button>")
-        mtxt = ""
-        for m in inst.get("mounts", []) or []:
-            mtxt += (f"<div class='text-muted' style='font-size:12px'>{IC_FILES2} {h(m.get('host'))} → "
-                     f"{h(m.get('guest'))}{' (ro)' if m.get('readonly') else ''}</div>")
-        rows += (f"<tr><td data-label=Instance>"
-                 f"<div style='display:flex;flex-direction:column;gap:2px'>"
-                 f"<span style=\"font-family:var(--font-heading);font-weight:600;font-size:16px\">{name}</span>"
-                 f"<span class='text-muted' style='font-size:12px'>{h(sub)}</span>"
-                 f"{model_line}"
-                 f"{usage_line}"
-                 f"<span class='text-muted' style='font-size:12px'>{h(inst.get('description',''))}</span>"
-                 f"{mtxt}</div></td>"
-                 f"<td data-label=Status><div style='display:flex;flex-direction:column;gap:4px;align-items:flex-start'>{st}{ntag} {ptag} {ttag}</div></td>"
-                 f"<td data-label='vCPU / RAM' style='font-variant-numeric:tabular-nums'>"
-                 f"{inst.get('vcpus',2)} / {inst.get('mem_mib',1024)} MiB</td>"
-                 f"<td data-label='Guest IP' class=mono>{n['guest']}</td>"
-                 f"<td data-label=Actions><div class=acts>{btn}</div></td></tr>")
+            btn += (f"<a href=\"/chat?i={name}\" class=\"btn btn-primary btn-sm\" title=\"Chat with the agent\">"
+                    f"{IC_CHAT}Chat</a>")
+        if run:
+            btn += (f"<a href=\"/i/{name}/term/\" target=_blank class=\"btn btn-ghost btn-sm\" title=\"Browser terminal\">"
+                    f"{IC_TERM}Terminal</a>")
+        else:
+            btn += f"<button class=\"btn btn-secondary btn-sm\" onclick=\"act('{name}','start')\">Start</button>"
+        menu = ""
+        if run:
+            menu += f"<button onclick=\"act('{name}','stop')\">Stop instance</button>"
+            menu += (f"<button onclick=\"act('{name}','restart')\">"
+                     f"{'Restart with update' if stale else 'Restart'}</button>")
+        menu += f"<button onclick=\"openActivity('{name}')\">{IC_AUDIT}Activity</button>"
+        menu += f"<button onclick=\"editMounts('{name}')\">{IC_FILES}Folders</button>"
+        menu += f"<button class=danger onclick=\"del('{name}')\">{IC_DEL}Delete</button>"
+        btn += (f"<details class=imenu><summary class=\"btn btn-ghost btn-sm\" aria-label=\"More actions\" "
+                f"title=\"More actions\">⋮</summary><div class=imenu-pop>{menu}</div></details>")
+        mtxt = "".join(
+            f"<span class=imeta>{IC_FILES2} {h(m.get('host'))} → {h(m.get('guest'))}{' (ro)' if m.get('readonly') else ''}</span>"
+            for m in inst.get("mounts", []) or [])
+        rows += (f"<article class=irow>"
+                 f"<div class=imain>"
+                 f"<div class=ititle><span class=iname>{name}</span>{st}{upd}</div>"
+                 f"<div class=isub>{h(inst.get('description', '') or sub)}"
+                 f"{(' · ' + h(sub)) if inst.get('description') else ''}</div>"
+                 f"<div class=ichips>{chips}{model_line}</div>"
+                 f"{usage_line}{mtxt}</div>"
+                 f"<div class=iside><span class='ires mono'>{res}</span>"
+                 f"<div class=acts>{btn}</div></div></article>")
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
-    empty = ("<tr><td colspan=5 class=text-muted style='padding:18px 8px'>"
-             "no instances yet — create one below</td></tr>")
+    empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — create one below</p>"
     return (PAGE.replace("__LOGO__", LOGO_INLINE)
                 .replace("__ROWS__", rows or empty)
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
