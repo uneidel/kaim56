@@ -5961,6 +5961,36 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 401)
         self.assertEqual(m._sessions.list_all(), [])
 
+    def test_oidc_session_survives_idp_outage_and_browser_restart(self):
+        """The web cookie is persistent (Max-Age = web TTL); an unreachable
+        IdP postpones the re-check instead of ending the session; a session
+        without a refresh token is not re-checked."""
+        import sqlite3
+        from contextlib import closing
+        m = self.m
+        st = self._oidc_env()
+        _, (_, head, _) = self._oidc_web_login(st)
+        self.assertIn(f"Max-Age={m._sessions.TTL['web']}", head)
+        tok = re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        def age():
+            with closing(sqlite3.connect(m._sessions.DB)) as c, c:
+                c.execute("UPDATE sessions SET last_check=last_check-1000")
+        real = m._oidc.refresh
+        def down(rt):
+            raise m._oidc.OIDCError("idp unreachable (URLError: test)")
+        m._oidc.refresh = down
+        try:
+            age()
+            self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 200)
+            self.assertEqual(len(m._sessions.list_all()), 1)
+        finally:
+            m._oidc.refresh = real
+        with closing(sqlite3.connect(m._sessions.DB)) as c, c:
+            c.execute("UPDATE sessions SET refresh=''")
+        st["refresh_fail"] = True                                                 # would end it — but there is nothing to refresh
+        age()
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 200)
+
     def test_oidc_user_role_table_and_attribution(self):
         """Role user: use, not configure (default deny); a write by a person is
         in the access log; chat pushes and tasks carry the speaker's name."""

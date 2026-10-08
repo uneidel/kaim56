@@ -19,7 +19,7 @@ from contextlib import closing
 from mgr import paths as _paths
 
 DB = os.path.join(_paths.BASE, "sessions.db")
-TTL = {"web": 12 * 3600, "device": 90 * 86400}
+TTL = {"web": 30 * 86400, "device": 90 * 86400}   # sliding; the IdP re-check is what revokes
 CHECK_EVERY = 900
 _COLS = "id, sub, name, email, role, kind, device_name, refresh, created, expires, last_check, last_use"
 

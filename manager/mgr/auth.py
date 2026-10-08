@@ -115,16 +115,24 @@ def cookie(header, name):
 def session_principal(token, now=None):
     """The Principal behind a session token, or None. Every CHECK_EVERY
     seconds the IdP is asked again (refresh, rotated token, fresh role); a
-    failed refresh or a lost role ends the session."""
+    refused refresh or a lost role ends the session. An IdP that is merely
+    unreachable does not: the session goes on and is checked again later.
+    Without a refresh token (client lacks the refresh flow) there is nothing
+    to re-check — the session runs to its TTL; admins can still revoke it."""
     now = int(now or time.time())
     s = _sessions.get(token, now)
     if s is None:
         return None
-    if now - s["last_check"] <= _sessions.CHECK_EVERY or not _sessions.claim_check(s["id"], s["last_check"], now):
-        return _oidc.Principal(s["sub"], s["name"], s["email"], s["role"])
+    cached = _oidc.Principal(s["sub"], s["name"], s["email"], s["role"])
+    if (not s["refresh"] or now - s["last_check"] <= _sessions.CHECK_EVERY
+            or not _sessions.claim_check(s["id"], s["last_check"], now)):
+        return cached
     try:
         p, rt = _oidc.refresh(s["refresh"])
     except _oidc.OIDCError as e:
+        if str(e).startswith("idp unreachable"):
+            print(f"[auth] session {s['id']}: re-check postponed ({e})", flush=True)
+            return cached
         p, why = None, str(e)
     else:
         why = "role gone" if p.role is None else "other user" if p.sub != s["sub"] else ""

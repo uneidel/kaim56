@@ -105,7 +105,7 @@ def _rt_callback(h):
     # A page, not a 302: a SameSite=Strict cookie set in a redirect chain that
     # started at the IdP is not sent on that chain's next hop (login loop).
     _page(h, 200, "Logged in. <a href=/>Continue</a>.", refresh="/", cookies=[
-        clear, f"{_auth.SID_COOKIE}={tok}; Path=/; HttpOnly; Secure; SameSite=Strict"])
+        clear, f"{_auth.SID_COOKIE}={tok}; Path=/; Max-Age={_sessions.TTL['web']}; HttpOnly; Secure; SameSite=Strict"])
 
 
 @_routes.ROUTER.get("/auth/logout", admin=True)
