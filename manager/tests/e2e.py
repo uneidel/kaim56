@@ -5215,6 +5215,196 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             stop(); undo()
 
+    # ---- decision backend (mgr/decision.py): Decision-1 / local LLM, Jev fallback ----
+    def _fake_llm(self, answers, delay=0, status=200):
+        """An OpenAI-compatible chat-completions server: answers with
+        {"answers": answers} as the message content (in a code fence, after a
+        think block). Records (path, headers, body). -> (base, calls, stop)."""
+        import http.server
+        calls = []
+
+        class L(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                calls.append((self.path, dict(self.headers), b))
+                time.sleep(delay)
+                content = "<think>hm</think>```json\n" + json.dumps({"answers": answers}) + "\n```"
+                out = json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
+                self.send_response(status); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                try:
+                    self.wfile.write(out)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), L)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def stop():
+            srv.shutdown(); srv.server_close()
+        return f"http://127.0.0.1:{srv.server_address[1]}", calls, stop
+
+    _DEC_ANSWERS = {"persona": {"coder": 1.7, "ghost": 0.99, "assistant": 0.1},
+                    "tier": {"code": 0.8, "huge": 0.9},
+                    "skills": {**{f"sk{i}": 0.9 - i * 0.05 for i in range(8)}, "std": 0.99, "nope": 0.95, "sk11": -2}}
+
+    def _dec_env(self, jev, extra, base):
+        """_jev_env plus decision settings; the OpenRouter upstream and the
+        Azure https check pointed at the local fake."""
+        m = self.m
+        undo1 = self._jev_env(jev)
+        st = {"JEV_URL": jev, "OPENROUTER_API_KEY": "sk-or-SECRETKEY1", "AZURE_DECISION_KEY": "az-SECRETKEY2",
+              "LLAMA_API_KEY": "llama-SECRETKEY3", "LLAMA_ENDPOINT": base + "/v1",
+              "AZURE_DECISION_ENDPOINT": base + "/models", **extra}
+        old = (dict(m._llmproxy.LLM_PROXY_UPSTREAMS), m._settings.validate_decision)
+        m._settings.load_settings = lambda: dict(st)
+        m._llmproxy.LLM_PROXY_UPSTREAMS["openrouter"] = (base + "/api/v1/chat/completions", "OPENROUTER_API_KEY")
+        m._settings.validate_decision = lambda d: ""            # the fake is http, not https
+
+        def undo():
+            m._llmproxy.LLM_PROXY_UPSTREAMS.clear(); m._llmproxy.LLM_PROXY_UPSTREAMS.update(old[0])
+            m._settings.validate_decision = old[1]
+            undo1()
+        return st, undo
+
+    def test_decision_backends_suggest_with_full_catalogs(self):
+        """openrouter / azure / local-llm: ONE request with every persona and
+        every non-standard skill (no pre-filter), the tiers, purpose and
+        context; the key in the header (each backend its own); unknown names
+        dropped, scores clamped, at most 6 skills; same shape as Jev's."""
+        m = self.m
+        base, calls, stop = self._fake_llm(self._DEC_ANSWERS)
+        want = {"decision1-openrouter": ("/api/v1/chat/completions", "Authorization", "Bearer sk-or-SECRETKEY1", "microsoft/decision-1"),
+                "decision1-azure": ("/models/chat/completions", "api-key", "az-SECRETKEY2", "Microsoft-Decision-1"),
+                "local-llm": ("/v1/chat/completions", "Authorization", "Bearer llama-SECRETKEY3", "qwen-local")}
+        try:
+            for be, (path, hdr, val, model) in want.items():
+                calls.clear()
+                st, undo = self._dec_env("", {"DECISION_BACKEND": be, "DECISION_LOCAL_MODEL": "qwen-local"}, base)
+                try:
+                    s = m._jevsetup.suggest("write and fix the backend code", "Repository: Cloudflare Workers. Squad goal: ship")
+                finally:
+                    undo()
+                self.assertEqual(len(calls), 1, be)
+                p, h, b = calls[0]
+                self.assertEqual((p, {k.lower(): v for k, v in h.items()}[hdr.lower()], b["model"]), (path, val, model), be)
+                task = json.loads(b["messages"][1]["content"])
+                self.assertEqual(sorted(task["questions"]["skills"]["criteria"]), sorted(f"sk{i}" for i in range(12)))
+                self.assertEqual(sorted(task["questions"]["persona"]["criteria"]), ["assistant", "code-architect", "coder"])
+                self.assertEqual(sorted(task["questions"]["tier"]["criteria"]), ["code", "strong"])
+                self.assertIn("write and fix the backend code", task["state"]); self.assertIn("Cloudflare Workers", task["state"])
+                self.assertEqual(s["persona"], {"name": "coder", "score": 1.0}, be)                 # ghost dropped, clamped
+                self.assertEqual([x["name"] for x in s["skills"]], [f"sk{i}" for i in range(6)])   # std/nope dropped, max 6
+                self.assertTrue(all(0 <= x["score"] <= 1 for x in s["skills"]))
+                self.assertEqual((s["tier"], s["model"], s["model_key"], s["backend"]),
+                                 ({"name": "code", "score": 0.8}, "qwen/coder", "OPENROUTER_MODEL", be))
+                self.assertEqual(set(s) - {"backend"}, set(m._jevsetup.empty("x")) - {"backend"})
+                self.assertEqual(be == "local-llm", "chat_template_kwargs" in b)
+        finally:
+            stop()
+        # choose(): a generic choice, unknown option dropped
+        base, calls, stop = self._fake_llm({"q": {"code": 0.8, "strong": 0.2, "huge": 1}})
+        st, undo = self._dec_env("", {"DECISION_BACKEND": "decision1-openrouter"}, base)
+        try:
+            r = m._decision.choose("Which tier?", {"code": "code model", "strong": "big"}, "fix a bug")
+            self.assertEqual(r, [{"option": "code", "score": 0.8}, {"option": "strong", "score": 0.2}])
+        finally:
+            undo(); stop()
+
+    def test_decision_failure_falls_back_to_jev_without_leaking_keys(self):
+        """HTTP error, garbage and timeout -> Jev's suggestion, noted; no key
+        in the note, the log line or the /api/decision/test answer; the route
+        is admin only."""
+        import contextlib
+        import io
+        m = self.m
+        jev, _, stopj = self._fake_jev()
+        dec = m._decision
+        old_t, old_ip = dec.TIMEOUT, m._guests.instance_by_ip
+        m._guests.instance_by_ip = lambda ip: {"name": "g", "index": 9, "config": {}} if ip == "172.30.9.2" else None
+        try:
+            for kind, srv in (("http", self._fake_llm({}, status=500)), ("garbage", self._fake_llm("nope")),
+                              ("timeout", self._fake_llm(self._DEC_ANSWERS, delay=1.5))):
+                base, calls, stop = srv
+                dec.TIMEOUT = 0.5
+                st, undo = self._dec_env(jev, {"DECISION_BACKEND": "decision1-openrouter"}, base)
+                err = io.StringIO()
+                try:
+                    with contextlib.redirect_stderr(err):
+                        s = m._jevsetup.suggest("write and fix the backend code")
+                        h = self._post_handler("/api/decision/test", "127.0.0.1", b"{}"); h._do_POST()
+                        out = h.wfile.getvalue()
+                    hg = self._post_handler("/api/decision/test", "172.30.9.2", b"{}"); hg._do_POST()
+                finally:
+                    undo(); stop()
+                self.assertEqual((s["backend"], s["persona"]["name"]), ("jev", "coder"), kind)
+                self.assertTrue(s["note"].startswith("decision1-openrouter failed"), s["note"])
+                d = json.loads(out.split(b"\r\n\r\n", 1)[1])
+                self.assertEqual((self._status(h), d["backend"], d["used"]), (200, "decision1-openrouter", "jev"))
+                self.assertIn("Jev used", err.getvalue())
+                for blob in (s["note"], err.getvalue(), out.decode()):
+                    self.assertFalse(any(k in blob for k in ("SECRETKEY1", "SECRETKEY2", "SECRETKEY3")), kind)
+                self.assertEqual(self._status(hg), 403)
+            self.assertFalse(m._auth.user_allowed("POST", "/api/decision/test"))
+            self.assertEqual(dec.safe_err(ValueError("bad sk-or-SECRETKEY1"), {"OPENROUTER_API_KEY": "sk-or-SECRETKEY1"}),
+                             "ValueError: bad ***")
+        finally:
+            dec.TIMEOUT, m._guests.instance_by_ip = old_t, old_ip
+            stopj()
+
+    def test_decision_router_only_when_switched_on(self):
+        """DECISION_ROUTER off (or backend jev) -> the router never asks the
+        decision backend; on -> one request with the policy's classes, Jev on
+        failure."""
+        m = self.m
+        rt, dec = m._router, m._decision
+        asked, jevd = [], []
+        old = (dec.ask, rt.jev_classify, m._settings.load_settings)
+        dec.ask = lambda task, be=None: asked.append(task) or (
+            {"task": {"code": 0.9, "chat": 0.1}, "difficulty": {"hard": 0.7}}, 12)
+        rt.jev_classify = lambda pol, text: jevd.append(text) or ({"task": ("chat", 0.6)}, 3)
+        try:
+            for st in ({"DECISION_BACKEND": "decision1-openrouter"}, {"DECISION_BACKEND": "jev", "DECISION_ROUTER": "1"},
+                       {"DECISION_ROUTER": "1"}):
+                m._settings.load_settings = lambda st=st: st
+                self.assertEqual(rt.classify(rt.DEFAULT_POLICY, "fix it"), ({"task": ("chat", 0.6)}, 3))
+            self.assertEqual(asked, [])
+            m._settings.load_settings = lambda: {"DECISION_BACKEND": "local-llm", "DECISION_ROUTER": "1"}
+            self.assertEqual(rt.classify(rt.DEFAULT_POLICY, "fix it"), ({"task": ("code", 0.9), "difficulty": ("hard", 0.7)}, 12))
+            self.assertEqual(asked[0]["state"], "fix it")
+            self.assertEqual(asked[0]["questions"]["task"]["criteria"], rt.DEFAULT_POLICY["questions"]["task"])
+            dec.ask = lambda task, be=None: (_ for _ in ()).throw(TimeoutError("slow"))
+            import contextlib
+            import io
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(rt.classify(rt.DEFAULT_POLICY, "fix it"), ({"task": ("chat", 0.6)}, 3))
+        finally:
+            dec.ask, rt.jev_classify, m._settings.load_settings = old
+
+    def test_decision_settings_validated_and_key_masked(self):
+        m = self.m
+        tmp = tempfile.mkdtemp()
+        old = m._paths.SETTINGS_FILE
+        m._paths.SETTINGS_FILE = os.path.join(tmp, "settings.json")
+        try:
+            for bad in ({"DECISION_BACKEND": "gpt"}, {"DECISION_ROUTER": "yes"}, {"DECISION_MODEL": "a b"},
+                        {"AZURE_DECISION_ENDPOINT": "http://x.azure.com/v1"},
+                        {"AZURE_DECISION_ENDPOINT": "https://u:p@x.azure.com/"}):
+                self.assertTrue(m._settings.save_settings(bad).startswith("error: "), bad)
+            self.assertFalse(os.path.exists(m._paths.SETTINGS_FILE))
+            ok = {"DECISION_BACKEND": "decision1-azure", "DECISION_ROUTER": "", "DECISION_MODEL": "microsoft/decision-1",
+                  "AZURE_DECISION_ENDPOINT": "https://x.services.ai.azure.com/models", "AZURE_DECISION_KEY": "az-SECRETKEY2"}
+            self.assertEqual(m._settings.save_settings(ok), "saved")
+            self.assertEqual(m._settings.settings_for_ui()["AZURE_DECISION_KEY"], m._settings.SETTINGS_KEEP)
+            self.assertNotIn("AZURE_DECISION_KEY", m._settings.SECRET_PARAMS)     # never released to a VM
+            self.assertEqual(m._decision.backend(), "decision1-azure")
+            keys = {s["key"] for s in m._settings.SETTINGS_SCHEMA}
+            self.assertTrue({"DECISION_BACKEND", "DECISION_MODEL", "AZURE_DECISION_ENDPOINT", "AZURE_DECISION_KEY",
+                             "DECISION_LOCAL_MODEL", "DECISION_ROUTER"} <= keys)
+        finally:
+            m._paths.SETTINGS_FILE = old
+
     def test_squadgate_profile_in_catalog_proposal_and_kickoff(self):
         """The project's repo profile is in squad_catalog (and its text), in a
         squad proposal (what the card shows) and in the kickoff goal message;

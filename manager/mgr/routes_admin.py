@@ -15,6 +15,7 @@ import json
 import mimetypes
 import os
 import re
+import time
 import urllib.parse
 import urllib.request
 
@@ -35,6 +36,7 @@ from mgr import guestproxy as _guestproxy
 from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
+from mgr import decision as _decision
 from mgr import jevsetup as _jevsetup
 from mgr import katfs as _katfs
 from mgr import mcp as _mcp
@@ -379,6 +381,15 @@ def _rt_router(h):
 def _rt_setup_suggest(h):
     # {purpose} -> Jev's persona / skills / tier+model suggestion for a new instance (mgr/jevsetup.py)
     return h._json(_jevsetup.suggest((h._body() or {}).get("purpose")))
+
+
+@_routes.ROUTER.post("/api/decision/test", admin=True)
+def _rt_decision_test(h):
+    # One sample setup suggestion with the saved decision backend (mgr/decision.py): backend, latency, result or error.
+    be, t0 = _decision.backend(), time.time()
+    s = _jevsetup.suggest("Implement and test the REST API of the backend service.",
+                          "Repository: Python, HTTP API, SQLite. Squad goal: ship v1 of the order service")
+    return h._json({"backend": be, "used": s.get("backend", "jev"), "ms": int((time.time() - t0) * 1000), "result": s})
 
 
 @_routes.ROUTER.post("/api/router/tiers", admin=True)

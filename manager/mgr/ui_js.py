@@ -1576,7 +1576,20 @@ async function voiceHealth(){
 function saveSettings(){
   const d={};document.querySelectorAll('#settings input,#settings select').forEach(i=>d[i.dataset.s]=i.value);
   fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-    .then(()=>{Object.assign(SETTINGS,d);document.getElementById('setmsg').textContent='saved ✓';renderParams();loadAppsPanel()});
+    .then(r=>r.json()).then(r=>{const m=document.getElementById('setmsg');
+      if(/^error/.test(r.msg||'')){m.textContent=r.msg;return}
+      Object.assign(SETTINGS,d);m.textContent='saved ✓';renderParams();loadAppsPanel()});
+}
+async function decisionTest(){
+  // POST /api/decision/test (mgr/decision.py): one sample suggestion with the SAVED backend
+  const m=document.getElementById('setmsg'); m.textContent='testing the decision backend…';
+  let d; try{d=await (await fetch('/api/decision/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}
+  catch(e){m.textContent='manager not reachable';return}
+  const s=d.result||{}, fell=d.backend!==d.used;
+  m.textContent=`${d.backend}${fell?' → fell back to '+d.used:''} · ${d.ms} ms · `+
+    (s.persona?`persona ${s.persona.name} (${s.persona.score})`:'no persona')+
+    ` · skills ${(s.skills||[]).map(x=>x.name+' ('+x.score+')').join(', ')||'–'}`+
+    ` · tier ${s.tier?s.tier.name+' ('+s.tier.score+')':'–'} · ${s.note||''}`;
 }
 function fieldFor(p){
   const v=p.default||SETTINGS[p.key]||'';

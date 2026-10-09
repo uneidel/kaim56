@@ -45,6 +45,7 @@ import uuid
 from mgr import audit as _audit
 from mgr import indexer as _indexer
 from mgr import instances as _instances
+from mgr import decision as _decision
 from mgr import jevsetup as _jevsetup
 from mgr import notify as _notify
 from mgr import paths as _paths
@@ -366,7 +367,7 @@ def propose(proj, by, kind, body):
     if kind != "merge":
         prop["profile"] = profile(proj)          # what the choices are based on (the card shows it)
     _put(prop)
-    if kind != "merge" and _router.jev_url() and any(_wants_suggestion(m) for m in prop["members"]):
+    if kind != "merge" and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
         _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval",
@@ -450,7 +451,7 @@ def suggest_member(project, pid, member):
     m = next((x for x in prop.get("members") or [] if x["name"] == member), None)
     if m is None or m["existing"]:
         return None, f"{member!r} is no new member of this proposal"
-    if not _router.jev_url():
+    if not _decision.ready():
         return None, "Jev is not configured (JEV_URL in Settings)"
     p = fill_suggestions(project, pid, member, force=True)
     return (p, "") if p else (None, "the proposal was decided meanwhile")

@@ -922,7 +922,10 @@ HTML_BOTTOM = """
   <b>Setup suggestion</b> (<code>mgr/jevsetup.py</code>, <code>POST /api/setup/suggest</code>): from a purpose, Jev scores the personas, the skills (word
   pre-filter, max 16 hypotheses per call) and the same task/difficulty questions &#8212; persona, skills (config <code>SKILLS</code>, listed to the agent like
   standard skills) and tier + model pre-filled in New instance; in a squad proposal (repo keywords + goal as context) only persona and tier from 0.8,
-  never skills &#8212; the rest are hints, "Suggest again" fills all three; nothing applies without Create / Approve.</p></div>
+  never skills &#8212; the rest are hints, "Suggest again" fills all three; nothing applies without Create / Approve.
+  <b>Decision backend</b> (<code>mgr/decision.py</code>, Settings <code>DECISION_BACKEND</code>): Jev, Microsoft-Decision-1 (OpenRouter or Azure Foundry,
+  keys host-side) or the local LLM &#8212; one strict-JSON chat-completions request with the full catalogs, names checked, scores clamped; any failure
+  falls back to Jev (noted). The router uses it only with <code>DECISION_ROUTER=1</code>. Settings &#8594; Test runs one sample.</p></div>
 
   <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
   <p class=card-body>After a long successful turn the agent distils a skill proposal; nothing enters the catalog without the operator&#8217;s click. The distiller
@@ -996,7 +999,7 @@ HTML_BOTTOM = """
     </div>
     <pre id=updlog hidden class=mono style="font-size:11.5px;max-height:180px;overflow:auto;margin:-8px 0 16px;padding:8px 12px;border:1px solid var(--color-divider);white-space:pre-wrap"></pre>
     <div class=stack id=settings></div>
-    <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
+    <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-secondary" title="One sample setup suggestion with the saved decision backend" onclick=decisionTest()>Test decision backend</button><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
   </div>
   <div class="panel blueprint" id=sesspanel hidden style="margin-top:18px">
     <h6 style="margin:0 0 10px">Sessions (OIDC logins)</h6>

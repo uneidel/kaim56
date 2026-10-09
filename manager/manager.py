@@ -71,6 +71,7 @@ from mgr import checkout as _checkout        # noqa: F401
 from mgr import cfapi as _cfapi              # noqa: F401
 from mgr import chats as _chats              # noqa: F401
 from mgr import cloud as _cloud              # noqa: F401
+from mgr import decision as _decision        # noqa: F401
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat      # noqa: F401
 from mgr import guestproxy as _guestproxy    # noqa: F401
