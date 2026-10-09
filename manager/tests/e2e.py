@@ -32,6 +32,12 @@ import zipfile
 import re
 import socket
 
+# Every temp dir of a run lives under one parent that goes at exit: the
+# tests' 86 mkdtemp calls left ~100 dirs in /tmp (a RAM disk) per run.
+import atexit
+tempfile.tempdir = tempfile.mkdtemp(prefix="kaim56-e2e-run-")
+atexit.register(shutil.rmtree, tempfile.tempdir, True)
+
 # --- paths to the modules under test ----------------------------------------
 FC_DIR = os.environ.get("FC_DIR", "/home/ulrich/firecracker")
 AGENT_PATH = os.environ.get("AGENT_PATH", "/home/ulrich/openrouter-agent/agent/__init__.py")   # the agent package
