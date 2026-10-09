@@ -215,6 +215,17 @@ def _guard(proj, targets, depth, now):
     return ""
 
 
+_OPERATOR_WORDS = {"user", "admin", "operator", "owner", "human", "you"}
+
+
+def _last_user(project):
+    """'user:<name>' of the latest person who wrote in the project's channel, or ''."""
+    with _db() as c:
+        row = c.execute("SELECT sender FROM squad_msg WHERE project=? AND sender LIKE 'user:%' "
+                        "ORDER BY id DESC LIMIT 1", (project,)).fetchone()
+    return row[0] if row else ""
+
+
 def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
     """Store one message and wake its addressees. -> (message, '') or (None, why).
     `sender` is a member's name or 'user:<name>'; it is never woken."""
@@ -239,6 +250,12 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
         to = to or [orig["from"]]
     if kind != "ask":                            # a question names its one addressee in `to`
         to += [m for m in _MENTION.findall(text) if m in names or m == "all"]
+    # The operator is no member: "user", "admin", "operator" or no addressee at
+    # all means the person who last wrote in this channel (live 2026-10-09: an
+    # architect burned its turn on "not a member: admin" and a missing `to`).
+    if kind == "post" and not str(sender).startswith("user:") and (not to or any(x in _OPERATOR_WORDS for x in to)):
+        op = _last_user(proj["name"]) or "user:operator"
+        to = [op if x in _OPERATOR_WORDS else x for x in to] or [op]
     bad = [x for x in to if x not in names and x != "all" and not x.startswith("user:")]
     if bad:
         return None, f"not a member of {proj['name']}: {', '.join(sorted(set(bad)))}"

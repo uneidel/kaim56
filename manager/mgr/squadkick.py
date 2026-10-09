@@ -407,7 +407,9 @@ def step_post(job):
         return
     arch = job["arch"]
     text = (f"@{arch} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
-            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\nStudy the code. Call squad_catalog first. For each member choose "
+            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\nThe code is the repository mounted read-only at /project/{job['name']} "
+            f"(not your workspace, not the web): read it there first (list_dir /project/{job['name']}, read_file, "
+            f"bash: ls/grep/cat). Then call squad_catalog. For each member choose "
             f"persona (or propose new_persona if none fits), skills from the catalog, model tier and template "
             f"(openrouter or claude), and a role. Then call squad_propose with the members, tickets with their "
             f"dependencies, and a daily token budget (default {BUDGET}). Nothing else runs before I approve.")

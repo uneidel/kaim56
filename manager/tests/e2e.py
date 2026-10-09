@@ -4271,6 +4271,23 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._store.TASKS_FILE = old
 
+    def test_squad_member_post_without_addressee_goes_to_the_operator(self):
+        """A member's post with no `to` (or to=user/admin) goes to the person who
+        last wrote in the channel and wakes nobody; the operator must still name
+        someone. A lead is created with a raised step limit."""
+        woke, tasks, undo = self._squad_env()
+        m, A = self.m, "172.30.3.2"
+        try:
+            m._squads.post(m._projects.get("sq"), "user:ulrich", ["a"], "goal")
+            n = len(woke)
+            for to in ("", "admin", "user"):
+                st, d = self._sq("/api/squad/post", A, {"to": to, "text": "plan is up"})
+                self.assertEqual((st, d["to"], d["delivered"]), (200, ["user:ulrich"], []))
+            self.assertEqual(len(woke), n)
+        finally:
+            undo()
+        self.assertEqual(m._squadgate.LEAD_MAX_STEPS, 40)
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason
@@ -5201,7 +5218,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((name, tpl, cfg["TRANSPORT"], cfg["ANTHROPIC_MODEL"]), ("repo-architect", "claude", "web", "opus"))
             self.assertNotIn("OPENROUTER_MODEL", cfg)
             self.assertTrue({"squad_catalog", "squad_propose"} <= set(cfg["AGENT_TOOLS"].split(",")))
-            self.assertIn("Call squad_catalog first", woke[0][1]); self.assertIn("new_persona", woke[0][1])
+            self.assertIn("Then call squad_catalog", woke[0][1]); self.assertIn("/project/repo", woke[0][1]); self.assertIn("new_persona", woke[0][1])
             self.assertIn("(openrouter or claude)", woke[0][1])
         finally:
             undo()

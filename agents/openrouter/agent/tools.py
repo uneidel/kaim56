@@ -272,7 +272,7 @@ BUILTIN = {
                    "Post to your project's squad channel. Members you address (to, or @name / @all in the "
                    "text) are woken to act on it. Reply to a message with reply_to=<its id>. Address only "
                    "those who need to act; the operator reads the channel.",
-                   {"to": {"type": "string", "description": "member name(s), comma-separated, or 'all' (empty with reply_to = its sender)"},
+                   {"to": {"type": "string", "description": "member name(s), comma-separated, or 'all'; 'user' or empty = the operator (the person who wrote last); empty with reply_to = that message's sender"},
                     "text": {"type": "string"},
                     "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
                     "project": {"type": "string", "description": "optional when you are in one squad"}},

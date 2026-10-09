@@ -464,6 +464,9 @@ def _model_cfg(m, steps):
     return {"OPENROUTER_MODEL": want}
 
 
+LEAD_MAX_STEPS = 40
+
+
 def _create(proj, m, steps):
     """The member's instance (created when missing)."""
     if any(i["name"] == m["name"] for i in _instances.load_instances()):
@@ -472,6 +475,8 @@ def _create(proj, m, steps):
     # task -> _chat_post); a template's own default (signal) left the first
     # live architect deaf to every message (2026-10-09).
     cfg = {"TRANSPORT": "web"}
+    if m["role"] == "lead":                         # a lead studies code before it plans: 12 tool rounds were
+        cfg["AGENT_MAX_STEPS"] = str(LEAD_MAX_STEPS)  # not enough for the first live architect (2026-10-09)
     if m["skills"]:
         cfg["SKILLS"] = ",".join(m["skills"])
     pers = next((p for p in _personas.load_personas() if p.get("name") == m["persona"]), None) if m["persona"] else None

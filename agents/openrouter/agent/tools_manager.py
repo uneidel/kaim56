@@ -633,7 +633,7 @@ def _squad_call(path, payload=None, timeout=60):
         return None, f"Error: {e!r}"
 
 
-def t_squad_post(to, text, reply_to="", project=""):
+def t_squad_post(to="", text="", reply_to="", project=""):
     """Post to the project channel; the addressed members are woken."""
     d, err = _squad_call("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None,
                                              "project": project})
@@ -690,7 +690,8 @@ def _gate_out(d, err):
         return err
     w = d.get("warnings") or []
     return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — "
-            "nothing happens before; a squad message brings the decision."
+            "nothing happens before; a squad message brings the decision. Your work for now is done: "
+            "end this turn with a short summary (no tickets, no further posts until the decision arrives)."
             + (" Flags: " + "; ".join(w) if w else ""))
 
 

@@ -129,7 +129,8 @@ def _proposed(path, payload):
     d = json.loads(_post(path, payload))
     w = d.get("warnings") or []
     return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — nothing "
-            "happens before; a squad message brings the decision." + (" Flags: " + "; ".join(w) if w else ""))
+            "happens before; a squad message brings the decision. Your work for now is done: end this turn with a short "
+            "summary (no tickets, no further posts until the decision arrives)." + (" Flags: " + "; ".join(w) if w else ""))
 
 
 def t_squad_catalog(project=""):
