@@ -60,6 +60,8 @@ MAX_COMMENTS = 100
 MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
+LEAD_TOOLS = ("squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
+              "project_status", "project_diff")   # a lead created here (the kickoff's architect)
 _lock = threading.Lock()        # the file
 _decide = threading.Lock()      # one approval at a time
 
@@ -359,7 +361,8 @@ def _create(proj, m, steps):
     if m["persona"] and not pers:
         steps.append({"step": f"persona {m['name']}", "ok": False, "detail": f"persona {m['persona']!r} not found — none set"})
     if pers and pers.get("tools"):                # a tool subset still needs the squad's own tools
-        cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(pers["tools"]) + list(MEMBER_TOOLS)))
+        extra = MEMBER_TOOLS + (LEAD_TOOLS if m["role"] == "lead" else ())
+        cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(pers["tools"]) + list(extra)))
     if pers and pers.get("model"):
         cfg["OPENROUTER_MODEL"] = pers["model"]
     cfg.update(_model_cfg(m, steps))

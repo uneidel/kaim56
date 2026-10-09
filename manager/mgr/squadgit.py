@@ -51,6 +51,7 @@ DEFAULTS = {"provider": "github", "url": "", "token_secret": "", "base": "main",
 GIT_TIMEOUT, API_TIMEOUT = 120, 20
 TITLE_MAX, BODY_MAX, COMMENT_SHOW = 200, 20000, 20
 KEEP = 500                                  # created PRs/issues remembered
+TOKEN_PREFIX = "SQUAD_GIT_TOKEN_"           # the kickoff's per-host tokens (mgr/squadkick.py)
 REMOTE_NS = "refs/remotes/kaim56"           # where fetch puts the remote's branches
 FILE_PROTOCOL = "never"                     # the tests' local bare "remote" sets "always"
 URL_RE = re.compile(r"^https://([A-Za-z0-9.-]{1,253}(?::\d{1,5})?)((?:/[A-Za-z0-9._~-]+)*?)"
@@ -111,8 +112,10 @@ def normalize(body):
 
 
 def reserved_secrets():
-    """The token secret names of every project remote — never released to a VM."""
-    return {r["token_secret"] for r in (settings(p) for p in _projects.load()) if r and r.get("token_secret")}
+    """The token secret names of every project remote, and every kickoff
+    token (SQUAD_GIT_TOKEN_*, mgr/squadkick.py) — never released to a VM."""
+    return ({r["token_secret"] for r in (settings(p) for p in _projects.load()) if r and r.get("token_secret")}
+            | {k for k in _secrets.load_secrets_file() if k.startswith(TOKEN_PREFIX)})
 
 
 def _token(cfg):
@@ -146,17 +149,23 @@ def repo_name(cfg):
 
 
 # ---- git on the host ----------------------------------------------------------
+def auth_env(provider, token):
+    """The environment that hands git the token: an http.extraHeader in
+    GIT_CONFIG_*, no system/global config, no prompt, no redirect."""
+    user = "x-access-token" if provider == "github" else "kaim56"
+    auth = base64.b64encode(f"{user}:{token}".encode()).decode()
+    return {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_ASKPASS": "/bin/false", "SSH_ASKPASS": "/bin/false",
+            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_KEY_0": "http.extraHeader", "GIT_CONFIG_VALUE_0": f"Authorization: Basic {auth}",
+            "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": "",
+            "GIT_CONFIG_KEY_2": "http.followRedirects", "GIT_CONFIG_VALUE_2": "false"}
+
+
 def _git(repo, args, cfg, token):
     """git in the project repo as the repo owner; the token only in the environment."""
     uid, gid = _projwt._owner(repo)
-    user = "x-access-token" if cfg["provider"] == "github" else "kaim56"
-    auth = base64.b64encode(f"{user}:{token}".encode()).decode()
-    env = {**_projwt._env(repo, uid), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-           "GIT_ASKPASS": "/bin/false", "SSH_ASKPASS": "/bin/false",
-           "GIT_CONFIG_COUNT": "3",
-           "GIT_CONFIG_KEY_0": "http.extraHeader", "GIT_CONFIG_VALUE_0": f"Authorization: Basic {auth}",
-           "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": "",
-           "GIT_CONFIG_KEY_2": "http.followRedirects", "GIT_CONFIG_VALUE_2": "false"}
+    env = {**_projwt._env(repo, uid), **auth_env(cfg["provider"], token)}
     try:
         r = subprocess.run(["git", *_projwt.GIT_SAFE, "-c", f"protocol.file.allow={FILE_PROTOCOL}", *args],
                            cwd=repo, env=env, capture_output=True, text=True, timeout=GIT_TIMEOUT, check=False,

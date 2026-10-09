@@ -208,6 +208,7 @@ _USER_ROUTES = [
     ("GET", rf"/api/projects/{_N}/squad/(messages|board)"),  # a squad's channel and proposals/tickets: read
                                                             # and post — not its settings, decisions, ticket edits
     ("POST", rf"/api/projects/{_N}/squad/post"),
+    ("GET", r"/api/squads"),                                # the Squads page's list — not the kickoff
 ]
 _USER_RX = [(m, re.compile(p + r"\Z")) for m, p in _USER_ROUTES]
 

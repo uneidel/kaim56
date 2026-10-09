@@ -8091,6 +8091,268 @@ class ManagerFunctions(unittest.TestCase):
             undo()
 
 
+    # ---- squad kickoff: repo URL + goal -> clone, project, remote, architect, goal posted -----
+    SK_TOK = "ghp_KiCkOfFtOkEn9876543210"
+
+    def _kick_env(self):
+        """_gate_env + a squads dir under the browse root, a host secret
+        store, a bare repo the kickoff clones (clone_url), the strong tier,
+        persona code-architect; steps run in the caller's thread; every
+        Popen recorded (argv, env)."""
+        import subprocess as sp
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        tmp = os.path.dirname(m._projects.PROJECTS_FILE)
+        k, sg = m._squadkick, m._squadgit
+        old = (m._settings.SITE, k._spawn, k.clone_url, sg.FILE_PROTOCOL, sg.STATE_FILE, m._secrets.SECRETS_FILE,
+               m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._indexer.instance, m._instances.delete_instance,
+               k.MAX_BYTES, sp.Popen)
+        m._settings.SITE = {**old[0], "SQUADS_DIR": os.path.join(tmp, "squads"), "SQUAD_GITEA_HOSTS": "git.example.org"}
+        k._jobs.clear()
+        k._spawn = lambda fn, *a: fn(*a)
+        repo, _g = self._git_repo(tmp)
+        bare = os.path.join(tmp, "src.git")
+        sp.run(["git", "clone", "-q", "--bare", repo, bare], check=True)
+        k.clone_url, sg.FILE_PROTOCOL = (lambda job: bare), "always"
+        sg.STATE_FILE = os.path.join(tmp, "squadgit.json")
+        m._secrets.SECRETS_FILE = os.path.join(tmp, "secrets.env")
+        _wtext(m._secrets.SECRETS_FILE, "OTHER_KEY=x\n")
+        m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+        m._indexer.instance = lambda: None
+        m._instances.delete_instance = lambda n: self._sq_insts.remove(next(i for i in self._sq_insts if i["name"] == n))
+        m._router.load = lambda: {"tiers": {"openrouter/acme/big": "strong"}, "policies": {}}
+        m._personas.load_personas = lambda: [{"name": "code-architect", "prompt": "You design.", "tools": ["bash"]}]
+        calls, real = [], sp.Popen
+
+        def popen(args, *a, **kw):
+            calls.append((list(args), dict(kw.get("env") or {})))
+            return real(args, *a, **kw)
+        sp.Popen = popen
+
+        def undo2():
+            (m._settings.SITE, k._spawn, k.clone_url, sg.FILE_PROTOCOL, sg.STATE_FILE, m._secrets.SECRETS_FILE,
+             m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._indexer.instance, m._instances.delete_instance,
+             k.MAX_BYTES, sp.Popen) = old
+            k._jobs.clear()
+            undo()
+        return tmp, bare, woke, created, calls, undo2
+
+    def _kick_clean(self, tmp, name="repo"):
+        m = self.m
+        self.assertFalse(os.path.exists(os.path.join(tmp, "squads", name)))
+        self.assertIsNone(m._projects.get(name))
+        self.assertFalse([i for i in self._sq_insts if i["name"] == name + "-architect"])
+
+    def test_squadkick_parse_hosts_and_names(self):
+        """The first https URL is the repo, the rest the goal (both needed);
+        github.com and the configured Gitea hosts only; the name comes from
+        the repo, -2 when taken; the token secret is named per host."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k = m._squadkick
+        try:
+            f, _ = k.parse("Please https://github.com/Own/My_Repo.git, add dark mode.")
+            self.assertEqual((f["url"], f["provider"], f["repo"], f["goal"]),
+                             ("https://github.com/Own/My_Repo", "github", "My_Repo", "Please add dark mode."))
+            f, _ = k.parse("https://git.example.org/team/app fix the login")
+            self.assertEqual((f["provider"], f["goal"]), ("gitea", "fix the login"))
+            for text, why in (("add dark mode", "https URL"), ("https://github.com/o/r", "goal"),
+                              ("https://gitlab.com/o/r do it", "not allowed"), ("http://github.com/o/r x", "https URL"),
+                              ("https://github.com/o/r/tree/main do it", "github.com/<owner>/<repo>"),
+                              ("https://github.com/o do it", "no repository URL")):
+                self.assertIn(why, k.parse(text)[1], text)
+            self.assertEqual(k.derive_name("My_Repo.JS"), "my-repo-js")
+            self.assertEqual(k.derive_name("---"), "squad")
+            self.assertEqual(len(k.derive_name("x" * 60)), k.NAME_MAX)
+            os.makedirs(os.path.join(tmp, "squads", "taken"))
+            self.assertEqual(k.derive_name("taken"), "taken-2")
+            self.assertEqual(k.derive_name("sq"), "sq-2")                          # a project of that name
+            self.assertEqual((k.token_secret("github.com"), k.token_secret("git.example.org:3000")),
+                             ("SQUAD_GIT_TOKEN_GITHUB", "SQUAD_GIT_TOKEN_GIT_EXAMPLE_ORG"))
+            _wtext(m._secrets.SECRETS_FILE, "SQUAD_GIT_TOKEN_GITHUB=t\n")
+            self.assertIn("SQUAD_GIT_TOKEN_GITHUB", m._squadgit.reserved_secrets())  # never to a VM
+            st, d = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "no url here"})
+            self.assertEqual(st, 400); self.assertIn("https URL", d["error"])
+        finally:
+            undo()
+
+    def test_squadkick_happy_path_admin_only_and_idempotent(self):
+        """Kickoff: clone under SQUADS_DIR, worktree project on the default
+        branch, the remote with the host's token secret, <name>-architect
+        (persona, strong tier, lead tools) as lead, squad enabled but not
+        approved, the goal posted to the architect. The token is in no argv,
+        log or file. Running the steps again changes nothing. Admin only."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k, L = m._squadkick, "127.0.0.1"
+        _wtext(m._secrets.SECRETS_FILE, f"SQUAD_GIT_TOKEN_GITHUB={self.SK_TOK}\n")
+        try:
+            st, j = self._sq("/api/squads/kickoff", L, {"text": "https://github.com/own/repo add dark mode"})
+            self.assertEqual((st, j["name"], j["arch"]), (200, "repo", "repo-architect"), j)
+            st, j = self._sq("/api/squads/kickoff/" + j["id"], L)
+            self.assertEqual(j["status"], "done", j["log"])
+            dest = os.path.join(tmp, "squads", "repo")
+            self.assertTrue(os.path.isfile(os.path.join(dest, "top.txt")))
+            self.assertEqual(os.stat(os.path.join(tmp, "squads")).st_mode & 0o777, 0o750)
+            p = m._projects.get("repo")
+            self.assertEqual((p["strategy"], p["base"], p["source"]["path"]), ("worktree", "main", dest))
+            self.assertEqual(p["members"]["repo-architect"]["role"], "lead")
+            r = m._squadgit.settings(p)
+            self.assertEqual((r["provider"], r["url"], r["token_secret"], r["base"]),
+                             ("github", "https://github.com/own/repo", "SQUAD_GIT_TOKEN_GITHUB", "main"))
+            self.assertEqual([c[0] for c in created], ["repo-architect"])
+            cfg = created[0][2]
+            self.assertEqual(cfg["OPENROUTER_MODEL"], "acme/big")
+            self.assertTrue(cfg["AGENT_SYSTEM"].startswith("You design."))
+            self.assertTrue({"squad_propose", "ticket_create", "squad_post"} <= set(cfg["AGENT_TOOLS"].split(",")))
+            s = m._squads.settings(p)
+            self.assertEqual((s["enabled"], s["approved"], s["daily_token_budget"]), (True, False, 2_000_000))
+            self.assertEqual([w[0] for w in woke], ["repo-architect"])
+            self.assertIn("add dark mode", woke[0][1]); self.assertIn("squad_propose", woke[0][1])
+            self.assertEqual(m._squads.read("repo")[0]["from"], "user:admin")
+            sq = {x["name"]: x for x in self._sq("/api/squads", L)[1]["squads"]}
+            self.assertEqual((sq["repo"]["status"], sq["repo"]["lead"]), ("waiting for approval", "repo-architect"))
+            # the token: only as a header in git's environment
+            b64 = base64.b64encode(f"x-access-token:{self.SK_TOK}".encode()).decode()
+            carried = []
+            for argv, env in calls:
+                self.assertFalse([a for a in argv if self.SK_TOK in a or b64 in a], argv)
+                carried += [x for x, v in env.items() if self.SK_TOK in v or b64 in v]
+            self.assertEqual(carried, ["GIT_CONFIG_VALUE_0"])                    # the clone, as a header
+            self.assertNotIn(self.SK_TOK, json.dumps(j))
+            for d, _dirs, files in os.walk(tmp):
+                for f in files:
+                    fp = os.path.join(d, f)
+                    if fp != m._secrets.SECRETS_FILE and not os.path.islink(fp) and "/objects/" not in fp:
+                        with open(fp, "rb") as fh:
+                            self.assertNotIn(self.SK_TOK.encode(), fh.read(), fp)
+            # again: every step skips what is done
+            k.run(j["id"])
+            self.assertEqual((len(created), len(woke), k.get(j["id"])["status"]), (1, 1, "done"))
+            self.assertEqual(self._sq(f"/api/squads/kickoff/{j['id']}/retry", L, {})[0], 400)
+            # the next kickoff of the same repo is a new squad
+            st, j2 = self._sq("/api/squads/kickoff", L, {"text": "https://github.com/own/repo second team"})
+            self.assertEqual((j2["name"], k.get(j2["id"])["status"]), ("repo-2", "done"))
+            # admin only: the kickoff; role user reads the list and the channel, posts
+            ua = m._auth.user_allowed
+            for meth, path in (("POST", "/api/squads/kickoff"), ("GET", "/api/squads/kickoff"),
+                               ("GET", "/api/squads/kickoff/abc"), ("POST", "/api/squads/kickoff/abc/retry")):
+                self.assertFalse(ua(meth, path), path)
+                self.assertTrue(m._routes.ROUTER.resolve(meth, path)[1])           # not from a guest
+            self.assertTrue(ua("GET", "/api/squads")); self.assertTrue(ua("POST", "/api/projects/repo/squad/post"))
+            self.assertEqual(self._sq("/api/squads/kickoff", "172.30.3.2", {"text": "x"})[0], 403)
+        finally:
+            undo()
+
+    def _dumb_http(self, bare, token):
+        """A git 'dumb HTTP' server for the bare repo that answers 401 unless
+        the request carries the token as Basic auth -> (server, url, seen)."""
+        import http.server
+        import subprocess as sp
+        from http.server import ThreadingHTTPServer
+        sp.run(["git", "-C", bare, "update-server-info"], check=True)
+        want = "Basic " + base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        seen = []
+
+        class H(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, directory=bare, **kw)
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                if self.headers.get("Authorization") != want:
+                    self.send_response(401)
+                    self.send_header("WWW-Authenticate", 'Basic realm="git"')
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.path = self.path.split("?", 1)[0]
+                return super().do_GET()
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv, f"http://127.0.0.1:{srv.server_address[1]}/", seen
+
+    def test_squadkick_auth_failure_names_the_secret_then_retry(self):
+        """A private repo without a token: the chat names the secret to
+        create and nothing is left behind; with the secret, Retry clones over
+        HTTP with the token as a header only and finishes."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k = m._squadkick
+        srv, url, seen = self._dumb_http(bare, self.SK_TOK)
+        k.clone_url = lambda job: url
+        try:
+            st, j = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "https://github.com/own/repo ship it"})
+            j = k.get(j["id"])
+            self.assertEqual(j["status"], "failed", j["log"])
+            self.assertIn("create the host secret SQUAD_GIT_TOKEN_GITHUB", j["log"][-2]["text"] + j["log"][-1]["text"])
+            self._kick_clean(tmp)
+            self.assertEqual((created, woke), ([], []))
+            _wtext(m._secrets.SECRETS_FILE, f"SQUAD_GIT_TOKEN_GITHUB={self.SK_TOK}\n")
+            st, j = self._sq(f"/api/squads/kickoff/{j['id']}/retry", "127.0.0.1", {})
+            self.assertEqual(st, 200)
+            j = k.get(j["id"])
+            self.assertEqual(j["status"], "done", j["log"])
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "squads", "repo", "top.txt")))
+            self.assertTrue(any(a and a.startswith("Basic ") for _p, a in seen))
+            self.assertNotIn(self.SK_TOK, json.dumps(j))
+            with open(os.path.join(tmp, "squads", "repo", ".git", "config")) as fh:
+                cfg = fh.read()
+            self.assertNotIn(self.SK_TOK, cfg); self.assertNotIn("Authorization", cfg)
+            self.assertFalse([a for a, _e in calls if any(self.SK_TOK in x for x in a)])
+        finally:
+            srv.shutdown(); srv.server_close()
+            undo()
+
+    def test_squadkick_size_cap_and_failed_step_clean_up(self):
+        """Over SQUAD_MAX_BYTES the clone is aborted and removed; a failing
+        later step (the instance) removes the clone and the project this
+        kickoff made — never what it found."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k = m._squadkick
+        try:
+            k.MAX_BYTES = 10
+            st, j = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "https://github.com/own/repo ship it"})
+            j = k.get(j["id"])
+            self.assertEqual(j["status"], "failed")
+            self.assertTrue(any("larger than" in x["text"] for x in j["log"]), j["log"])
+            self._kick_clean(tmp)
+            k.MAX_BYTES = 2 * 1024 ** 3
+            m._instances.create_instance = lambda *a, **kw: "unknown template 'openrouter'"
+            j = k.get(k.retry(j["id"])[0]["id"])
+            self.assertEqual(j["status"], "failed")
+            self.assertIn("creating repo-architect failed", " ".join(x["text"] for x in j["log"]))
+            self._kick_clean(tmp)
+            self.assertTrue(os.path.isdir(os.path.join(tmp, "squads")))            # the root stays
+        finally:
+            undo()
+
+    def test_personas_seed_adds_missing_only(self):
+        """New built-in personas join an existing personas.json; a persona
+        the user has (even of the same name) is never touched."""
+        m = self.m
+        p = m._personas
+        old = p.PERSONAS_FILE
+        p.PERSONAS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-pers-"), "personas.json")
+        try:
+            with open(p.PERSONAS_FILE, "w") as fh:
+                json.dump([{"name": "mine", "prompt": "x"}, {"name": "qa-engineer", "prompt": "my own"}], fh)
+            self.assertEqual(p.seed_missing(), ["ui-developer"])
+            got = {x["name"]: x["prompt"] for x in p.load_personas()}
+            self.assertEqual((got["mine"], got["qa-engineer"]), ("x", "my own"))
+            self.assertIn("accessible", got["ui-developer"])
+            self.assertEqual(p.seed_missing(), [])
+            os.remove(p.PERSONAS_FILE)
+            self.assertTrue({"qa-engineer", "ui-developer"} <= {x["name"] for x in p.load_personas()})   # a new install
+        finally:
+            p.PERSONAS_FILE = old
+
+
 def _fake_forge():
     """A fake GitHub (/repos/…) and Gitea (/api/v1/repos/…) REST API ->
     (server, base url, log of (provider, method, path, query, headers, body))."""
