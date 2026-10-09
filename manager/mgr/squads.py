@@ -16,7 +16,8 @@ that replies to it (``reply_to``) from that member; answers wake nobody — the
 asker polls.
 
 Settings live in the project (projects.json, key ``squad``); messages in
-squad.db in the manager dir (root-only, the last KEEP per project).
+squad.db in the manager dir (root-only, the last KEEP per project). The squad
+ID, the member IDs and the archive of every message: mgr/squadrec.py.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -34,6 +35,7 @@ from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
 from mgr import paths as _paths
 from mgr import projects as _projects
+from mgr import squadrec as _squadrec
 from mgr import store as _store
 
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
@@ -107,8 +109,31 @@ def normalize_settings(body, old=None):
     return s, ""
 
 
+def save_settings(name, s):
+    """Store a project's squad settings; an enabled squad gets its record (IDs, folder)."""
+    p = _projects.set_squad(name, s)
+    if p is not None:
+        record(p)
+    return p
+
+
+def record(proj):
+    """The project's squad record (mgr/squadrec.py): made for an enabled squad, else only read."""
+    try:
+        return _squadrec.ensure(proj) if settings(proj)["enabled"] else _squadrec.of_project(proj["name"])
+    except Exception as e:                      # the record never blocks the channel
+        print(f"[quiet] squad record {proj.get('name')}: {e!r}", flush=True)
+        return None
+
+
 def members(proj):
-    return [{"name": n, "role": m.get("role")} for n, m in sorted((proj.get("members") or {}).items())]
+    rec = record(proj)
+    return [{"name": n, "role": m.get("role"), "member_id": _squadrec.member_id(rec, n)}
+            for n, m in sorted((proj.get("members") or {}).items())]
+
+
+def squad_id(proj):
+    return (_squadrec.of_project(proj["name"]) or {}).get("id", "")
 
 
 def tokens_today(proj):
@@ -150,10 +175,11 @@ def wake(member, message, project, depth, msg_id):
     return _store.add_task(member, message, squad={"project": project, "depth": depth, "msg": msg_id})["id"]
 
 
-def _frame(project, sender, mid, text, kind):
+def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     how = (f"question {mid} — answer with squad_post reply_to={mid}" if kind == "ask"
            else f"msg {mid}, reply with squad_post reply_to={mid}")
-    return f"[squad {project}] from {sender} ({how}): {text}\n{NOTE}"
+    ids = f"\n(squad id {sid}; your member id {member_id})" if sid else ""
+    return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}"
 
 
 def _guard(proj, targets, depth, now):
@@ -225,16 +251,20 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
                       "(SELECT id FROM squad_msg WHERE project=? ORDER BY id DESC LIMIT ?)",
                       (proj["name"], proj["name"], KEEP))
         woke = {}
+        rec = record(proj)
         if targets and not blocked:
-            msg = _frame(proj["name"], sender, mid, text, kind)
             for m in targets:
+                msg = _frame(proj["name"], sender, mid, text, kind, (rec or {}).get("id", ""),
+                             _squadrec.member_id(rec, m))
                 try:
                     woke[m] = wake(m, msg, proj["name"], int(depth), mid)
                 except Exception as e:           # one failed wake must not hide the others
                     blocked = f"wake {m} failed: {e!r}"[:300]
             with _db() as c:
                 c.execute("UPDATE squad_msg SET woke=?, blocked=? WHERE id=?", (json.dumps(woke), blocked, mid))
-    return _get(mid), ""
+    out = _get(mid)
+    _squadrec.log_channel(proj["name"], out)
+    return out, ""
 
 
 def answer(ask_id, asker):
@@ -267,7 +297,12 @@ def read(project, viewer=None, since=0, limit=200):
 
 
 def purge(project):
-    """A deleted project's channel goes with it (a new one of that name starts empty)."""
+    """A deleted project's channel goes with it (a new one of that name starts
+    empty); its squad's archive stays, the project leaves the squad record."""
+    try:
+        _squadrec.detach(project)
+    except Exception as e:
+        print(f"[quiet] squad record detach {project}: {e!r}", flush=True)
     if os.path.exists(SQUAD_DB):
         with _db() as c:
             c.execute("DELETE FROM squad_msg WHERE project=?", (project,))

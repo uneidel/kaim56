@@ -778,7 +778,10 @@ def _rt_squad_members(h):
     inst, p, err = _squad_guest(h, "squad_members", _routes._qs(h).get("project", [""])[0])
     if err:
         return h._json({"error": err}, 403)
-    return h._json({"project": p["name"], "members": _squads.members(p), "settings": _squads.settings(p)})
+    mem = _squads.members(p)
+    return h._json({"project": p["name"], "squad_id": _squads.squad_id(p), "members": mem,
+                    "you": next((x["member_id"] for x in mem if x["name"] == inst["name"]), ""),
+                    "settings": _squads.settings(p)})
 
 
 @_routes.ROUTER.get("/api/squad/answer/", prefix=True)

@@ -1607,6 +1607,9 @@ class ManagerFunctions(unittest.TestCase):
         cls.m = _load("manager_e2e", MANAGER_PATH)
         # the live projects.json (root-only) must not reach any mount test
         cls.m._projects.PROJECTS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-noproj-"), "projects.json")
+        # nor any squad record / archive the real squads dir (mgr/squadrec.py)
+        cls.m._squadrec.REC_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-norec-"), "squadrec.json")
+        cls.m._settings.SITE["SQUADS_DIR"] = tempfile.mkdtemp(prefix="e2e-nosquads-")
 
     def test_open_manager_warns_at_start(self):
         """Without MANAGER_PASS every request is an admin: the start says so in
@@ -4147,8 +4150,10 @@ class ManagerFunctions(unittest.TestCase):
         insts.append({"name": "d", "index": 6, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
                       "mounts": [], "config": {}})
         old = (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
-               m._llmproxy.used_today, m._store.load_tasks)
+               m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE)
         m._squads.SQUAD_DB = os.path.join(tmp, "squad.db")
+        m._squadrec.REC_FILE = os.path.join(tmp, "squadrec.json")
+        m._settings.SITE = {**m._settings.SITE, "SQUADS_DIR": os.path.join(tmp, "squads")}
         m._audit.AUDIT_DIR = os.path.join(tmp, "audit")
         woke, tasks = [], []
         m._squads.wake = lambda member, msg, project, depth, mid: woke.append((member, msg, depth)) or f"t{len(woke)}"
@@ -4162,7 +4167,7 @@ class ManagerFunctions(unittest.TestCase):
 
         def undo():
             (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
-             m._llmproxy.used_today, m._store.load_tasks) = old
+             m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE) = old
             restore()
         return woke, tasks, undo
 
@@ -4202,8 +4207,9 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._sq(f"/api/squad/read?since={d2['id']}", D)[1]["messages"][0]["id"], d3["id"])
             self.assertEqual(self._sq("/api/squad/read", C)[0], 403)
             st, mem = self._sq("/api/squad/members", B)
-            self.assertEqual(mem["members"], [{"name": "a", "role": "lead"}, {"name": "b", "role": "writer"},
-                                              {"name": "d", "role": "reader"}])
+            self.assertEqual([(x["name"], x["role"]) for x in mem["members"]], [("a", "lead"), ("b", "writer"), ("d", "reader")])
+            self.assertTrue(all(x["member_id"].startswith(mem["squad_id"] + "-") for x in mem["members"]))
+            self.assertEqual(mem["you"], mem["members"][1]["member_id"])
             with open(os.path.join(m._audit.AUDIT_DIR, "a.jsonl")) as fh:
                 self.assertEqual(json.loads(fh.readlines()[-1])["tool"], "squad_post")
             # a tool allowlist without the squad tools closes the routes
@@ -8137,9 +8143,15 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         return tmp, bare, woke, created, calls, undo2
 
+    def _kick_dest(self, name="repo"):
+        rec = self.m._squadrec.of_project(name)
+        return self.m._squadrec.repo_dir(rec, name)
+
     def _kick_clean(self, tmp, name="repo"):
         m = self.m
         self.assertFalse(os.path.exists(os.path.join(tmp, "squads", name)))
+        self.assertFalse([x for x in os.listdir(os.path.join(tmp, "squads")) if x.endswith("__" + name)])
+        self.assertFalse(m._squadrec.name_taken(name))
         self.assertIsNone(m._projects.get(name))
         self.assertFalse([i for i in self._sq_insts if i["name"] == name + "-architect"])
 
@@ -8191,7 +8203,13 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, j["name"], j["arch"]), (200, "repo", "repo-architect"), j)
             st, j = self._sq("/api/squads/kickoff/" + j["id"], L)
             self.assertEqual(j["status"], "done", j["log"])
-            dest = os.path.join(tmp, "squads", "repo")
+            dest = self._kick_dest()
+            rec = m._squadrec.of_project("repo")
+            self.assertEqual(dest, os.path.join(tmp, "squads", rec["id"] + "__repo", "projects", "repo", "repo"))
+            self.assertEqual([(x["name"], x["repo"]) for x in rec["projects"]], [("repo", dest)])
+            self.assertEqual([(x["instance"], x["role"], x["persona"]) for x in rec["members"]],
+                             [("repo-architect", "lead", "code-architect")])
+            self.assertTrue(os.path.isfile(os.path.join(m._squadrec.folder(rec), "squad.json")))
             self.assertTrue(os.path.isfile(os.path.join(dest, "top.txt")))
             self.assertEqual(os.stat(os.path.join(tmp, "squads")).st_mode & 0o777, 0o750)
             p = m._projects.get("repo")
@@ -8297,10 +8315,10 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 200)
             j = k.get(j["id"])
             self.assertEqual(j["status"], "done", j["log"])
-            self.assertTrue(os.path.isfile(os.path.join(tmp, "squads", "repo", "top.txt")))
+            self.assertTrue(os.path.isfile(os.path.join(self._kick_dest(), "top.txt")))
             self.assertTrue(any(a and a.startswith("Basic ") for _p, a in seen))
             self.assertNotIn(self.SK_TOK, json.dumps(j))
-            with open(os.path.join(tmp, "squads", "repo", ".git", "config")) as fh:
+            with open(os.path.join(self._kick_dest(), ".git", "config")) as fh:
                 cfg = fh.read()
             self.assertNotIn(self.SK_TOK, cfg); self.assertNotIn("Authorization", cfg)
             self.assertFalse([a for a, _e in calls if any(self.SK_TOK in x for x in a)])
@@ -8329,6 +8347,197 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn("creating repo-architect failed", " ".join(x["text"] for x in j["log"]))
             self._kick_clean(tmp)
             self.assertTrue(os.path.isdir(os.path.join(tmp, "squads")))            # the root stays
+        finally:
+            undo()
+
+    # ---- squad records: stable IDs, the archive of every conversation (mgr/squadrec.py) -----
+    SR_TOK = "ghp_ArChIvEtOkEn0123456789abcdefXYZ"
+
+    def _sr_lines(self, path):
+        with open(path) as fh:
+            return [json.loads(x) for x in fh]
+
+    def _sr_read(self, path):
+        with open(path) as fh:
+            return fh.read()
+
+    def _sr_files(self, root):
+        return [os.path.join(d, f) for d, _ds, fs in os.walk(root) for f in fs]
+
+    def test_squadrec_ids_and_archive_of_everything(self):
+        """A squad ID (16 x [a-z0-9]) and member IDs (<squad>-<16>) assigned
+        once and kept; the same instance has another member ID in another
+        squad; posts, ask/answer, wake turns, proposal decisions and ticket
+        changes land in their files with the IDs; no secret in any file;
+        long text capped; squad.json lists projects and members."""
+        m = self.m
+        sr = m._squadrec
+        woke, created, notes, merges, undo = self._gate_env()
+        A, B, L = "172.30.3.2", "172.30.4.2", "127.0.0.1"
+        tmp = os.path.dirname(m._projects.PROJECTS_FILE)
+        old_sec = m._secrets.SECRETS_FILE
+        m._secrets.SECRETS_FILE = os.path.join(tmp, "secrets.env")
+        _wtext(m._secrets.SECRETS_FILE, f"SQUAD_GIT_TOKEN_GITHUB={self.SR_TOK}\nSHORT=abc\n")
+        try:
+            self.assertEqual(len({sr.new_id() for _ in range(2000)}), 2000)
+            self.assertNotEqual(sr.new_id({"x"}), "x")
+            self.assertIsNone(sr.of_project("sq"))
+            self._sq("/api/projects/sq/squad", L, {"enabled": True})                    # the first enable
+            rec = sr.of_project("sq")
+            self.assertRegex(rec["id"], r"^[a-z0-9]{16}$")
+            mids = {x["instance"]: x["member_id"] for x in rec["members"]}
+            self.assertEqual(sorted(mids), ["a", "b", "d"])
+            for x in mids.values():
+                self.assertRegex(x, "^" + rec["id"] + r"-[a-z0-9]{16}$"); self.assertEqual(len(x), 33)
+            fold = sr.folder(rec)
+            self.assertEqual(os.path.basename(fold), rec["id"] + "__sq")
+            # immutable: settings saved, members read, the project saved again
+            self._sq("/api/projects/sq/squad", L, {"approved": True})
+            st, s = self._sq("/api/projects/sq/squad", L)
+            self.assertEqual(s["squad_id"], rec["id"])
+            self.assertEqual({x["name"]: x["member_id"] for x in s["members"]}, mids)
+            # another squad: b has another member ID there
+            self.assertTrue(m._projects.upsert({"name": "sq2", "source": {"type": "host", "path": os.path.join(tmp, "repo")},
+                                                "members": {"b": "lead"}}).get("ok"))
+            m._squads.save_settings("sq2", m._squads.normalize_settings({"enabled": True})[0])
+            rec2 = sr.of_project("sq2")
+            self.assertNotEqual(rec2["id"], rec["id"]); self.assertNotEqual(sr.member_id(rec2, "b"), mids["b"])
+            # the channel: a post, an ask and its answer
+            st, d = self._sq("/api/squad/post", A, {"to": "b", "project": "sq",
+                                                    "text": f"token {self.SR_TOK} and Authorization: Bearer abcdefghijkl123"})
+            self.assertEqual(st, 200, d)
+            self.assertIn(f"(squad id {rec['id']}; your member id {mids['b']})", woke[-1][1])
+            self.assertTrue(woke[-1][1].startswith("[squad sq] from a (msg "))
+            st, q = self._sq("/api/squad/ask", A, {"to": "b", "question": "which branch?", "project": "sq"})
+            st, ans = self._sq("/api/squad/post", B, {"text": "main", "reply_to": q["id"], "project": "sq"})
+            day = time.strftime("%Y-%m-%d")
+            ch = self._sr_lines(os.path.join(fold, "conversations", "channel", day + ".jsonl"))
+            by = {e["msg_id"]: e for e in ch}
+            self.assertEqual((by[d["id"]]["from_member_id"], by[d["id"]]["to_member_ids"], by[d["id"]]["delivered"]),
+                             (mids["a"], {"b": mids["b"]}, ["b"]))
+            self.assertEqual((by[q["id"]]["kind"], by[ans["id"]]["kind"], by[ans["id"]]["reply_to"], by[ans["id"]]["from_member_id"]),
+                             ("ask", "answer", q["id"], mids["b"]))
+            self.assertTrue(all(e["squad_id"] == rec["id"] for e in ch))
+            # a wake turn: the worker runs the task, its result goes to b's file (capped)
+            t = {"id": "t1", "instance": "b", "message": woke[-1][1], "squad": {"project": "sq", "depth": 1, "msg": q["id"]}}
+            tk = m._tasks
+            old_t = (tk._run_task_now, m._store.with_tasks, m._chats.chat_log_append, m._store.history_add, tk._mission_advance_fire)
+            tk._run_task_now = lambda *a, **kw: (True, "x" * (sr.FIELD_MAX + 500))
+            m._store.with_tasks = lambda fn: None
+            m._chats.chat_log_append = m._store.history_add = tk._mission_advance_fire = lambda *a, **kw: None
+            try:
+                tk._execute(t)
+            finally:
+                (tk._run_task_now, m._store.with_tasks, m._chats.chat_log_append, m._store.history_add, tk._mission_advance_fire) = old_t
+            turn = self._sr_lines(os.path.join(fold, "conversations", "members", f"{mids['b']}__b", day + ".jsonl"))[-1]
+            self.assertEqual((turn["member_id"], turn["task_id"], turn["msg_id"], turn["status"], turn["incoming"]),
+                             (mids["b"], "t1", q["id"], "done", woke[-1][1]))
+            self.assertTrue(turn["result"].endswith(" …[truncated 500 chars]")); self.assertIn("duration_s", turn)
+            # a proposal and its decision (with the operator's edits); tickets
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            with open(os.path.join(fold, "proposals", pid + ".json")) as fh:
+                self.assertEqual(json.load(fh)["status"], "pending")
+            edits = {"members": self._SG_PLAN["members"], "budget_tokens_per_day": 400000, "tickets": self._SG_PLAN["tickets"]}
+            self.assertEqual(self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": True, **edits})[0], 200)
+            with open(os.path.join(fold, "proposals", pid + ".json")) as fh:
+                pj = json.load(fh)
+            self.assertEqual((pj["status"], pj["decided_by"], pj["edits"]["budget_tokens_per_day"], pj["squad_id"]),
+                             ("approved", "admin", 400000, rec["id"]))
+            self.assertTrue(pj["steps"])
+            rec = sr.of_project("sq")
+            self.assertEqual({x["instance"]: x["persona"] for x in rec["members"] if x["instance"] in ("e", "f")},
+                             {"e": "coder", "f": "ghost"})
+            self.assertEqual({x["instance"]: x["member_id"] for x in rec["members"] if x["instance"] in mids}, mids)
+            st, tu = self._sq("/api/projects/sq/squad/ticket", L, {"id": 1, "status": "doing", "comment": "go"})
+            self.assertEqual(st, 200, tu)
+            tl = self._sr_lines(os.path.join(fold, "tickets.jsonl"))
+            self.assertEqual([(e["event"], e["ticket"]["key"]) for e in tl], [("create", "T1"), ("create", "T2"), ("update", "T1")])
+            self.assertEqual(tl[-1]["change"], {"status": "doing", "comment": "go"})
+            # squad.json: projects, members, settings; modes; no secret anywhere
+            with open(os.path.join(fold, "squad.json")) as fh:
+                sj = json.load(fh)
+            self.assertEqual(([p["name"] for p in sj["projects"]], sj["id"]), (["sq"], rec["id"]))
+            self.assertEqual(sorted(x["instance"] for x in sj["members"]), ["a", "b", "d", "e", "f"])
+            self.assertTrue(sj["settings"]["sq"]["approved"])
+            files = self._sr_files(sr.squads_dir())
+            self.assertGreater(len(files), 5)
+            for f in files:
+                self.assertEqual(os.stat(f).st_mode & 0o777, 0o640, f)
+                with open(f) as fh:
+                    body = fh.read()
+                self.assertNotIn(self.SR_TOK, body, f); self.assertNotIn("abcdefghijkl123", body, f)
+            for dd, _ds, _fs in os.walk(fold):
+                self.assertEqual(os.stat(dd).st_mode & 0o777, 0o750, dd)
+            self.assertIn("[secret]", json.dumps(by[d["id"]]))
+            # a deleted project leaves the squad; the archive stays; a new one of that name is a new squad
+            self.assertEqual(self._sq("/api/projects/sq2/delete", L, {})[0], 200)
+            self.assertIsNone(sr.of_project("sq2")); self.assertTrue(os.path.isdir(sr.folder(rec2)))
+        finally:
+            m._secrets.SECRETS_FILE = old_sec
+            undo()
+
+    def test_squadrec_migration_idempotent_keeps_a_mounted_clone(self):
+        """At start every squad project gets its record and folder; history
+        from before is exported once (re-running adds nothing); a pre-ID clone
+        SQUADS_DIR/<name> stays while a member runs (recorded), and moves
+        into <id>__<name>/projects/<name>/repo — the project following — once
+        nothing runs."""
+        import subprocess as sp
+        m = self.m
+        sr = m._squadrec
+        woke, created, notes, merges, undo = self._gate_env()
+        A = "172.30.3.2"
+        tmp = os.path.dirname(m._projects.PROJECTS_FILE)
+        try:
+            legacy = os.path.join(sr.squads_dir(), "old")
+            os.makedirs(sr.squads_dir(), exist_ok=True)
+            sp.run(["git", "init", "-q", "-b", "main", legacy], check=True)
+            self.assertTrue(m._projects.upsert({"name": "old", "source": {"type": "host", "path": legacy},
+                                                "members": {"a": "lead", "b": "writer"}}).get("ok"))
+            # history from before IDs: the squad disabled -> no record yet
+            m._projects.set_squad("old", m._squads.normalize_settings({"enabled": False})[0])
+            m._squads.post(m._projects.get("old"), "user:admin", ["a"], "hello from before")
+            m._squads.post(m._projects.get("old"), "a", ["b"], "second")
+            m._squadgate._ticket_add("old", {"title": "old ticket"}, "a")
+            m._squadgate._put({"id": "p0ld", "project": "old", "kind": "member", "status": "rejected", "by": "a"})
+            m._projects.set_squad("old", m._squads.normalize_settings({"enabled": True, "approved": True})[0])
+            self.assertIsNone(sr.of_project("old"))
+            running = {"a"}
+            m._instances.is_running = lambda i: i["name"] in running
+            msgs = sr.migrate()
+            rec = sr.of_project("old")
+            self.assertRegex(rec["id"], r"^[a-z0-9]{16}$")
+            self.assertTrue(any("running member" in x for x in msgs), msgs)
+            self.assertTrue(os.path.isdir(os.path.join(legacy, ".git")))                  # not moved
+            self.assertEqual(m._projects.get("old")["source"]["path"], legacy)
+            self.assertEqual(rec["projects"][0]["repo"], legacy); self.assertTrue(rec["projects"][0]["move_pending"])
+            fold = sr.folder(rec)
+            ch = os.path.join(fold, "conversations", "channel")
+            exported = [e for f in sorted(os.listdir(ch)) for e in self._sr_lines(os.path.join(ch, f))]
+            self.assertEqual([e["text"] for e in exported], ["hello from before", "second"])
+            self.assertTrue(all(e["migrated"] for e in exported))
+            self.assertEqual(exported[1]["from_member_id"], sr.member_id(rec, "a"))
+            self.assertTrue(os.path.isfile(os.path.join(fold, "proposals", "p0ld.json")))
+            self.assertEqual(len(self._sr_lines(os.path.join(fold, "tickets.jsonl"))), 1)
+            snap = {f: self._sr_read(f) for f in self._sr_files(fold)}
+            # again: nothing new, same IDs
+            sr.migrate()
+            self.assertEqual(sr.of_project("old")["id"], rec["id"])
+            self.assertEqual({f: self._sr_read(f) for f in self._sr_files(fold)}, snap)
+            # nothing runs any more: the clone moves, the project follows
+            running.clear()
+            msgs = sr.migrate()
+            target = sr.repo_dir(rec, "old")
+            self.assertTrue(any("moved" in x for x in msgs), msgs)
+            self.assertTrue(os.path.isdir(os.path.join(target, ".git"))); self.assertFalse(os.path.exists(legacy))
+            self.assertEqual(m._projects.get("old")["source"]["path"], target)
+            rec = sr.of_project("old")
+            self.assertEqual(rec["projects"][0]["repo"], target); self.assertNotIn("move_pending", rec["projects"][0])
+            self.assertEqual(sr.migrate(), [])
+            self.assertEqual(sr.of_project("old")["id"], rec["id"])
+            # a member woken now sees its IDs in the frame
+            self._sq("/api/squad/post", A, {"to": "b", "project": "old", "text": "after"})
+            self.assertIn(sr.member_id(rec, "b"), woke[-1][1])
         finally:
             undo()
 

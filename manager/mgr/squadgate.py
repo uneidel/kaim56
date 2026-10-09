@@ -22,7 +22,8 @@ status and assignee. Assigning a ticket whose dependencies are done — or the
 last dependency reaching done — wakes the assignee through squads.post (the
 phase-1 wake path, same guards).
 
-State: squadgate.json in the manager dir (root-only).
+State: squadgate.json in the manager dir (root-only); every proposal and
+ticket change is also archived in the squad's folder (mgr/squadrec.py).
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -45,6 +46,7 @@ from mgr import personas as _personas
 from mgr import projects as _projects
 from mgr import router as _router
 from mgr import skills as _skills
+from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 
 GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
@@ -224,6 +226,7 @@ def _put(prop):
         done = [p for p in d["proposals"] if p.get("status") != "pending"]
         d["proposals"] = keep + done[-KEEP_PROPOSALS:]
         _save(d)
+    _squadrec.log_proposal(prop)
 
 
 def propose(proj, by, kind, body):
@@ -406,13 +409,19 @@ def _run(prop, who):
         if prop["kind"] == "squad":
             s = {**_squads.settings(proj), "enabled": True, "approved": True,
                  "daily_token_budget": prop["budget_tokens_per_day"]}
-            _projects.set_squad(name, s)
+            _squads.save_settings(name, s)
             steps.append({"step": "squad", "ok": True, "detail": f"enabled, approved, budget {s['daily_token_budget']}"})
             have = {t["key"] for t in tickets(name)}
             new = [t for t in prop["tickets"] if t["key"] not in have]
             for t in new:
                 _ticket_add(name, t, who)
             steps.append({"step": "tickets", "ok": True, "detail": f"{len(new)} created, {len(prop['tickets']) - len(new)} existed"})
+        proj = _projects.get(name)
+        if proj and _squads.settings(proj)["enabled"]:
+            try:                                  # the new members' IDs (mgr/squadrec.py)
+                _squadrec.ensure(proj, {m["name"]: m["persona"] for m in made})
+            except Exception as e:
+                steps.append({"step": "squad record", "ok": False, "detail": repr(e)[:300]})
     return steps
 
 
@@ -429,6 +438,8 @@ def decide(project, pid, ok, who, note="", edits=None):
         if prop["status"] == "rejected" or (not ok and prop["status"] != "pending"):
             return None, f"proposal is {prop['status']} already"
         note = _txt(note, 1000) or prop.get("note", "")
+        if ok and edits and prop["status"] == "pending":
+            prop["edits"] = edits                 # what the operator changed (the archive keeps it)
         if ok and edits and prop["status"] == "pending" and prop["kind"] == "squad":
             f, why = validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits})
             if not f:
@@ -472,6 +483,7 @@ def _ticket_add(project, t, who):
                "depends_on": t.get("depends_on") or [], "comments": [], "updated": int(time.time()), "by": who}
         d["tickets"].append(new)
         _save(d)
+    _squadrec.log_ticket(project, "create", new, who)
     return new
 
 
@@ -539,6 +551,9 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             t["comments"] = (t["comments"] + [{"ts": int(time.time()), "by": who, "text": comment}])[-MAX_COMMENTS:]
         t["updated"] = int(time.time())
         _save(d)
+    _squadrec.log_ticket(proj["name"], "update", t, who,
+                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment))
+                          if v or (k == "assignee" and v is not None)})
     now = [x for x in mine if _ready(x, mine)]
     wake = [x for x in now if x["key"] not in before
             or (x is t and assignee and assignee != old_assignee)]

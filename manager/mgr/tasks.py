@@ -27,6 +27,7 @@ from mgr import missions as _missions
 from mgr import notify as _notify
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
+from mgr import squadrec as _squadrec
 from mgr import store as _store
 from mgr import util as _util
 from mgr import vm as _vm
@@ -383,6 +384,11 @@ def _execute(t):
         # anywhere must never leave the task as a "running" orphan
         # (bug Aug 20: exception in the follow-up -> outer except ->
         # the task never fired again and the chat entry was missing).
+        begun = None
+        try:
+            begun = _squadrec.turn_begin(t)                  # a squad wake: archived below
+        except Exception as e:
+            _util._wlog(f"{t['id']}: squad turn: {e!r}")
         try:
             msg = f"[{t['by']}] {t['message']}" if t.get("by") else t["message"]   # who asked (OIDC user)
             ok, res = _run_task_now(t["instance"], msg, t.get("model"), timeout=TASK_TIMEOUT,
@@ -416,6 +422,10 @@ def _execute(t):
                         t.get("schedule", ""), origin="worker")
         except Exception as e:
             _util._wlog(f"{t['id']}: history_add: {e!r}")
+        try:
+            _squadrec.turn_end(t, begun, ok, res)
+        except Exception as e:
+            _util._wlog(f"{t['id']}: squad turn: {e!r}")
         try:
             _mission_advance_fire(t["id"])
         except Exception as e:
