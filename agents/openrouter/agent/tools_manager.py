@@ -612,3 +612,70 @@ def t_project_merge(project, member):
         return f"Error: {e!r}"
     return f"Merged ({d.get('commit', '')[:12]})" + (f" — {d['note']}" if d.get("note") else "")
 
+
+
+# ---- squads: the members of a project talk (mgr/squads.py) -----------------
+def _squad_line(m):
+    st = (" — not delivered: " + m["blocked"]) if m.get("blocked") else ""
+    re_ = f" (re {m['reply_to']})" if m.get("reply_to") else ""
+    return f"#{m['id']} {m['from']} -> {', '.join(m.get('to') or [])}{re_} [{m.get('kind')}]: {m.get('text', '')}{st}"
+
+
+def _squad_call(path, payload=None, timeout=60):
+    base = _mgrclient._manager_base()
+    try:
+        raw = _mgrclient._mgr(base, path, payload, timeout) if payload is not None \
+            else _mgrclient._mgr_get(base, path, timeout)
+        return json.loads(raw), ""
+    except urllib.error.HTTPError as e:
+        return None, f"Error: {_mgr_error(e)}"
+    except Exception as e:
+        return None, f"Error: {e!r}"
+
+
+def t_squad_post(to, text, reply_to="", project=""):
+    """Post to the project channel; the addressed members are woken."""
+    d, err = _squad_call("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None,
+                                             "project": project})
+    if err:
+        return err
+    st = f"delivered to {', '.join(d['delivered'])}" if d.get("delivered") else \
+        (f"stored, not delivered: {d['blocked']}" if d.get("blocked") else "stored")
+    return f"Posted #{d['id']} in {d['project']} ({st})."
+
+
+def t_squad_ask(to, question, wait=True, timeout=600, project=""):
+    """Ask one member; with wait, poll until it answers (or the timeout)."""
+    d, err = _squad_call("/api/squad/ask", {"to": to, "question": question, "project": project})
+    if err:
+        return err
+    if d.get("blocked"):
+        return f"Question #{d['id']} not delivered: {d['blocked']}"
+    if not wait:
+        return f"Asked #{d['id']}; the answer appears in squad_read as a reply to #{d['id']}."
+    end = time.time() + max(10, min(int(timeout or 600), 1800))
+    while time.time() < end:
+        time.sleep(5)
+        a, err = _squad_call(f"/api/squad/answer/{d['id']}")
+        if a and a.get("status") == "answered":
+            return f"{a.get('from', to)} answered: {a.get('answer', '')}"
+        if a and a.get("status") == "expired":
+            return f"No answer to #{d['id']}: {a.get('reason', 'expired')}"
+    return f"No answer to #{d['id']} yet; check later with squad_read."
+
+
+def t_squad_read(since="", project=""):
+    """The channel messages addressed to this agent (or all), plus its own."""
+    q = urllib.parse.urlencode({"since": since or 0, "project": project})
+    d, err = _squad_call(f"/api/squad/read?{q}")
+    if err:
+        return err
+    msgs = d.get("messages") or []
+    return "\n".join(_squad_line(m) for m in msgs) if msgs else f"No new messages in {d.get('project')}."
+
+
+def t_squad_members(project=""):
+    d, err = _squad_call("/api/squad/members?" + urllib.parse.urlencode({"project": project}))
+    if err:
+        return err
+    return f"Project {d['project']}: " + ", ".join(f"{m['name']} ({m['role']})" for m in d.get("members") or [])

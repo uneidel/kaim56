@@ -503,7 +503,7 @@ def with_tasks(mutator):
         return result
 
 
-def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0, by=""):
+def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0, by="", squad=None):
     schedule = (schedule or "").strip()
     t = {"id": uuid.uuid4().hex[:12], "instance": instance, "message": message,
          "schedule": schedule, "status": "scheduled" if schedule else "pending",
@@ -517,6 +517,8 @@ def add_task(instance, message, schedule="", model="", sandbox=None, max_steps=0
         t["max_steps"] = int(max_steps)            # ephemeral target: the agent's tool-round cap
     if by:
         t["by"] = str(by)                          # who asked (OIDC user); the agent sees it in the prompt
+    if squad:
+        t["squad"] = squad                         # a squad wake (mgr/squads.py): project, depth, message id
 
     def mut(tasks):
         tasks.append(t)

@@ -195,6 +195,8 @@ def upsert(body):
         proj, why = _normalize(body or {}, rest)
         if not proj:
             return {"error": why}
+        if old and old.get("squad"):
+            proj["squad"] = old["squad"]                     # squad settings: set_squad only
         why = _assign_slots(proj, old, rest)
         if why:
             return {"error": why}
@@ -231,6 +233,18 @@ def delete(name):
     if old.get("strategy") == "worktree":
         _projwt.remove_project(name)                         # the branches stay in the repo
     return {"ok": True}
+
+
+def set_squad(name, squad):
+    """Store a project's squad settings (mgr/squads.py) -> the project or None."""
+    with _lock:
+        items = load()
+        p = next((x for x in items if x.get("name") == name), None)
+        if p is None:
+            return None
+        p["squad"] = squad
+        _save(items)
+    return p
 
 
 def get(name):

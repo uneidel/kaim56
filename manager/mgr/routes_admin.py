@@ -43,6 +43,7 @@ from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import squads as _squads
 from mgr import resources as _resources
 from mgr import router as _router
 from mgr import routes as _routes
@@ -258,6 +259,8 @@ def _project_path(h):
 def _rt_projects_review(h):
     # GET /api/projects/<name>/status (every writer) | /diff/<member> (a patch)
     name, op, member = _project_path(h)
+    if op == "squad":
+        return _squad_get(h, name, member)
     if op == "status":
         return h._json({"project": name, "members": _projects.review(name)})
     if op == "diff":
@@ -266,15 +269,61 @@ def _rt_projects_review(h):
     return h._json({"error": "unknown operation"}, 404)
 
 
+def _project_delete(name, _member):
+    r = _projects.delete(name)
+    if "error" in r:
+        return r, 404
+    _squads.purge(name)
+    return r, 200
+
+
 _PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
                  "discard": lambda n, m: _projects.member_op(n, "discard", m),
-                 "delete": lambda n, m: (lambda r: (r, 404 if "error" in r else 200))(_projects.delete(n))}
+                 "delete": _project_delete}
+
+
+# ---- squads: settings, the channel, posting as the operator (mgr/squads.py) --
+def _squad_get(h, name, sub):
+    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages (also role user)
+    p = _projects.get(name)
+    if p is None:
+        return h._json({"error": "unknown project"}, 404)
+    if sub == "messages":
+        since = _routes._qs(h).get("since", ["0"])[0]
+        return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
+                        "messages": _squads.read(name, None, int(since) if since.isdigit() else 0)})
+    if sub:
+        return h._json({"error": "unknown operation"}, 404)
+    return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
+                    "members": _squads.members(p), "tokens_today": _squads.tokens_today(p)})
+
+
+def _squad_post(h, name, sub):
+    # POST /api/projects/<n>/squad (settings; admin) | /squad/post (as the logged-in person; also role user)
+    p = _projects.get(name)
+    if p is None:
+        return h._json({"error": "unknown project"}, 404)
+    b = h._body() or {}
+    if sub == "post":
+        pr = getattr(h, "principal", None)
+        who = pr.name if pr is not None and pr.sub != "basic" else "admin"
+        m, why = _squads.post(p, "user:" + who, b.get("to"), b.get("text"), reply_to=b.get("reply_to"))
+        return h._json(m) if m else h._json({"error": why}, 400)
+    if sub:
+        return h._json({"error": "unknown operation"}, 404)
+    s, why = _squads.normalize_settings(b, p.get("squad"))
+    if s is None:
+        return h._json({"error": why}, 400)
+    _projects.set_squad(name, s)
+    return h._json({"ok": True, "settings": s})
 
 
 @_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)
 def _rt_projects_op(h):
     # POST /api/projects/<name>/delete | /merge/<member> | /discard/<member>
     name, op, member = _project_path(h)
+    if op == "squad":
+        return _squad_post(h, name, member)
     if op not in _PROJECT_POST:
         return h._json({"error": "unknown operation"}, 404)
     r, st = _PROJECT_POST[op](name, member)

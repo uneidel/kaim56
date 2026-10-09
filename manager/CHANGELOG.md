@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-09
+- Squads (phase 1): a project's members talk in one channel (`mgr/squads.py`, `squad.db`; agent tools `squad_post/ask/read/members`, also in the Claude guest); addressed members are woken as a task, guarded per project (off by default; pause, wakes/h, members' tokens today, reply depth), blocked messages kept with the reason; Projects tab: Squad panel, operator posts as `user:<name>` (role user: read + post).
+
 ## 2026-10-08
 - MCP `browser`: headless Chromium (Playwright MCP 0.0.83) in the hub; agents store MCP images as `workspace/screenshots/*.png`.
 - OIDC: web login stays 30 days (persistent cookie, sliding); an unreachable IdP no longer ends sessions; no refresh token = no re-check.

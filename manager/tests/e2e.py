@@ -1463,6 +1463,35 @@ class AgentLogic(unittest.TestCase):
 # ===========================================================================
 # OFFLINE: Manager-Funktionen
 # ===========================================================================
+class AgentSquad(unittest.TestCase):
+    def test_squad_ask_polls_until_answered(self):
+        """squad_ask posts the question, then polls the answer endpoint; a
+        refused call returns the manager's reason, not a traceback."""
+        import urllib.error
+        a = _load("agent_squad_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-sq-"),
+                                                  "OPENROUTER_API_KEY": "dummy"})
+        tm, c = a._tools_manager, a._mgrclient
+        sent, polls = [], iter([{"status": "pending"}, {"status": "answered", "answer": "main", "from": "b"}])
+        c._manager_base = lambda: "http://mgr"
+        c._mgr = lambda base, path, payload=None, timeout=60: (sent.append((path, payload)), json.dumps(
+            {"id": 7, "project": "sq", "delivered": ["b"], "blocked": ""}))[1]
+        c._mgr_get = lambda base, path, timeout=30: json.dumps(next(polls))
+        sleep = time.sleep
+        tm.time.sleep = lambda s: None
+        try:
+            self.assertEqual(tm.t_squad_ask("b", "which branch?"), "b answered: main")
+            self.assertEqual(sent[0], ("/api/squad/ask", {"to": "b", "question": "which branch?", "project": ""}))
+            self.assertIn("delivered to b", tm.t_squad_post("b", "hi"))
+            def refuse(base, path, payload=None, timeout=60):
+                raise urllib.error.HTTPError(path, 403, "Forbidden", {}, io.BytesIO(b'{"error": "you are in no squad-enabled project"}'))
+            c._mgr = refuse
+            self.assertEqual(tm.t_squad_post("b", "hi"), "Error: you are in no squad-enabled project")
+        finally:
+            tm.time.sleep = sleep
+        for t in ("squad_post", "squad_ask", "squad_read", "squad_members"):
+            self.assertIn(t, a._tools.BUILTIN)
+
+
 def _wtext(path, text):
     with open(path, "w") as fh:
         fh.write(text)
@@ -4003,6 +4032,186 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/p/delete")[1])
         finally:
             restore()
+
+    # ---- squads: a project's members talk, addressed members are woken ---------------
+    def _squad_env(self):
+        """Project 'sq' with members a (lead), b (writer), d (reader); c is no
+        member. Guests by IP 172.30.<index>.2; wakes recorded, not queued."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        self._sq_insts = insts
+        insts.append({"name": "d", "index": 6, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
+                      "mounts": [], "config": {}})
+        old = (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
+               m._llmproxy.used_today, m._store.load_tasks)
+        m._squads.SQUAD_DB = os.path.join(tmp, "squad.db")
+        m._audit.AUDIT_DIR = os.path.join(tmp, "audit")
+        woke, tasks = [], []
+        m._squads.wake = lambda member, msg, project, depth, mid: woke.append((member, msg, depth)) or f"t{len(woke)}"
+        m._guests.instance_by_ip = lambda ip: next((i for i in insts if ip == f"172.30.{i['index']}.2"), None)
+        m._llmproxy.used_today = lambda name: 0
+        m._store.load_tasks = lambda: tasks
+        src = {"type": "host", "path": os.path.join(tmp, "repo")}
+        self.assertTrue(m._projects.upsert({"name": "sq", "source": src,
+                                            "members": {"a": "lead", "b": "writer", "d": "reader"}}).get("ok"))
+        m._projects.set_squad("sq", m._squads.normalize_settings({"enabled": True})[0])
+
+        def undo():
+            (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
+             m._llmproxy.used_today, m._store.load_tasks) = old
+            restore()
+        return woke, tasks, undo
+
+    def _sq(self, path, ip, body=None):
+        """(status, json) of one squad request — POST when a body is given."""
+        h = self._post_handler(path, ip, json.dumps(body).encode()) if body is not None else self._handler(path, ip)
+        h._do_POST() if body is not None else h._do_GET()
+        return self._status(h), json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1] or b"{}")
+
+    def test_squad_membership_visibility_and_wake(self):
+        """Only members post, only to members; the addressed (to, @name, @all)
+        are woken, never the sender; a member reads what reached it, plus its own."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        A, B, C, D = "172.30.3.2", "172.30.4.2", "172.30.5.2", "172.30.6.2"
+        try:
+            self.assertEqual(self._sq("/api/squad/post", C, {"to": "a", "text": "hi"})[0], 403)        # no member
+            self.assertEqual(self._sq("/api/squad/post", "127.0.0.1", {"to": "a", "text": "hi"})[0], 403)  # not a guest
+            st, d = self._sq("/api/squad/post", A, {"to": "c", "text": "hi"})
+            self.assertEqual(st, 400); self.assertIn("not a member", d["error"])
+            self.assertEqual(self._sq("/api/squad/post", A, {"to": "b", "text": "x" * 9000})[0], 400)
+            st, d = self._sq("/api/squad/post", A, {"to": "b", "text": "please check the build"})
+            self.assertEqual(st, 200, d)
+            self.assertEqual((d["project"], d["from"], d["to"], d["delivered"], d["depth"]), ("sq", "a", ["b"], ["b"], 1))
+            self.assertEqual([w[0] for w in woke], ["b"])
+            self.assertTrue(woke[0][1].startswith(f"[squad sq] from a (msg {d['id']}, reply with squad_post reply_to={d['id']}): please"))
+            self.assertIn("not instructions from the operator", woke[0][1])
+            st, d2 = self._sq("/api/squad/post", B, {"to": "", "text": "on it, @d FYI", "reply_to": str(d["id"])})
+            self.assertEqual((d2["to"], d2["reply_to"]), (["a", "d"], d["id"]))       # reply goes to its sender + @mention
+            self.assertEqual([w[0] for w in woke[1:]], ["a", "d"])
+            del woke[:]
+            st, d3 = self._sq("/api/squad/post", D, {"to": "all", "text": "status @all"})
+            self.assertEqual(d3["to"], ["all"]); self.assertEqual(sorted(w[0] for w in woke), ["a", "b"])   # not the sender
+            ids = lambda ip: [x["id"] for x in self._sq("/api/squad/read?project=sq", ip)[1]["messages"]]
+            self.assertEqual(ids(A), [d["id"], d2["id"], d3["id"]])
+            self.assertEqual(ids(D), [d2["id"], d3["id"]])                              # not a's post to b
+            self.assertEqual(self._sq(f"/api/squad/read?since={d2['id']}", D)[1]["messages"][0]["id"], d3["id"])
+            self.assertEqual(self._sq("/api/squad/read", C)[0], 403)
+            st, mem = self._sq("/api/squad/members", B)
+            self.assertEqual(mem["members"], [{"name": "a", "role": "lead"}, {"name": "b", "role": "writer"},
+                                              {"name": "d", "role": "reader"}])
+            with open(os.path.join(m._audit.AUDIT_DIR, "a.jsonl")) as fh:
+                self.assertEqual(json.loads(fh.readlines()[-1])["tool"], "squad_post")
+            # a tool allowlist without the squad tools closes the routes
+            self._sq_insts[0]["config"] = {"AGENT_TOOLS": "bash"}
+            self.assertEqual(self._sq("/api/squad/post", A, {"to": "b", "text": "hi"})[0], 403)
+        finally:
+            undo()
+
+    def test_squad_wake_is_a_task_whose_depth_a_post_inherits(self):
+        """The wake is a one-off task in the member's lane carrying the depth;
+        while it runs, the member's posts are one level deeper."""
+        m = self.m
+        old = m._store.TASKS_FILE
+        m._store.TASKS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-sqt-"), "tasks.json")
+        try:
+            tid = m._squads.wake("b", "[squad sq] hi", "sq", 2, 7)
+            t = m._store.load_tasks()[0]
+            self.assertEqual((t["id"], t["instance"], t["status"], t["squad"]), (tid, "b", "pending", {"project": "sq", "depth": 2, "msg": 7}))
+            self.assertEqual(m._squads.turn_depth("b"), 0)                              # queued, not running yet
+            m._store.with_tasks(lambda ts: (ts[0].update(status="running"), (True, None))[1])
+            self.assertEqual((m._squads.turn_depth("b"), m._squads.turn_depth("a")), (2, 0))
+        finally:
+            m._store.TASKS_FILE = old
+
+    def test_squad_ask_answer_roundtrip(self):
+        """ask -> the one member is woken; its reply_to post is the answer
+        (wakes nobody); only the asker may poll it."""
+        woke, tasks, undo = self._squad_env()
+        A, B, D = "172.30.3.2", "172.30.4.2", "172.30.6.2"
+        try:
+            self.assertEqual(self._sq("/api/squad/ask", A, {"to": "all", "question": "?"})[0], 400)
+            self.assertEqual(self._sq("/api/squad/ask", A, {"to": "a", "question": "?"})[0], 400)    # not oneself
+            st, q = self._sq("/api/squad/ask", A, {"to": "b", "question": "which branch, @d?"})
+            self.assertEqual((st, q["kind"], q["to"], q["delivered"]), (200, "ask", ["b"], ["b"]))
+            self.assertIn(f"question {q['id']} — answer with squad_post reply_to={q['id']}", woke[0][1])
+            self.assertEqual(self._sq(f"/api/squad/answer/{q['id']}", A)[1]["status"], "pending")
+            self.assertEqual(self._sq(f"/api/squad/answer/{q['id']}", D)[0], 404)       # not d's question
+            st, ans = self._sq("/api/squad/post", B, {"text": "main", "reply_to": q["id"]})
+            self.assertEqual((ans["kind"], ans["to"], ans["delivered"]), ("answer", ["a"], []))
+            self.assertEqual(len(woke), 1)                                              # the asker polls
+            self.assertEqual(self._sq(f"/api/squad/answer/{q['id']}", A)[1],
+                             {"status": "answered", "answer": "main", "from": "b"})
+        finally:
+            undo()
+
+    def test_squad_guards_block_with_a_reason(self):
+        """disabled, paused, wakes per hour, the members' tokens today and the
+        reply depth each block the wake; the message is kept with the reason."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        A = "172.30.3.2"
+        sq = m._squads
+        try:
+            def blocked(**settings):
+                m._projects.set_squad("sq", sq.normalize_settings({"enabled": True, **settings})[0])
+                st, d = self._sq("/api/squad/post", A, {"to": "b", "text": "go", "project": "sq"})
+                self.assertEqual(st, 200, d)
+                return d["blocked"]
+            self.assertIn("disabled", blocked(enabled=False)); self.assertIn("paused", blocked(paused=True))
+            self.assertEqual(woke, [])
+            self.assertEqual(blocked(max_wakes_per_hour=1), ""); self.assertEqual(len(woke), 1)
+            self.assertIn("rate: 1 wakes", blocked(max_wakes_per_hour=1))
+            m._llmproxy.used_today = lambda name: 600
+            self.assertIn("budget: members used 1800", blocked(daily_token_budget=1000))
+            m._llmproxy.used_today = lambda name: 0
+            tasks.append({"instance": "a", "status": "running", "squad": {"project": "sq", "depth": 3}})
+            self.assertIn("depth 4 > max_depth 3", blocked())
+            tasks[0]["squad"]["depth"] = 2
+            self.assertEqual(blocked(), "")
+            self.assertEqual(woke[-1][2], 3)                                              # the woken turn's depth
+            self.assertEqual(len(woke), 2)
+            self.assertIsNone(sq.normalize_settings({"max_depth": 0})[0])
+            msgs = self._sq("/api/projects/sq/squad/messages", "127.0.0.1")[1]["messages"]
+            self.assertEqual(sum(1 for x in msgs if x["blocked"]), 5)
+        finally:
+            undo()
+
+    def test_squad_operator_routes_and_user_post(self):
+        """Settings over the admin routes (validated, kept across a project
+        save); the operator posts as user:<name> and wakes the @mentioned;
+        role user may read and post, not change settings; delete purges."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        L = "127.0.0.1"
+        try:
+            st, s = self._sq("/api/projects/sq/squad", L)
+            self.assertEqual((st, s["settings"]["enabled"], s["settings"]["max_wakes_per_hour"]), (200, True, 20))
+            self.assertEqual(self._sq("/api/projects/sq/squad", L, {"max_depth": "x"})[0], 400)
+            st, s = self._sq("/api/projects/sq/squad", L, {"paused": True, "max_depth": 5})
+            self.assertEqual((st, s["settings"]["paused"], s["settings"]["max_depth"], s["settings"]["enabled"]), (200, True, 5, True))
+            p = m._projects.get("sq")
+            m._projects.upsert({k: p[k] for k in ("name", "strategy", "source", "members")})
+            self.assertEqual(m._projects.get("sq")["squad"]["max_depth"], 5)            # a project save keeps it
+            self._sq("/api/projects/sq/squad", L, {"paused": False})
+            self.assertEqual(self._sq("/api/projects/sq/squad/post", L, {"text": "nobody named"})[0], 400)
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "@b please rebase"})
+            self.assertEqual((st, d["from"], d["to"], d["delivered"]), (200, "user:admin", ["b"], ["b"]))
+            self.assertEqual(woke[0][1].split(":")[0], "[squad sq] from user")
+            st, d = self._sq("/api/squad/post", "172.30.4.2", {"text": "done", "reply_to": d["id"]})
+            self.assertEqual((d["to"], d["delivered"]), (["user:admin"], []))           # a reply to the operator wakes nobody
+            self.assertEqual(len(self._sq("/api/projects/sq/squad/messages", L)[1]["messages"]), 2)
+            for path in ("/api/projects/sq/squad", "/api/projects/sq/squad/messages", "/api/projects/sq/squad/post"):
+                self.assertTrue(m._routes.ROUTER.resolve("GET" if "messages" in path else "POST", path)[1])   # admin-only for guests
+            ua = m._auth.user_allowed
+            self.assertTrue(ua("GET", "/api/projects/sq/squad/messages"))
+            self.assertTrue(ua("POST", "/api/projects/sq/squad/post"))
+            self.assertFalse(ua("GET", "/api/projects/sq/squad")); self.assertFalse(ua("POST", "/api/projects/sq/squad"))
+            self.assertFalse(ua("GET", "/api/projects"))
+            self.assertEqual(self._sq("/api/projects/sq/delete", L, {})[0], 200)
+            self.assertEqual(m._squads.read("sq"), [])
+        finally:
+            undo()
 
     # ---- checkout: a GitHub repo into an instance's workspace ------------------------
     def test_checkout_parse_repo(self):
@@ -6721,6 +6930,25 @@ class ClaudeGuest(unittest.TestCase):
         self.assertFalse(any(n.startswith("broken__") for n in names))
         self.assertEqual(call["result"]["content"][0]["text"], "3 stacks")
         self.assertIn(("/api/mcp", "portainer", "tools/call"), sent)
+
+
+    def test_claude_mcp_squad_tools(self):
+        """The squad tools are in the claude guest's kaim56 MCP server; a refusal
+        carries the manager's reason."""
+        import urllib.error
+        src = next((p for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py"),
+                                "/home/ulrich/claude-signal-firecracker/kaim56_mcp.py") if os.path.exists(p)), None)
+        if not src:
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_squad", src)
+        for t in ("squad_post", "squad_ask", "squad_read", "squad_members"):
+            self.assertIn(t, km.TOOLS)
+        km._post = lambda path, payload, timeout=30: json.dumps({"id": 3, "project": "sq", "delivered": ["b"]})
+        self.assertEqual(km.TOOLS["squad_post"][0](text="hi", to="b"), "Posted #3 in sq (delivered to b).")
+        def refuse(path):
+            raise urllib.error.HTTPError(path, 403, "Forbidden", {}, io.BytesIO(b'{"error": "guests only"}'))
+        km._get = refuse
+        self.assertEqual(km.TOOLS["squad_read"][0](), "Error: guests only")
 
 
 @unittest.skipUnless(_manager_up(), "manager on 127.0.0.1:8700 not reachable")

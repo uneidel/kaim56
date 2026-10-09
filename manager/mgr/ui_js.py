@@ -832,7 +832,8 @@ async function loadProjects(){
     `<td class=mono style="font-size:12.5px;word-break:break-all">${escT(src(p))}</td>`+
     `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`+
       (p.strategy==='worktree'&&m.role==='writer'?` <button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(p.name)}','${esc(n)}')">Changes</button>`:'')).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
-    `<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="editProject('${esc(p.name)}')">Edit</button>`+
+    `<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="sqOpen('${esc(p.name)}')">Squad${(p.squad||{}).enabled?((p.squad||{}).paused?' ⏸':' ●'):''}</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick="editProject('${esc(p.name)}')">Edit</button>`+
     `<button class="btn btn-ghost btn-sm" onclick="delProject('${esc(p.name)}')">✕</button></td></tr>`).join('')
     :'<tr><td colspan=4 class=text-muted>No projects yet — name a folder below and add the instances that work on it.</td></tr>';
   if(!document.getElementById('pj-members').children.length&&!PJ_EDIT)pjAddMember();
@@ -929,6 +930,46 @@ async function pjDiscard(){
   const d=await pjOp('discard');
   if(d.error){document.getElementById('pjdlgmsg').textContent=d.error;return}
   pjReview(PJ_REV.p,PJ_REV.w).then(()=>{document.getElementById('pjdlgmsg').textContent='discarded ✓'});
+}
+/* squad: the project's members talk in one channel (mgr/squads.py) */
+let SQ='';
+async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
+  await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
+function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none'}
+async function sqLoad(){
+  if(!SQ)return;
+  const base='/api/projects/'+encodeURIComponent(SQ)+'/squad';
+  let s={},d={};
+  try{s=await (await fetch(base)).json();d=await (await fetch(base+'/messages')).json()}catch(e){document.getElementById('sqmsg').textContent='manager not reachable';return}
+  if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
+  const st=s.settings||{};
+  document.getElementById('sq-head').textContent='Squad · '+SQ;
+  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused;
+  ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
+  document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
+  document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
+  const msgs=d.messages||[], th=document.getElementById('sq-thread');
+  th.innerHTML=msgs.length?msgs.map(m=>`<div style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
+    `<div class=text-muted style="font-size:12px">#${m.id} · ${new Date(m.ts*1000).toLocaleString()} · <b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))}`+
+    `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
+    `<div style="white-space:pre-wrap;word-break:break-word;margin:4px 0">${escT(m.text)}</div>`+
+    (m.blocked?`<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`
+      :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">woke ${escT(m.delivered.join(', '))}</div>`:'')+
+    `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
+  th.scrollTop=th.scrollHeight;
+}
+async function sqSave(){
+  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked};
+  ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sqmsg').textContent=d.error||'saved ✓';
+  if(!d.error){sqLoad();loadProjects()}
+}
+async function sqSend(){
+  const el=document.getElementById('sq-text'), text=el.value.trim(); if(!text)return;
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sqmsg').textContent=d.error||'';
+  if(!d.error){el.value='';sqLoad()}
 }
 async function delProject(name){
   if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;

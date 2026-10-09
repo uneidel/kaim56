@@ -24,6 +24,7 @@ else lives in mgr/, one concern per module:
     mounts        guest squash user, per-instance NFS exports, mount deny list
     projects      one folder set joined by instances with a role (shared / worktree)
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
+    squads        a project's members talk in one channel; addressed members are woken (guarded)
     router        model router: per-turn model choice via Jev (opt-in per instance)
     cloud         apps to Cloudflare and back, the app tokens
     cfapi         the Cloudflare Workers API (cfdo's upload path in Python)
@@ -106,6 +107,7 @@ from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import mail as _mail
 from mgr import skills as _skills            # noqa: F401
+from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store
 from mgr import tasks as _tasks

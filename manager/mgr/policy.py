@@ -63,6 +63,10 @@ AGENT_TOOLS_CATALOG = [
     {"name": "project_status", "desc": "Lead: writers' changes in its projects"},
     {"name": "project_diff", "desc": "Lead: a writer's changes as a patch"},
     {"name": "project_merge", "desc": "Lead: merge a writer's work (if allowed)"},
+    {"name": "squad_post", "desc": "Squad: message project members (wakes the addressed)"},
+    {"name": "squad_ask", "desc": "Squad: ask one member and wait for the answer"},
+    {"name": "squad_read", "desc": "Squad: read the project channel"},
+    {"name": "squad_members", "desc": "Squad: the project's members and roles"},
     {"name": "list_secrets", "desc": "Show granted secret names"},
     {"name": "get_secret", "desc": "Fetch a granted secret"},
 ]
