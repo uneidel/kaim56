@@ -81,6 +81,20 @@ def meta(items=None):
             for x in (load_skills() if items is None else items)]
 
 
+def names_error(value):
+    """'' when every name of a comma list is in the catalog, else the complaint
+    (config key SKILLS: the skills an instance gets in addition to the standard ones)."""
+    have = {s.get("name") for s in load_skills()}
+    bad = [n for n in (x.strip() for x in str(value or "").split(",")) if n and n not in have]
+    return f"unknown skill(s): {', '.join(bad)}" if bad else ""
+
+
+def of_instance(inst):
+    """The names in the instance's SKILLS (SQUAD_SKILLS: squads phase 2, read as a fallback)."""
+    cfg = (inst or {}).get("config") or {}
+    return [x.strip() for x in str(cfg.get("SKILLS") or cfg.get("SQUAD_SKILLS") or "").split(",") if x.strip()]
+
+
 def delete_skill(name):
     save_skills([s for s in load_skills() if s.get("name") != name])
     return f"skill '{name}' deleted"

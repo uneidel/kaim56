@@ -27,6 +27,39 @@ async function loadTools(){
 }
 function toolAll(on){document.querySelectorAll('.toolcb').forEach(c=>c.checked=!!on)}
 
+/* — skills of the new instance (config SKILLS) and Jev's suggestion (/api/setup/suggest) — */
+let SK_SCORE={};
+function renderSkillPick(){
+  const box=document.getElementById('skillpick'); if(!box)return;
+  const on=new Set([...box.querySelectorAll('.skillcb:checked')].map(c=>c.value).concat(Object.keys(SK_SCORE)));
+  const list=SKILLS.filter(s=>!s.default).sort((a,b)=>(SK_SCORE[b.name]||0)-(SK_SCORE[a.name]||0));
+  box.innerHTML=list.map(s=>`<label class=radio style="font-size:13px"><input type=checkbox class=skillcb value="${esc(s.name)}"${on.has(s.name)?' checked':''}>`+
+    `<span class=dot></span><span title="${esc(s.description)}"><span class=mono style="font-size:12px">${escT(s.name)}</span>`+
+    (SK_SCORE[s.name]?` <span class="tag tag-accent">${SK_SCORE[s.name].toFixed(2)}</span>`:'')+`</span></label>`).join('')
+    ||'<span class=text-muted style="font-size:12px">no skills in the catalog besides the standard ones</span>';
+}
+function setParam(k,v){
+  const el=document.querySelector('#params [data-k="'+k+'"]'); if(!el)return false;
+  if(el.tagName==='SELECT'&&![...el.options].some(o=>o.value===v))
+    el.insertAdjacentHTML('afterbegin',`<option value="${esc(v)}">${escT(v)}</option>`);
+  el.value=v; return true;
+}
+async function jevSuggest(){
+  const purpose=document.getElementById('purpose').value.trim(), msg=document.getElementById('suggestmsg'), btn=document.getElementById('suggestbtn');
+  if(!purpose){msg.textContent='Describe the purpose first.';return}
+  btn.disabled=true; msg.textContent='asking Jev… (can take half a minute)';
+  let d={}; try{d=await (await fetch('/api/setup/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose})})).json()}catch(e){d={note:'manager not reachable'}}
+  btn.disabled=false;
+  const f=v=>(+v).toFixed(2), said=[], sel=document.getElementById('persona');
+  if(d.persona&&[...sel.options].some(o=>o.value===d.persona.name)){sel.value=d.persona.name;said.push('persona '+d.persona.name+' '+f(d.persona.score))}
+  if(d.tier)said.push('tier '+d.tier.name+' '+f(d.tier.score)+': '+(!d.model?'no model has this tier (Router)':
+    setParam(d.model_key,d.model)?d.model:d.model+' — not set, this template has no '+d.model_key));
+  SK_SCORE={}; (d.skills||[]).forEach(s=>SK_SCORE[s.name]=s.score);
+  renderSkillPick();
+  if((d.skills||[]).length)said.push(d.skills.length+' skill(s), ticked below');
+  msg.textContent=(said.length?'Jev suggests: '+said.join(' · '):'No suggestion. '+(d.note||''))+(d.ms?' ('+(d.ms/1000).toFixed(1)+' s)':'');
+}
+
 /* — Policy: what each instance may do (net/tools/secrets/MCP) + what it does (audit) — */
 function _b64(buf){let str='',a=new Uint8Array(buf);for(let i=0;i<a.length;i+=0x8000)str+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000));return btoa(str);}
 async function loadPlugins(){
@@ -978,13 +1011,34 @@ const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request'};
 function sqSel(k,opts,cur){return `<select class=input data-k=${k}><option value="">—</option>`+
   opts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${escT(o)}</option>`).join('')+'</select>'}
 const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" onclick="this.closest('tr').remove()">✕</button>`;
-function sqMemRows(p){
-  const pers=[...new Set(PERSONAS.map(x=>x.name).concat(p.members.map(m=>m.persona).filter(Boolean)))];
-  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th></th></tr></thead><tbody>`+
-    p.members.map(m=>`<tr data-m="${esc(m.name)}"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new · '+escT(m.template)}</span>`+
-      `<div class=text-muted>${escT(m.purpose)}</div></td><td>${sqSel('role',['writer','reader','lead'],m.role)}</td><td>${sqSel('persona',pers,m.persona)}</td>`+
+function sqJev(s){
+  if(!s)return '';
+  const f=v=>(+v).toFixed(2), parts=[];
+  if(s.persona!=null)parts.push('persona '+f(s.persona));
+  if(s.skills)parts.push('skills '+Object.entries(s.skills).map(([n,v])=>n+' '+f(v)).join(', '));
+  if(s.tier!=null)parts.push('tier '+f(s.tier));
+  return `<div class=text-muted style="font-size:12px">suggested by Jev: ${escT(parts.join(' · ')||s.note||'nothing above the floor')}</div>`;
+}
+function sqMemRow(p,m){
+  const pers=[...new Set(PERSONAS.map(x=>x.name).concat(p.members.map(x=>x.persona).filter(Boolean)))];
+  return `<tr data-m="${esc(m.name)}"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new · '+escT(m.template)}</span>`+
+      `<div class=text-muted>${escT(m.purpose)}</div>${sqJev(m.suggested)}`+
+      (m.existing?'':`<button class="btn btn-ghost btn-sm" onclick="sqSuggest('${esc(p.id)}','${esc(m.name)}',this)">Suggest again</button>`)+
+      `</td><td>${sqSel('role',['writer','reader','lead'],m.role)}</td><td>${sqSel('persona',pers,m.persona)}</td>`+
       `<td><input class=input data-k=skills value="${esc((m.skills||[]).join(', '))}"></td><td>${sqSel('model_tier',SQB.tiers||[],m.model_tier)}</td>`+
-      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td><td>${SQ_X}</td></tr>`).join('')+'</tbody></table>';
+      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td><td>${SQ_X}</td></tr>`;
+}
+function sqMemRows(p){
+  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th></th></tr></thead><tbody>`+
+    p.members.map(m=>sqMemRow(p,m)).join('')+'</tbody></table>';
+}
+async function sqSuggest(id,name,btn){
+  btn.disabled=true; btn.textContent='asking Jev…';
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,member:name})})).json()}catch(e){d={error:'manager not reachable'}}
+  const p=(SQB.proposals||[]).find(x=>x.id===id), m=(d.members||[]).find(x=>x.name===name);
+  if(d.error||!p||!m){btn.disabled=false;btn.textContent='Suggest again';document.getElementById('sqmsg').textContent=d.error||'';return}
+  p.members=p.members.map(x=>x.name===name?m:x);
+  btn.closest('tr').outerHTML=sqMemRow(p,m);           // only this row: the other rows keep the user's edits
 }
 function sqTicketRows(p){
   const names=[...new Set(p.members.map(m=>m.name).concat((SQB.members||[]).map(m=>m.name)))];
@@ -1405,8 +1459,10 @@ function create(){
   const mounts=collectMounts(document.getElementById('mounts'));
   const internet=document.getElementById('cap-net').checked;
   const tools=[...document.querySelectorAll('.toolcb:checked')].map(c=>c.value);
+  const skills=[...document.querySelectorAll('.skillcb:checked')].map(c=>c.value);
   fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:n,template:t,config:cfg,mcps,mounts,internet,tools})}).then(()=>location.reload());
+    body:JSON.stringify({name:n,template:t,config:cfg,mcps,mounts,internet,tools,skills})}).then(r=>r.json())
+    .then(d=>{if(/created/.test(d.msg||''))location.reload();else alert(d.msg||'not created')}).catch(()=>alert('manager not reachable'));
 }
 let MCPS=[];
 async function renderMcps(){
@@ -1861,7 +1917,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
-  renderSettings();renderParams();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a

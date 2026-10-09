@@ -651,6 +651,26 @@ class AgentLogic(unittest.TestCase):
         finally:
             a._mgrclient._mgr_get = old
 
+    def test_instance_skills_ride_the_standard_skills_block(self):
+        """The agent names what /api/skills?default=1 returns — the manager
+        adds the instance's own SKILLS there — in ONE standard-skills block."""
+        a, ctx = self.a, self.a._context
+        seen, old = [], (a._mgrclient._mgr_get, list(ctx._history), dict(ctx._std_cache))
+        try:
+            a._mgrclient._mgr_get = lambda base, path, **k: (seen.append(path), json.dumps(
+                [{"name": "security-audit", "description": "std"}, {"name": "tdd", "description": "the instance's own"}]))[1]
+            ctx._std_cache.update(ts=0.0, items=[])
+            ctx._history[:] = [{"role": "system", "content": "sys"}]
+            ctx._inject_standard_skills(); ctx._inject_standard_skills()
+            blocks = [x["content"] for x in ctx._history if x["content"].startswith(ctx.STANDARD_SKILLS_TAG)]
+            self.assertEqual(seen, ["/api/skills?default=1"])
+            self.assertEqual(len(blocks), 1)
+            self.assertIn("- tdd: the instance's own", blocks[0])
+        finally:
+            a._mgrclient._mgr_get = old[0]
+            ctx._history[:] = old[1]
+            ctx._std_cache.clear(); ctx._std_cache.update(old[2])
+
     def test_hook_denylist_blocks_rmrf(self):
         allow, reason = self.a._tools._hook_before_tool("bash", {"command": "sudo rm -rf / --no-preserve-root"})
         self.assertFalse(allow)
@@ -4278,7 +4298,9 @@ class ManagerFunctions(unittest.TestCase):
         woke, tasks, undo = self._squad_env()
         g = m._squadgate
         old = (g.GATE_FILE, m._instances.create_instance, m._instances.load_templates, m._personas.load_personas,
-               m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok)
+               m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok,
+               g._spawn)
+        g._spawn = lambda fn, *a: None                 # no Jev thread outliving the test
         g.GATE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-sg-"), "squadgate.json")
         created, notes, merges = [], [], []
 
@@ -4299,7 +4321,8 @@ class ManagerFunctions(unittest.TestCase):
 
         def undo2():
             (g.GATE_FILE, m._instances.create_instance, m._instances.load_templates, m._personas.load_personas,
-             m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok) = old
+             m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok,
+             g._spawn) = old
             undo()
         return woke, created, notes, merges, undo2
 
@@ -4351,7 +4374,7 @@ class ManagerFunctions(unittest.TestCase):
 
     def test_squadgate_approve_creates_members_tickets_idempotent(self):
         """Approve (with the operator's edits) creates the missing instances
-        with persona, skills hint, tier model; adds the members with their
+        with persona, SKILLS, tier model; adds the members with their
         roles; sets the budget; enables + approves; creates the tickets; tells
         the lead. Approving again changes nothing; a reject is refused then."""
         m = self.m
@@ -4366,10 +4389,10 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, p["status"], p["decided_by"]), (200, "approved", "admin"), p)
             self.assertEqual([c[0] for c in created], ["e", "f"])
             e = created[0][2]
-            self.assertEqual((e["OPENROUTER_MODEL"], e["SQUAD_SKILLS"]), ("acme/fast", "tdd"))
+            self.assertEqual((e["OPENROUTER_MODEL"], e["SKILLS"]), ("acme/fast", "tdd"))
             self.assertEqual(e["AGENT_TOOLS"], "bash,squad_post,squad_ask,squad_read,squad_members,ticket_list,ticket_update")
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
-            self.assertIn("load_skill: tdd", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
+            self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
             self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
             failed = [s["step"] for s in p["steps"] if not s["ok"]]
             self.assertEqual(failed, ["persona f", "model f"])
@@ -4474,6 +4497,168 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, merges, p["steps"][0]["ok"], p["steps"][0]["detail"]),
                              (200, [("sq", "merge", "b")], True, "abc123"))
         finally:
+            undo()
+
+    # ---- Jev setup suggestions (mgr/jevsetup.py), per-instance SKILLS ----------------
+    def _fake_jev(self):
+        """A Jev on a free port: entailment by substring; records each call's
+        hypotheses and premise. -> (url, calls, stop)."""
+        import http.server
+        calls = []
+        score = {"coder fits": 0.9, "assistant fits": 0.6, "writing or fixing code": 0.92, "moderate difficulty": 0.8,
+                 "needs std": 0.99, "needs sk10": 0.3, "needs sk11": 0.49}
+        score.update({f"needs sk{i}:": 0.99 - i * 0.01 for i in range(10)})
+
+        class J(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                calls.append(b)
+                out = json.dumps({"entail": [next((v for k, v in score.items() if k in h), 0.05)
+                                             for h in b["hypotheses"]], "ms": 5}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), J)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def stop():
+            srv.shutdown(); srv.server_close()
+        return f"http://127.0.0.1:{srv.server_address[1]}", calls, stop
+
+    def _jev_env(self, url):
+        m = self.m
+        old = (m._settings.load_settings, m._personas.load_personas, m._skills.load_skills, m._router.load)
+        m._settings.load_settings = lambda: {"JEV_URL": url} if url else {}
+        m._personas.load_personas = lambda: [{"name": "assistant", "prompt": "You are a helpful agent. Be brief."},
+                                             {"name": "coder", "prompt": "You are an experienced software developer. Test."},
+                                             {"name": "code-architect", "prompt": "## Process\n- study the code"}]
+        m._skills.load_skills = lambda: ([{"name": "std", "description": "standard", "default": True}]
+                                         + [{"name": f"sk{i}", "description": f"skill {i}"} for i in range(12)])
+        m._router.load = lambda: {"tiers": {"openrouter/qwen/coder": "code", "orcarouter/tencent/hy3": "strong"},
+                                  "policies": {"default": m._router.DEFAULT_POLICY}}
+
+        def undo():
+            (m._settings.load_settings, m._personas.load_personas, m._skills.load_skills, m._router.load) = old
+        return undo
+
+    def test_jevsetup_suggest_maps_persona_skills_tier(self):
+        """Best persona above the floor; skills above the floor, at most 8, no
+        standard skill; the router questions through the default rules to a
+        tier and its first concrete model; calls of <= 16 short hypotheses;
+        the purpose capped. Jev down or not configured -> a note, no raise."""
+        js = self.m._jevsetup
+        url, calls, stop = self._fake_jev()
+        undo = self._jev_env(url)
+        try:
+            s = js.suggest("write and fix the backend code " + "x" * 3000)
+            self.assertEqual(s["persona"], {"name": "coder", "score": 0.9})
+            self.assertEqual([x["name"] for x in s["skills"]], [f"sk{i}" for i in range(8)])
+            self.assertEqual((s["tier"], s["model"], s["model_key"]), ({"name": "code", "score": 0.92}, "qwen/coder", "OPENROUTER_MODEL"))
+            self.assertEqual(s["classes"], {"task": ["code", 0.92], "difficulty": ["moderate", 0.8]})
+            hyps = [h for c in calls for h in c["hypotheses"]]
+            self.assertTrue(all(len(c["hypotheses"]) <= 16 for c in calls) and all(len(h) <= 100 for h in hyps))
+            self.assertEqual(len(hyps), 8 + 3 + 12)                         # router + personas + non-standard skills
+            self.assertFalse(any("needs std" in h for h in hyps))
+            self.assertIn("A code architect fits this task.", hyps)            # no prose sentence: the name only
+            self.assertTrue(all(len(c["premise"]) <= 1000 for c in calls))
+            self.assertEqual(js.suggest("")["note"], "no purpose given")
+        finally:
+            stop(); undo()
+        for jev, note in ((url, "Jev unreachable"), ("", "Jev is not configured")):   # stopped server, then none
+            undo = self._jev_env(jev)
+            try:
+                s = js.suggest("write code")
+                self.assertTrue(s["note"].startswith(note), s["note"])
+                self.assertEqual((s["persona"], s["skills"], s["tier"], s["model"]), (None, [], None, ""))
+            finally:
+                undo()
+
+    def test_setup_suggest_route_admin_only_and_create_stores_skills(self):
+        """/api/setup/suggest and /squad/suggest: admin only (no guest, no
+        role user). /api/create and the config setter take only catalog
+        skills into SKILLS; a guest's /api/skills?default=1 lists its own
+        SKILLS (SQUAD_SKILLS as the fallback) next to the standard skills."""
+        m = self.m
+        url, calls, stop = self._fake_jev()
+        undo = self._jev_env(url)
+        g = {"name": "g", "index": 9, "config": {"SKILLS": "sk3"}}
+        made, saved = [], []
+        old = (m._guests.instance_by_ip, m._instances.create_instance, m._instances.load_instances, m._instances.save_instance)
+        m._guests.instance_by_ip = lambda ip: g if ip == "172.30.9.2" else None
+        m._instances.create_instance = lambda n, t, cfg=None, *a, **k: made.append(cfg) or f"instance '{n}' created"
+        m._instances.load_instances = lambda: [g]
+        m._instances.save_instance = saved.append
+        try:
+            for path in ("/api/setup/suggest", "/api/projects/sq/squad/suggest"):
+                self.assertTrue(m._routes.ROUTER.resolve("POST", path)[1], path)
+                self.assertFalse(m._auth.user_allowed("POST", path), path)
+            h = self._post_handler("/api/setup/suggest", "172.30.9.2", b'{"purpose": "code"}'); h._do_POST()
+            self.assertEqual(self._status(h), 403)
+            self.assertEqual(calls, [])
+            h = self._post_handler("/api/setup/suggest", "127.0.0.1", b'{"purpose": "write code"}'); h._do_POST()
+            d = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+            self.assertEqual((self._status(h), d["persona"]["name"], d["model"]), (200, "coder", "qwen/coder"))
+            for skills, want in ((["sk1", "nope"], "error: unknown skill(s): nope"), (["sk1", "sk2"], "created")):
+                h = self._post_handler("/api/create", "127.0.0.1", json.dumps(
+                    {"name": "n", "template": "openrouter", "skills": skills}).encode()); h._do_POST()
+                self.assertIn(want, json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])["msg"])
+            self.assertEqual([c.get("SKILLS") for c in made], ["sk1,sk2"])
+            self.assertTrue(m._instances._set_config_key("g", "SKILLS", "sk1,bad").startswith("error: unknown skill(s): bad"))
+            self.assertEqual(saved, [])
+            self.assertTrue(m._instances._set_config_key("g", "SKILLS", "sk1, sk2").startswith("SKILLS = "))
+            for cfg, want in (({"SKILLS": "sk3"}, ["std", "sk3"]), ({"SQUAD_SKILLS": "sk4"}, ["std", "sk4"]), ({}, ["std"])):
+                g["config"] = cfg
+                for ip, names in (("172.30.9.2", want), ("127.0.0.1", ["std"])):
+                    h = self._handler("/api/skills?default=1", ip); h._do_GET()
+                    self.assertEqual([x["name"] for x in json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])], names)
+        finally:
+            (m._guests.instance_by_ip, m._instances.create_instance, m._instances.load_instances,
+             m._instances.save_instance) = old
+            stop(); undo()
+
+    def test_squadgate_members_get_jev_suggestions(self):
+        """A new member without persona/skills/tier gets Jev's, marked with the
+        scores; a complete or existing member is left alone; 'Suggest again'
+        replaces one member's (admin); nothing is created before Approve, then
+        the member gets SKILLS."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        g = m._squadgate
+        A, L = "172.30.3.2", "127.0.0.1"
+        sugg = {"persona": {"name": "coder", "score": 0.91}, "skills": [{"name": "tdd", "score": 0.88}],
+                "tier": {"name": "cheap", "score": 0.77}, "model": "acme/fast", "model_key": "OPENROUTER_MODEL",
+                "classes": {}, "ms": 12, "note": "n"}
+        asked = []
+        old = (m._jevsetup.suggest, m._router.jev_url)
+        m._jevsetup.suggest = lambda purpose: asked.append(purpose) or json.loads(json.dumps(sugg))
+        m._router.jev_url = lambda: "http://jev"
+        g._spawn = lambda fn, *a: fn(*a)                                       # synchronous here
+        try:
+            plan = dict(self._SG_PLAN, members=self._SG_PLAN["members"] + [{"name": "h", "purpose": "write docs"}])
+            st, d = self._sq("/api/squad/propose", A, plan)
+            self.assertEqual(st, 200, d)
+            self.assertEqual(asked, ["write docs"])                             # e, f complete; b existing
+            p = g._get("sq", d["id"])
+            h = next(x for x in p["members"] if x["name"] == "h")
+            self.assertEqual((h["persona"], h["skills"], h["model_tier"]), ("coder", ["tdd"], "cheap"))
+            self.assertEqual(h["suggested"], {"note": "n", "ms": 12, "persona": 0.91, "skills": {"tdd": 0.88}, "tier": 0.77})
+            self.assertNotIn("suggested", next(x for x in p["members"] if x["name"] == "e"))
+            self.assertEqual(created, [])
+            st, d2 = self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "f"})
+            self.assertEqual(st, 200, d2)
+            f = next(x for x in d2["members"] if x["name"] == "f")
+            self.assertEqual((f["persona"], f["skills"], f["model_tier"], f["suggested"]["persona"]), ("coder", ["tdd"], "cheap", 0.91))
+            self.assertEqual(self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "b"})[0], 400)
+            self.assertEqual(self._sq("/api/projects/sq/squad/suggest", A, {"id": d["id"], "member": "f"})[0], 403)
+            self.assertEqual(created, [])
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
+            self.assertEqual(st, 200, p)
+            self.assertEqual(dict((c[0], c[2].get("SKILLS")) for c in created), {"e": "tdd", "f": "tdd", "h": "tdd"})
+            self.assertEqual(self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "h"})[0], 400)
+        finally:
+            m._jevsetup.suggest, m._router.jev_url = old
             undo()
 
     # ---- checkout: a GitHub repo into an instance's workspace ------------------------

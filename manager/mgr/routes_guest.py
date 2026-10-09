@@ -60,7 +60,8 @@ def _rt_skills(h):
     q = urllib.parse.parse_qs(h.path.partition("?")[2])
     items = _skills.load_skills()
     if q.get("default", ["0"])[0] == "1":                # the standard skills (agents, each turn)
-        items = [x for x in items if x.get("default")]
+        mine = set(_skills.of_instance(h._guest()))      # + the instance's own (config SKILLS)
+        items = [x for x in items if x.get("default") or x.get("name") in mine]
     if q.get("meta", ["0"])[0] == "1" or q.get("default", ["0"])[0] == "1":
         items = _skills.meta(items)
     return json.dumps(items, ensure_ascii=False).encode(), "application/json"

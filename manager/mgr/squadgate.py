@@ -37,6 +37,7 @@ import uuid
 
 from mgr import audit as _audit
 from mgr import instances as _instances
+from mgr import jevsetup as _jevsetup
 from mgr import notify as _notify
 from mgr import paths as _paths
 from mgr import personas as _personas
@@ -258,12 +259,70 @@ def propose(proj, by, kind, body):
     else:
         return None, "unknown kind"
     _put(prop)
+    if kind != "merge" and _router.jev_url() and any(_wants_suggestion(m) for m in prop["members"]):
+        _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
         _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval",
                            f"{kind} proposal by {by} — review it in Projects → Squad", link="projects")
     except Exception as e:                       # the proposal stands without the bell
         print(f"[quiet] squad notify failed: {e!r}", flush=True)
     return prop, ""
+
+
+# ---- Jev's suggestions (mgr/jevsetup.py): filled into the pending proposal ---
+def _spawn(fn, *args):
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+def _wants_suggestion(m):
+    return not m["existing"] and not (m["persona"] and m["skills"] and (m["model_tier"] or m["model"]))
+
+
+def fill_suggestions(project, pid, only="", force=False):
+    """Jev's persona / skills / tier for the new members that lack them (all
+    three for `only` with force), marked in member["suggested"] with the
+    scores. Written only while the proposal is pending; the user approves."""
+    prop = _get(project, pid)
+    if prop is None or prop.get("status") != "pending" or prop["kind"] == "merge":
+        return None
+    done = {}
+    for m in prop["members"]:
+        if (only and m["name"] != only) or m["existing"] or not (force or _wants_suggestion(m)):
+            continue
+        s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""))
+        mark = {"note": s["note"], "ms": s["ms"]}
+        if s["persona"] and (force or not m["persona"]):
+            m["persona"], mark["persona"] = s["persona"]["name"], s["persona"]["score"]
+        if s["skills"] and (force or not m["skills"]):
+            m["skills"], mark["skills"] = [x["name"] for x in s["skills"]], {x["name"]: x["score"] for x in s["skills"]}
+        if s["tier"] and (force or not (m["model_tier"] or m["model"])):
+            m["model_tier"], mark["tier"] = s["tier"]["name"], s["tier"]["score"]
+            if force:
+                m["model"] = ""
+        m["suggested"] = mark
+        done[m["name"]] = m
+    with _lock:
+        d = _load()
+        cur = next((p for p in d["proposals"] if p.get("id") == pid), None)
+        if cur is None or cur.get("status") != "pending":
+            return None
+        cur["members"] = [done.get(m["name"], m) for m in cur["members"]]
+        _save(d)
+    return cur
+
+
+def suggest_member(project, pid, member):
+    """'Suggest again' on the approval card -> (proposal, '') or (None, why)."""
+    prop = _get(project, pid)
+    if prop is None or prop.get("status") != "pending":
+        return None, "no pending proposal " + pid
+    m = next((x for x in prop.get("members") or [] if x["name"] == member), None)
+    if m is None or m["existing"]:
+        return None, f"{member!r} is no new member of this proposal"
+    if not _router.jev_url():
+        return None, "Jev is not configured (JEV_URL in Settings)"
+    p = fill_suggestions(project, pid, member, force=True)
+    return (p, "") if p else (None, "the proposal was decided meanwhile")
 
 
 def _model_cfg(m, steps):
@@ -292,7 +351,7 @@ def _create(proj, m, steps):
     """The member's instance (created when missing)."""
     if any(i["name"] == m["name"] for i in _instances.load_instances()):
         return True
-    cfg = {"SQUAD_SKILLS": ",".join(m["skills"])} if m["skills"] else {}
+    cfg = {"SKILLS": ",".join(m["skills"])} if m["skills"] else {}
     pers = next((p for p in _personas.load_personas() if p.get("name") == m["persona"]), None) if m["persona"] else None
     if m["persona"] and not pers:
         steps.append({"step": f"persona {m['name']}", "ok": False, "detail": f"persona {m['persona']!r} not found — none set"})
@@ -303,9 +362,7 @@ def _create(proj, m, steps):
     cfg.update(_model_cfg(m, steps))
     lines = [(pers or {}).get("prompt") or "",
              f"You are {m['name']}, {m['role']} in the squad of project {proj['name']}."
-             + (f" Your purpose: {m['purpose']}" if m["purpose"] else ""),
-             ("At the start of a task, load these skills with load_skill: " + ", ".join(m["skills"]))
-             if m["skills"] else ""]
+             + (f" Your purpose: {m['purpose']}" if m["purpose"] else "")]
     cfg["AGENT_SYSTEM"] = "\n\n".join(x for x in lines if x)
     msg = _instances.create_instance(m["name"], m["template"], cfg)
     ok = "created" in str(msg)
