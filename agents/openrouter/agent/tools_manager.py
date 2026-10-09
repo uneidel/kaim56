@@ -697,7 +697,9 @@ def _gate_out(d, err):
 
 def catalog_text(d):
     """The squad catalog as the lines a lead picks from (shared wording with the Claude guest)."""
-    out = [f"Squad catalog for {d.get('project', '')} — choose per member:", "Personas (persona=<name>):"]
+    out = [f"Squad catalog for {d.get('project', '')} — choose per member:"]
+    out += [d["profile_text"]] if d.get("profile_text") else []
+    out.append("Personas (persona=<name>):")
     out += [f"- {p['name']}: {p.get('description', '')}" + (f" [tools: {', '.join(p['tools'])}]" if p.get("tools") else "")
             for p in d.get("personas") or []]
     out.append("  none fits -> new_persona: {name, description, prompt, tools?}")

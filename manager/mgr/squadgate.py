@@ -10,7 +10,10 @@ A project's lead PROPOSES; only the operator's approval in the UI acts:
   persona — or a ``new_persona`` created only on approval —, skills, model
   tier, template openrouter|claude, role), tickets, a daily token budget.
   Each member records who chose each field (``by``: architect, jev (score),
-  you). The lead reads what it can choose from with squad_catalog. One
+  you). Jev fills in a missing persona / tier only from JEV_AUTO_MIN, never
+  skills (its other picks are hints on the card). The proposal keeps the
+  repo profile (mgr/repoprofile.py) its choices were based on.
+  The lead reads what it can choose from with squad_catalog. One
   pending per project. Approve: create the missing instances, add them to the
   project, set the budget, enable + approve the squad, create the tickets,
   tell the lead. Every step is recorded in the proposal and skips what is
@@ -48,6 +51,7 @@ from mgr import paths as _paths
 from mgr import personas as _personas
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import repoprofile as _repoprofile
 from mgr import router as _router
 from mgr import skills as _skills
 from mgr import squadrec as _squadrec
@@ -74,6 +78,7 @@ MEMBER_TEMPLATES = {"openrouter": "API model via OpenRouter (512 MiB); counts ag
 CLAUDE_TIER = {"cheap": "haiku", "code": "sonnet", "strong": "opus"}   # no anthropic/* model of the tier in Router
 PERSONA_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
+JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
 PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
 _decide = threading.Lock()      # one approval at a time
@@ -274,16 +279,28 @@ def _summary(p):
     return re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0][:200]
 
 
-def catalog():
-    """Personas, skills (standard flagged), model tiers and the member
-    templates — read-only, for the lead's squad_propose."""
+def profile(proj):
+    """The project's repo profile (mgr/repoprofile.py), None when there is none or it fails."""
+    try:
+        return _repoprofile.of_project(proj)
+    except Exception as e:                       # a proposal or the catalog never fails over it
+        print(f"[quiet] repo profile of {(proj or {}).get('name')}: {e!r}", flush=True)
+        return None
+
+
+def catalog(proj=None):
+    """Personas, skills (standard flagged), model tiers, the member
+    templates and the project's repo profile — read-only, for the lead's
+    squad_propose."""
+    prof = profile(proj) if proj else None
     tiers = _router.load()["tiers"]
     have = {t.get("template") for t in _instances.load_templates()}
     return {"personas": [{"name": p["name"], "description": _summary(p), **({"tools": p["tools"]} if p.get("tools") else {})}
                          for p in _personas.load_personas() if p.get("name")],
             "skills": _skills.meta(),
             "tiers": [{"tier": t, "models": sorted(k for k, v in tiers.items() if v == t)} for t in _router.TIERS],
-            "templates": [{"template": t, "note": n} for t, n in MEMBER_TEMPLATES.items() if t in have]}
+            "templates": [{"template": t, "note": n} for t, n in MEMBER_TEMPLATES.items() if t in have],
+            "profile": prof, "profile_text": _repoprofile.text(prof)}
 
 
 # ---- proposals --------------------------------------------------------------
@@ -343,6 +360,8 @@ def propose(proj, by, kind, body):
         prop.update(writer=writer, summary=summary)
     else:
         return None, "unknown kind"
+    if kind != "merge":
+        prop["profile"] = profile(proj)          # what the choices are based on (the card shows it)
     _put(prop)
     if kind != "merge" and _router.jev_url() and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
@@ -360,13 +379,21 @@ def _spawn(fn, *args):
 
 
 def _wants_suggestion(m):
-    return not m["existing"] and not (m["persona"] and m["skills"] and (m["model_tier"] or m["model"]))
+    return not m["existing"] and not (m["persona"] and (m["model_tier"] or m["model"]))
+
+
+def jev_context(prop):
+    """Jev's context for a member: the repo profile's keywords, then the squad goal."""
+    kw, goal = _repoprofile.context(prop.get("profile")), prop.get("goal") or ""
+    return ((f"Repository: {kw}. " if kw else "") + (f"Squad goal: {goal}" if goal else "")).strip()
 
 
 def fill_suggestions(project, pid, only="", force=False):
-    """Jev's persona / skills / tier for the new members that lack them (all
-    three for `only` with force), marked in member["suggested"] with the
-    scores. Written only while the proposal is pending; the user approves."""
+    """Jev's persona / tier for the new members that lack them, filled in
+    only from JEV_AUTO_MIN (skills never: Jev's skill picks were noise); below
+    it, and Jev's skills, are kept as hints in member["suggested"]. `only` with
+    force ('Suggest again'): that member gets all three, whatever the score.
+    Written only while the proposal is pending; the user approves."""
     prop = _get(project, pid)
     if prop is None or prop.get("status") != "pending" or prop["kind"] == "merge":
         return None
@@ -374,20 +401,31 @@ def fill_suggestions(project, pid, only="", force=False):
     for m in prop["members"]:
         if (only and m["name"] != only) or m["existing"] or not (force or _wants_suggestion(m)):
             continue
-        s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""))
-        mark, by = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {})
+        s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""), jev_context(prop))
+        mark, by, hint = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {}), {}
         if s["persona"] and (force or not m["persona"]) and not m.get("new_persona"):   # never over a proposed one
-            m["persona"], mark["persona"] = s["persona"]["name"], s["persona"]["score"]
-            by["persona"] = f"jev ({s['persona']['score']:.2f})"
+            if force or s["persona"]["score"] >= JEV_AUTO_MIN:
+                m["persona"], mark["persona"] = s["persona"]["name"], s["persona"]["score"]
+                by["persona"] = f"jev ({s['persona']['score']:.2f})"
+            else:
+                hint["persona"] = s["persona"]
         if s["skills"] and (force or not m["skills"]):
-            m["skills"], mark["skills"] = [x["name"] for x in s["skills"]], {x["name"]: x["score"] for x in s["skills"]}
-            by["skills"] = f"jev ({max(x['score'] for x in s['skills']):.2f})"
-        if s["tier"] and (force or not (m["model_tier"] or m["model"])):
-            m["model_tier"], mark["tier"] = s["tier"]["name"], s["tier"]["score"]
-            by["model_tier"] = f"jev ({s['tier']['score']:.2f})"
             if force:
-                m["model"] = ""
-                by.pop("model", None)
+                m["skills"], mark["skills"] = [x["name"] for x in s["skills"]], {x["name"]: x["score"] for x in s["skills"]}
+                by["skills"] = f"jev ({max(x['score'] for x in s['skills']):.2f})"
+            else:
+                hint["skills"] = {x["name"]: x["score"] for x in s["skills"]}
+        if s["tier"] and (force or not (m["model_tier"] or m["model"])):
+            if force or s["tier"]["score"] >= JEV_AUTO_MIN:
+                m["model_tier"], mark["tier"] = s["tier"]["name"], s["tier"]["score"]
+                by["model_tier"] = f"jev ({s['tier']['score']:.2f})"
+                if force:
+                    m["model"] = ""
+                    by.pop("model", None)
+            else:
+                hint["tier"] = s["tier"]
+        if hint:
+            mark["hint"] = hint
         m["suggested"] = mark
         done[m["name"]] = m
     with _lock:

@@ -1625,6 +1625,11 @@ def _wtext(path, text):
         fh.write(text)
 
 
+def _wtextp(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _wtext(path, text)
+
+
 class ManagerFunctions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -4187,7 +4192,9 @@ class ManagerFunctions(unittest.TestCase):
         insts.append({"name": "d", "index": 6, "template": "openrouter", "rootfs": "instances/openrouter-rootfs.ext4",
                       "mounts": [], "config": {}})
         old = (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
-               m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE)
+               m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE,
+               m._repoprofile.CACHE_FILE)
+        m._repoprofile.CACHE_FILE = os.path.join(tmp, "repoprofile.json")
         m._squads.SQUAD_DB = os.path.join(tmp, "squad.db")
         m._squadrec.REC_FILE = os.path.join(tmp, "squadrec.json")
         m._settings.SITE = {**m._settings.SITE, "SQUADS_DIR": os.path.join(tmp, "squads")}
@@ -4204,7 +4211,8 @@ class ManagerFunctions(unittest.TestCase):
 
         def undo():
             (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
-             m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE) = old
+             m._llmproxy.used_today, m._store.load_tasks, m._squadrec.REC_FILE, m._settings.SITE,
+             m._repoprofile.CACHE_FILE) = old
             restore()
         return woke, tasks, undo
 
@@ -5035,10 +5043,11 @@ class ManagerFunctions(unittest.TestCase):
             stop(); undo()
 
     def test_squadgate_members_get_jev_suggestions(self):
-        """A new member without persona/skills/tier gets Jev's, marked with the
-        scores; a complete or existing member is left alone; 'Suggest again'
-        replaces one member's (admin); nothing is created before Approve, then
-        the member gets SKILLS."""
+        """A new member without persona/tier gets Jev's persona/tier only
+        from 0.8 (skills never — they and the rest stay hints), with the squad
+        goal as context; a member with persona + tier or an existing one is
+        left alone; 'Suggest again' replaces one member's all three (admin);
+        nothing is created before Approve, then the member gets SKILLS."""
         m = self.m
         woke, created, notes, merges, undo = self._gate_env()
         g = m._squadgate
@@ -5048,20 +5057,20 @@ class ManagerFunctions(unittest.TestCase):
                 "classes": {}, "ms": 12, "note": "n"}
         asked = []
         old = (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose: asked.append(purpose) or json.loads(json.dumps(sugg))
+        m._jevsetup.suggest = lambda purpose, context="": asked.append((purpose, context)) or json.loads(json.dumps(sugg))
         m._router.jev_url = lambda: "http://jev"
         g._spawn = lambda fn, *a: fn(*a)                                       # synchronous here
         try:
             plan = dict(self._SG_PLAN, members=self._SG_PLAN["members"] + [{"name": "h", "purpose": "write docs"}])
             st, d = self._sq("/api/squad/propose", A, plan)
             self.assertEqual(st, 200, d)
-            self.assertEqual(asked, ["write docs"])                             # e, f complete; b existing
+            self.assertEqual(asked, [("write docs", "Squad goal: ship v2")])    # e, f complete; b existing
             p = g._get("sq", d["id"])
             h = next(x for x in p["members"] if x["name"] == "h")
-            self.assertEqual((h["persona"], h["skills"], h["model_tier"]), ("coder", ["tdd"], "cheap"))
-            self.assertEqual(h["suggested"], {"note": "n", "ms": 12, "persona": 0.91, "skills": {"tdd": 0.88}, "tier": 0.77})
-            self.assertEqual(h["by"], {"persona": "jev (0.91)", "skills": "jev (0.88)", "model_tier": "jev (0.77)",
-                                       "template": "default"})                           # who chose it, on the card
+            self.assertEqual((h["persona"], h["skills"], h["model_tier"]), ("coder", [], ""))   # 0.77 < 0.8: no tier
+            self.assertEqual(h["suggested"], {"note": "n", "ms": 12, "persona": 0.91, "hint": {
+                "skills": {"tdd": 0.88}, "tier": {"name": "cheap", "score": 0.77}}})
+            self.assertEqual(h["by"], {"persona": "jev (0.91)", "template": "default"})       # who chose it, on the card
             self.assertNotIn("suggested", next(x for x in p["members"] if x["name"] == "e"))
             self.assertEqual(created, [])
             st, d2 = self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "f"})
@@ -5073,11 +5082,143 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(created, [])
             st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
             self.assertEqual(st, 200, p)
-            self.assertEqual(dict((c[0], c[2].get("SKILLS")) for c in created), {"e": "tdd", "f": "tdd", "h": "tdd"})
+            self.assertEqual(dict((c[0], c[2].get("SKILLS")) for c in created), {"e": "tdd", "f": "tdd", "h": None})
             self.assertEqual(self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "h"})[0], 400)
         finally:
             m._jevsetup.suggest, m._router.jev_url = old
             undo()
+
+    # ---- repo profile (mgr/repoprofile.py): what the squad's choices are based on ------
+    def _rp_node(self, root):
+        """A cfdo-like fixture: a Worker with a Durable Object binding, a CLI
+        bin, a README with a badge; node_modules and a symlinked manifest to
+        be ignored."""
+        _wtextp(os.path.join(root, "package.json"), json.dumps({
+            "name": "cfdo", "bin": {"cfdo": "bin/cfdo.js"}, "scripts": {"build": "tsc", "test": "vitest"},
+            "dependencies": {"hono": "4"}, "devDependencies": {"wrangler": "3", "typescript": "5", "@types/node": "1"}}))
+        _wtextp(os.path.join(root, "wrangler.toml"), 'name = "x"\n[[durable_objects.bindings]]\nname = "ROOM"\n')
+        _wtextp(os.path.join(root, "README.md"), "# cfdo\n\n[![ci](https://x/b.svg)](https://x)\n\n"
+               "Tooling for **Cloudflare Durable Objects**: deploy, inspect and back up `objects` from a [CLI](https://x).\n\nMore.\n")
+        for f in ("src/index.ts", "src/room.ts", "bin/cfdo.js"):
+            _wtextp(os.path.join(root, f), "export {}\n")
+        _wtextp(os.path.join(root, "Dockerfile"), "FROM node\n")
+        _wtextp(os.path.join(root, ".github", "workflows", "ci.yml"), "on: push\n")
+        for i in range(30):
+            _wtextp(os.path.join(root, "node_modules", "react", f"f{i}.py"), "x\n")
+        _wtextp(os.path.join(root, "node_modules", "react", "package.json"), '{"dependencies": {"nm-dep": "1"}}')
+        outside = tempfile.mkdtemp()
+        _wtextp(os.path.join(outside, "package.json"), '{"dependencies": {"evil": "1"}}')
+        _wtextp(os.path.join(outside, "many.py"), "x\n")
+        os.makedirs(os.path.join(root, "pkg"))
+        os.symlink(os.path.join(outside, "package.json"), os.path.join(root, "pkg", "package.json"))
+        os.symlink(outside, os.path.join(root, "linked"))
+        return root
+
+    def test_repoprofile_fixtures_bounded_and_cached(self):
+        """Node + wrangler (Durable Objects), Python pyproject, go.mod: the
+        languages, frameworks, entry points and keywords; node_modules
+        skipped, symlinks (dir and manifest) never followed, MAX_FILES
+        bounds the scan; the per-project cache holds while HEAD does."""
+        import subprocess as sp
+        rp = self.m._repoprofile
+        tmp = tempfile.mkdtemp()
+        p = rp.build(self._rp_node(os.path.join(tmp, "node")))
+        for k in ("Durable Objects", "Cloudflare Workers", "TypeScript", "Hono", "Docker", "GitHub Actions"):
+            self.assertIn(k, p["keywords"], p["keywords"])
+        self.assertEqual(p["languages"], [["TypeScript", 2], ["JavaScript", 1]])     # no node_modules, no linked/
+        self.assertNotIn("evil", p["deps"]); self.assertNotIn("nm-dep", p["deps"]); self.assertNotIn("Python", p["keywords"])
+        self.assertIn("bin cfdo", p["entry_points"]); self.assertIn("npm scripts: build, test", p["entry_points"])
+        self.assertEqual(p["readme"], "Tooling for Cloudflare Durable Objects: deploy, inspect and back up objects from a CLI.")
+        self.assertIn("Cloudflare Durable Objects", p["keywords"])                   # a proper name from the README
+        self.assertNotIn("types/node", " ".join(p["keywords"]))
+        self.assertLessEqual(len(p["keywords"]), 25)
+        txt = rp.text(p)
+        self.assertTrue(txt.startswith("Repo profile:\n- keywords: ")); self.assertIn("- README: Tooling", txt)
+        py = os.path.join(tmp, "py")
+        _wtextp(os.path.join(py, "pyproject.toml"), '[project]\nname = "t"\ndependencies = ["fastapi>=0.1", "pydantic[email]"]\n'
+               '[project.scripts]\nt = "t:main"\n')
+        _wtextp(os.path.join(py, "t", "main.py"), "x = 1\n")
+        p = rp.build(py)
+        self.assertEqual((p["languages"], p["deps"]), ([["Python", 1]], ["fastapi", "pydantic"]))
+        self.assertTrue({"FastAPI", "Pydantic", "Python"} <= set(p["keywords"])); self.assertIn("script t", p["entry_points"])
+        go = os.path.join(tmp, "go")
+        _wtextp(os.path.join(go, "go.mod"), "module example.com/tool\n\ngo 1.22\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n)\n")
+        _wtextp(os.path.join(go, "cmd", "tool", "main.go"), "package main\n")
+        p = rp.build(go)
+        self.assertTrue({"CLI", "Go", "cobra"} <= set(p["keywords"]), p); self.assertIn("cmd/tool", p["entry_points"])
+        old = rp.MAX_FILES
+        rp.MAX_FILES = 3
+        try:
+            self.assertTrue(rp.build(os.path.join(tmp, "node"))["truncated"])
+        finally:
+            rp.MAX_FILES = old
+        # cache by HEAD
+        old = rp.CACHE_FILE
+        rp.CACHE_FILE = os.path.join(tmp, "cache.json")
+        g = lambda *a: sp.run(["git", "-C", py, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True, capture_output=True)
+        try:
+            g("init", "-q"); g("add", "-A"); g("commit", "-q", "-m", "one")
+            self.assertNotIn("Go", rp.get("t", py)["keywords"])
+            self.assertEqual(os.stat(rp.CACHE_FILE).st_mode & 0o777, 0o600)
+            _wtextp(os.path.join(py, "x.go"), "package x\n")
+            self.assertNotIn("Go", rp.get("t", py)["keywords"])                     # same HEAD: the cache
+            g("add", "-A"); g("commit", "-q", "-m", "two")
+            self.assertIn("Go", rp.get("t", py)["keywords"])                        # new HEAD: recomputed
+            self.assertIsNone(rp.of_project({"name": "k", "source": {"type": "katfs"}}))
+        finally:
+            rp.CACHE_FILE = old
+
+    def test_jevsetup_context_reaches_premise_and_prefilter(self):
+        """suggest(purpose, context): the premise is purpose first, then the
+        context, within the cap; the word pre-filter also matches the context,
+        so durable-objects reaches Jev's hypotheses for a cfdo-like repo it
+        never did from "Implement the web UI." alone."""
+        m = self.m
+        url, calls, stop = self._fake_jev()
+        undo = self._jev_env(url)
+        sk = m._skills.load_skills() + [{"name": "durable-objects", "description": "Cloudflare Durable Objects: state, alarms"}]
+        m._skills.load_skills = lambda: sk
+        prof = m._repoprofile.build(self._rp_node(tempfile.mkdtemp()))
+        try:
+            hyps = lambda: [h for c in calls for h in c["hypotheses"]]
+            m._jevsetup.suggest("Implement the web UI.")
+            self.assertFalse([h for h in hyps() if "durable objects" in h])
+            calls.clear()
+            ctx = "Repository: " + m._repoprofile.context(prof) + ". Squad goal: " + "x " * 800
+            m._jevsetup.suggest("Implement the web UI.", ctx)
+            self.assertTrue([h for h in hyps() if h.startswith("This task needs durable objects")], hyps())
+            self.assertTrue(all(c["premise"].startswith("Implement the web UI. Context: Repository: Cloudflare Workers, Durable Objects")
+                                and len(c["premise"]) <= m._jevsetup.PURPOSE_MAX for c in calls))
+        finally:
+            stop(); undo()
+
+    def test_squadgate_profile_in_catalog_proposal_and_kickoff(self):
+        """The project's repo profile is in squad_catalog (and its text), in a
+        squad proposal (what the card shows) and in the kickoff goal message;
+        Jev gets its keywords as context. skills.meta lists a name once."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        src = m._projects.get("sq")["source"]["path"]
+        self._rp_node(src)
+        asked, old = [], (m._jevsetup.suggest, m._router.jev_url)
+        m._jevsetup.suggest = lambda purpose, context="": asked.append(context) or m._jevsetup.empty("x")
+        m._router.jev_url = lambda: "http://jev"
+        m._squadgate._spawn = lambda fn, *a: fn(*a)
+        try:
+            st, d = self._sq("/api/squad/catalog?project=sq", "172.30.3.2")
+            self.assertEqual(st, 200, d)
+            self.assertIn("Durable Objects", d["profile"]["keywords"]); self.assertTrue(d["profile_text"].startswith("Repo profile:"))
+            plan = dict(self._SG_PLAN, members=[{"name": "h", "purpose": "Implement the web UI."}], tickets=[])
+            st, d = self._sq("/api/squad/propose", "172.30.3.2", plan)
+            self.assertEqual(st, 200, d)
+            self.assertIn("Durable Objects", m._squadgate._get("sq", d["id"])["profile"]["frameworks"])
+            self.assertTrue(asked[0].startswith("Repository: Cloudflare Workers, Durable Objects"), asked)
+            self.assertTrue(asked[0].endswith("Squad goal: ship v2"))
+        finally:
+            m._jevsetup.suggest, m._router.jev_url = old
+            undo()
+        sk = [{"name": "a", "description": "1"}, {"name": "b"}, {"name": "a", "description": "2"}]
+        self.assertEqual([(x["name"], x["description"]) for x in m._skills.meta(sk)], [("a", "1"), ("b", "")])
 
     # ---- squad catalog, new personas, claude members, provenance -------------------
     def _cat_env(self):
@@ -8453,6 +8594,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((s["enabled"], s["approved"], s["daily_token_budget"]), (True, False, 2_000_000))
             self.assertEqual([w[0] for w in woke], ["repo-architect"])
             self.assertIn("add dark mode", woke[0][1]); self.assertIn("squad_propose", woke[0][1])
+            self.assertIn("Repo profile:\n- main dirs: apps (1)", woke[0][1])          # computed after the clone
+            self.assertTrue(any(x["text"].startswith("Repo profile: ") for x in j["log"]), j["log"])
             self.assertEqual(m._squads.read("repo")[0]["from"], "user:admin")
             sq = {x["name"]: x for x in self._sq("/api/squads", L)[1]["squads"]}
             self.assertEqual((sq["repo"]["status"], sq["repo"]["lead"]), ("waiting for approval", "repo-architect"))

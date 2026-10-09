@@ -30,7 +30,8 @@ e. instance <name>-architect: template openrouter (or claude, the
    path; the project's lead.
 f. squad enabled, NOT approved (only the lead can be woken), budget 2M
    tokens/day; reindex when an indexer exists (queued, never blocks).
-g. the goal, posted as user:<name> to @<name>-architect: propose the squad.
+g. the goal with the repo profile (mgr/repoprofile.py, computed right after
+   the clone), posted as user:<name> to @<name>-architect: propose the squad.
 
 Each step skips what is done (a retry resumes). A failure removes what THIS
 job created (instance, project, clone, squad record + folder) — never anything
@@ -53,6 +54,7 @@ from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import projects as _projects
 from mgr import projwt as _projwt
+from mgr import repoprofile as _repoprofile
 from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import squadgate as _squadgate
@@ -323,6 +325,18 @@ def step_clone(job):
     if not job["base"]:
         raise Stop("the repository is empty: no default branch to work on")
     _say(job, f"Cloned ({size / 2**20:.1f} MB), default branch {job['base']}.")
+    prof = _profile(job)
+    if prof:
+        _say(job, "Repo profile: " + (", ".join(prof["keywords"]) or "no keywords"))
+
+
+def _profile(job):
+    """The clone's repo profile (cached by HEAD), None when it fails — the kickoff goes on without."""
+    try:
+        return _repoprofile.get(job["name"], job["path"])
+    except Exception as e:
+        _say(job, f"Repo profile failed: {e!r}"[:300], ok=False)
+        return None
 
 
 def step_project(job):
@@ -405,9 +419,9 @@ def step_squad(job):
 def step_post(job):
     if "post" in job["done"]:
         return
-    arch = job["arch"]
+    arch, prof = job["arch"], _repoprofile.text(_profile(job))
     text = (f"@{arch} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
-            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\nThe code is the repository mounted read-only at /project/{job['name']} "
+            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\n" + (prof + "\n\n" if prof else "") + f"The code is the repository mounted read-only at /project/{job['name']} "
             f"(not your workspace, not the web): read it there first (list_dir /project/{job['name']}, read_file, "
             f"bash: ls/grep/cat). Then call squad_catalog. For each member choose "
             f"persona (or propose new_persona if none fits), skills from the catalog, model tier and template "
