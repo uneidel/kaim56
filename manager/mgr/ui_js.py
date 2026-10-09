@@ -1091,19 +1091,35 @@ function sqJev(s){
   if(s.persona!=null)parts.push('persona '+f(s.persona));
   if(s.skills)parts.push('skills '+Object.entries(s.skills).map(([n,v])=>n+' '+f(v)).join(', '));
   if(s.tier!=null)parts.push('tier '+f(s.tier));
-  return `<div class=text-muted style="font-size:12px">suggested by Jev: ${escT(parts.join(' · ')||s.note||'nothing above the floor')}</div>`;
+  const h=s.hint||{}, hp=[];   /* not filled in (below 0.8; skills only on Suggest again): the user applies them */
+  if(h.persona)hp.push('persona '+h.persona.name+' '+f(h.persona.score));
+  if(h.skills)hp.push('skills '+Object.entries(h.skills).map(([n,v])=>n+' '+f(v)).join(', '));
+  if(h.tier)hp.push('tier '+h.tier.name+' '+f(h.tier.score));
+  return `<div class=text-muted style="font-size:12px">suggested by Jev: ${escT(parts.join(' · ')||(hp.length?'nothing sure enough to fill in':s.note||'nothing above the floor'))}</div>`+
+    (hp.length?`<div class=text-muted style="font-size:12px">Jev hints, not applied: ${escT(hp.join(' · '))}</div>`:'');
+}
+/* the repo profile the proposal was made with (mgr/repoprofile.py) */
+function sqProfile(r){
+  if(!r)return '';
+  const row=(k,v)=>v?`<div><b>${k}</b> ${escT(v)}</div>`:'';
+  return `<details style="margin:6px 0;font-size:12px"><summary class=text-muted>Repo profile — what the choice is based on</summary>`+
+    row('keywords',(r.keywords||[]).join(', '))+row('languages',(r.languages||[]).map(x=>x[0]+' ('+x[1]+')').join(', '))+
+    row('frameworks',(r.frameworks||[]).join(', '))+row('entry points',(r.entry_points||[]).join('; '))+
+    row('main dirs',(r.main_dirs||[]).map(x=>x[0]+' ('+x[1]+')').join(', '))+row('README',r.readme)+
+    (r.commit?`<div class=text-muted>commit ${escT(String(r.commit).slice(0,10))}</div>`:'')+'</details>';
 }
 /* who chose each field: architect, jev (score), you (an edit here) — mgr/squadgate.py _chose */
 const SQ_F={persona:'persona',new_persona:'new persona',skills:'skills',model_tier:'tier',model:'model',template:'template'};
 function sqBy(m){
-  const b=m.by||{};
-  return `<div class="text-muted sq-by" style="font-size:12px">chosen by: `+Object.keys(SQ_F).filter(k=>b[k]).map(k=>`${SQ_F[k]} <span data-by=${k}>${escT(b[k])}</span>`).join(' · ')+'</div>';
+  const b=m.by||{}, empty={persona:!m.persona&&!m.new_persona,skills:!(m.skills||[]).length,model_tier:!m.model_tier&&!m.model};
+  return `<div class="text-muted sq-by" style="font-size:12px">chosen by: `+Object.keys(SQ_F).filter(k=>b[k]||empty[k]).map(k=>`${SQ_F[k]} `+
+    (b[k]?`<span data-by=${k}>${escT(b[k])}</span>`:`<span data-by=${k} style="color:var(--color-warn)">empty — choose</span>`)).join(' · ')+'</div>';
 }
 function sqYou(e){
   const r=e.target.closest('tr'), k=String(e.target.dataset.k||'').startsWith('np_')?'new_persona':e.target.dataset.k, d=r&&r.querySelector('.sq-by');
   if(!d||!SQ_F[k])return;
   const s=d.querySelector('[data-by='+k+']');
-  if(s)s.textContent='you'; else d.insertAdjacentHTML('beforeend',` · ${SQ_F[k]} <span data-by=${k}>you</span>`);
+  if(s){s.textContent='you';s.style.color=''} else d.insertAdjacentHTML('beforeend',` · ${SQ_F[k]} <span data-by=${k}>you</span>`);
 }
 function sqNewPersona(n){
   if(!n)return '';
@@ -1146,7 +1162,7 @@ function sqCard(p){
   const id=esc(p.id);
   let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
   if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
-  else body+=(p.goal?`<p style="white-space:pre-wrap">${escT(p.goal)}</p>`:'')+sqMemRows(p)+(p.kind==='squad'?sqTicketRows(p)+
+  else body+=(p.goal?`<p style="white-space:pre-wrap">${escT(p.goal)}</p>`:'')+sqProfile(p.profile)+sqMemRows(p)+(p.kind==='squad'?sqTicketRows(p)+
     `<div class=field><label>Daily token budget (all members)</label><input class=input type=number min=0 data-k=budget value="${+p.budget_tokens_per_day||0}"></div>`:'');
   return `<div id="sqp-${id}" style="padding:12px;border:1px solid var(--app-line);border-radius:8px;margin:8px 0">`+
     `<div style="display:flex;justify-content:space-between;gap:8px"><b>${SQ_KIND[p.kind]||escT(p.kind)}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+

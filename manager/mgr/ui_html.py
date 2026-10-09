@@ -855,7 +855,9 @@ HTML_BOTTOM = """
   The lead reads <code>squad_catalog</code> (personas, skills, tiers, templates) and picks per member persona or a
   <code>new_persona</code> (created only on approve, never over an existing one), skills, tier and template
   (<code>openrouter</code> or <code>claude</code>: tier &#8594; <code>ANTHROPIC_MODEL</code>); the card shows who chose each field
-  (architect, jev, you). A claude guest writes its <code>AGENT_SYSTEM</code> into CLAUDE.md under "Your role" at boot.
+  (architect, jev, you; "empty &#8212; choose"). The kickoff computes a <b>repo profile</b> (<code>mgr/repoprofile.py</code>, no LLM:
+  languages, manifests and wrangler bindings, entry points, README paragraph, keywords; cached by HEAD) for the architect's goal message,
+  <code>squad_catalog</code>, the proposal card and Jev's context. A claude guest writes its <code>AGENT_SYSTEM</code> into CLAUDE.md under "Your role" at boot.
   <b>Squad git</b> (<code>mgr/squadgit.py</code>): a project's GitHub/Gitea remote; <code>git_push_branch</code>, <code>pr_*</code>, <code>issue_*</code>
   run on the host with a token from the secret store that never reaches a VM (env header, not argv); pushes only to
   <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.
@@ -919,7 +921,8 @@ HTML_BOTTOM = """
   keyless upstream). Jev slow, down or undecided: the instance&#8217;s own model. Every decision lands in <code>route_log</code> (Models tab, trace).
   <b>Setup suggestion</b> (<code>mgr/jevsetup.py</code>, <code>POST /api/setup/suggest</code>): from a purpose, Jev scores the personas, the skills (word
   pre-filter, max 16 hypotheses per call) and the same task/difficulty questions &#8212; persona, skills (config <code>SKILLS</code>, listed to the agent like
-  standard skills) and tier + model pre-filled in New instance and in a squad proposal; nothing applies without Create / Approve.</p></div>
+  standard skills) and tier + model pre-filled in New instance; in a squad proposal (repo keywords + goal as context) only persona and tier from 0.8,
+  never skills &#8212; the rest are hints, "Suggest again" fills all three; nothing applies without Create / Approve.</p></div>
 
   <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
   <p class=card-body>After a long successful turn the agent distils a skill proposal; nothing enters the catalog without the operator&#8217;s click. The distiller

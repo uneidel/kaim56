@@ -10,7 +10,9 @@ it, the user changes or takes it; nothing here creates or changes anything.
 Jev (OpenJev NLI, mgr/router.py) takes at most 16 hypotheses of at most 200
 characters per call, and the time grows with their length (~0.8 s per short
 hypothesis on the host, 2026-10-09; 101 skills in full took over a minute).
-So the catalogs are pre-filtered by word overlap with the purpose (8
+So the catalogs are pre-filtered by word overlap with the purpose and its
+context — for a squad member the repo profile's keywords, so a skill the
+purpose never names (durable-objects for a Cloudflare repo) still gets in (8
 personas, 12 skills), hypotheses are cut to 100 characters, and all of them
 (the router's task/difficulty questions, personas, skills) go out in calls
 of 16, one after the other — Jev works one call at a time, parallel calls
@@ -116,23 +118,29 @@ def empty(note):
             "classes": {}, "ms": 0, "note": note}
 
 
-def suggest(purpose):
-    """{persona, skills, tier, model, model_key, classes, ms, note} for a purpose."""
+def suggest(purpose, context=""):
+    """{persona, skills, tier, model, model_key, classes, ms, note} for a
+    purpose. `context` (the squad goal, the repo profile's keywords —
+    mgr/repoprofile.py) goes into the premise after the purpose, within the
+    cap, and into the word pre-filter."""
     purpose = re.sub(r"\s+", " ", str(purpose or "")).strip()[:PURPOSE_MAX]
     if not purpose:
         return empty("no purpose given")
+    context = re.sub(r"\s+", " ", str(context or "")).strip()
+    premise = (purpose + " Context: " + context)[:PURPOSE_MAX] if context else purpose
+    words = purpose + " " + context
     if not _router.jev_url():
         return empty("Jev is not configured (JEV_URL in Settings)")
     pers = _prefilter([p for p in _personas.load_personas() if p.get("name")],
-                      lambda p: p["name"] + " " + (p.get("description") or p.get("prompt", "")[:400]), purpose, MAX_PERSONAS)
-    sks = _prefilter([s for s in _skills.load_skills() if s.get("name") and not s.get("default")],
-                     lambda s: s["name"] + " " + s.get("description", ""), purpose, MAX_SKILLS)
+                      lambda p: p["name"] + " " + (p.get("description") or p.get("prompt", "")[:400]), words, MAX_PERSONAS)
+    sks = _prefilter([s for s in _skills.unique(_skills.load_skills()) if s.get("name") and not s.get("default")],
+                     lambda s: s["name"] + " " + s.get("description", ""), words, MAX_SKILLS)
     policy = _router.load()["policies"].get("default") or _router.DEFAULT_POLICY
     qs = [(q, c, h) for q, classes in policy["questions"].items() for c, h in classes.items()]
     hyps = [h for _, _, h in qs] + [persona_hyp(p) for p in pers] + [skill_hyp(s) for s in sks]
     t0 = time.time()
     try:
-        e = _entail(purpose, hyps, t0 + SUGGEST_TIMEOUT)
+        e = _entail(premise, hyps, t0 + SUGGEST_TIMEOUT)
     except Exception as ex:
         return empty(f"Jev unreachable: {ex!r}"[:200])
     ms = int((time.time() - t0) * 1000)

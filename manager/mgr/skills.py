@@ -75,10 +75,29 @@ def set_default(name, on):
     return f"skill '{name}': {'standard' if on else 'on demand'}"
 
 
+_dup_warned = set()
+
+
+def unique(items):
+    """The skills with each name once (the first) — the store may hold a
+    duplicate; it is left as it is, a warning is logged once per name."""
+    seen, out = set(), []
+    for x in items:
+        n = x.get("name", "")
+        if n in seen:
+            if n not in _dup_warned:
+                _dup_warned.add(n)
+                print(f"[skills] duplicate skill {n!r} in skills.json: the first one is used", flush=True)
+            continue
+        seen.add(n)
+        out.append(x)
+    return out
+
+
 def meta(items=None):
-    """name, description, default — what agents and the UI list."""
+    """name, description, default — what agents and the UI list (each name once)."""
     return [{"name": x.get("name", ""), "description": x.get("description", ""), "default": bool(x.get("default"))}
-            for x in (load_skills() if items is None else items)]
+            for x in unique(load_skills() if items is None else items)]
 
 
 def names_error(value):

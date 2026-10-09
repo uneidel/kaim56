@@ -835,7 +835,7 @@ def _rt_squad_catalog(h):
     inst, p, err = _gate_guest(h, "squad_catalog", _routes._qs(h).get("project", [""])[0])
     if err:
         return h._json({"error": err}, 403)
-    return h._json({"project": p["name"], **_squadgate.catalog()})
+    return h._json({"project": p["name"], **_squadgate.catalog(p)})
 
 
 @_routes.ROUTER.get("/api/squad/tickets")

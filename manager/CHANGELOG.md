@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Squads: repo profile (`mgr/repoprofile.py`, deterministic: languages, frameworks/deps from manifests + wrangler bindings, entry points, README paragraph, keywords; cached by HEAD) in the kickoff message, `squad_catalog`, the proposal (card: collapsible) and as Jev context; Jev fills a squad member's persona/tier only from 0.8 and never skills (hints on the card, "empty — choose"); `skills.meta` lists each name once.
 - Squads: a member's post without addressee (or to user/admin) reaches the operator; leads get AGENT_MAX_STEPS=40; the kickoff points the architect at /project/<name>; squad_propose tells the lead to end its turn.
 - Squads: `squad_catalog` (lead: personas, skills, tiers, templates; `GET /api/squad/catalog`, member-only), members may propose `new_persona` (created only on approve, never over an existing one) and `template` openrouter|claude (claude: tier -> ANTHROPIC_MODEL, else account default, noted); the card edits both and shows who chose each field (architect / jev (score) / you); kickoff picks the architect's template; the claude guest writes AGENT_SYSTEM into CLAUDE.md ("## Your role") at boot.
 - Templates: openrouter/orcarouter/llama 512 MiB (were 1024), claude 1024 (was 1536) — idle VMs use ~130 MB; existing instances changed alike (applies on restart).
