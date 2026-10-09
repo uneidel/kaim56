@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler
 import base64
 import hmac
 import json
+import urllib.parse
 
 from mgr import audit as _audit
 from mgr import auth as _auth
@@ -41,7 +42,12 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
     def end_headers(self):
         self._sent = True
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        if _auth.is_index_host(getattr(self, "headers", None)):    # the code dashboard: never framed, no Referer out
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("Referrer-Policy", "no-referrer")
+        else:
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
         return super().end_headers()
 
     def _fail500(self):
@@ -90,6 +96,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         # session, or BASIC for the MANAGER_PASS login. None for guests, app
         # tokens, host services and the open (no password, no OIDC) manager.
         self.principal = None
+        if _auth.is_index_host(self.headers):
+            return self._auth_index()
         oidc = _oidc.enabled()
         # Guests (VMs) carry no credentials: they are identified by source IP
         # and gated by the guest allow/deny lists. Without this exemption a set
@@ -143,6 +151,33 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self.end_headers()
         return False
 
+    def _auth_index(self):
+        """INDEX_HOST, the code dashboard's own origin: its paths only
+        (mgr/auth.index_path_allowed, else 404) and its own "dash" session
+        cookie only — no guest by IP, no Basic, no Bearer, no manager session."""
+        if not _auth.index_path_allowed(self.path) or not _oidc.enabled():
+            self._json({"error": "not found"}, 404)
+            return False
+        key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        if _auth.auth_locked(key):
+            self._send(b'{"error":"too many failed logins, try again later"}', "application/json", 429)
+            return False
+        if self.path.split("?", 1)[0] in _auth.INDEX_AUTH_PATHS:
+            return True                      # the login itself (rate-limited in mgr/routes_auth.py)
+        tok = _auth.cookie(self.headers.get("Cookie", ""), _auth.DASH_COOKIE)
+        self.principal = _auth.session_principal(tok, dash=True) if tok else None
+        if self.principal is not None:
+            _auth.auth_succeeded(key)
+            return True
+        if self.command == "GET":            # back here after the login (routes_auth: next)
+            self.send_response(302)
+            self.send_header("Location", "/auth/login?next=" + urllib.parse.quote(self.path, safe=""))
+            self.end_headers()
+            return False
+        self.send_response(401)
+        self.end_headers()
+        return False
+
     def log_message(self, *a):
         pass
 
@@ -153,7 +188,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return
         # No route: the admin UI for everything else (index, deep links).
         # Guests get nothing here; unknown API paths a clean 404.
-        if _guests.instance_by_ip(self.client_address[0]) is not None:
+        if _guests.instance_by_ip(self.client_address[0]) is not None or _auth.is_index_host(self.headers):
             return self._forbid()
         if self.path.split("?", 1)[0].startswith("/api/"):
             return self._json({"error": "not found"}, 404)
@@ -172,7 +207,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return
         p = self.path.split("?", 1)[0]
         guest = _guests.instance_by_ip(self.client_address[0])
-        if guest is None and not _auth.origin_allowed(self.headers.get("Origin", "")):
+        idx = _auth.is_index_host(self.headers)       # there: same-origin only (mgr/auth.origin_allowed)
+        if (guest is None or idx) and not _auth.origin_allowed(self.headers.get("Origin", ""), idx):
             return self._json({"error": "cross-site request refused"}, 403)
         if guest is not None and not (
                 p in _guests.GUEST_POST_PATHS or p.startswith(_guests.GUEST_POST_PREFIXES)

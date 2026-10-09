@@ -39,21 +39,39 @@ def trusted_hosts():
         except (OSError, subprocess.SubprocessError):
             pass
         _trusted_cache.update(ts=now, hosts={h.lower() for h in hosts})
-    return _trusted_cache["hosts"]
+    return _trusted_cache["hosts"] - {_settings.INDEX_HOST}    # the dashboard's origin never is
 
 
-def origin_allowed(origin):
+def is_index_host(headers):
+    """Is this request for the code dashboard's own origin (settings.INDEX_HOST)?"""
+    host = ((headers.get("Host") if headers is not None else "") or "").split(":")[0].strip().lower()
+    return bool(_settings.INDEX_HOST) and host == _settings.INDEX_HOST
+
+
+# On INDEX_HOST nothing but the dashboard and its login (mgr/httpd.py).
+INDEX_AUTH_PATHS = ("/auth/login", "/auth/callback", "/auth/logout")
+
+
+def index_path_allowed(path):
+    p = path.split("?", 1)[0]
+    return p in INDEX_AUTH_PATHS or p.startswith("/indexer/open/") or p == "/indexer/ui" or p.startswith("/indexer/ui/")
+
+
+def origin_allowed(origin, index=False):
     """CSRF guard for state-changing requests. Browsers send Origin on every
     POST; the app, the desktop client and curl do not (empty = fine). A page
     on another site — or a DNS-rebound name — carries a foreign Origin and is
-    refused, so it cannot export a folder into a VM or create an instance."""
+    refused, so it cannot export a folder into a VM or create an instance.
+    On INDEX_HOST (index=True) only its own Origin passes, none missing."""
     o = (origin or "").strip()
     if not o:
-        return True
+        return not index
     try:
         host = (urllib.parse.urlsplit(o).hostname or "").lower()
     except ValueError:
         return False
+    if index:
+        return host == _settings.INDEX_HOST
     return bool(host) and host in trusted_hosts()
 
 USER = os.environ.get("MANAGER_USER", "admin")
@@ -99,6 +117,7 @@ def auth_succeeded(key):
 
 # ---- OIDC sessions and roles (mgr/oidc.py, mgr/sessions.py) ----------------
 SID_COOKIE = "kaim56_sid"
+DASH_COOKIE = "__Host-kaim56_dash"      # INDEX_HOST's own, host-only (the prefix forbids Domain=)
 BASIC = _oidc.Principal("basic", "basic", "", "admin")   # MANAGER_PASS login, during the migration
 # Reachable without a login while OIDC is on; they rate-limit themselves.
 PUBLIC_PATHS = ("/auth/login", "/auth/callback", "/auth/logout", "/api/auth/device", "/api/auth/device/poll")
@@ -112,16 +131,18 @@ def cookie(header, name):
     return m.value if m else ""
 
 
-def session_principal(token, now=None):
+def session_principal(token, now=None, dash=False):
     """The Principal behind a session token, or None. Every CHECK_EVERY
     seconds the IdP is asked again (refresh, rotated token, fresh role); a
     refused refresh or a lost role ends the session. An IdP that is merely
     unreachable does not: the session goes on and is checked again later.
     Without a refresh token (client lacks the refresh flow) there is nothing
-    to re-check — the session runs to its TTL; admins can still revoke it."""
+    to re-check — the session runs to its TTL; admins can still revoke it.
+    A "dash" session (INDEX_HOST login) is valid there only (dash=True), and
+    only it: no token crosses between the dashboard and the manager."""
     now = int(now or time.time())
     s = _sessions.get(token, now)
-    if s is None:
+    if s is None or (s["kind"] == "dash") != bool(dash):
         return None
     cached = _oidc.Principal(s["sub"], s["name"], s["email"], s["role"])
     if (not s["refresh"] or now - s["last_check"] <= _sessions.CHECK_EVERY

@@ -845,7 +845,10 @@ HTML_BOTTOM = """
   are answered by the manager, so only a real query boots the VM &#8212; a failed call starts it and is retried once.
   The Squad panel&#8217;s <b>Dashboard</b> (admin only) opens repowise&#8217;s web UI for the project: <code>/indexer/open/&#8249;name&#8250;</code>
   starts the VM and the UI (Next.js, built into the image with basePath <code>/indexer/ui</code>; its API on loopback),
-  then <code>/indexer/ui/</code> is reverse-proxied unchanged to <code>:7341</code>, without the browser&#8217;s credentials.</p></div>
+  then <code>/indexer/ui/</code> is reverse-proxied unchanged to <code>:7341</code>, without the browser&#8217;s credentials.
+  Only on its own origin (site <code>INDEX_HOST</code>, e.g. index.kat56.de; unset = no dashboard): there only these paths and the
+  OIDC login answer, with a separate admin-only <code>dash</code> session (valid on no other host, no manager session or Basic valid there),
+  same-origin POSTs only, never framed; the manager refuses POSTs with that Origin.</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).

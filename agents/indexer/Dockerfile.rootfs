@@ -44,4 +44,8 @@ COPY --from=web /out /opt/repowise-web
 COPY indexer_service.py /app/indexer_service.py
 COPY config.env         /app/config.env
 COPY guest-init.sh      /init
-RUN chmod +x /init && node --version
+# The UI's server writes only its cache (image optimisation, ISR): that one
+# directory is the service user's, the code stays root's.
+RUN chmod +x /init && node --version \
+    && mkdir -p /opt/repowise-web/packages/web/.next/cache \
+    && chown indexer:indexer /opt/repowise-web/packages/web/.next/cache

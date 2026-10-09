@@ -83,6 +83,10 @@ def load_site():
         return {}
 SITE = load_site()
 PUBLIC_HOST = SITE.get("PUBLIC_HOST") or "example.com"
+# The code dashboard's own origin (mgr/indexer.py): its JavaScript must never run
+# with the manager's session. On this Host only the dashboard and its login
+# answer (mgr/httpd.py); empty = no dashboard.
+INDEX_HOST = str(SITE.get("INDEX_HOST") or "").strip().lower()
 
 
 SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"

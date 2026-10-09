@@ -19,9 +19,11 @@
 - idle_sweep (task worker): stop the VM after IDLE_STOP s without a call.
 - Dashboard (admin only): GET /indexer/open/<project> starts the indexer and
   repowise's web UI for that project (open_dashboard), then /indexer/ui/ is
-  reverse-proxied to it (mgr/guestproxy.py _dash_proxy). The UI is built with
+  reverse-proxied to it (mgr/guestproxy.py dash_relay). The UI is built with
   that basePath (agents/indexer/Dockerfile.rootfs): paths pass unchanged.
-  Every proxied request counts as use for the idle stop.
+  Every proxied request counts as use for the idle stop. Served only on its
+  own origin settings.INDEX_HOST with its own "dash" session (mgr/httpd.py
+  _auth_index, mgr/routes_auth.py); unset = no dashboard.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in

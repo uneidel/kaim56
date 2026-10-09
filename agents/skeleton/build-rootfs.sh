@@ -15,26 +15,29 @@ if [ -z "${FC_DIR:-}" ]; then
   done
 fi
 [ -n "${FC_DIR:-}" ] || { echo "FC_DIR: no manager tree found (set FC_DIR)"; exit 1; }
-export PATH="$PATH:/usr/sbin:/sbin"      # mkfs.ext4
 IMG="$FC_DIR/instances/$NAME-rootfs.ext4"
 cd "$HERE"
+# Docker image -> ext4 with the image's owners (root for the system, the agent
+# user for its home): tar + mkfs.ext4 -d run as root in a throwaway container
+# (no --privileged, mkfs works on a plain file). Unpacked by this non-root user
+# instead, every file in the image was owned by uid 1000 — /usr, /etc, /app too.
+mkrootfs() {  # <image> <absolute out.ext4> <size MB>
+  local cid rc; cid=$(docker create "$1") || return 1
+  docker export "$cid" | docker run -i --rm --network none -v "$(dirname "$2"):/out" \
+      "${ROOTFS_TOOL_IMAGE:-debian:bookworm-slim}" sh -euc '
+    mkdir /r; tar -C /r --numeric-owner --xattrs --xattrs-include=security.capability -xpf -
+    rm -f "/out/$2"; truncate -s "$1M" "/out/$2"; mkfs.ext4 -F -q -d /r "/out/$2"; chown "$3" "/out/$2"' \
+      sh "$3" "$(basename "$2")" "$(id -u):$(id -g)"
+  rc=$?; docker rm "$cid" >/dev/null; return $rc
+}
 
 echo "== [1] docker build =="
 docker build -t "kaim56-$NAME-rootfs" .
 
-echo "== [2] export =="
-rm -rf rootfs && mkdir -p rootfs
-CID=$(docker create "kaim56-$NAME-rootfs")
-docker export "$CID" | tar -C rootfs -xf -
-docker rm "$CID" >/dev/null
+echo "== [2] export + ext4 image (in a container) =="
+mkrootfs "kaim56-$NAME-rootfs" "$HERE/rootfs.ext4" "${ROOTFS_MB:-1024}" || exit 1
 
-echo "== [3] ext4 image =="
-rm -f rootfs.ext4
-truncate -s "${ROOTFS_MB:-1024}M" rootfs.ext4
-mkfs.ext4 -F -q -d rootfs rootfs.ext4
-rm -rf rootfs
-
-echo "== [4] place atomically =="
+echo "== [3] place atomically =="
 # Never write INTO the target: a running VM holds it open as a block device.
 # Next to it, then rename — a running VM keeps its old inode until it stops.
 mv -f rootfs.ext4 "$IMG.new" && mv -f "$IMG.new" "$IMG"

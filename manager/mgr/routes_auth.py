@@ -13,6 +13,7 @@ Part of the mgr package: no import from manager.py.
 import hmac
 import html
 import json
+import re
 
 from mgr import audit as _audit
 from mgr import auth as _auth
@@ -23,10 +24,14 @@ from mgr import settings as _settings
 
 RETRY_COOKIE = "kaim56_retry"           # one automatic restart of a failed web login
 LOGIN_COOKIE = "kaim56_login"      # binds the callback to the browser that started the login
+NEXT_COOKIE = "kaim56_next"        # INDEX_HOST: the dashboard page the login was for
+_NEXT_RX = re.compile(r"/indexer/open/[A-Za-z0-9_.%-]{1,200}\Z")
 
 
-def _redirect_uri():
-    return f"https://{_settings.PUBLIC_HOST}/auth/callback"
+def _redirect_uri(h):
+    """The callback on the host the login runs on: the manager's public name,
+    or INDEX_HOST for a code-dashboard ("dash") session (mgr/httpd._auth_index)."""
+    return f"https://{_settings.INDEX_HOST if _auth.is_index_host(h.headers) else _settings.PUBLIC_HOST}/auth/callback"
 
 
 def _key(h):
@@ -68,16 +73,20 @@ def _rt_login(h):
     if _off(h):
         return
     # The callback goes to the public name; the binding cookie must live there too.
-    if (h.headers.get("Host") or "").split(":")[0].lower() != _settings.PUBLIC_HOST.lower():
+    index = _auth.is_index_host(h.headers)
+    if not index and (h.headers.get("Host") or "").split(":")[0].lower() != _settings.PUBLIC_HOST.lower():
         return _redirect(h, f"https://{_settings.PUBLIC_HOST}/auth/login")
     if not _auth.auth_rate(_key(h)):
         return h._json({"error": "too many login attempts, try again later"}, 429)
     try:
-        url, state = _oidc.login_start(_redirect_uri())
+        url, state = _oidc.login_start(_redirect_uri(h))
     except _oidc.OIDCError as e:
         return _page(h, 502, f"Login unavailable ({e}).")
-    _redirect(h, url, [f"{LOGIN_COOKIE}={state}; Path=/auth/callback; Max-Age={_oidc.PENDING_TTL}; "
-                       "HttpOnly; Secure; SameSite=Lax"])
+    cookies = [f"{LOGIN_COOKIE}={state}; Path=/auth/callback; Max-Age={_oidc.PENDING_TTL}; HttpOnly; Secure; SameSite=Lax"]
+    nxt = _routes._qs(h).get("next", [""])[0]
+    if index and _NEXT_RX.match(nxt):
+        cookies.append(f"{NEXT_COOKIE}={nxt}; Path=/auth/callback; Max-Age={_oidc.PENDING_TTL}; HttpOnly; Secure; SameSite=Lax")
+    _redirect(h, url, cookies)
 
 
 @_routes.ROUTER.get("/auth/callback", admin=True)
@@ -100,7 +109,7 @@ def _rt_callback(h):
         _auth.auth_failed(_key(h))
         return _page(h, 400, f"Login failed ({html.escape(why)}). <a href=/auth/login>Try again</a>.", [clear])
     try:
-        p, rt = _oidc.login_finish(state, code, _redirect_uri())
+        p, rt = _oidc.login_finish(state, code, _redirect_uri(h))
     except _oidc.OIDCError as e:
         _auth.auth_failed(_key(h))
         print(f"[auth] web login failed: {e}", flush=True)
@@ -110,6 +119,8 @@ def _rt_callback(h):
     if p.role is None:
         _audit.access_append(p, "GET", "/auth/callback", 403, event="refused")
         return _page(h, 403, f"{html.escape(p.name)} has no kAIm56 role.", [clear])
+    if _auth.is_index_host(h.headers):
+        return _dash_login(h, p, rt, clear)
     tok = _sessions.create(p, "web", rt)
     _auth.auth_succeeded(_key(h))
     _audit.access_append(p, "GET", "/auth/callback", 200, event="login")
@@ -120,17 +131,34 @@ def _rt_callback(h):
         clear, f"{_auth.SID_COOKIE}={tok}; Path=/; Max-Age={_sessions.TTL['web']}; HttpOnly; Secure; SameSite=Lax"])
 
 
+def _dash_login(h, p, rt, clear):
+    """The callback on INDEX_HOST: a "dash" session (valid there only), admins
+    only, in its own host-only cookie; then on to the page the login was for."""
+    if p.role != "admin":
+        _audit.access_append(p, "GET", "/auth/callback", 403, event="refused")
+        return _page(h, 403, f"The code dashboard is for admins; {html.escape(p.name)} is not one.", [clear])
+    tok = _sessions.create(p, "dash", rt)
+    _auth.auth_succeeded(_key(h))
+    _audit.access_append(p, "GET", "/auth/callback", 200, event="login")
+    nxt = _auth.cookie(h.headers.get("Cookie", ""), NEXT_COOKIE)
+    nxt = nxt if _NEXT_RX.match(nxt) else "/indexer/ui/"
+    _page(h, 200, "Logged in.", refresh=nxt, cookies=[
+        clear, f"{NEXT_COOKIE}=; Path=/auth/callback; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+        f"{_auth.DASH_COOKIE}={tok}; Path=/; Max-Age={_sessions.TTL['dash']}; HttpOnly; Secure; SameSite=Lax"])
+
+
 @_routes.ROUTER.get("/auth/logout", admin=True)
 def _rt_logout(h):
     if _off(h):
         return
-    tok = _auth.cookie(h.headers.get("Cookie", ""), _auth.SID_COOKIE)
+    name = _auth.DASH_COOKIE if _auth.is_index_host(h.headers) else _auth.SID_COOKIE
+    tok = _auth.cookie(h.headers.get("Cookie", ""), name)
     s = _sessions.get(tok) if tok else None
     if s is not None:
         _sessions.delete(s["id"])
         _audit.access_append(_oidc.Principal(s["sub"], s["name"], s["email"], s["role"]),
                              "GET", "/auth/logout", 200, event="logout")
-    cookie = f"{_auth.SID_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+    cookie = f"{name}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
     end = _oidc.end_session_url()
     if end:
         return _redirect(h, end, [cookie])

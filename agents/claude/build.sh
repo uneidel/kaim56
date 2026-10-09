@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds all artifacts: firecracker binary, guest kernel (vmlinux), rootfs.ext4.
-# Braucht: docker, curl, e2fsprogs (mkfs.ext4 -d). Als DEIN User ausfuehren
-# (no root needed; the docker group is enough). Places login into the rootfs.
+# Braucht: docker, curl. Als DEIN User ausfuehren
+# (no root needed; the docker group is enough). The login comes from the manager at boot.
 set -euo pipefail
 cd "$(dirname "$0")"
 ARCH=x86_64
@@ -26,29 +26,7 @@ if [ ! -f ./vmlinux ]; then
   echo "     vmlinux-6.1.128"
 fi
 
-echo "[3/5] Build rootfs image (docker)..."
-cp ../claude-signal-bridge/bridge.py ./bridge.py
-docker build -f Dockerfile.rootfs -t claude-fc-rootfs .
-
-echo "[4/5] Export rootfs + insert login..."
-rm -rf rootfs && mkdir -p rootfs
-CID=$(docker create claude-fc-rootfs)
-docker export "$CID" | tar -C rootfs -xf -
-docker rm "$CID" >/dev/null
-mkdir -p rootfs/root/.claude rootfs/root/workspace
-if [ -f "$HOME/.claude/.credentials.json" ]; then
-  cp "$HOME/.claude/.credentials.json" rootfs/root/.claude/
-  chmod 600 rootfs/root/.claude/.credentials.json
-  echo "     login inserted."
-else
-  echo "     WARN: ~/.claude/.credentials.json missing -> guest has no login."
-fi
-
-echo "[5/5] ext4-Image erzeugen..."
-SIZE_MB=${ROOTFS_MB:-3072}
-rm -f rootfs.ext4
-truncate -s "${SIZE_MB}M" rootfs.ext4
-mkfs.ext4 -F -q -d rootfs rootfs.ext4
-rm -rf rootfs
+echo "[3/5] rootfs.ext4 (build-rootfs.sh: owners as in the image, no login baked in)..."
+bash ./build-rootfs.sh
 echo "FERTIG: firecracker | vmlinux | rootfs.ext4"
 echo "Next: 'sudo ./net.sh' then 'sudo ./run.sh' (or install the systemd unit)."

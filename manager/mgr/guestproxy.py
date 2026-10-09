@@ -360,7 +360,7 @@ _HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "transfer-encoding", "upgrade", "host"}
 _DASH_NOT_UP = _HOP | {"authorization", "cookie", "content-length", "x-forwarded-for", "x-forwarded-host",
                        "x-forwarded-proto", "x-real-ip", "forwarded"}
-_DASH_NOT_DOWN = _HOP | {"set-cookie"}
+_DASH_NOT_DOWN = _HOP | {"set-cookie", "x-frame-options", "referrer-policy"}   # ours apply (mgr/httpd.end_headers)
 
 
 def dash_relay(h, method, target):
@@ -368,10 +368,10 @@ def dash_relay(h, method, target):
     in the indexer VM (mgr/indexer.py) and stream the answer back.
 
     Unlike /i/<name>/ the HTML is NOT sandboxed: it is a JS app that calls its
-    API on this origin: it is trusted like the indexer VM itself (a pinned
-    build baked into its image; no agent runs there, no internet). The browser's
-    credentials (Authorization, Cookie) never reach the VM, its cookies never
-    reach the browser."""
+    API on its origin. That origin is its own (settings.INDEX_HOST, only a
+    "dash" session is valid there), so its JavaScript never runs with the
+    manager's session. The browser's credentials (Authorization, Cookie) never
+    reach the VM, its cookies never reach the browser."""
     if target is None:
         return h._send(b"<p>The code indexer is not running: open the dashboard from the Squad panel.</p>",
                        "text/html; charset=utf-8", 503)

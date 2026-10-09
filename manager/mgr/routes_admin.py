@@ -25,6 +25,7 @@ from mgr import cfapi as _cfapi
 from mgr import cloud as _cloud
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
+from mgr import auth as _auth
 from mgr import checkout as _checkout
 from mgr import browse as _browse
 from mgr import chats as _chats
@@ -508,8 +509,17 @@ def _rt_katfs_proxy(h):
 
 def _indexer_page(h, method):
     """/indexer/open/<project>: start the code dashboard, then on to it;
-    /indexer/ui[/…]: the dashboard itself (mgr/indexer.py). Admin only."""
+    /indexer/ui[/…]: the dashboard itself (mgr/indexer.py). Admin only.
+    Served on its own origin only (settings.INDEX_HOST, mgr/httpd._auth_index):
+    the manager's host redirects the open there and has no /indexer/ui."""
     p = h.path.split("?", 1)[0]
+    if not _auth.is_index_host(h.headers):
+        if method == "GET" and p.startswith("/indexer/open/") and _settings.INDEX_HOST:
+            h.send_response(302)
+            h.send_header("Location", f"https://{_settings.INDEX_HOST}{p}")
+            h.end_headers()
+            return None
+        return h._json({"error": "not found" if _settings.INDEX_HOST else "code dashboard off (site INDEX_HOST unset)"}, 404)
     if method == "GET" and p.startswith("/indexer/open/"):
         why = _indexer.open_dashboard(urllib.parse.unquote(p[len("/indexer/open/"):]).strip("/"))
         if why:
