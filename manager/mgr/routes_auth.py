@@ -21,6 +21,7 @@ from mgr import routes as _routes
 from mgr import sessions as _sessions
 from mgr import settings as _settings
 
+RETRY_COOKIE = "kaim56_retry"           # one automatic restart of a failed web login
 LOGIN_COOKIE = "kaim56_login"      # binds the callback to the browser that started the login
 
 
@@ -87,15 +88,25 @@ def _rt_callback(h):
     state, code = q.get("state", [""])[0], q.get("code", [""])[0]
     bound = _auth.cookie(h.headers.get("Cookie", ""), LOGIN_COOKIE)
     clear = f"{LOGIN_COOKIE}=; Path=/auth/callback; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
-    if q.get("error") or not state or not bound or not hmac.compare_digest(state.encode(), bound.encode()):
+    why = (f"idp: {q['error'][0][:60]}" if q.get("error") else "no state" if not state
+           else "no login cookie" if not bound
+           else "state mismatch" if not hmac.compare_digest(state.encode(), bound.encode()) else "")
+    if why:
+        print(f"[auth] web login refused: {why}", flush=True)
+        # A stale or crossed login (an old tab, a second attempt, a restart in
+        # between) is not an attack: start over once by itself, then show why.
+        if why != "no state" and not _auth.cookie(h.headers.get("Cookie", ""), RETRY_COOKIE):
+            return _redirect(h, "/auth/login", [clear, f"{RETRY_COOKIE}=1; Path=/auth; Max-Age=120; HttpOnly; Secure; SameSite=Lax"])
         _auth.auth_failed(_key(h))
-        return _page(h, 400, "Login failed or expired. <a href=/auth/login>Try again</a>.", [clear])
+        return _page(h, 400, f"Login failed ({html.escape(why)}). <a href=/auth/login>Try again</a>.", [clear])
     try:
         p, rt = _oidc.login_finish(state, code, _redirect_uri())
     except _oidc.OIDCError as e:
         _auth.auth_failed(_key(h))
         print(f"[auth] web login failed: {e}", flush=True)
-        return _page(h, 400, "Login failed. <a href=/auth/login>Try again</a>.", [clear])
+        if not _auth.cookie(h.headers.get("Cookie", ""), RETRY_COOKIE):   # e.g. login begun before a restart
+            return _redirect(h, "/auth/login", [clear, f"{RETRY_COOKIE}=1; Path=/auth; Max-Age=120; HttpOnly; Secure; SameSite=Lax"])
+        return _page(h, 400, f"Login failed ({html.escape(str(e))}). <a href=/auth/login>Try again</a>.", [clear])
     if p.role is None:
         _audit.access_append(p, "GET", "/auth/callback", 403, event="refused")
         return _page(h, 403, f"{html.escape(p.name)} has no kAIm56 role.", [clear])

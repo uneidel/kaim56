@@ -6118,9 +6118,15 @@ class ManagerFunctions(unittest.TestCase):
         tok = sid.group(1)
         code, _, body = self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")
         self.assertEqual(json.loads(body), {"oidc": True, "name": "alice", "role": "admin"})
-        # replay of the callback, and a callback without the binding cookie: refused
-        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")[0], 400)
-        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1")[0], 400)
+        # replay of the callback, and a callback without the binding cookie: no
+        # session; the first failure restarts the login once, then it is refused
+        code, head, _ = self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")
+        self.assertEqual((code, "Location: /auth/login" in head, "kaim56_sid=" in head), (302, True, False))
+        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1",
+                                        cookie=f"kaim56_login={q['state']}; kaim56_retry=1")[0], 400)
+        code, head, _ = self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1")
+        self.assertEqual((code, "kaim56_retry=1" in head), (302, True))
+        self.assertEqual(self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie="kaim56_retry=1")[0], 400)
         with closing(sqlite3.connect(m._sessions.DB)) as c:                  # the token is stored as its hash only
             self.assertEqual(c.execute("SELECT hash FROM sessions").fetchone()[0], hashlib.sha256(tok.encode()).hexdigest())
         with open(os.path.join(m._audit.AUDIT_DIR, "access.log")) as fh:
