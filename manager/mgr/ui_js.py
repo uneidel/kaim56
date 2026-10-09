@@ -944,7 +944,7 @@ async function sqLoad(){
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
-  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused;
+  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
@@ -957,9 +957,10 @@ async function sqLoad(){
       :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">woke ${escT(m.delivered.join(', '))}</div>`:'')+
     `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
   th.scrollTop=th.scrollHeight;
+  sqBoard();
 }
 async function sqSave(){
-  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked};
+  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
@@ -970,6 +971,86 @@ async function sqSend(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'';
   if(!d.error){el.value='';sqLoad()}
+}
+/* squad gate: proposals the user approves, tickets (mgr/squadgate.py) */
+let SQB={};
+const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request'};
+function sqSel(k,opts,cur){return `<select class=input data-k=${k}><option value="">—</option>`+
+  opts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${escT(o)}</option>`).join('')+'</select>'}
+const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" onclick="this.closest('tr').remove()">✕</button>`;
+function sqMemRows(p){
+  const pers=[...new Set(PERSONAS.map(x=>x.name).concat(p.members.map(m=>m.persona).filter(Boolean)))];
+  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th></th></tr></thead><tbody>`+
+    p.members.map(m=>`<tr data-m="${esc(m.name)}"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new · '+escT(m.template)}</span>`+
+      `<div class=text-muted>${escT(m.purpose)}</div></td><td>${sqSel('role',['writer','reader','lead'],m.role)}</td><td>${sqSel('persona',pers,m.persona)}</td>`+
+      `<td><input class=input data-k=skills value="${esc((m.skills||[]).join(', '))}"></td><td>${sqSel('model_tier',SQB.tiers||[],m.model_tier)}</td>`+
+      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td><td>${SQ_X}</td></tr>`).join('')+'</tbody></table>';
+}
+function sqTicketRows(p){
+  const names=[...new Set(p.members.map(m=>m.name).concat((SQB.members||[]).map(m=>m.name)))];
+  return `<table class=table style="font-size:12.5px"><thead><tr><th>Key</th><th>Title</th><th>Assignee</th><th>After</th><th></th></tr></thead><tbody>`+
+    p.tickets.map(t=>`<tr data-t="${esc(t.key)}"><td>${escT(t.key)}</td><td><input class=input data-k=title value="${esc(t.title)}"><div class=text-muted>${escT(t.description)}</div></td>`+
+      `<td>${sqSel('assignee',names,t.assignee)}</td><td>${escT(t.depends_on.join(', '))}</td><td>${SQ_X}</td></tr>`).join('')+'</tbody></table>';
+}
+function sqCard(p){
+  const id=esc(p.id);
+  let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
+  if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
+  else body+=(p.goal?`<p style="white-space:pre-wrap">${escT(p.goal)}</p>`:'')+sqMemRows(p)+(p.kind==='squad'?sqTicketRows(p)+
+    `<div class=field><label>Daily token budget (all members)</label><input class=input type=number min=0 data-k=budget value="${+p.budget_tokens_per_day||0}"></div>`:'');
+  return `<div id="sqp-${id}" style="padding:12px;border:1px solid var(--app-line);border-radius:8px;margin:8px 0">`+
+    `<div style="display:flex;justify-content:space-between;gap:8px"><b>${SQ_KIND[p.kind]||escT(p.kind)}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+
+    body+`<div style="display:flex;gap:6px;margin-top:8px"><input class=input data-k=note placeholder="Note to the lead (optional)" style="flex:1;min-width:0">`+
+    `<button class="btn btn-secondary" onclick="sqDecide('${id}',false)">Reject</button><button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div></div>`;
+}
+function sqDone(p){
+  const bad=(p.steps||[]).some(s=>!s.ok);
+  return `<div style="font-size:12.5px;margin:6px 0"><b>${SQ_KIND[p.kind]||escT(p.kind)}</b> ${escT(p.id)} · ${escT(p.status)} by ${escT(p.decided_by)}${p.note?' · '+escT(p.note):''}`+
+    (p.steps||[]).map(s=>`<div ${s.ok?'class=text-muted':'style="color:var(--color-warn)"'}>${s.ok?'✓':'✗'} ${escT(s.step)}: ${escT(s.detail)}</div>`).join('')+
+    (bad?`<button class="btn btn-ghost btn-sm" onclick="sqDecide('${esc(p.id)}',true)">Retry the failed steps</button>`:'')+'</div>';
+}
+function sqCollect(p,c){
+  const v=(r,k)=>r.querySelector('[data-k='+k+']').value, out={};
+  out.members=[...c.querySelectorAll('tr[data-m]')].map(r=>({...p.members.find(m=>m.name===r.dataset.m),role:v(r,'role'),persona:v(r,'persona'),
+    skills:v(r,'skills').split(',').map(s=>s.trim()).filter(Boolean),model_tier:v(r,'model_tier'),model:v(r,'model').trim()}));
+  if(p.kind==='squad'){
+    out.tickets=[...c.querySelectorAll('tr[data-t]')].map(r=>({...p.tickets.find(t=>t.key===r.dataset.t),title:v(r,'title'),assignee:v(r,'assignee')}));
+    out.budget_tokens_per_day=+c.querySelector('[data-k=budget]').value;
+  }
+  return out;
+}
+async function sqBoard(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/board')).json()}catch(e){return}
+  if(d.error)return;
+  SQB=d;
+  const ps=d.proposals||[], pend=ps.filter(p=>p.status==='pending'), done=ps.filter(p=>p.status!=='pending').slice(0,10);
+  document.getElementById('sq-gate').innerHTML=(d.approved?'':'<p class=text-muted style="font-size:12.5px;margin:0">No approved plan yet: only the lead can be woken. It proposes with squad_propose.</p>')+
+    pend.map(sqCard).join('')+(done.length?`<details><summary class=text-muted style="font-size:12.5px">Decided (${done.length})</summary>${done.map(sqDone).join('')}</details>`:'');
+  const cols=d.statuses||[], ts=d.tickets||[], mem=(d.members||[]).map(m=>m.name);
+  document.getElementById('sq-board').innerHTML=ts.length?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+
+    cols.map(c=>`<div><div class=text-muted style="font-size:12px;margin-bottom:4px">${c} · ${ts.filter(t=>t.status===c).length}</div>`+
+      ts.filter(t=>t.status===c).map(t=>`<div style="padding:8px;border-radius:8px;background:var(--app-bg);margin-bottom:6px;font-size:12.5px">`+
+        `<b>${escT(t.key)}</b> ${escT(t.title)}`+(t.depends_on.length?`<div class=text-muted>after ${escT(t.depends_on.join(', '))}</div>`:'')+
+        (t.comments.length?`<div class=text-muted title="${esc(t.comments[t.comments.length-1].text)}">${t.comments.length} comment(s), last by ${escT(t.comments[t.comments.length-1].by)}</div>`:'')+
+        `<div style="display:flex;gap:4px;margin-top:6px"><select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{status:this.value})">`+
+        cols.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('')+'</select>'+
+        `<select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{assignee:this.value})"><option value="">—</option>`+
+        mem.map(n=>`<option value="${esc(n)}"${n===t.assignee?' selected':''}>${escT(n)}</option>`).join('')+'</select></div></div>').join('')+'</div>').join('')+'</div>'
+    :'<span class=text-muted style="font-size:12.5px">No tickets yet.</span>';
+}
+async function sqDecide(id,ok){
+  const c=document.getElementById('sqp-'+id), p=(SQB.proposals||[]).find(x=>x.id===id);
+  if(!ok&&!confirm('Reject this proposal? The note goes to the lead.'))return;
+  const body={id,approve:ok,note:c?c.querySelector('[data-k=note]').value:''};
+  if(ok&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Decided':' ✓'));
+  if(!d.error){sqLoad();loadProjects()}
+}
+async function sqTicket(id,change){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sqmsg').textContent=d.error||'';
+  sqLoad();
 }
 async function delProject(name){
   if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;

@@ -1491,6 +1491,34 @@ class AgentSquad(unittest.TestCase):
         for t in ("squad_post", "squad_ask", "squad_read", "squad_members"):
             self.assertIn(t, a._tools.BUILTIN)
 
+    def test_squad_gate_tools(self):
+        """squad_propose / ticket_* call the gate routes; the answer says the
+        user approves first, a ticket change names whom it woke; a refusal
+        carries the manager's reason."""
+        import urllib.error
+        a = _load("agent_sqgate_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-sg-"),
+                                                   "OPENROUTER_API_KEY": "dummy"})
+        tm, c = a._tools_manager, a._mgrclient
+        sent, reply = [], {}
+        c._manager_base = lambda: "http://mgr"
+        c._mgr = lambda base, path, payload=None, timeout=60: (sent.append((path, payload)), json.dumps(reply))[1]
+        reply.update(id="p1", project="sq", kind="squad", status="pending", warnings=["f: persona 'x' does not exist"])
+        out = tm.t_squad_propose("ship", [{"name": "e"}], [{"title": "t"}], 1000)
+        self.assertEqual(sent[-1], ("/api/squad/propose", {"goal": "ship", "members": [{"name": "e"}], "tickets": [{"title": "t"}],
+                                                           "budget_tokens_per_day": 1000, "project": ""}))
+        self.assertIn("waiting for the user's approval", out); self.assertIn("persona 'x'", out)
+        reply.clear(); reply.update(id=1, key="T1", status="done", title="tests", assignee="e", depends_on=[],
+                                    woke={"T2": "woken"})
+        self.assertEqual(tm.t_ticket_update("1", "done"), "#1 T1 [done] tests -> e\nT2: woken")
+        self.assertEqual(sent[-1][0], "/api/squad/ticket-update")
+        def refuse(base, path, payload=None, timeout=60):
+            raise urllib.error.HTTPError(path, 400, "Bad", {}, io.BytesIO(b'{"error": "waiting for approval: x"}'))
+        c._mgr = refuse
+        self.assertEqual(tm.t_ticket_create("x"), "Error: waiting for approval: x")
+        for t in ("squad_propose", "squad_request_member", "squad_request_merge",
+                  "ticket_list", "ticket_update", "ticket_create", "ticket_assign"):
+            self.assertIn(t, a._tools.BUILTIN)
+
 
 def _wtext(path, text):
     with open(path, "w") as fh:
@@ -4054,7 +4082,7 @@ class ManagerFunctions(unittest.TestCase):
         src = {"type": "host", "path": os.path.join(tmp, "repo")}
         self.assertTrue(m._projects.upsert({"name": "sq", "source": src,
                                             "members": {"a": "lead", "b": "writer", "d": "reader"}}).get("ok"))
-        m._projects.set_squad("sq", m._squads.normalize_settings({"enabled": True})[0])
+        m._projects.set_squad("sq", m._squads.normalize_settings({"enabled": True, "approved": True})[0])
 
         def undo():
             (m._squads.SQUAD_DB, m._squads.wake, m._guests.instance_by_ip, m._audit.AUDIT_DIR,
@@ -4154,7 +4182,7 @@ class ManagerFunctions(unittest.TestCase):
         sq = m._squads
         try:
             def blocked(**settings):
-                m._projects.set_squad("sq", sq.normalize_settings({"enabled": True, **settings})[0])
+                m._projects.set_squad("sq", sq.normalize_settings({"enabled": True, "approved": True, **settings})[0])
                 st, d = self._sq("/api/squad/post", A, {"to": "b", "text": "go", "project": "sq"})
                 self.assertEqual(st, 200, d)
                 return d["blocked"]
@@ -4210,6 +4238,221 @@ class ManagerFunctions(unittest.TestCase):
             self.assertFalse(ua("GET", "/api/projects"))
             self.assertEqual(self._sq("/api/projects/sq/delete", L, {})[0], 200)
             self.assertEqual(m._squads.read("sq"), [])
+        finally:
+            undo()
+
+    # ---- squad gate: the lead proposes, the user approves; tickets ---------------------
+    _SG_PLAN = {"project": "sq", "goal": "ship v2", "budget_tokens_per_day": 500000,
+                "members": [{"name": "e", "purpose": "tests", "persona": "coder", "skills": ["tdd"],
+                             "model_tier": "cheap", "role": "writer"},
+                            {"name": "f", "persona": "ghost", "skills": ["nope"], "model_tier": "local", "role": "reader"},
+                            {"name": "b", "existing": True, "role": "writer"}],
+                "tickets": [{"key": "T1", "title": "write tests", "assignee": "e"},
+                            {"key": "T2", "title": "review", "assignee": "f", "depends_on": ["T1"]}]}
+
+    def _gate_env(self):
+        """_squad_env with the squad enabled but NOT approved; instance
+        creation, templates, personas, skills, router tiers, notify and the
+        merge path patched (recorded)."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        g = m._squadgate
+        old = (g.GATE_FILE, m._instances.create_instance, m._instances.load_templates, m._personas.load_personas,
+               m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok)
+        g.GATE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-sg-"), "squadgate.json")
+        created, notes, merges = [], [], []
+
+        def create(name, template, config=None, mounts=None, internet=True):
+            created.append((name, template, config))
+            self._sq_insts.append({"name": name, "index": 10 + len(created), "template": template,
+                                   "rootfs": "x", "mounts": [], "config": config or {}})
+            return f"instance '{name}' created from template '{template}'"
+        m._instances.create_instance = create
+        m._instances.load_templates = lambda: [{"template": "openrouter"}]
+        m._personas.load_personas = lambda: [{"name": "coder", "prompt": "You code.", "tools": ["bash"]}]
+        m._skills.load_skills = lambda: [{"name": "tdd"}]
+        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "llama/qwen": "local"}, "policies": {}}
+        m._notify.notify_add = lambda *a, **k: notes.append(a) or ("n1", "ok")
+        m._projects.member_op = lambda n, op, w: (merges.append((n, op, w)), ({"commit": "abc123"}, 200))[1]
+        m._util.rate_ok = lambda *a: True
+        m._projects.set_squad("sq", m._squads.normalize_settings({"enabled": True})[0])     # not approved
+
+        def undo2():
+            (g.GATE_FILE, m._instances.create_instance, m._instances.load_templates, m._personas.load_personas,
+             m._skills.load_skills, m._router.load, m._notify.notify_add, m._projects.member_op, m._util.rate_ok) = old
+            undo()
+        return woke, created, notes, merges, undo2
+
+    def test_squadgate_propose_lead_only_validated_one_pending(self):
+        """Only the lead proposes; names, roles, tiers, tickets are checked,
+        unknown persona/skills flagged; one pending plan; the user is notified;
+        before approval nothing is created, only the lead can be woken, and
+        tickets / member requests are refused."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, B, C = "172.30.3.2", "172.30.4.2", "172.30.5.2"
+        plan = self._SG_PLAN
+        try:
+            self.assertEqual(self._sq("/api/squad/propose", C, plan)[0], 403)                 # no member
+            st, d = self._sq("/api/squad/propose", B, plan)
+            self.assertEqual(st, 400); self.assertIn("only the lead", d["error"])
+            bad = [({"name": "E_1"}, "a-z 0-9"), ({"name": "e", "model_tier": "huge"}, "model_tier"),
+                   ({"name": "e", "role": "lead"}, "one lead"), ({"name": "c"}, "exists"),
+                   ({"name": "zz", "existing": True}, "no such instance"), ({"name": "e", "template": "nope"}, "template")]
+            for mem, why in bad:
+                st, d = self._sq("/api/squad/propose", A, {**plan, "members": [mem]})
+                self.assertEqual(st, 400, mem); self.assertIn(why, d["error"])
+            for tks, why in (([{"title": "x", "assignee": "c"}], "no member"),
+                             ([{"key": "T1", "title": "x", "depends_on": ["T9"]}], "no other ticket"),
+                             ([{"key": "T1", "title": ""}], "title missing")):
+                st, d = self._sq("/api/squad/propose", A, {**plan, "tickets": tks})
+                self.assertEqual(st, 400, tks); self.assertIn(why, d["error"])
+            self.assertEqual(self._sq("/api/squad/propose", A, {**plan, "goal": ""})[0], 400)
+            self.assertEqual(notes, [])
+            st, d = self._sq("/api/squad/propose", A, plan)
+            self.assertEqual((st, d["kind"], d["status"]), (200, "squad", "pending"), d)
+            self.assertTrue(any("ghost" in w for w in d["warnings"]) and any("nope" in w for w in d["warnings"]))
+            self.assertEqual(notes[0][1], "Squad sq: proposal waiting for approval")
+            st, d2 = self._sq("/api/squad/propose", A, {k: v for k, v in plan.items() if k != "project"})   # the one it leads
+            self.assertEqual(st, 400); self.assertIn("waiting for approval already", d2["error"])
+            st, d2 = self._sq("/api/squad/request-member", A, {"member": {"name": "g"}})
+            self.assertEqual(st, 400); self.assertIn("waiting for approval", d2["error"])
+            st, d2 = self._sq("/api/squad/ticket-create", A, {"title": "x"})
+            self.assertEqual(st, 400); self.assertIn("waiting for approval", d2["error"])
+            self.assertEqual(created, [])
+            st, msg = self._sq("/api/squad/post", A, {"to": "b", "text": "start"})              # rule 5: lead only
+            self.assertIn("waiting for approval", msg["blocked"]); self.assertEqual(woke, [])
+            st, msg = self._sq("/api/projects/sq/squad/post", "127.0.0.1", {"text": "@a what is the plan?"})
+            self.assertEqual(msg["delivered"], ["a"])
+            board = self._sq("/api/projects/sq/squad/board", "127.0.0.1")[1]
+            self.assertEqual(([p["status"] for p in board["proposals"]], board["approved"]), (["pending"], False))
+        finally:
+            undo()
+
+    def test_squadgate_approve_creates_members_tickets_idempotent(self):
+        """Approve (with the operator's edits) creates the missing instances
+        with persona, skills hint, tier model; adds the members with their
+        roles; sets the budget; enables + approves; creates the tickets; tells
+        the lead. Approving again changes nothing; a reject is refused then."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            plan = self._SG_PLAN
+            edits = {"members": plan["members"], "budget_tokens_per_day": 400000,
+                     "tickets": [dict(plan["tickets"][0], title="write the tests"), plan["tickets"][1]]}
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": True, **edits})
+            self.assertEqual((st, p["status"], p["decided_by"]), (200, "approved", "admin"), p)
+            self.assertEqual([c[0] for c in created], ["e", "f"])
+            e = created[0][2]
+            self.assertEqual((e["OPENROUTER_MODEL"], e["SQUAD_SKILLS"]), ("acme/fast", "tdd"))
+            self.assertEqual(e["AGENT_TOOLS"], "bash,squad_post,squad_ask,squad_read,squad_members,ticket_list,ticket_update")
+            self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
+            self.assertIn("load_skill: tdd", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
+            self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
+            failed = [s["step"] for s in p["steps"] if not s["ok"]]
+            self.assertEqual(failed, ["persona f", "model f"])
+            proj = m._projects.get("sq")
+            self.assertEqual({n: x["role"] for n, x in proj["members"].items()},
+                             {"a": "lead", "b": "writer", "d": "reader", "e": "writer", "f": "reader"})
+            s = m._squads.settings(proj)
+            self.assertEqual((s["enabled"], s["approved"], s["daily_token_budget"]), (True, True, 400000))
+            ts = m._squadgate.tickets("sq")
+            self.assertEqual([(t["id"], t["key"], t["title"], t["status"]) for t in ts],
+                             [(1, "T1", "write the tests", "open"), (2, "T2", "review", "open")])
+            self.assertEqual([w[0] for w in woke], ["a"]); self.assertIn("was approved by admin", woke[0][1])
+            st, p2 = self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": True})   # retry = no-op
+            self.assertEqual(st, 200)
+            self.assertEqual((len(created), len(m._squadgate.tickets("sq"))), (2, 2))
+            self.assertEqual(self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": False})[0], 400)
+            with open(os.path.join(m._audit.AUDIT_DIR, "a.jsonl")) as fh:
+                rec = json.loads(fh.readlines()[-1])
+            self.assertEqual((rec["tool"], rec["target"]), ("squad_decision", f"sq squad {pid}"))
+            # a member request now: approve creates and adds it
+            st, d = self._sq("/api/squad/request-member", A, {"member": {"name": "g", "role": "reader"}, "reason": "docs"})
+            self.assertEqual(st, 200, d)
+            st, p3 = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
+            self.assertEqual((st, created[-1][0], m._projects.get("sq")["members"]["g"]["role"]), (200, "g", "reader"))
+            self.assertEqual(self._sq("/api/projects/sq/delete", L, {})[0], 200)               # purge goes with it
+            self.assertEqual((m._squadgate.proposals("sq"), m._squadgate.tickets("sq")), ([], []))
+        finally:
+            undo()
+
+    def test_squadgate_reject_tells_the_lead(self):
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": False, "note": "too many members"})
+            self.assertEqual((st, p["status"], p["note"]), (200, "rejected", "too many members"))
+            self.assertEqual(created, [])
+            self.assertEqual(woke[0][0], "a"); self.assertIn("rejected by admin. Note: too many members", woke[0][1])
+            self.assertEqual(self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": True})[0], 400)
+            self.assertFalse(m._squadgate.approved(m._projects.get("sq")))
+            self.assertEqual(self._sq("/api/squad/propose", A, self._SG_PLAN)[0], 200)           # a new plan may come
+        finally:
+            undo()
+
+    def test_squadgate_tickets_wake_assignee_and_dependents(self):
+        """After approval: only the lead creates/assigns; assigning a ready
+        ticket wakes the assignee; the last dependency done wakes the next;
+        only the assignee or the lead updates; the operator edits any time;
+        role user reads, never decides or edits."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, B, D, L = "172.30.3.2", "172.30.4.2", "172.30.6.2", "127.0.0.1"
+        E = "172.30.11.2"                                                                     # created first
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            self.assertEqual(m._squadgate.decide("sq", pid, True, "admin")[0]["status"], "approved")
+            del woke[:]
+            st, d = self._sq("/api/squad/ticket-create", B, {"title": "x"})
+            self.assertEqual(st, 400); self.assertIn("only the lead", d["error"])
+            st, t3 = self._sq("/api/squad/ticket-create", A, {"title": "docs", "assignee": "d"})
+            self.assertEqual((st, t3["key"], t3["wake"]), (200, "T3", "woken"), t3)
+            self.assertEqual(woke[-1][0], "d"); self.assertIn("ticket_update id=3", woke[-1][1])
+            st, t4 = self._sq("/api/squad/ticket-create", A, {"title": "release", "depends_on": ["T2"]})
+            st, d = self._sq("/api/squad/ticket-assign", A, {"id": t4["id"], "assignee": "b"})
+            self.assertEqual((st, d["woke"]), (200, {}))                                     # T2 not done yet
+            n = len(woke)
+            st, d = self._sq("/api/squad/ticket-update", D, {"id": 1, "status": "done"})
+            self.assertEqual(st, 400); self.assertIn("only the assignee", d["error"])
+            st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "done", "comment": "green"})
+            self.assertEqual((st, d["status"], d["comments"][0]["text"], list(d["woke"])), (200, "done", "green", ["T2"]))
+            self.assertEqual([w[0] for w in woke[n:]], ["f"])                                 # T2 became ready
+            st, d = self._sq("/api/projects/sq/squad/ticket", L, {"id": 2, "assignee": "b"})  # operator reassigns
+            self.assertEqual((st, d["assignee"], list(d["woke"])), (200, "b", ["T2"]))
+            self.assertEqual(woke[-1][0], "b")
+            st, d = self._sq("/api/projects/sq/squad/ticket", L, {"id": 2, "status": "done"})
+            self.assertEqual(list(d["woke"]), ["T4"])                                          # release is next
+            self.assertEqual(self._sq("/api/projects/sq/squad/ticket", L, {"id": 2, "status": "nope"})[0], 400)
+            self.assertEqual([t["status"] for t in self._sq("/api/squad/tickets", B)[1]["tickets"]],
+                             ["done", "done", "open", "open"])
+            ua = m._auth.user_allowed
+            self.assertTrue(ua("GET", "/api/projects/sq/squad/board"))
+            self.assertFalse(ua("POST", "/api/projects/sq/squad/decide"))
+            self.assertFalse(ua("POST", "/api/projects/sq/squad/ticket"))
+            self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/sq/squad/decide")[1])   # admin route
+        finally:
+            undo()
+
+    def test_squadgate_merge_proposal_runs_the_merge_path(self):
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        try:
+            st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "feature done"})
+            self.assertEqual(st, 400); self.assertIn("worktree", d["error"])                   # shared project
+            items = m._projects.load(); items[0]["strategy"] = "worktree"; m._projects._save(items)
+            self.assertEqual(self._sq("/api/squad/request-merge", A, {"writer": "d", "summary": "x"})[0], 400)
+            st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "feature done"})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(merges, [])
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
+            self.assertEqual((st, merges, p["steps"][0]["ok"], p["steps"][0]["detail"]),
+                             (200, [("sq", "merge", "b")], True, "abc123"))
         finally:
             undo()
 
@@ -6980,6 +7223,13 @@ class ClaudeGuest(unittest.TestCase):
             raise urllib.error.HTTPError(path, 403, "Forbidden", {}, io.BytesIO(b'{"error": "guests only"}'))
         km._get = refuse
         self.assertEqual(km.TOOLS["squad_read"][0](), "Error: guests only")
+        for t in ("squad_propose", "squad_request_member", "squad_request_merge",
+                  "ticket_list", "ticket_update", "ticket_create", "ticket_assign"):
+            self.assertIn(t, km.TOOLS)
+        km._post = lambda path, payload, timeout=30: json.dumps({"id": "p1", "project": "sq", "kind": "merge", "status": "pending"})
+        self.assertIn("waiting for the user's approval", km.TOOLS["squad_request_merge"][0](writer="b", summary="done"))
+        km._get = lambda path: json.dumps({"project": "sq", "approved": False, "tickets": []})
+        self.assertEqual(km.TOOLS["ticket_list"][0](), "Project sq (squad plan not approved yet):\nno tickets")
 
 
 @unittest.skipUnless(_manager_up(), "manager on 127.0.0.1:8700 not reachable")

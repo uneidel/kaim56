@@ -7,8 +7,10 @@
 A message names its recipients (``to`` = members, ``["all"]``, or ``@name`` in
 the text); every addressed member is woken as a new turn on its instance — a
 one-off task in its lane (mgr/tasks.py starts the VM when needed). Guard rails
-decide before a wake: squad enabled and not paused, wakes per hour, the
-members' tokens today, and the reply depth. A blocked message is stored anyway,
+decide before a wake: squad enabled and not paused, the plan approved (before
+that only the lead may be woken: it talks to the user and proposes — the
+squad gate, mgr/squadgate.py), wakes per hour, the members' tokens today, and
+the reply depth. A blocked message is stored anyway,
 with the reason. ``ask`` is a message to one member whose answer is the post
 that replies to it (``reply_to``) from that member; answers wake nobody — the
 asker polls.
@@ -34,7 +36,7 @@ from mgr import projects as _projects
 from mgr import store as _store
 
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
-DEFAULTS = {"enabled": False, "paused": False, "max_wakes_per_hour": 20,
+DEFAULTS = {"enabled": False, "approved": False, "paused": False, "max_wakes_per_hour": 20,
             "daily_token_budget": 2_000_000, "max_depth": 3}
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
@@ -89,7 +91,7 @@ def settings(proj):
 def normalize_settings(body, old=None):
     """(settings, '') or (None, why). Missing keys keep their old value."""
     s = settings({"squad": old or {}})
-    for k in ("enabled", "paused"):
+    for k in ("enabled", "approved", "paused"):
         if k in body:
             s[k] = bool(body[k])
     for k, (lo, hi) in LIMITS.items():
@@ -153,12 +155,17 @@ def _frame(project, sender, mid, text, kind):
     return f"[squad {project}] from {sender} ({how}): {text}\n{NOTE}"
 
 
-def _guard(proj, n, depth, now):
+def _guard(proj, targets, depth, now):
     s = settings(proj)
+    n = len(targets)
     if not s["enabled"]:
         return "squad disabled"
     if s["paused"]:
         return "squad paused"
+    if not s["approved"]:
+        others = [t for t in targets if ((proj.get("members") or {}).get(t) or {}).get("role") != "lead"]
+        if others:
+            return f"waiting for approval: only the lead may be woken before the squad plan is approved (not {', '.join(others)})"
     if depth > s["max_depth"]:
         return f"depth {depth} > max_depth {s['max_depth']}"
     with _db() as c:
@@ -205,7 +212,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
     targets = [] if kind == "answer" else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
-        blocked = _guard(proj, len(targets), depth, now) if targets else ""
+        blocked = _guard(proj, targets, depth, now) if targets else ""
         with _db() as c:
             mid = c.execute("INSERT INTO squad_msg(ts,project,sender,rcpt,text,reply_to,kind,depth,woke,blocked) "
                             "VALUES(?,?,?,?,?,?,?,?,?,?)",

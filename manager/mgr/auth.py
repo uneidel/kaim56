@@ -184,7 +184,8 @@ _USER_ROUTES = [
     ("POST", r"/api/tasks/[a-f0-9]{1,32}/(run|update|delete)"),
     ("POST", rf"/i/{_N}/(?!term(/|\Z)).*"),
     ("POST", rf"/apps/{_N}/_api(/.*)?"),
-    ("GET", rf"/api/projects/{_N}/squad/messages"),        # a squad's channel: read and post, not its settings
+    ("GET", rf"/api/projects/{_N}/squad/(messages|board)"),  # a squad's channel and proposals/tickets: read
+                                                            # and post — not its settings, decisions, ticket edits
     ("POST", rf"/api/projects/{_N}/squad/post"),
 ]
 _USER_RX = [(m, re.compile(p + r"\Z")) for m, p in _USER_ROUTES]

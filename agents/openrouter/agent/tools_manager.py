@@ -679,3 +679,63 @@ def t_squad_members(project=""):
     if err:
         return err
     return f"Project {d['project']}: " + ", ".join(f"{m['name']} ({m['role']})" for m in d.get("members") or [])
+
+
+# ---- squad gate: the lead proposes, the user approves; tickets (mgr/squadgate.py)
+def _gate_out(d, err):
+    if err:
+        return err
+    w = d.get("warnings") or []
+    return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — "
+            "nothing happens before; a squad message brings the decision."
+            + (" Flags: " + "; ".join(w) if w else ""))
+
+
+def t_squad_propose(goal, members, tickets=None, budget_tokens_per_day=0, project=""):
+    """Lead: the squad plan, for the user to approve."""
+    return _gate_out(*_squad_call("/api/squad/propose", {
+        "goal": goal, "members": members, "tickets": tickets or [],
+        "budget_tokens_per_day": budget_tokens_per_day or None, "project": project}))
+
+
+def t_squad_request_member(member, reason="", project=""):
+    return _gate_out(*_squad_call("/api/squad/request-member", {"member": member, "reason": reason, "project": project}))
+
+
+def t_squad_request_merge(writer, summary, project=""):
+    return _gate_out(*_squad_call("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project}))
+
+
+def _ticket_line(t):
+    deps = f" after {','.join(t['depends_on'])}" if t.get("depends_on") else ""
+    return f"#{t['id']} {t['key']} [{t['status']}] {t['title']} -> {t.get('assignee') or 'unassigned'}{deps}"
+
+
+def t_ticket_list(project=""):
+    d, err = _squad_call("/api/squad/tickets?" + urllib.parse.urlencode({"project": project}))
+    if err:
+        return err
+    head = f"Project {d['project']}" + ("" if d.get("approved") else " (squad plan not approved yet)")
+    return head + ":\n" + ("\n".join(_ticket_line(t) for t in d.get("tickets") or []) or "no tickets")
+
+
+def _ticket_done(d, err):
+    if err:
+        return err
+    woke = d.get("woke") or ({d["key"]: d["wake"]} if d.get("wake") else {})
+    return _ticket_line(d) + "".join(f"\n{k}: {v}" for k, v in woke.items())
+
+
+def t_ticket_update(id, status="", comment="", project=""):
+    return _ticket_done(*_squad_call("/api/squad/ticket-update", {"id": id, "status": status, "comment": comment,
+                                                                  "project": project}))
+
+
+def t_ticket_create(title, description="", assignee="", depends_on=None, key="", project=""):
+    return _ticket_done(*_squad_call("/api/squad/ticket-create", {
+        "title": title, "description": description, "assignee": assignee, "depends_on": depends_on or [],
+        "key": key, "project": project}))
+
+
+def t_ticket_assign(id, assignee, project=""):
+    return _ticket_done(*_squad_call("/api/squad/ticket-assign", {"id": id, "assignee": assignee, "project": project}))

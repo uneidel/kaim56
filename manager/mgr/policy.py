@@ -67,6 +67,13 @@ AGENT_TOOLS_CATALOG = [
     {"name": "squad_ask", "desc": "Squad: ask one member and wait for the answer"},
     {"name": "squad_read", "desc": "Squad: read the project channel"},
     {"name": "squad_members", "desc": "Squad: the project's members and roles"},
+    {"name": "squad_propose", "desc": "Squad lead: propose the plan (members, tickets) for approval"},
+    {"name": "squad_request_member", "desc": "Squad lead: ask the user for one more member"},
+    {"name": "squad_request_merge", "desc": "Squad lead: ask the user to merge a writer's branch"},
+    {"name": "ticket_list", "desc": "Squad: the project's tickets"},
+    {"name": "ticket_create", "desc": "Squad lead: create a ticket (after approval)"},
+    {"name": "ticket_assign", "desc": "Squad lead: assign a ticket (wakes the assignee)"},
+    {"name": "ticket_update", "desc": "Squad: status/comment on a ticket (assignee or lead)"},
     {"name": "list_secrets", "desc": "Show granted secret names"},
     {"name": "get_secret", "desc": "Fetch a granted secret"},
 ]

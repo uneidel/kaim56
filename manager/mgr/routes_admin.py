@@ -43,6 +43,7 @@ from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import squadgate as _squadgate
 from mgr import squads as _squads
 from mgr import resources as _resources
 from mgr import router as _router
@@ -274,6 +275,7 @@ def _project_delete(name, _member):
     if "error" in r:
         return r, 404
     _squads.purge(name)
+    _squadgate.purge(name)
     return r, 200
 
 
@@ -284,7 +286,7 @@ _PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
 
 # ---- squads: settings, the channel, posting as the operator (mgr/squads.py) --
 def _squad_get(h, name, sub):
-    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages (also role user)
+    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board (also role user)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
@@ -292,6 +294,10 @@ def _squad_get(h, name, sub):
         since = _routes._qs(h).get("since", ["0"])[0]
         return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
                         "messages": _squads.read(name, None, int(since) if since.isdigit() else 0)})
+    if sub == "board":                       # proposals + tickets (also role user)
+        return h._json({"project": name, "approved": _squadgate.approved(p), "tiers": list(_router.TIERS),
+                        "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
+                        "statuses": list(_squadgate.STATUSES), "members": _squads.members(p)})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
@@ -299,16 +305,26 @@ def _squad_get(h, name, sub):
 
 
 def _squad_post(h, name, sub):
-    # POST /api/projects/<n>/squad (settings; admin) | /squad/post (as the logged-in person; also role user)
+    # POST /api/projects/<n>/squad (settings) | /squad/post (as the logged-in person; also role user)
+    #      | /squad/decide (a proposal) | /squad/ticket (edit one)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
     b = h._body() or {}
+    pr = getattr(h, "principal", None)
+    who = pr.name if pr is not None and pr.sub != "basic" else "admin"
     if sub == "post":
-        pr = getattr(h, "principal", None)
-        who = pr.name if pr is not None and pr.sub != "basic" else "admin"
         m, why = _squads.post(p, "user:" + who, b.get("to"), b.get("text"), reply_to=b.get("reply_to"))
         return h._json(m) if m else h._json({"error": why}, 400)
+    if sub == "decide":                      # {id, approve, note, members?, tickets?, budget_tokens_per_day?}
+        edits = {k: b[k] for k in ("members", "tickets", "budget_tokens_per_day") if k in b}
+        r, why = _squadgate.decide(name, str(b.get("id") or ""), bool(b.get("approve")), who,
+                                   b.get("note"), edits or None)
+        return h._json(r) if r else h._json({"error": why}, 400)
+    if sub == "ticket":                      # {id, status?, assignee?, comment?}: the operator, any time
+        body = {k: b[k] for k in ("status", "assignee", "comment") if k in b}
+        t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")
+        return h._json(t) if t else h._json({"error": why}, 400)
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     s, why = _squads.normalize_settings(b, p.get("squad"))
