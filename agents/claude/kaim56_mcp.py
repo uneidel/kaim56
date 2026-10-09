@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -175,7 +175,65 @@ def t_ticket_assign(id, assignee, project=""):
     return _ticket("/api/squad/ticket-assign", {"id": id, "assignee": assignee, "project": project})
 
 
+
+# --- squad git remote: push, PRs, issues — run on the host (mgr/squadgit.py) --
+def _git(op, payload, timeout=180):
+    return json.loads(_post(f"/api/git/{op}", {k: v for k, v in payload.items() if v not in (None, "")}, timeout))
+
+
+def _gline(i):
+    extra = f" {i['head']} -> {i['base']}" if i.get("head") else ""
+    return f"#{i.get('number')} [{i.get('state')}] {i.get('title')} ({i.get('author')}){extra} {i.get('url')}"
+
+
+def t_git_push_branch(name="", writer="", project=""):
+    d = _git("push", {"name": name, "writer": writer, "project": project})
+    return f"Pushed {d.get('commit', '')[:12]} to {d.get('branch')} on {d.get('repo')}."
+
+
+def t_git_fetch(project=""):
+    d = _git("fetch", {"project": project})
+    return f"Fetched {d.get('repo')}: {d.get('refs')} branches in {d.get('namespace')} (base at {d.get('base') or '?'})."
+
+
+def t_pr_create(title, body="", name="", writer="", project=""):
+    d = _git("pr-create", {"title": title, "body": body, "name": name, "writer": writer, "project": project})
+    return f"Opened PR {_gline(d)}" + (f"\n{d['note']}" if d.get("note") else "")
+
+
+def t_pr_list(state="open", project=""):
+    d = _git("prs", {"state": state, "project": project}, 60)
+    return "\n".join(_gline(i) for i in d.get("items") or []) or f"No {state} PRs in {d.get('repo')}."
+
+
+def t_pr_view(number, project=""):
+    d = _git("pr", {"number": number, "project": project}, 60)
+    cs = "".join(f"\n--- {c.get('author')} ({c.get('created')}):\n{c.get('body')}" for c in d.get("comments") or [])
+    return _gline(d) + (" (merged)" if d.get("merged") else "") + f"\n\n{d.get('body') or ''}" + cs
+
+
+def t_pr_comment(number, body, project=""):
+    d = _git("pr-comment", {"number": number, "body": body, "project": project}, 60)
+    return f"Commented on #{d.get('number')}: {d.get('url')}"
+
+
+def t_issue_create(title, body="", project=""):
+    d = _git("issue-create", {"title": title, "body": body, "project": project}, 60)
+    return f"Opened issue {_gline(d)}" + (f"\n{d['note']}" if d.get("note") else "")
+
+
+def t_issue_list(state="open", project=""):
+    d = _git("issues", {"state": state, "project": project}, 60)
+    return "\n".join(_gline(i) for i in d.get("items") or []) or f"No {state} issues in {d.get('repo')}."
+
+
+def t_issue_comment(number, body, project=""):
+    d = _git("issue-comment", {"number": number, "body": body, "project": project}, 60)
+    return f"Commented on #{d.get('number')}: {d.get('url')}"
+
+
 _PROJ ={"type": "string", "description": "optional when you are in one squad"}
+_GPROJ = {"type": "string", "description": "optional when one of your projects has a git remote"}
 TOOLS = {
     "memory_store": (t_memory_store,
         "Store a value in the platform's long-term memory (survives /reset and VM restarts).",
@@ -273,6 +331,38 @@ TOOLS = {
         "Lead only, after approval: assign a ticket; wakes the assignee when its dependencies are done.",
         {"type": "object", "properties": {"id": {"type": "string"}, "assignee": {"type": "string"}, "project": _PROJ},
          "required": ["id", "assignee"]}),
+    "git_push_branch": (_squad(t_git_push_branch),
+        "Squad git: snapshot your project folder and push its branch to squad/<you>/<name> on the project's remote "
+        "(runs on the host; you never hold the token). Writers; the lead names a writer.",
+        {"type": "object", "properties": {"name": {"type": "string", "description": "branch name part, default the project name"},
+                                          "writer": {"type": "string", "description": "lead only: whose branch"},
+                                          "project": _GPROJ}, "required": []}),
+    "git_fetch": (_squad(t_git_fetch),
+        "Squad git: fetch the remote's branches into the project repo as refs/remotes/kaim56/*.",
+        {"type": "object", "properties": {"project": _GPROJ}, "required": []}),
+    "pr_create": (_squad(t_pr_create),
+        "Squad git: push your branch and open a pull request to the base branch. Writers and the lead; daily limit. "
+        "Merging is left to the user.",
+        {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"},
+                                          "name": {"type": "string"}, "writer": {"type": "string"}, "project": _GPROJ},
+         "required": ["title"]}),
+    "pr_list": (_squad(t_pr_list), "Squad git: the remote's pull requests.",
+        {"type": "object", "properties": {"state": {"type": "string", "enum": ["open", "closed", "all"]}, "project": _GPROJ},
+         "required": []}),
+    "pr_view": (_squad(t_pr_view), "Squad git: one pull request with its description and comments.",
+        {"type": "object", "properties": {"number": {"type": "integer"}, "project": _GPROJ}, "required": ["number"]}),
+    "pr_comment": (_squad(t_pr_comment), "Squad git: comment on a pull request.",
+        {"type": "object", "properties": {"number": {"type": "integer"}, "body": {"type": "string"}, "project": _GPROJ},
+         "required": ["number", "body"]}),
+    "issue_create": (_squad(t_issue_create), "Squad git: open an issue on the project's remote (daily limit).",
+        {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}, "project": _GPROJ},
+         "required": ["title"]}),
+    "issue_list": (_squad(t_issue_list), "Squad git: the remote's issues (without PRs).",
+        {"type": "object", "properties": {"state": {"type": "string", "enum": ["open", "closed", "all"]}, "project": _GPROJ},
+         "required": []}),
+    "issue_comment": (_squad(t_issue_comment), "Squad git: comment on an issue.",
+        {"type": "object", "properties": {"number": {"type": "integer"}, "body": {"type": "string"}, "project": _GPROJ},
+         "required": ["number", "body"]}),
     "notify": (t_notify,
         "Push a notification to the user's devices (app + web bell).",
         {"type": "object",

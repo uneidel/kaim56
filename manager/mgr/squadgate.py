@@ -57,7 +57,9 @@ MAX_MEMBERS, MAX_TICKETS, MAX_SKILLS, MAX_DEPS = 8, 50, 10, 10
 MAX_PENDING = 10                # pending proposals per project
 KEEP_PROPOSALS = 200
 MAX_COMMENTS = 100
-MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update")
+MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update",
+                "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
+                "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
 _lock = threading.Lock()        # the file
 _decide = threading.Lock()      # one approval at a time
 

@@ -195,8 +195,9 @@ def upsert(body):
         proj, why = _normalize(body or {}, rest)
         if not proj:
             return {"error": why}
-        if old and old.get("squad"):
-            proj["squad"] = old["squad"]                     # squad settings: set_squad only
+        for k in ("squad", "remote"):                       # set_squad / set_remote only
+            if old and old.get(k):
+                proj[k] = old[k]
         why = _assign_slots(proj, old, rest)
         if why:
             return {"error": why}
@@ -235,16 +236,28 @@ def delete(name):
     return {"ok": True}
 
 
-def set_squad(name, squad):
-    """Store a project's squad settings (mgr/squads.py) -> the project or None."""
+def _set_key(name, key, value):
     with _lock:
         items = load()
         p = next((x for x in items if x.get("name") == name), None)
         if p is None:
             return None
-        p["squad"] = squad
+        if value is None:
+            p.pop(key, None)
+        else:
+            p[key] = value
         _save(items)
     return p
+
+
+def set_squad(name, squad):
+    """Store a project's squad settings (mgr/squads.py) -> the project or None."""
+    return _set_key(name, "squad", squad)
+
+
+def set_remote(name, remote):
+    """Store (None: drop) a project's git remote settings (mgr/squadgit.py)."""
+    return _set_key(name, "remote", remote)
 
 
 def get(name):

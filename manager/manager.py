@@ -26,6 +26,7 @@ else lives in mgr/, one concern per module:
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
     squads        a project's members talk in one channel; addressed members are woken (guarded)
     squadgate     the lead proposes (squad plan, member, merge), the user approves; tickets
+    squadgit      a squad's git remote: push, fetch, PRs + issues host-side (token never in a VM)
     router        model router: per-turn model choice via Jev (opt-in per instance)
     jevsetup      Jev suggests persona, skills and model tier for a new instance (only a suggestion)
     cloud         apps to Cloudflare and back, the app tokens
@@ -33,6 +34,7 @@ else lives in mgr/, one concern per module:
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
     routes_auth   /auth/* login and logout, device flow, who-am-I, session list
+    routes_squadgit  /api/git/* (members) and /api/squad-git/* (admin)
   the VMs
     instances     instances/<name>.json, templates, network, running state
     vm            images, harness drive, write layer, start and stop
@@ -103,6 +105,7 @@ from mgr import routes as _routes            # noqa: F401
 from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_auth as _routes_auth  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_guest as _routes_guest  # noqa: F401  (registers its routes in ROUTER on import)
+from mgr import routes_squadgit as _routes_squadgit  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import rules as _rules
 from mgr import saddler as _saddler_mod
 from mgr import secrets as _secrets
@@ -112,6 +115,7 @@ from mgr import signal as _signal_mod
 from mgr import mail as _mail
 from mgr import skills as _skills            # noqa: F401
 from mgr import squadgate as _squadgate      # noqa: F401
+from mgr import squadgit as _squadgit        # noqa: F401
 from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store

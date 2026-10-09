@@ -31,7 +31,7 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/
                     "/api/squad/post", "/api/squad/ask",        # members of a project (mgr/squads.py)
                     "/api/squad/propose", "/api/squad/request-member", "/api/squad/request-merge",
                     "/api/squad/ticket-create", "/api/squad/ticket-assign", "/api/squad/ticket-update")  # mgr/squadgate.py
-GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
+GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/", "/api/git/")   # /api/git/: members of a project with a remote (mgr/squadgit.py)
 
 # GET paths a guest VM must never reach: the admin UI, the web chat, the katfs
 # browser and the per-instance proxy /i/<name>/… (incl. the WebSocket
