@@ -6113,7 +6113,7 @@ class ManagerFunctions(unittest.TestCase):
         q, (code, head, body) = self._oidc_web_login(st)
         self.assertEqual(code, 200, body)
         sid = re.search(r"Set-Cookie: kaim56_sid=([^;]+);([^\r\n]*)", head)
-        for flag in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/"):
+        for flag in ("HttpOnly", "Secure", "SameSite=Lax", "Path=/"):
             self.assertIn(flag, sid.group(2))
         tok = sid.group(1)
         code, _, body = self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")
@@ -6189,6 +6189,31 @@ class ManagerFunctions(unittest.TestCase):
         st["refresh_fail"] = True
         age()
         self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={tok}")[0], 401)
+        self.assertEqual(m._sessions.list_all(), [])
+
+    def test_oidc_idle_session_keeps_its_refresh_token_alive(self):
+        """keep_sessions refreshes sessions idle longer than KEEP_EVERY (the
+        IdP token rotates) and ends one the IdP refuses; the cookie is Lax."""
+        import sqlite3
+        from contextlib import closing
+        m = self.m
+        st = self._oidc_env()
+        _, (_, head, _) = self._oidc_web_login(st)
+        self.assertIn("SameSite=Lax", re.search(r"kaim56_sid=[^\r\n]*", head).group(0))
+        def age(sec):
+            with closing(sqlite3.connect(m._sessions.DB)) as c, c:
+                c.execute("UPDATE sessions SET last_check=last_check-?", (sec,))
+        rt0 = st["rt"]
+        m._auth.keep_sessions()                                                   # fresh: nothing to do
+        self.assertEqual(st["rt"], rt0)
+        age(m._auth.KEEP_EVERY + 10)
+        m._auth.keep_sessions()
+        self.assertNotEqual(st["rt"], rt0)
+        with closing(sqlite3.connect(m._sessions.DB)) as c:
+            self.assertEqual(c.execute("SELECT refresh FROM sessions").fetchone()[0], st["rt"])
+        st["refresh_fail"] = True
+        age(m._auth.KEEP_EVERY + 10)
+        m._auth.keep_sessions()
         self.assertEqual(m._sessions.list_all(), [])
 
     def test_oidc_session_survives_idp_outage_and_browser_restart(self):

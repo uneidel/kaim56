@@ -16,6 +16,7 @@ import time
 import urllib.request
 import uuid
 
+from mgr import auth as _auth
 from mgr import chats as _chats
 from mgr import guestchat as _guestchat
 from mgr import guests as _guests
@@ -535,6 +536,10 @@ def _task_worker():
                     _store.turns_prune(30)          # traces older than the weekly digest's reach
                 except Exception as e:
                     _util._wlog(f"turns-prune failed: {e!r}")
+                try:
+                    _auth.keep_sessions()           # idle OIDC sessions keep their refresh token alive
+                except Exception as e:
+                    _util._wlog(f"session-keep failed: {e!r}")
             try:
                 _vm.image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:

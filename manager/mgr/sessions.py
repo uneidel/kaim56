@@ -74,6 +74,14 @@ def claim_check(sid, seen_last_check, now):
                          (int(now), sid, seen_last_check)).rowcount == 1
 
 
+def due_for_check(before):
+    """Live sessions with an IdP refresh token, last checked before `before`."""
+    with closing(_db()) as c:
+        rows = c.execute(f"SELECT {_COLS} FROM sessions WHERE refresh<>'' AND last_check<? AND expires>=?",
+                         (int(before), int(time.time()))).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update(sid, p, refresh_token):
     with closing(_db()) as c, c:
         c.execute("UPDATE sessions SET name=?, email=?, role=?, refresh=? WHERE id=?",

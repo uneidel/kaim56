@@ -102,10 +102,11 @@ def _rt_callback(h):
     tok = _sessions.create(p, "web", rt)
     _auth.auth_succeeded(_key(h))
     _audit.access_append(p, "GET", "/auth/callback", 200, event="login")
-    # A page, not a 302: a SameSite=Strict cookie set in a redirect chain that
-    # started at the IdP is not sent on that chain's next hop (login loop).
+    # Lax, not Strict: a Strict cookie is not sent when kAIm56 is opened from
+    # a link, a bookmark launcher or the app — every such open was a new
+    # login. Cross-site POSTs stay refused by the Origin check (httpd).
     _page(h, 200, "Logged in. <a href=/>Continue</a>.", refresh="/", cookies=[
-        clear, f"{_auth.SID_COOKIE}={tok}; Path=/; Max-Age={_sessions.TTL['web']}; HttpOnly; Secure; SameSite=Strict"])
+        clear, f"{_auth.SID_COOKIE}={tok}; Path=/; Max-Age={_sessions.TTL['web']}; HttpOnly; Secure; SameSite=Lax"])
 
 
 @_routes.ROUTER.get("/auth/logout", admin=True)
@@ -118,7 +119,7 @@ def _rt_logout(h):
         _sessions.delete(s["id"])
         _audit.access_append(_oidc.Principal(s["sub"], s["name"], s["email"], s["role"]),
                              "GET", "/auth/logout", 200, event="logout")
-    cookie = f"{_auth.SID_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict"
+    cookie = f"{_auth.SID_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
     end = _oidc.end_session_url()
     if end:
         return _redirect(h, end, [cookie])

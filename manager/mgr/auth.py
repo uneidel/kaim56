@@ -127,6 +127,12 @@ def session_principal(token, now=None):
     if (not s["refresh"] or now - s["last_check"] <= _sessions.CHECK_EVERY
             or not _sessions.claim_check(s["id"], s["last_check"], now)):
         return cached
+    return _recheck(s, cached)
+
+
+def _recheck(s, cached):
+    """Refresh one session at the IdP: the new Principal, the cached one when
+    the IdP is merely unreachable, or None (session deleted) when it refuses."""
     try:
         p, rt = _oidc.refresh(s["refresh"])
     except _oidc.OIDCError as e:
@@ -139,10 +145,24 @@ def session_principal(token, now=None):
     if why:
         _sessions.delete(s["id"])
         print(f"[auth] session {s['id']} of {s['name']} ended: {why}", flush=True)
-        _audit.access_append(_oidc.Principal(s["sub"], s["name"], s["email"], s["role"]), "", "", 401, event="expired")
+        _audit.access_append(cached, "", "", 401, event="expired")
         return None
     _sessions.update(s["id"], p, rt)
     return p
+
+
+KEEP_EVERY = 6 * 3600
+
+
+def keep_sessions(now=None):
+    """Idle sessions keep their IdP refresh token alive: one refresh every
+    KEEP_EVERY. Without it a browser closed for longer than the IdP's refresh
+    lifetime came back to a dead token and a new login, although the kAIm56
+    session (30 days) was still valid. Revocation still bites here."""
+    now = int(now or time.time())
+    for s in _sessions.due_for_check(now - KEEP_EVERY):
+        if _sessions.claim_check(s["id"], s["last_check"], now):
+            _recheck(s, _oidc.Principal(s["sub"], s["name"], s["email"], s["role"]))
 
 
 # Role "user" = use, not configure: these routes (method, path regex without
