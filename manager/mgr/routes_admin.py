@@ -338,8 +338,8 @@ def _squad_post(h, name, sub):
         return h._json(r) if r else h._json({"error": why}, 400)
     if sub == "reindex":                     # queue a code index run (admin only)
         return h._json({"msg": _indexer.reindex(name, "operator " + who)})
-    if sub == "ticket":                      # {id, status?, assignee?, comment?}: the operator, any time
-        body = {k: b[k] for k in ("status", "assignee", "comment") if k in b}
+    if sub == "ticket":                      # {id, status?, assignee?, comment?, level?}: the operator, any time
+        body = {k: b[k] for k in ("status", "assignee", "comment", "level") if k in b}
         t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")
         return h._json(t) if t else h._json({"error": why}, 400)
     if sub:
@@ -376,6 +376,7 @@ def _rt_router(h):
             health = {"ok": False, "error": repr(e)[:200]}
     conf = _router.load()
     return h._json({"jev": health, "url": _router.jev_url(), "tiers": conf["tiers"], "tier_names": list(_router.TIERS),
+                    "levels": conf["levels"], "tier_level": _router.TIER_LEVEL, "ladder": _router.ladder(conf, True),
                     "policies": sorted(conf["policies"]), "candidates": _router.candidates(),
                     "recent": _store.routes_read(limit=int((_routes._qs(h).get("limit", ["30"])[0]) or 30))})
 
@@ -399,6 +400,18 @@ def _rt_decision_test(h):
 def _rt_router_tiers(h):
     # {"tiers": {"backend/model": "cheap|strong|code|local"}} — replaces the table.
     return h._json({"ok": True, "tiers": _router.save_tiers((h._body() or {}).get("tiers") or {})})
+
+
+@_routes.ROUTER.post("/api/router/levels", admin=True)
+def _rt_router_levels(h):
+    # {"levels": {"backend/model": 1..5}} — replaces the ladder levels (cost router).
+    return h._json({"ok": True, "levels": _router.save_levels((h._body() or {}).get("levels") or {})})
+
+
+@_routes.ROUTER.get("/api/router/savings", admin=True)
+def _rt_router_savings(h):
+    # Resources card: routed turns' cost vs. the same tokens on the strong model (24h/7d/30d).
+    return h._json(_router.savings())
 
 
 @_routes.ROUTER.get("/api/apps", admin=True)

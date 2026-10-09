@@ -18,6 +18,7 @@ import uuid
 
 from mgr import auth as _auth
 from mgr import chats as _chats
+from mgr import decision as _decision
 from mgr import guestchat as _guestchat
 from mgr import guests as _guests
 from mgr import indexer as _indexer
@@ -25,6 +26,7 @@ from mgr import instances as _instances
 from mgr import memfs as _memfs
 from mgr import missions as _missions
 from mgr import notify as _notify
+from mgr import router as _router
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import squadrec as _squadrec
@@ -45,13 +47,14 @@ _active_lock = threading.Lock()
 _stop = threading.Event()             # set only by tests: ends the dispatcher loop
 
 
-def _chat_post(inst, message, timeout=600):
+def _chat_post(inst, message, timeout=600, turn=None):
     """Non-streaming chat call to an instance's bridge. The agent gets the
     deadline along and stops its tool loop in time — a run that outlives the
-    caller answers into the void (a 12-step job search once did)."""
+    caller answers into the void (a 12-step job search once did). `turn`
+    names the turn (the cost router planned it under that id)."""
     url = f"http://{_instances.net_of(inst)['guest']}:{_instances.WEB_GUEST_PORT}/api/chat"
     data = json.dumps({"message": message, "deadline": time.time() + timeout - 30,
-                       "kind": "task"}).encode()
+                       "kind": "task", **({"turn": turn} if turn else {})}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     body = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
@@ -61,9 +64,10 @@ def _chat_post(inst, message, timeout=600):
         return body
 
 
-def _run_named(instance, message, timeout=600):
+def _run_named(instance, message, timeout=600, **turn):
     """Run a task on an EXISTING instance (its tools/MCP/secrets live there).
-    Starts it if needed and waits until the bridge is up."""
+    Starts it if needed and waits until the bridge is up. `turn=` names the
+    turn (cost routing)."""
     inst = next((i for i in _instances.load_instances() if i["name"] == instance), None)
     if not inst:
         return (False, f"instance '{instance}' unknown")
@@ -72,7 +76,7 @@ def _run_named(instance, message, timeout=600):
             return (False, f"instance '{instance}' not ready")
         inst = next((i for i in _instances.load_instances() if i["name"] == instance), None)
     try:
-        return (True, _chat_post(inst, message, timeout=timeout))
+        return (True, _chat_post(inst, message, timeout=timeout, **turn))
     except (TimeoutError, socket.timeout):
         return (False, f"error: no answer within {timeout} s — the agent did not finish in time")
     except Exception as e:
@@ -189,6 +193,38 @@ def _run_task_now(instance, message, model=None, timeout=600, sandbox=None, max_
             return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, sandbox, **extra)
         return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, **extra)
     return _run_named(instance, message, timeout)
+
+
+def _run_routed(t, msg):
+    """Run a claimed task -> (ok, result, level or None). Under cost routing
+    (the instance's MODEL_ROUTER policy is in mode cheapest, or its squad has
+    cost routing on; mgr/router.py) the turn runs on the cheapest sufficient
+    model for the task's level (the ticket's, the task's, else judged now); a
+    failed turn — error, max tool steps, or with policy "check" a judged
+    insufficient answer — runs ONCE more one level up. Both attempts are in
+    the route log with their result. Anything else: _run_task_now as before."""
+    inst = None
+    if t["instance"] != "ephemeral":
+        inst = next((i for i in _instances.load_instances() if i["name"] == t["instance"]), None)
+    sq = t.get("squad") or {}
+    pol = _router.cost_routing(inst, _squads.cost_routing_on(sq.get("project"))) if inst else None
+    if not pol:
+        ok, res = _run_task_now(t["instance"], msg, t.get("model"), timeout=TASK_TIMEOUT, sandbox=t.get("sandbox"),
+                                **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}))
+        return ok, res, None
+    level = int(sq.get("level") or t.get("level") or 0) or _decision.judge(t["message"])["level"]
+    turn = uuid.uuid4().hex[:12]
+    _router.plan(t["instance"], turn, level)
+    ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn)
+    bad = _router.failed(ok, res) or (bool(pol.get("check")) and not _decision.sufficient(t["message"], res))
+    _router.book(t["instance"], turn, "failed" if bad else "ok")
+    up = _router.next_level(t["instance"], turn, level) if bad and pol.get("escalate", True) else None
+    if up:
+        turn2 = uuid.uuid4().hex[:12]
+        _router.plan(t["instance"], turn2, up, escalated=True)
+        ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn2)
+        _router.book(t["instance"], turn2, "failed" if _router.failed(ok, res) else "ok")
+    return ok, res, level
 
 
 # ---- Instant trigger for the orchestrator ----------------------------------
@@ -392,22 +428,23 @@ def _execute(t):
             _util._wlog(f"{t['id']}: squad turn: {e!r}")
         try:
             msg = f"[{t['by']}] {t['message']}" if t.get("by") else t["message"]   # who asked (OIDC user)
-            ok, res = _run_task_now(t["instance"], msg, t.get("model"), timeout=TASK_TIMEOUT,
-                                    sandbox=t.get("sandbox"), **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}))
+            ok, res, level = _run_routed(t, msg)
         except Exception as e:
-            ok, res = False, f"worker-exception (run): {e!r}"
+            ok, res, level = False, f"worker-exception (run): {e!r}", None
             _util._wlog(f"{t['id']}: {res}")
         if t.get("squad"):                   # a squad wake: tell the channel how it ended
             try:
                 _squads.wake_result((t["squad"] or {}).get("msg"), t["instance"], ok, res)
             except Exception as e:
                 _util._wlog(f"{t['id']}: squad wake_result: {e!r}")
-        def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched):
+        def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched, _lvl=level):
             tt = next((x for x in fresh if x["id"] == _tid), None)
             if tt is None:
                 return False, None
             tt["updated"] = int(time.time())
             tt["result"] = _res
+            if _lvl and not tt.get("level"):
+                tt["level"] = _lvl                   # judged once, kept for the next run (cost routing)
             if _sched:
                 tt["status"] = "scheduled"
                 tt["next_run"] = _store._next_run(tt["schedule"], int(time.time()))

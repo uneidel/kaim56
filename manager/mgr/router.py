@@ -18,6 +18,14 @@ never changes inside a tool loop.
   preference. Below the confidence floor a question counts as undecided.
 - Never blocks an answer: Jev unreachable, slow, or no tiered candidate -> the
   instance's own model, as if there were no router.
+- Mode "cheapest" (built-in policy 'cheapest', or any policy with
+  "mode": "cheapest"): decision.judge() gives the turn a level 1-5; the ladder
+  is every tiered running model with a capability level (operator-set, else
+  from its tier) and its catalog price; the cheapest model with level >= the
+  turn's and the features it needs wins. "catalog": true adds the catalog
+  models the operator ladder-tagged in the Models tab. A failed turn is run
+  again one level up, once: tasks and squad wakes by the manager (tasks.py),
+  a chat turn by moving the instance's NEXT turn up (outcome()).
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -31,6 +39,7 @@ import urllib.request
 
 from mgr import decision as _decision
 from mgr import instances as _instances
+from mgr import models as _models
 from mgr import paths as _paths
 from mgr import settings as _settings
 from mgr import store as _store
@@ -60,7 +69,13 @@ DEFAULT_POLICY = {
     ],
     "floor": 0.55,
 }
+CHEAPEST = {"mode": "cheapest", "catalog": False, "check": False, "escalate": True}
+TIER_LEVEL = {"local": 2, "cheap": 2, "code": 4, "strong": 5}    # a model's level when the operator set none
+LONG_CTX = 100_000                # tokens a model needs for a long-context turn
+FAIL_OUTCOMES = ("max_steps", "error")
 _cache = {}                       # (instance, turn) -> decision, for the rest of the turn
+_plans = {}                       # (instance, turn) -> level the manager set for a turn it runs (tasks.py)
+_bump = {}                        # instance -> level: its next chat turn runs there (the last one failed)
 _lock = threading.Lock()
 
 
@@ -74,19 +89,40 @@ def load():
     except (FileNotFoundError, ValueError, OSError):
         d = {}
     tiers = {k: v for k, v in (d.get("tiers") or {}).items() if v in TIERS}
-    policies = {"default": DEFAULT_POLICY, **(d.get("policies") or {})}
-    return {"tiers": tiers, "policies": policies}
+    levels = {k: int(v) for k, v in (d.get("levels") or {}).items() if v in (1, 2, 3, 4, 5)}
+    policies = {"default": DEFAULT_POLICY, "cheapest": CHEAPEST, **(d.get("policies") or {})}
+    return {"tiers": tiers, "levels": levels, "policies": policies}
+
+
+def _store_conf(**part):
+    d = load()
+    d.update(part)
+    out = {"tiers": d["tiers"], "levels": d["levels"],
+           "policies": {k: v for k, v in d["policies"].items() if v is not DEFAULT_POLICY and v is not CHEAPEST}}
+    tmp = ROUTER_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(out, fh, indent=2)
+    os.replace(tmp, ROUTER_FILE)
 
 
 def save_tiers(tiers):
     """Replace the tier table ({"backend/model": tier}; an empty tier removes)."""
     clean = {str(k)[:160]: v for k, v in (tiers or {}).items() if v in TIERS and "/" in str(k)}
-    d = load()
-    out = {"tiers": clean, "policies": {k: v for k, v in d["policies"].items() if k != "default"}}
-    tmp = ROUTER_FILE + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(out, fh, indent=2)
-    os.replace(tmp, ROUTER_FILE)
+    _store_conf(tiers=clean)
+    return clean
+
+
+def save_levels(levels):
+    """Replace the ladder levels ({"backend/model": 1..5}; anything else removes)."""
+    clean = {}
+    for k, v in (levels or {}).items():
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= v <= 5 and "/" in str(k):
+            clean[str(k)[:160]] = v
+    _store_conf(levels=clean)
     return clean
 
 
@@ -185,55 +221,259 @@ def pick(policy, classes, tiered):
     return None, None
 
 
-def route(inst, payload, turn):
-    """The decision for this call: {"backend", "model", "upstream", ...} to use
-    instead of the instance's own model, or None (= its own model). Cached per
-    (instance, turn); every fresh decision is recorded (store.route_add)."""
-    name_ = (inst.get("config") or {}).get("MODEL_ROUTER", "").strip()
-    if not name_ or not turn or not (jev_url() or _decision.router_on()):
-        return None
-    now = time.time()
+# ---- the ladder: level, price and features per model ------------------------
+def facts(backend, model):
+    """Price ($ per 1M tokens in/out, `price` = blended 3:1 for a typical turn)
+    and features of one model. llama = 0 (local); claude = 0, marked
+    subscription; else the OpenRouter catalog (cache only); unknown = None."""
+    if backend == "llama":
+        return {"pin": 0.0, "pout": 0.0, "price": 0.0, "note": "local", "vision": False, "tools": True, "ctx": 0}
+    if backend == "claude":
+        return {"pin": 0.0, "pout": 0.0, "price": 0.0, "note": "subscription", "vision": True, "tools": True, "ctx": 200_000}
+    row = _models.lookup(model)
+    if not row:
+        return {"pin": None, "pout": None, "price": None, "note": "price unknown", "vision": False, "tools": True, "ctx": 0}
+    return {"pin": row["pin"], "pout": row["pout"], "price": round((3 * row["pin"] + row["pout"]) / 4, 4),
+            "note": "", "vision": bool(row.get("vision")), "tools": bool(row.get("tools")), "ctx": int(row.get("ctx") or 0)}
+
+
+def ladder(conf=None, catalog=False):
+    """[{key, backend, model, upstream, tier, level, price, ...}]: the running
+    models with a tier or a level (level = operator's, else from the tier);
+    with `catalog` also the OpenRouter models the operator gave a level."""
+    conf = conf or load()
+    out = {}
+    for c in candidates():
+        tier = conf["tiers"].get(c["key"], "")
+        lvl = conf["levels"].get(c["key"]) or TIER_LEVEL.get(tier)
+        if lvl:
+            out[c["key"]] = {**c, "tier": tier, "level": lvl, "catalog": False, **facts(c["backend"], c["model"])}
+    if catalog:
+        for key, lvl in conf["levels"].items():
+            if key.startswith("openrouter/") and key not in out:
+                mdl = key[len("openrouter/"):]
+                out[key] = {"key": key, "backend": "openrouter", "model": mdl, "upstream": None, "instances": [],
+                            "tier": "", "level": lvl, "catalog": True, **facts("openrouter", mdl)}
+    return sorted(out.values(), key=lambda e: e["key"])
+
+
+def choose(lad, level, needs=None):
+    """The cheapest entry with level >= `level` and every needed feature;
+    equal price -> the higher level; unknown price last. None if none fits."""
+    needs = needs or {}
+    ok = [e for e in lad if e["level"] >= level
+          and (not needs.get("vision") or e["vision"])
+          and (not needs.get("tools") or e["tools"])
+          and (not needs.get("long_context") or e["ctx"] >= LONG_CTX)]
+    ok.sort(key=lambda e: (e["price"] is None, e["price"] or 0, -e["level"], e["key"]))
+    return ok[0] if ok else None
+
+
+def needs_of(payload):
+    """What the request itself demands: tools offered, an image attached, a long context."""
+    msgs = [m for m in (payload.get("messages") or []) if isinstance(m, dict)]
+    img = any(isinstance(m.get("content"), list) and any(isinstance(p, dict) and p.get("type") == "image_url"
+                                                         for p in m["content"]) for m in msgs)
+    return {"tools": bool(payload.get("tools")), "vision": img,
+            "long_context": len(json.dumps(msgs, ensure_ascii=False)) // 4 > LONG_CTX // 2}
+
+
+# ---- manager-run turns and escalation ---------------------------------------
+def plan(instance, turn, level, escalated=False):
+    """The manager runs this turn (task / squad wake) at this level (tasks.py)."""
     with _lock:
-        hit = _cache.get((inst["name"], turn))
-        for k in [k for k, v in _cache.items() if now - v["ts"] > CACHE_TTL]:
-            _cache.pop(k, None)
-    if hit is not None:
-        return hit["target"]
-    conf = load()
-    policy = conf["policies"].get(name_)
-    own = model_of(inst)
-    own_key = f"{own[0]}/{own[1]}" if own else ""
-    decision = {"ts": now, "target": None, "classes": {}, "ms": 0, "why": ""}
+        _plans[(instance, turn)] = {"level": max(1, min(5, int(level))), "escalated": bool(escalated), "ts": time.time()}
+
+
+def planned(instance, turn):
+    with _lock:
+        return bool(turn) and (instance, turn) in _plans
+
+
+def cost_routing(inst, squad_on=False):
+    """The policy a manager-run turn on `inst` routes with, or None: its
+    MODEL_ROUTER policy in mode cheapest, else CHEAPEST when its squad has cost
+    routing on. Never for a template without OpenAI-style calls (claude
+    members stay on Claude)."""
+    if not inst or not model_of(inst):
+        return None
+    pol = load()["policies"].get((inst.get("config") or {}).get("MODEL_ROUTER", "").strip())
+    if pol and pol.get("mode") == "cheapest":
+        return pol
+    return CHEAPEST if squad_on else None
+
+
+def failed(ok, res):
+    """Did a manager-run turn fail (error, max tool steps, an error reply)?"""
+    t = str(res or "")
+    return not ok or "(max tool steps reached)" in t or t.lstrip().startswith(("⚠️", "error:"))
+
+
+def next_level(instance, turn, level):
+    """One level above what the turn ran on (its chosen model's level), or None at the top."""
+    with _lock:
+        d = _cache.get((instance, turn)) or {}
+    up = max(int(level), int(d.get("chosen_level") or level)) + 1
+    return up if up <= 5 else None
+
+
+def book(instance, turn, result):
+    _store.route_result(instance, turn, result)
+
+
+def outcome(instance, turn, result):
+    """A turn ended (agent trace / proxy error). For a chat turn the router
+    chose in mode cheapest: book the result; a failure moves the instance's
+    NEXT turn one level up — once (an escalated turn never escalates again).
+    Manager-run turns book and re-run themselves (tasks.py)."""
+    with _lock:
+        d = _cache.get((instance, turn))
+    if not d or d.get("mode") != "cheapest" or d.get("planned"):
+        return
+    book(instance, turn, result)
+    if result in FAIL_OUTCOMES and not d.get("escalated") and d.get("escalate", True):
+        up = max(d["level"], d.get("chosen_level") or d["level"]) + 1
+        if up <= 5:
+            with _lock:
+                _bump[instance] = up
+
+
+def savings(now=None):
+    """{"24h"|"7d"|"30d": {turns, in, out, actual, strong, saved}}: the routed
+    turns' usage cost vs. the same tokens at the strong model's price (the
+    'strong' tier's priciest known model, else the top-level one)."""
+    lad = [e for e in ladder(catalog=True) if e["price"] is not None]
+    strong = (sorted([e for e in lad if e["tier"] == "strong"], key=lambda e: -e["price"])
+              or sorted(lad, key=lambda e: (-e["level"], -e["price"])))
+    if not strong:
+        return {"error": "no ladder model with a known price — give your strong model a tier"}
+    s = strong[0]
+    now = now or time.time()
+    out = {"strong": s["key"]}
+    for win, secs in (("24h", 86400), ("7d", 7 * 86400), ("30d", 30 * 86400)):
+        turns, rows = _store.route_usage(int(now - secs))
+        tin = sum(r[1] for r in rows)
+        tout = sum(r[2] for r in rows)
+        actual = 0.0
+        for mdl, i, o, cost in rows:
+            if cost:
+                actual += cost
+            else:                                    # no cost reported: the catalog's price, local = 0
+                row = _models.lookup(mdl)
+                actual += (i * row["pin"] + o * row["pout"]) / 1e6 if row else 0.0
+        base = (tin * s["pin"] + tout * s["pout"]) / 1e6
+        out[win] = {"turns": turns, "in": tin, "out": tout, "actual": round(actual, 4),
+                    "strong": round(base, 4), "saved": round(base - actual, 4)}
+    return out
+
+
+# ---- the decision ------------------------------------------------------------
+def _rules(policy, payload, conf, own_key, decision):
     tiered = {}
     for c in candidates():
         t = conf["tiers"].get(c["key"])
         if t:
             tiered.setdefault(t, []).append(c)
+    if not tiered:
+        decision["why"] = "no running model has a tier"
+        return
+    text = premise(payload)
+    if not text:
+        decision["why"] = "no user message"
+        return
+    try:
+        classes, ms = classify(policy, text)
+        decision.update(classes={q: [c, round(p, 3)] for q, (c, p) in classes.items()}, ms=ms)
+        cand, rule = pick(policy, classes, tiered)
+        if cand is None:
+            decision["why"] = "no rule matched"
+        elif cand["key"] == own_key:
+            decision["why"] = f"rule {rule}: own model"
+        else:
+            decision["target"] = {"backend": cand["backend"], "model": cand["model"],
+                                  "upstream": cand["upstream"], "key": cand["key"]}
+            decision["why"] = f"rule {rule}: {conf['tiers'][cand['key']]}"
+    except Exception as e:                       # never block an answer
+        decision["why"] = f"jev: {e!r}"[:200]
+
+
+def _cheapest(inst, policy, payload, conf, own_key, decision, plan_):
+    text = premise(payload)
+    needs = needs_of(payload)
+    decision.update(mode="cheapest", escalate=policy.get("escalate", True), excerpt=text[:160],
+                    planned=bool(plan_), escalated=False)
+    note = ""
+    if plan_:
+        level = plan_["level"]
+        decision["escalated"] = plan_["escalated"]
+        note = "set by the manager"
+    else:
+        j = _decision.judge(text)
+        level, note = j["level"], j.get("note") or j.get("backend", "")
+        needs["vision"] = needs["vision"] or j["needs"].get("vision", False)
+        decision.update(classes={"level": [level, j.get("score", 0)]}, ms=j.get("ms", 0))
+        with _lock:
+            up = _bump.pop(inst["name"], None)
+        if up:
+            level, decision["escalated"] = max(level, up), True
+    decision["level"] = level
+    lad = ladder(conf, policy.get("catalog"))
+    cand = choose(lad, level, needs)
+    own = next((e for e in lad if e["key"] == own_key), None)
+    if cand is None:
+        decision["chosen_level"] = own["level"] if own else level
+        decision["why"] = f"L{level}: no ladder model fits — own model" + (f" ({note})" if note else "")
+        return
+    decision.update(chosen_level=cand["level"], price=cand["price"])
+    p = "price ?" if cand["price"] is None else f"${cand['price']:.2f}/1M" + (f" {cand['note']}" if cand["note"] else "")
+    decision["why"] = (f"L{level}{' escalated' if decision['escalated'] else ''}: cheapest L{cand['level']} "
+                       f"{cand['key']} ({p})" + (f" · {note}" if note else ""))[:200]
+    if cand["key"] != own_key:
+        decision["target"] = {"backend": cand["backend"], "model": cand["model"],
+                              "upstream": cand["upstream"], "key": cand["key"]}
+
+
+def route(inst, payload, turn):
+    """The decision for this call: {"backend", "model", "upstream", ...} to use
+    instead of the instance's own model, or None (= its own model). Cached per
+    (instance, turn); every fresh decision is recorded (store.route_add). A
+    turn the manager planned (plan()) routes in mode cheapest at its level."""
+    name_ = (inst.get("config") or {}).get("MODEL_ROUTER", "").strip()
+    now = time.time()
+    with _lock:
+        plan_ = _plans.get((inst["name"], turn)) if turn else None
+        hit = _cache.get((inst["name"], turn))
+        for k in [k for k, v in _cache.items() if now - v["ts"] > CACHE_TTL]:
+            _cache.pop(k, None)
+        for k in [k for k, v in _plans.items() if now - v["ts"] > CACHE_TTL]:
+            _plans.pop(k, None)
+    if not turn or not (name_ or plan_):
+        return None
+    if hit is not None:
+        return hit["target"]
+    conf = load()
+    policy = conf["policies"].get(name_)
+    cheapest = bool(plan_) or (policy or {}).get("mode") == "cheapest"
+    if plan_ and (policy or {}).get("mode") != "cheapest":
+        policy = CHEAPEST
+    if not cheapest and not (jev_url() or _decision.router_on()):
+        return None
+    own = model_of(inst)
+    own_key = f"{own[0]}/{own[1]}" if own else ""
+    decision = {"ts": now, "target": None, "classes": {}, "ms": 0, "why": ""}
     if policy is None:
         decision["why"] = f"unknown policy {name_!r}"
-    elif not tiered:
-        decision["why"] = "no running model has a tier"
+    elif cheapest:
+        try:
+            _cheapest(inst, policy, payload, conf, own_key, decision, plan_)
+        except Exception as e:                   # never block an answer
+            decision["why"] = f"cheapest: {e!r}"[:200]
     else:
-        text = premise(payload)
-        if not text:
-            decision["why"] = "no user message"
-        else:
-            try:
-                classes, ms = classify(policy, text)
-                decision.update(classes={q: [c, round(p, 3)] for q, (c, p) in classes.items()}, ms=ms)
-                cand, rule = pick(policy, classes, tiered)
-                if cand is None:
-                    decision["why"] = "no rule matched"
-                elif cand["key"] == own_key:
-                    decision["why"] = f"rule {rule}: own model"
-                else:
-                    decision["target"] = {"backend": cand["backend"], "model": cand["model"],
-                                          "upstream": cand["upstream"], "key": cand["key"]}
-                    decision["why"] = f"rule {rule}: {conf['tiers'][cand['key']]}"
-            except Exception as e:                       # never block an answer
-                decision["why"] = f"jev: {e!r}"[:200]
+        _rules(policy, payload, conf, own_key, decision)
     with _lock:
         _cache[(inst["name"], turn)] = decision
     _store.route_add(inst["name"], turn, own_key, (decision["target"] or {}).get("key") or own_key,
-                     decision["classes"], decision["ms"], decision["why"])
+                     decision["classes"], decision["ms"], decision["why"], level=decision.get("level"),
+                     price=decision.get("price"), escalated=decision.get("escalated", False),
+                     excerpt=decision.get("excerpt", ""))
     return decision["target"]

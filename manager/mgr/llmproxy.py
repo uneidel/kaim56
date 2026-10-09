@@ -198,7 +198,8 @@ class LLMProxyMixin:
             body, want_stream = None, False
         # Model router (opt-in per instance, mgr/router.py): the turn may run on
         # another model the running instances use — never blocks, never a new provider.
-        if isinstance(body, dict) and ginst is not None and (ginst.get("config") or {}).get("MODEL_ROUTER"):
+        if isinstance(body, dict) and ginst is not None and ((ginst.get("config") or {}).get("MODEL_ROUTER")
+                                                             or _router.planned(ginst["name"], span["turn"])):
             target = _router.route(ginst, body, span["turn"])
             re_url, re_key = _routed_upstream(target, st) if target else (None, None)
             if re_url:
@@ -219,6 +220,7 @@ class LLMProxyMixin:
                 _store.usage_add(ginst["name"], backend, 0, 0, 0, ok=False,
                           err=f"HTTP {e.code}: {data[:300].decode('utf-8', 'replace')}",
                           ms=int((time.monotonic() - _t0) * 1000), **span)
+                _router.outcome(ginst["name"], span["turn"], "error")    # cost router: next turn one level up
             self.send_response(e.code)
             self.send_header("Content-Type", e.headers.get("Content-Type", "application/json"))
             self.send_header("Content-Length", str(len(data)))

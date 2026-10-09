@@ -389,19 +389,48 @@ async function loadRouter(){
     ?`Jev ready · <code>${escT(j.model||'')}</code> · ${j.calls||0} classifications · <code>${escT(d.url)}</code>`
     :`Jev not available — ${escT(j.error||'loading')} ${d.url?'':'(set JEV_URL in Settings)'}`;
   const tiers=d.tiers||{}, names=d.tier_names||[];
+  RT_LVL={...(d.levels||{})}; RT_TL=d.tier_level||{};
+  const lad=Object.fromEntries((d.ladder||[]).map(e=>[e.key,e]));
   document.getElementById('rtcands').innerHTML=(d.candidates||[]).map(c=>
     `<tr><td class=mono style="font-size:12.5px">${escT(c.key)}</td><td style="font-size:12.5px">${escT(c.instances.join(', '))}</td>`+
     `<td><select class=input data-tier="${esc(c.key)}" style="font-size:12.5px"><option value="">— not a target —</option>`+
-    names.map(t=>`<option${tiers[c.key]===t?' selected':''}>${t}</option>`).join('')+`</select></td></tr>`).join('')
-    ||'<tr><td colspan=3 class=text-muted>No running instance with an OpenAI-style model.</td></tr>';
+    names.map(t=>`<option${tiers[c.key]===t?' selected':''}>${t}</option>`).join('')+`</select></td>`+
+    `<td>${lvlSel(c.key,RT_TL[tiers[c.key]]||'')}</td><td style="font-size:12px;white-space:nowrap">${lad[c.key]?rtPrice(lad[c.key]):'—'}</td></tr>`).join('')
+    ||'<tr><td colspan=5 class=text-muted>No running instance with an OpenAI-style model.</td></tr>';
+  if(CATALOG.length)renderModels();
   const rec=d.recent||[];
   document.getElementById('rtrecent').innerHTML=rec.length?rec.slice(0,15).map(r=>{
-    const cl=Object.entries(r.classes||{}).map(([q,v])=>`${escT(q)}=${escT(v[0])} ${v[1]}`).join(' · ');
+    const cl=Object.entries(r.classes||{}).filter(([q])=>q!=='level').map(([q,v])=>`${escT(q)}=${escT(v[0])} ${v[1]}`).join(' · ');
     const moved=r.chosen&&r.chosen!==r.own;
     return `<div style="padding:5px 0;border-bottom:1px solid var(--color-divider)"><span class=mono>${new Date(r.ts*1000).toLocaleString()}</span> · <b>${escT(r.instance)}</b> · `+
+      (r.level?`<span class="tag tag-neutral">L${r.level}</span> `:'')+(r.escalated?'<span class="tag tag-accent">escalated</span> ':'')+
       (moved?`<span class="tag tag-accent">${escT(r.own)} → ${escT(r.chosen)}</span>`:`<span class="tag tag-neutral">own model</span>`)+
-      ` <span>${cl}</span> · ${r.ms} ms · ${escT(r.why||'')}</div>`}).join('')
+      (r.price!=null?` $${(+r.price).toFixed(2)}/1M`:'')+(r.result?` · <b>${escT(r.result)}</b>`:'')+
+      ` <span>${cl}</span> · ${r.ms} ms · ${escT(r.why||'')}`+
+      (r.excerpt?`<div class=text-muted style="font-size:11.5px">${escT(r.excerpt)}</div>`:'')+`</div>`}).join('')
     :'No routed turns yet.';
+}
+/* — cost router: a level per model (the ladder); catalog rows and running models share RT_LVL — */
+let RT_LVL={}, RT_TL={};
+function rtPrice(e){return e.price==null?'price ?':'$'+(+e.price).toFixed(2)+'/1M'+(e.note?' · '+escT(e.note):'')+(e.vision?' · vision':'')}
+function lvlSel(key,dflt){
+  return `<select class=input data-lvl="${esc(key)}" style="font-size:12px;padding:2px 4px" onchange="setLvl(this)"><option value="">${dflt?'tier: '+dflt:'—'}</option>`+
+    [1,2,3,4,5].map(n=>`<option value=${n}${RT_LVL[key]===n?' selected':''}>L${n}</option>`).join('')+'</select>';
+}
+async function setLvl(el){
+  const k=el.dataset.lvl; if(el.value)RT_LVL[k]=+el.value; else delete RT_LVL[k];
+  let d={}; try{d=await (await fetch('/api/router/levels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({levels:RT_LVL})})).json()}catch(e){d={error:'manager not reachable'}}
+  const m=d.ok?'ladder saved ✓':'⚠️ '+(d.error||'failed');
+  ['rtmsg','mdlmsg'].forEach(i=>{const x=document.getElementById(i);if(x)x.textContent=m});
+}
+async function loadRouterSavings(){
+  const el=document.getElementById('rtsave'); if(!el)return;
+  let d={}; try{d=await (await fetch('/api/router/savings')).json()}catch(e){el.textContent='not reachable';return}
+  if(d.error){el.textContent=d.error;return}
+  el.innerHTML=`<div style="font-size:12px;margin-bottom:8px">Always-strong reference: <code>${escT(d.strong)}</code></div>`+
+    '<table class=table><thead><tr><th>Window</th><th>Routed turns</th><th>Tokens in/out</th><th>Cost</th><th>Always strong</th><th>Saved</th></tr></thead><tbody>'+
+    ['24h','7d','30d'].map(w=>{const x=d[w]||{};return `<tr><td>${w}</td><td>${x.turns||0}</td><td style="font-variant-numeric:tabular-nums">${(x.in||0).toLocaleString()} / ${(x.out||0).toLocaleString()}</td>`+
+      `<td>$${(x.actual||0).toFixed(4)}</td><td>$${(x.strong||0).toFixed(4)}</td><td><b>$${(x.saved||0).toFixed(4)}</b></td></tr>`}).join('')+'</tbody></table>';
 }
 async function saveTiers(){
   const tiers={};
@@ -427,6 +456,7 @@ function _bar(pct,max,color){
 }
 async function loadResources(){
   loadUsageChart();                       // the chart below the table, same tab, both entry points
+  loadRouterSavings();
   let rs=[]; try{rs=(await (await fetch('/api/resources')).json()).resources||[];}catch(e){return;}
   const el=document.getElementById('resrows'); if(!el)return;
   el.innerHTML = rs.length ? rs.map(r=>{
@@ -999,7 +1029,7 @@ async function sqLoad(){
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
-  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved;
+  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
@@ -1067,7 +1097,7 @@ async function sqGitFetch(){
   document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
-  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked};
+  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
@@ -1258,7 +1288,9 @@ async function sqBoard(){
         `<div style="display:flex;gap:4px;margin-top:6px"><select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{status:this.value})">`+
         cols.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('')+'</select>'+
         `<select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{assignee:this.value})"><option value="">—</option>`+
-        mem.map(n=>`<option value="${esc(n)}"${n===t.assignee?' selected':''}>${escT(n)}</option>`).join('')+'</select></div></div>').join('')+'</div>').join('')+'</div>'
+        mem.map(n=>`<option value="${esc(n)}"${n===t.assignee?' selected':''}>${escT(n)}</option>`).join('')+'</select>'+
+        `<select class=input style="font-size:12px;padding:2px 4px" title="level for cost routing (${esc(t.level_by||'')})" onchange="sqTicket(${+t.id},{level:+this.value})">`+
+        [1,2,3,4,5].map(n=>`<option value=${n}${n===(t.level||3)?' selected':''}>L${n}</option>`).join('')+'</select></div></div>').join('')+'</div>').join('')+'</div>'
     :'<span class=text-muted style="font-size:12.5px">No tickets yet.</span>';
 }
 async function sqDecide(id,ok){
@@ -1975,7 +2007,8 @@ function renderModels(){
     `<div class=text-muted style="font-size:11.5px">${escT(m.name||'')}</div></td>`+
     `<td style="white-space:nowrap;font-variant-numeric:tabular-nums">${escT(m.price||'')}</td>`+
     `<td style="white-space:nowrap;font-variant-numeric:tabular-nums" class=text-muted>${m.ctx?(m.ctx/1000).toFixed(0)+'k':''}</td>`+
-    `<td>${m.tools?'<span class="tag tag-accent">tools</span>':'<span class="tag tag-neutral">no tools</span>'}</td></tr>`)
+    `<td>${m.tools?'<span class="tag tag-accent">tools</span>':'<span class="tag tag-neutral">no tools</span>'}</td>`+
+    `<td title="Ladder level for the cost router (policy cheapest with catalog: true)">${lvlSel('openrouter/'+m.id,'')}</td></tr>`)
     .join('')||'<tr><td class=text-muted style="padding:14px">nothing matches</td></tr>';
 }
 function saveModels(){

@@ -256,6 +256,9 @@ HTML_TOP = """</head><body>
   </div>
   <div class=text-muted style="font-size:12px;margin:-6px 0 12px">Tokens in and out, each stacked by model on its own scale, cost as billed by the provider &#183; one-shot task VMs are summed as &#8220;tasks&#8221;.</div>
   <div id=usagechart class=text-muted style="font-size:13px">…</div>
+  <div class=sec-head style="margin-top:28px"><div><h6>Model router</h6><h3>Routing: saved vs. always-strong</h3></div></div>
+  <div class=text-muted style="font-size:12px;margin:-6px 0 12px">The turns the router decided on: their cost as billed (catalog price where none was reported, local = 0) against the same tokens on the strong model.</div>
+  <div id=rtsave class=text-muted style="font-size:13px">…</div>
 </section>
 
 <section class="screen" id=s-models>
@@ -283,7 +286,10 @@ HTML_TOP = """</head><body>
       runs that turn on another model — only for instances where you switch a router policy on (Policy tab), only among the models your
       <b>running</b> instances use, and only those you give a tier here. Jev slow or down: the instance's own model, as always.</p>
     <div id=rtjev class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
-    <table class=table><thead><tr><th>Model (running)</th><th>Used by</th><th style="width:160px">Tier</th></tr></thead><tbody id=rtcands></tbody></table>
+    <p class=text-muted style="font-size:12.5px;margin:0 0 12px;max-width:80ch">Policy <b>cheapest</b>: each turn gets a level (1 small talk · 2 simple question/edit · 3 code change · 4 multi-file/architecture · 5 hard reasoning)
+      and runs on the cheapest model whose level is at least that (price: blended 3:1 input:output per 1M tokens from the catalog; local 0). A failed turn runs once more one level up.
+      Level per model: set here, else from its tier (local/cheap 2, code 4, strong 5); a catalog model with a level (column &#8220;Ladder&#8221; above) is a target only for a policy with <code>"catalog": true</code>.</p>
+    <table class=table><thead><tr><th>Model (running)</th><th>Used by</th><th style="width:160px">Tier</th><th style="width:110px">Level</th><th>Price</th></tr></thead><tbody id=rtcands></tbody></table>
     <div class=panel-foot><span id=rtmsg class=msg></span><button class="btn btn-primary" onclick=saveTiers()>Save tiers</button></div>
     <h4 style="margin:22px 0 8px;font-size:14px">Latest decisions</h4>
     <div id=rtrecent class=text-muted style="font-size:12.5px">…</div>
@@ -357,6 +363,7 @@ HTML_TOP = """</head><body>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-approved> Plan approved (before: only the lead may be woken; approving a squad proposal sets it)</label></div>
+      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-cost_routing> Cost routing (wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude)</label></div>
       <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
       <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
@@ -919,6 +926,11 @@ HTML_BOTTOM = """
   models the <b>running</b> instances use, and only those the operator gave a tier (cheap / strong / code / local) &#8212; no new provider is ever reached.
   The decision holds for the whole turn (no model switch inside a tool loop); the proxy rewrites model, upstream and key (the Jetson&#8217;s llama.cpp as a
   keyless upstream). Jev slow, down or undecided: the instance&#8217;s own model. Every decision lands in <code>route_log</code> (Models tab, trace).
+  <b>Cost routing</b> (policy <code>cheapest</code>, or a squad&#8217;s &#8220;Cost routing&#8221;): <code>decision.judge()</code> gives the turn a level 1&#8211;5 (Jev classes
+  mapped, or one strict-JSON question to the LLM backend; failure: level 3); the ladder is each tiered model&#8217;s level (operator&#8217;s, else from the tier)
+  and its catalog price (blended 3:1, local 0); the cheapest model with a high enough level and the needed features (tools, vision, context) wins. A failed
+  task or squad wake turn (error, max tool steps, optional answer check) runs once more one level up in the manager; a failed chat turn moves that instance&#8217;s
+  next turn up. Tickets carry their judged level (editable on the board); Resources compares the routed turns&#8217; cost with the strong model&#8217;s.
   <b>Setup suggestion</b> (<code>mgr/jevsetup.py</code>, <code>POST /api/setup/suggest</code>): from a purpose, Jev scores the personas, the skills (word
   pre-filter, max 16 hypotheses per call) and the same task/difficulty questions &#8212; persona, skills (config <code>SKILLS</code>, listed to the agent like
   standard skills) and tier + model pre-filled in New instance; in a squad proposal (repo keywords + goal as context) only persona and tier from 0.8,
