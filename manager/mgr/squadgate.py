@@ -78,6 +78,9 @@ MEMBER_TEMPLATES = {"openrouter": "API model via OpenRouter (512 MiB); counts ag
 CLAUDE_TIER = {"cheap": "haiku", "code": "sonnet", "strong": "opus"}   # no anthropic/* model of the tier in Router
 PERSONA_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
+# Planning personas: Jev never hands them to a non-lead by itself (it gave a
+# CLI developer code-architect at 0.96 — live 2026-10-09); a hint only.
+LEAD_PERSONAS = {"code-architect", "orchestrator"}
 JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
 PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
@@ -404,7 +407,8 @@ def fill_suggestions(project, pid, only="", force=False):
         s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""), jev_context(prop))
         mark, by, hint = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {}), {}
         if s["persona"] and (force or not m["persona"]) and not m.get("new_persona"):   # never over a proposed one
-            if force or s["persona"]["score"] >= JEV_AUTO_MIN:
+            lead_only = s["persona"]["name"] in LEAD_PERSONAS and m["role"] != "lead"
+            if force or (s["persona"]["score"] >= JEV_AUTO_MIN and not lead_only):
                 m["persona"], mark["persona"] = s["persona"]["name"], s["persona"]["score"]
                 by["persona"] = f"jev ({s['persona']['score']:.2f})"
             else:

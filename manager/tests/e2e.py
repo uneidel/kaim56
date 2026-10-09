@@ -5088,6 +5088,29 @@ class ManagerFunctions(unittest.TestCase):
             m._jevsetup.suggest, m._router.jev_url = old
             undo()
 
+    def test_squadgate_jev_never_gives_a_writer_a_lead_persona(self):
+        """code-architect / orchestrator stay a hint for non-leads even at a
+        high score (live: a CLI dev got code-architect at 0.96)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        g = m._squadgate
+        sugg = {"persona": {"name": "code-architect", "score": 0.96}, "skills": [], "tier": None, "model": "",
+                "model_key": "", "classes": {}, "ms": 1, "note": "n"}
+        old = (m._jevsetup.suggest, m._router.jev_url)
+        m._jevsetup.suggest = lambda purpose, context="": json.loads(json.dumps(sugg))
+        m._router.jev_url = lambda: "http://jev"
+        g._spawn = lambda fn, *a: fn(*a)
+        try:
+            plan = dict(self._SG_PLAN, members=self._SG_PLAN["members"] + [{"name": "h", "purpose": "build the CLI"}])
+            st, d = self._sq("/api/squad/propose", "172.30.3.2", plan)
+            self.assertEqual(st, 200, d)
+            h = next(x for x in g._get("sq", d["id"])["members"] if x["name"] == "h")
+            self.assertEqual(h["persona"], "")
+            self.assertEqual(h["suggested"]["hint"]["persona"]["name"], "code-architect")
+        finally:
+            m._jevsetup.suggest, m._router.jev_url = old
+            undo()
+
     # ---- repo profile (mgr/repoprofile.py): what the squad's choices are based on ------
     def _rp_node(self, root):
         """A cfdo-like fixture: a Worker with a Durable Object binding, a CLI
