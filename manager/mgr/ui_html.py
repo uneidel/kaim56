@@ -331,12 +331,18 @@ HTML_TOP = """</head><body>
     <div class=grid2>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
+      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-approved> Plan approved (before: only the lead may be woken; approving a squad proposal sets it)</label></div>
       <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
       <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
       <div class="field span2"><label>Members</label><div id=sq-members></div></div>
     </div>
+    <h4 style="margin:16px 0 4px">Proposals</h4>
+    <div id=sq-gate></div>
+    <h4 style="margin:16px 0 8px">Tickets</h4>
+    <div id=sq-board></div>
+    <h4 style="margin:16px 0 0">Channel</h4>
     <div id=sq-thread style="max-height:440px;overflow:auto;display:grid;gap:8px;margin:12px 0"></div>
     <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="@member … or @all … (posted as you)" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
       <button class="btn btn-secondary" onclick=sqSend()>Send</button></div>
@@ -814,7 +820,11 @@ HTML_BOTTOM = """
   <code>WORKER_PARALLEL</code> at once. <code>overlay</code> is next (docs/design-projects.md).
   <b>Squads</b> (<code>mgr/squads.py</code>, <code>squad.db</code>): a project's members post to one channel (<code>squad_post/ask/read/members</code>);
   each addressed member is woken as a one-off task in its lane, unless a guard (enabled, paused, wakes/hour, the members' tokens today,
-  reply depth) blocks it &#8212; the message is kept with the reason. A post during a woken turn inherits its depth.</p></div>
+  reply depth) blocks it &#8212; the message is kept with the reason. A post during a woken turn inherits its depth.
+  <b>Squad gate</b> (<code>mgr/squadgate.py</code>, <code>squadgate.json</code>): the lead only proposes (<code>squad_propose</code>,
+  <code>squad_request_member/merge</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
+  sets the budget, enables the squad and creates the tickets (each step recorded, re-approve retries). Before approval only the lead
+  can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).

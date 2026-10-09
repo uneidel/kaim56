@@ -39,6 +39,7 @@ from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import skills as _skills
+from mgr import squadgate as _squadgate
 from mgr import squads as _squads
 from mgr import store as _store
 from mgr import tasks as _tasks
@@ -786,6 +787,83 @@ def _rt_squad_answer(h):
         return h._json({"error": "guests only"}, 403)
     r = _squads.answer(_routes._tail(h, "/api/squad/answer/")[0], inst["name"])
     return h._json(r) if r else h._json({"error": "no such question of yours"}, 404)
+
+
+# ---- squad gate: the lead proposes, the user approves; tickets (mgr/squadgate.py)
+def _gate_guest(h, tool, project):
+    """Like _squad_guest; a lead that names no project gets the one it leads
+    (before approval its squad may not be enabled yet)."""
+    inst = h._guest()
+    if inst is not None and not str(project or "").strip():
+        led = [p["name"] for p, m in _projects.memberships(inst["name"]) if m.get("role") == "lead"]
+        project = led[0] if len(led) == 1 else ""
+    return _squad_guest(h, tool, project)
+
+
+_GATE_KIND = {"/api/squad/propose": ("squad_propose", "squad"),
+              "/api/squad/request-member": ("squad_request_member", "member"),
+              "/api/squad/request-merge": ("squad_request_merge", "merge")}
+
+
+@_routes.ROUTER.post("/api/squad/propose")
+@_routes.ROUTER.post("/api/squad/request-member")
+@_routes.ROUTER.post("/api/squad/request-merge")
+def _rt_squad_propose(h):
+    # The project's lead only; nothing happens until the user approves in the UI.
+    tool, kind = _GATE_KIND[h.path.split("?", 1)[0]]
+    b = h._body() or {}
+    inst, p, err = _gate_guest(h, tool, b.get("project"))
+    if err:
+        return h._json({"error": err}, 403)
+    if not _util.rate_ok(("squadgate", inst["name"]), 20, 300):
+        return h._json({"error": "rate limit: 20 proposals per 5 minutes"}, 429)
+    prop, why = _squadgate.propose(p, inst["name"], kind, b)
+    _audit.audit_append(inst["name"], tool, p["name"], prop is not None, err=why, result=(prop or {}).get("id", ""))
+    if prop is None:
+        return h._json({"error": why}, 400)
+    return h._json({"id": prop["id"], "project": p["name"], "kind": kind, "status": prop["status"],
+                    "warnings": prop.get("warnings") or []})
+
+
+@_routes.ROUTER.get("/api/squad/tickets")
+def _rt_squad_tickets(h):
+    inst, p, err = _gate_guest(h, "ticket_list", _routes._qs(h).get("project", [""])[0])
+    if err:
+        return h._json({"error": err}, 403)
+    return h._json({"project": p["name"], "approved": _squadgate.approved(p), "tickets": _squadgate.tickets(p["name"])})
+
+
+@_routes.ROUTER.post("/api/squad/ticket-create")
+@_routes.ROUTER.post("/api/squad/ticket-assign")
+@_routes.ROUTER.post("/api/squad/ticket-update")
+def _rt_squad_ticket(h):
+    # create/assign: the lead, after approval. update: the assignee or the lead.
+    op = h.path.split("?", 1)[0].rsplit("-", 1)[1]
+    b = h._body() or {}
+    inst, p, err = _gate_guest(h, "ticket_" + op, b.get("project"))
+    if err:
+        return h._json({"error": err}, 403)
+    name, is_lead = inst["name"], _squadgate.lead(p) == inst["name"]
+    if not _util.rate_ok(("squadticket", name), 60, 300):
+        return h._json({"error": "rate limit: 60 ticket changes per 5 minutes"}, 429)
+    depth = _squads.turn_depth(name) + 1
+    if op != "update" and not is_lead:
+        t, why = None, f"only the lead of {p['name']} may {op} tickets"
+    elif op != "update" and not _squadgate.approved(p):
+        t, why = None, "waiting for approval: the user has not approved the squad plan yet"
+    elif op == "create":
+        t, why = _squadgate.create_ticket(p, name, b, depth)
+    else:
+        def may(tk):
+            return "" if is_lead or tk.get("assignee") == name else "only the assignee or the lead may update this ticket"
+        body = {"assignee": b.get("assignee", "")} if op == "assign" else \
+            {"status": b.get("status"), "comment": b.get("comment")}
+        t, why = _squadgate.update_ticket(p, name, b.get("id"), body, may, depth)
+    _audit.audit_append(name, "ticket_" + op, f"{p['name']} {b.get('id') or b.get('title') or ''}", t is not None,
+                        err=why, result=(t or {}).get("status", ""))
+    if t is None:
+        return h._json({"error": why}, 400)
+    return h._json(t)
 
 
 # ---- katfs (guest: own share only; admin: browser) -------------------------

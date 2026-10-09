@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, and the squad tools (squad_post/ask/read/members: the project channel). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -125,7 +125,57 @@ def t_squad_members(project=""):
     return f"Project {d['project']}: " + ", ".join(f"{m['name']} ({m['role']})" for m in d.get("members") or [])
 
 
-_PROJ = {"type": "string", "description": "optional when you are in one squad"}
+def _proposed(path, payload):
+    d = json.loads(_post(path, payload))
+    w = d.get("warnings") or []
+    return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — nothing "
+            "happens before; a squad message brings the decision." + (" Flags: " + "; ".join(w) if w else ""))
+
+
+def t_squad_propose(goal, members, tickets=None, budget_tokens_per_day=0, project=""):
+    return _proposed("/api/squad/propose", {"goal": goal, "members": members, "tickets": tickets or [],
+                                            "budget_tokens_per_day": budget_tokens_per_day or None, "project": project})
+
+
+def t_squad_request_member(member, reason="", project=""):
+    return _proposed("/api/squad/request-member", {"member": member, "reason": reason, "project": project})
+
+
+def t_squad_request_merge(writer, summary, project=""):
+    return _proposed("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project})
+
+
+def _tline(t):
+    deps = f" after {','.join(t['depends_on'])}" if t.get("depends_on") else ""
+    return f"#{t['id']} {t['key']} [{t['status']}] {t['title']} -> {t.get('assignee') or 'unassigned'}{deps}"
+
+
+def t_ticket_list(project=""):
+    d = json.loads(_get("/api/squad/tickets?" + _q(project=project)))
+    head = f"Project {d['project']}" + ("" if d.get("approved") else " (squad plan not approved yet)")
+    return head + ":\n" + ("\n".join(_tline(t) for t in d.get("tickets") or []) or "no tickets")
+
+
+def _ticket(path, payload):
+    d = json.loads(_post(path, payload))
+    woke = d.get("woke") or ({d["key"]: d["wake"]} if d.get("wake") else {})
+    return _tline(d) + "".join(f"\n{k}: {v}" for k, v in woke.items())
+
+
+def t_ticket_update(id, status="", comment="", project=""):
+    return _ticket("/api/squad/ticket-update", {"id": id, "status": status, "comment": comment, "project": project})
+
+
+def t_ticket_create(title, description="", assignee="", depends_on=None, key="", project=""):
+    return _ticket("/api/squad/ticket-create", {"title": title, "description": description, "assignee": assignee,
+                                                "depends_on": depends_on or [], "key": key, "project": project})
+
+
+def t_ticket_assign(id, assignee, project=""):
+    return _ticket("/api/squad/ticket-assign", {"id": id, "assignee": assignee, "project": project})
+
+
+_PROJ ={"type": "string", "description": "optional when you are in one squad"}
 TOOLS = {
     "memory_store": (t_memory_store,
         "Store a value in the platform's long-term memory (survives /reset and VM restarts).",
@@ -178,6 +228,51 @@ TOOLS = {
     "squad_members": (_squad(t_squad_members),
         "The members of your squad (project) and their roles.",
         {"type": "object", "properties": {"project": _PROJ}, "required": []}),
+    "squad_propose": (_squad(t_squad_propose),
+        "Lead only: propose the squad plan to the user — goal, members (new or existing instances) and tickets. "
+        "NOTHING is created or started until the user approves it in the UI; the decision arrives as a squad message.",
+        {"type": "object",
+         "properties": {"goal": {"type": "string"},
+                        "members": {"type": "array", "items": {"type": "object", "properties": {
+                            "name": {"type": "string", "description": "a-z 0-9 -"}, "purpose": {"type": "string"},
+                            "role": {"type": "string", "enum": ["writer", "reader", "lead"]},
+                            "existing": {"type": "boolean"}, "persona": {"type": "string"},
+                            "skills": {"type": "array", "items": {"type": "string"}},
+                            "model_tier": {"type": "string", "enum": ["cheap", "strong", "code", "local"]},
+                            "model": {"type": "string"}, "template": {"type": "string"}}}},
+                        "tickets": {"type": "array", "items": {"type": "object", "properties": {
+                            "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
+                            "assignee": {"type": "string"}, "depends_on": {"type": "array", "items": {"type": "string"}}}}},
+                        "budget_tokens_per_day": {"type": "integer"}, "project": _PROJ},
+         "required": ["goal", "members"]}),
+    "squad_request_member": (_squad(t_squad_request_member),
+        "Lead only, after approval: ask the user for one more member (fields as in squad_propose).",
+        {"type": "object", "properties": {"member": {"type": "object"}, "reason": {"type": "string"}, "project": _PROJ},
+         "required": ["member"]}),
+    "squad_request_merge": (_squad(t_squad_request_merge),
+        "Lead only: ask the user to merge a writer's branch; the user reviews the diff and approves.",
+        {"type": "object", "properties": {"writer": {"type": "string"}, "summary": {"type": "string"}, "project": _PROJ},
+         "required": ["writer", "summary"]}),
+    "ticket_list": (_squad(t_ticket_list),
+        "The squad's tickets (id, key, status, assignee, dependencies).",
+        {"type": "object", "properties": {"project": _PROJ}, "required": []}),
+    "ticket_update": (_squad(t_ticket_update),
+        "Your ticket (any, as the lead): status open/doing/review/done/blocked and/or a comment. "
+        "Done wakes the members whose tickets waited on it.",
+        {"type": "object", "properties": {"id": {"type": "string"}, "status": {"type": "string"},
+                                          "comment": {"type": "string"}, "project": _PROJ},
+         "required": ["id"]}),
+    "ticket_create": (_squad(t_ticket_create),
+        "Lead only, after approval: a new ticket; an assignee whose dependencies are done is woken.",
+        {"type": "object", "properties": {"title": {"type": "string"}, "description": {"type": "string"},
+                                          "assignee": {"type": "string"}, "key": {"type": "string"},
+                                          "depends_on": {"type": "array", "items": {"type": "string"}},
+                                          "project": _PROJ},
+         "required": ["title"]}),
+    "ticket_assign": (_squad(t_ticket_assign),
+        "Lead only, after approval: assign a ticket; wakes the assignee when its dependencies are done.",
+        {"type": "object", "properties": {"id": {"type": "string"}, "assignee": {"type": "string"}, "project": _PROJ},
+         "required": ["id", "assignee"]}),
     "notify": (t_notify,
         "Push a notification to the user's devices (app + web bell).",
         {"type": "object",
