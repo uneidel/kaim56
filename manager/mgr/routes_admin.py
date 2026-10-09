@@ -326,10 +326,13 @@ def _squad_post(h, name, sub):
     pr = getattr(h, "principal", None)
     who = pr.name if pr is not None and pr.sub != "basic" else "admin"
     if sub == "post":
-        m, why = _squads.post(p, "user:" + who, b.get("to"), b.get("text"), reply_to=b.get("reply_to"))
+        m, why = _squadgate.operator_post(p, who, b)
         return h._json(m) if m else h._json({"error": why}, 400)
-    if sub == "decide":                      # {id, approve, note, members?, tickets?, budget_tokens_per_day?}
-        edits = {k: b[k] for k in ("members", "tickets", "budget_tokens_per_day") if k in b}
+    if sub == "decide":                      # {id, approve | changes, note, goal?, members?, tickets?, budget_tokens_per_day?}
+        edits = {k: b[k] for k in ("goal", "members", "tickets", "budget_tokens_per_day") if k in b}
+        if b.get("changes"):                 # request changes: the note is the required comment
+            r, why = _squadgate.request_changes(name, str(b.get("id") or ""), who, b.get("note"), edits or None)
+            return h._json(r) if r else h._json({"error": why}, 400)
         r, why = _squadgate.decide(name, str(b.get("id") or ""), bool(b.get("approve")), who,
                                    b.get("note"), edits or None)
         return h._json(r) if r else h._json({"error": why}, 400)

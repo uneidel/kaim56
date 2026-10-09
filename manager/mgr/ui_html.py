@@ -371,7 +371,7 @@ HTML_TOP = """</head><body>
     <div id=sq-board></div>
     <h4 style="margin:16px 0 0">Channel</h4>
     <div id=sq-thread style="max-height:440px;overflow:auto;display:grid;gap:8px;margin:12px 0"></div>
-    <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="@member … or @all … (posted as you)" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
+    <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="message the lead, or @member / @all …" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
       <button class="btn btn-secondary" onclick=sqSend()>Send</button></div>
     <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
   </div>

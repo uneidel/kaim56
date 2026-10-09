@@ -438,6 +438,12 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sq-tk>select.input{flex:0 1 180px}
 .sq-key{min-width:40px}
 .sq-tkd{flex-basis:100%;font-size:12px}
+.sq-tkd textarea,.sq-goal{width:100%;margin-top:4px;font-size:13px;resize:vertical}
+.sq-tk>.sq-dep{flex:0 1 110px}
+.sq-chg{margin:8px 0;font-size:12.5px}
+.sq-chg summary{cursor:pointer;color:var(--color-accent)}
+.sq-chg ul{margin:6px 0;padding-left:18px}
+.sq-cmt{margin:6px 0;padding:6px 10px;border-left:2px solid var(--app-line)}
 .sq-foot{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;margin:12px -14px -14px;padding:10px 14px;
   background:var(--app-card);border-top:1px solid var(--app-line);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
 .sq-foot .input{flex:1 1 200px;min-width:0;width:auto}

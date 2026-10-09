@@ -226,9 +226,10 @@ def _last_user(project):
     return row[0] if row else ""
 
 
-def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
+def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None):
     """Store one message and wake its addressees. -> (message, '') or (None, why).
-    `sender` is a member's name or 'user:<name>'; it is never woken."""
+    `sender` is a member's name or 'user:<name>'; it is never woken. `hints`:
+    {member: line} added to that member's wake only (not to the channel)."""
     text = str(text or "").strip()
     if not text:
         return None, "text missing"
@@ -256,6 +257,10 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
     if kind == "post" and not str(sender).startswith("user:") and (not to or any(x in _OPERATOR_WORDS for x in to)):
         op = _last_user(proj["name"]) or "user:operator"
         to = [op if x in _OPERATOR_WORDS else x for x in to] or [op]
+    # The operator without an addressee talks to the lead (live 2026-10-09: a
+    # plain "a simple app ui" in the Squads chat was refused).
+    if kind == "post" and str(sender).startswith("user:") and not to:
+        to = [n for n, m in (proj.get("members") or {}).items() if m.get("role") == "lead"][:1]
     bad = [x for x in to if x not in names and x != "all" and not x.startswith("user:")]
     if bad:
         return None, f"not a member of {proj['name']}: {', '.join(sorted(set(bad)))}"
@@ -280,7 +285,8 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
         rec = record(proj)
         if targets and not blocked:
             for m in targets:
-                msg = _frame(proj["name"], sender, mid, text, kind, (rec or {}).get("id", ""),
+                hint = (hints or {}).get(m)
+                msg = _frame(proj["name"], sender, mid, text + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
                              _squadrec.member_id(rec, m))
                 try:
                     woke[m] = wake(m, msg, proj["name"], int(depth), mid)

@@ -688,9 +688,10 @@ def t_squad_members(project=""):
 def _gate_out(d, err):
     if err:
         return err
-    w = d.get("warnings") or []
-    return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — "
-            "nothing happens before; a squad message brings the decision. Your work for now is done: "
+    w, v = d.get("warnings") or [], d.get("version") or 1
+    head = (f"Proposal {d['id']} is now v{v}, waiting for approval (it replaced v{v - 1}) — " if v > 1 else
+            f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — ")
+    return (head + "nothing happens before; a squad message brings the decision. Your work for now is done: "
             "end this turn with a short summary (no tickets, no further posts until the decision arrives)."
             + (" Flags: " + "; ".join(w) if w else ""))
 

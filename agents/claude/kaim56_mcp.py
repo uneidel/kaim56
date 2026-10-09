@@ -127,8 +127,10 @@ def t_squad_members(project=""):
 
 def _proposed(path, payload):
     d = json.loads(_post(path, payload))
-    w = d.get("warnings") or []
-    return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — nothing "
+    w, v = d.get("warnings") or [], d.get("version") or 1
+    head = (f"Proposal {d['id']} is now v{v}, waiting for approval (it replaced v{v - 1}) — " if v > 1 else
+            f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — ")
+    return (head + "nothing "
             "happens before; a squad message brings the decision. Your work for now is done: end this turn with a short "
             "summary (no tickets, no further posts until the decision arrives)." + (" Flags: " + "; ".join(w) if w else ""))
 
@@ -313,7 +315,9 @@ TOOLS = {
         "Lead only: propose the squad plan to the user — goal, members (new or existing instances) and tickets. "
         "Pick each member's persona, skills, model_tier and template from squad_catalog; when no persona fits, give "
         "new_persona (created only if the user approves). NOTHING is created or started until the user approves "
-        "it in the UI; the decision arrives as a squad message.",
+        "it in the UI; the decision arrives as a squad message. The user may ask for changes instead (a squad message "
+        "'Revise proposal <id>'): then call squad_propose again with the whole updated plan — it replaces that "
+        "proposal as its next version.",
         {"type": "object",
          "properties": {"goal": {"type": "string"},
                         "members": {"type": "array", "items": {"type": "object", "properties": {
