@@ -1,10 +1,34 @@
 # Rootfs of the indexer microVM: python + repowise (pinned), git, the NFS
 # client for the read-only project mounts. Nothing here needs the internet
 # at runtime: repowise indexes offline with --no-prose (no LLM, no embedder).
+
+# --- the repowise web dashboard (Next.js), built from the pinned source tag --
+# `repowise serve` would download a prebuilt UI on first run (no internet in
+# the VM) and that build only works at the URL root. The manager serves it
+# under /indexer/ui/ (mgr/indexer.py), so it is built here with that basePath;
+# the API calls go to the same prefix (NEXT_PUBLIC_REPOWISE_API_URL), the UI's
+# middleware forwards them to the API on loopback.
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS web
+ADD --checksum=sha256:fd062d695764025763e21979b16f59cec0b2ea644cbb7de80cddddbed8f5a21b \
+    https://github.com/repowise-dev/repowise/archive/refs/tags/v0.55.0.tar.gz /src.tgz
+WORKDIR /src
+ENV NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_REPOWISE_API_URL=/indexer/ui
+RUN tar -xzf /src.tgz --strip-components=1 && cd packages/web \
+    && sed -i 's|output: "standalone",|output: "standalone", basePath: "/indexer/ui",|' next.config.ts \
+    && sed -i 's|pathname.match(/^\\/repos|pathname.match(/\\/repos|' src/components/layout/context-drawer-provider.tsx \
+    && sed -i 's|location.href = `/repos/|location.href = `/indexer/ui/repos/|' src/components/docs/docs-viewer.tsx \
+    && grep -q 'basePath: "/indexer/ui"' next.config.ts \
+    && grep -q 'pathname.match(/\\/repos' src/components/layout/context-drawer-provider.tsx \
+    && grep -q '`/indexer/ui/repos/' src/components/docs/docs-viewer.tsx \
+    && cd /src && npm ci --no-audit --no-fund -w packages/web \
+    && cd packages/web && npm run build \
+    && mkdir /out && cp -a .next/standalone/. /out/ \
+    && cp -a .next/static /out/packages/web/.next/static && cp -a public /out/packages/web/public
+
 FROM python:3.12-slim
 
 ENV DO_NOT_TRACK=1 REPOWISE_TELEMETRY_DISABLED=1 REPOWISE_SKIP_EDITOR_SETUP=1 REPOWISE_NO_HINTS=1 \
-    PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+    NEXT_TELEMETRY_DISABLED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git iproute2 nfs-common curl \
@@ -15,7 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /var/lib/indexer /project && chown indexer:indexer /var/lib/indexer \
     && su indexer -c 'repowise telemetry disable' >/dev/null
 
+COPY --from=web /usr/local/bin/node /usr/local/bin/node
+COPY --from=web /out /opt/repowise-web
 COPY indexer_service.py /app/indexer_service.py
 COPY config.env         /app/config.env
 COPY guest-init.sh      /init
-RUN chmod +x /init
+# The UI's server writes only its cache (image optimisation, ISR): that one
+# directory is the service user's, the code stays root's.
+RUN chmod +x /init && node --version \
+    && mkdir -p /opt/repowise-web/packages/web/.next/cache \
+    && chown indexer:indexer /opt/repowise-web/packages/web/.next/cache

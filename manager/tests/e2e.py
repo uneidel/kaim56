@@ -4734,6 +4734,101 @@ class ManagerFunctions(unittest.TestCase):
             finally:
                 m._instances.load_templates, m._instances.load_instances, m._instances.save_instance = old
 
+    def test_indexer_dashboard_route_admin_only_starts_indexer_and_proxies(self):
+        """On INDEX_HOST: /indexer/open/<p> starts the stopped indexer and the
+        dashboard, then redirects to /indexer/ui; /indexer/ui/... is relayed
+        unchanged (method, path, query, body) without the browser's credentials,
+        upstream cookies dropped; counts as use. Admin only: not for guests, not
+        for role user. (Who gets onto INDEX_HOST: test_index_host_isolation.)"""
+        import http.server
+        m = self.m
+        x = m._indexer
+        running, calls, answers, woke, undo = self._idx_env()
+        seen = []
+
+        class D(http.server.BaseHTTPRequestHandler):
+            def _answer(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                seen.append((self.command, self.path, dict(self.headers), self.rfile.read(n)))
+                out = b"<html>dash</html>"
+                self.send_response(308 if self.path == "/indexer/ui/" else 200)
+                self.send_header("Location", "/indexer/ui")
+                self.send_header("Set-Cookie", "x=1")
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+            do_GET = do_POST = _answer
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), D)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (x.DASH_PORT, m._instances.net_of, m._settings.INDEX_HOST)
+        x.DASH_PORT = srv.server_address[1]
+        m._instances.net_of = lambda inst: {"guest": "127.0.0.1"}
+        m._settings.INDEX_HOST = "index.example.com"
+        L = "127.0.0.1"
+        admin = m._oidc.Principal("a1", "Admin", "", "admin")
+
+        def on_index(h, method="GET"):                   # past _auth_index with a dash session
+            h.headers["Host"] = "index.example.com"
+            h.principal = admin
+            self.assertTrue(h._dispatch(method))
+            return h
+        try:
+            for meth, path in (("GET", "/indexer/open/sq"), ("GET", "/indexer/ui/repos/r"), ("POST", "/indexer/ui/api/x")):
+                self.assertTrue(m._routes.ROUTER.resolve(meth, path)[1])                 # admin: no guest
+                self.assertFalse(m._auth.user_allowed(meth, path))                       # no role user
+            h = self._handler("/indexer/ui/repos/r", "172.30.4.2")                      # a guest
+            h._do_GET()
+            self.assertEqual((self._status(h), seen), (403, []))
+            h = self._handler("/indexer/ui/repos/r", L)
+            h.headers["Host"] = "index.example.com"
+            h.principal = m._oidc.Principal("u1", "User", "", "user")
+            self.assertTrue(h._dispatch("GET"))
+            self.assertEqual((self._status(h), seen), (403, []))
+
+            h = on_index(self._handler("/indexer/ui", L))                               # indexer stopped
+            self.assertEqual((self._status(h), seen), (503, []))
+            answers["/dashboard"] = {"ok": True, "project": "sq", "port": 7341}
+            x._last_use[0] = 0
+            h = on_index(self._handler("/indexer/open/sq", L))
+            self.assertEqual(self._status(h), 302)
+            self.assertIn(b"Location: /indexer/ui\r\n", h.wfile.getvalue())
+            self.assertEqual((running, calls[-1]), ({"idx"}, ("/dashboard", {"project": "sq"})))
+            self.assertGreater(x._last_use[0], 0)                                       # a use
+
+            x._last_use[0] = 0
+            h = self._handler("/indexer/ui/repos/r?tab=1", L, auth="Basic eDp5")
+            h.headers["Cookie"] = "__Host-kaim56_dash=secret"
+            h.headers["RSC"] = "1"
+            on_index(h)
+            raw = h.wfile.getvalue()
+            self.assertEqual(self._status(h), 200)
+            self.assertTrue(raw.endswith(b"<html>dash</html>")); self.assertNotIn(b"Set-Cookie", raw)
+            meth, path, hdrs, _ = seen[-1]
+            self.assertEqual((meth, path, hdrs.get("RSC")), ("GET", "/indexer/ui/repos/r?tab=1", "1"))
+            self.assertFalse({"Authorization", "Cookie"} & set(hdrs))
+            self.assertGreater(x._last_use[0], 0)
+            h = on_index(self._handler("/indexer/ui/", L))
+            self.assertEqual(self._status(h), 308)                                      # redirects pass through
+            h = on_index(self._post_handler("/indexer/ui/api/search", L, b'{"q":"x"}'), "POST")
+            self.assertEqual((self._status(h), seen[-1][0], seen[-1][1], seen[-1][3]),
+                             (200, "POST", "/indexer/ui/api/search", b'{"q":"x"}'))
+            h = on_index(self._handler("/indexer/other", L))
+            self.assertEqual(self._status(h), 404)
+
+            answers["/dashboard"] = urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b'{"error": "not indexed here (yet)"}'))
+            h = on_index(self._handler("/indexer/open/sq", L))
+            self.assertEqual(self._status(h), 503); self.assertIn(b"not indexed here", h.wfile.getvalue())
+            h = on_index(self._handler("/indexer/open/nope", L))
+            self.assertIn(b"unknown project", h.wfile.getvalue())
+        finally:
+            x.DASH_PORT, m._instances.net_of, m._settings.INDEX_HOST = old
+            srv.shutdown(); srv.server_close()
+            undo()
+
     # ---- Jev setup suggestions (mgr/jevsetup.py), per-instance SKILLS ----------------
     def _fake_jev(self):
         """A Jev on a free port: entailment by substring; records each call's
@@ -6798,6 +6893,113 @@ class ManagerFunctions(unittest.TestCase):
         st["codes"]["c-1"] = {"challenge": q["code_challenge"], "nonce": q["nonce"], "redirect": q["redirect_uri"]}
         return q, self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")
 
+    def _idx_req(self, path, method="GET", cookie=None, auth=None, origin=None, host="index.example.com"):
+        h = self._post_handler(path, "10.0.0.9", b"{}", origin=origin) if method == "POST" else self._handler(path, "10.0.0.9")
+        h.headers["Host"] = host
+        if auth:
+            h.headers["Authorization"] = auth
+        if cookie:
+            h.headers["Cookie"] = cookie
+        (h.do_POST if method == "POST" else h.do_GET)()
+        head, _, data = h.wfile.getvalue().partition(b"\r\n\r\n")
+        return self._status(h), head.decode(), data
+
+    def _idx_login(self, st, code="c-2"):
+        """The dashboard login on INDEX_HOST: own redirect_uri, back to the page it was for."""
+        c, head, _ = self._idx_req("/indexer/open/sq")
+        self.assertEqual(c, 302); self.assertIn("Location: /auth/login?next=%2Findexer%2Fopen%2Fsq\r\n", head + "\r\n")
+        c, head, _ = self._idx_req("/auth/login?next=%2Findexer%2Fopen%2Fsq")
+        self.assertEqual(c, 302)
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(re.search(r"Location: (\S+)", head).group(1)).query))
+        self.assertEqual(q["redirect_uri"], "https://index.example.com/auth/callback")
+        self.assertIn("kaim56_next=/indexer/open/sq;", head)
+        st["codes"][code] = {"challenge": q["code_challenge"], "nonce": q["nonce"], "redirect": q["redirect_uri"]}
+        return self._idx_req(f"/auth/callback?state={q['state']}&code={code}",
+                             cookie=f"kaim56_login={q['state']}; kaim56_next=/indexer/open/sq")
+
+    def test_index_host_isolation(self):
+        """INDEX_HOST (the code dashboard's own origin): an OIDC login there
+        makes a "dash" session (admins only, own redirect_uri and host-only
+        cookie) valid on that host only; manager sessions, Bearer and Basic are
+        not accepted there, nor dash sessions on the manager; only the dashboard
+        and login paths answer there; the manager has no /indexer/ui any more
+        and refuses POSTs from that Origin; POSTs there are same-origin only;
+        never framed, no Referer."""
+        m = self.m
+        st = self._oidc_env()
+        old = m._settings.INDEX_HOST, m._indexer.dashboard_target, m._auth.PW
+        m._settings.INDEX_HOST = "index.example.com"
+        m._indexer.dashboard_target = lambda: None          # the dashboard answers 503 "not running"
+        def undo():
+            m._settings.INDEX_HOST, m._indexer.dashboard_target, m._auth.PW = old
+            m._auth._trusted_cache.update(ts=0.0)
+        self.addCleanup(undo)
+        _, (_, head, _) = self._oidc_web_login(st)
+        web = re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        code, head, body = self._idx_login(st)
+        self.assertEqual(code, 200, body)
+        ck = re.search(r"Set-Cookie: __Host-kaim56_dash=([^;]+);([^\r\n]*)", head)
+        for flag in ("HttpOnly", "Secure", "Path=/", f"Max-Age={m._sessions.TTL['dash']}"):
+            self.assertIn(flag, ck.group(2))
+        self.assertNotIn("Domain", ck.group(2)); self.assertNotIn("kaim56_sid=", head)
+        self.assertIn(b'url=/indexer/open/sq"', body)
+        dash = ck.group(1)
+        self.assertEqual(sorted(s["kind"] for s in m._sessions.list_all()), ["dash", "web"])
+        D = f"__Host-kaim56_dash={dash}"
+        # who gets onto INDEX_HOST: the dash session only (503 = past auth, the dashboard is down)
+        self.assertEqual(self._idx_req("/indexer/ui/", cookie=D)[0], 503)
+        m._auth.PW = "s3cret"
+        for kw in ({"cookie": f"kaim56_sid={web}"}, {"cookie": f"__Host-kaim56_dash={web}"},
+                   {"auth": f"Bearer {web}"}, {"auth": f"Bearer {dash}"},
+                   {"auth": "Basic " + base64.b64encode(b"admin:s3cret").decode()}, {}):
+            code, head, _ = self._idx_req("/indexer/ui/", **kw)
+            self.assertEqual((code, "Location: /auth/login" in head), (302, True), kw)
+        self.assertEqual(self._idx_req("/indexer/ui/api/x", "POST", auth="Basic " + base64.b64encode(b"admin:s3cret").decode(),
+                                       origin="https://index.example.com")[0], 401)
+        m._auth.PW = ""
+        # the dash session is no good on the manager's host
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={dash}")[0], 401)
+        self.assertEqual(self._oidc_req("/api/auth/me", bearer=dash)[0], 401)
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={web}")[0], 200)
+        # nothing else answers on INDEX_HOST, with or without a session
+        for meth, p in (("GET", "/"), ("GET", "/api/instances"), ("GET", "/api/auth/me"), ("GET", "/i/a1/"),
+                        ("GET", "/katfs/"), ("GET", "/indexerx"), ("POST", "/api/auth/device"), ("POST", "/api/tasks")):
+            self.assertEqual(self._idx_req(p, meth, cookie=D, origin="https://index.example.com")[0], 404, p)
+        # the manager's host: no dashboard, the open goes over to INDEX_HOST
+        ckw = f"kaim56_sid={web}"
+        self.assertEqual(self._idx_req("/indexer/ui/", cookie=ckw, host="agents.example.com")[0], 404)
+        code, head, _ = self._idx_req("/indexer/open/sq", cookie=ckw, host="agents.example.com")
+        self.assertEqual(code, 302); self.assertIn("Location: https://index.example.com/indexer/open/sq\r\n", head + "\r\n")
+        # CSRF: the manager refuses INDEX_HOST's Origin; INDEX_HOST takes its own only
+        m._auth._trusted_cache.update(ts=0.0)                # built afresh with this test's PUBLIC_HOST
+        self.assertFalse(m._auth.origin_allowed("https://index.example.com"))
+        self.assertTrue(m._auth.origin_allowed("https://agents.example.com"))
+        code, _, body = self._idx_req("/api/tasks", "POST", cookie=ckw, origin="https://index.example.com", host="agents.example.com")
+        self.assertEqual((code, b"cross-site" in body), (403, True))
+        for o in ("https://agents.example.com", None, "null"):
+            self.assertEqual(self._idx_req("/indexer/ui/api/x", "POST", cookie=D, origin=o)[0], 403, o)
+        self.assertEqual(self._idx_req("/indexer/ui/api/x", "POST", cookie=D, origin="https://index.example.com")[0], 503)
+        # headers: never framed, no Referer out; the manager keeps SAMEORIGIN
+        _, head, _ = self._idx_req("/indexer/ui/", cookie=D)
+        for hd in ("X-Frame-Options: DENY", "Content-Security-Policy: frame-ancestors 'none'", "Referrer-Policy: no-referrer"):
+            self.assertIn(hd, head)
+        _, head, _ = self._idx_req("/api/auth/me", cookie=ckw, host="agents.example.com")
+        self.assertIn("X-Frame-Options: SAMEORIGIN", head); self.assertNotIn("Referrer-Policy", head)
+        # INDEX_HOST unset: no dashboard anywhere, no link
+        m._settings.INDEX_HOST = ""
+        self.assertEqual(self._idx_req("/indexer/open/sq", cookie=ckw, host="agents.example.com")[0], 404)
+        self.assertIn("const INDEX_HOST=\"\";", m._ui.render())
+        m._settings.INDEX_HOST = "index.example.com"
+        self.assertIn("const INDEX_HOST=\"index.example.com\";", m._ui.render())
+        # logout there ends the dash session only; role user gets no dash session
+        code, head, _ = self._idx_req("/auth/logout", cookie=D)
+        self.assertIn("__Host-kaim56_dash=;", head)
+        self.assertEqual([s["kind"] for s in m._sessions.list_all()], ["web"])
+        st["roles"] = ["kaim56_user"]
+        code, head, _ = self._idx_login(st, "c-3")
+        self.assertEqual(code, 403); self.assertNotIn("__Host-kaim56_dash=", head)
+        self.assertEqual([s["kind"] for s in m._sessions.list_all()], ["web"])
+
     def test_oidc_off_keeps_basic_auth(self):
         """Without OIDC_* nothing changes: no principal, Basic challenge, the
         /auth routes are 404."""
@@ -8048,6 +8250,68 @@ class IndexerService(unittest.TestCase):
             self.assertEqual(s.reindex("p", "--upload-pack=x", run=run)["error"], "bad ref")
         finally:
             s.DATA, s.SRC_ROOT, s.STATE_FILE = old
+
+    def test_dashboard_starts_once_per_project_and_stops(self):
+        """API on loopback, UI on the VM's network with the API behind it; one
+        project at a time; a dead process or no port in time -> stopped, error;
+        only indexed projects; a reindex of the shown project stops it."""
+        s = self.s
+        tmp = tempfile.mkdtemp(prefix="e2e-idxdash-")
+        old = (s.DATA, s.STATE_FILE, s.SRC_ROOT)
+        s.DATA, s.STATE_FILE, s.SRC_ROOT = tmp, os.path.join(tmp, "state.json"), os.path.join(tmp, "src")
+        os.makedirs(os.path.join(s.SRC_ROOT, "b", ".git"))
+        made = []
+
+        class P:
+            def __init__(self, argv, **kw):
+                self.argv, self.kw, self.rc, self.terminated = argv, kw, None, False
+                made.append(self)
+
+            def poll(self):
+                return self.rc
+
+            def terminate(self):
+                self.terminated, self.rc = True, -15
+
+            def wait(self, timeout=None):
+                return self.rc
+        up = {"ok": True}
+        try:
+            for p in ("a", "b"):
+                os.makedirs(os.path.join(tmp, p, ".repowise"))
+                open(os.path.join(tmp, p, ".repowise", "state.json"), "w").close()
+            s._save_state({"a": {"ok": True}, "b": {"ok": True}, "c": {"ok": False}})
+            api, ui = s.dashboard_cmds("a")
+            self.assertEqual(api[0], os.path.join(tmp, "a"))
+            self.assertEqual(api[1][:3] + api[1][4:6], ["repowise", "serve", "--no-ui", "127.0.0.1", "--port"])
+            self.assertEqual((ui[2]["HOSTNAME"], ui[2]["PORT"], ui[2]["REPOWISE_API_URL"]),
+                             ("0.0.0.0", str(s.DASH_PORT), f"http://127.0.0.1:{s.DASH_API_PORT}"))
+            for env in (api[2], ui[2]):
+                self.assertEqual((env["DO_NOT_TRACK"], env["REPOWISE_TELEMETRY_DISABLED"]), ("1", "1"))
+            self.assertEqual(ui[2]["NEXT_TELEMETRY_DISABLED"], "1"); self.assertEqual(api[2]["REPOWISE_EMBEDDER"], "mock")
+
+            d = s.Dashboard(popen=P, ready=lambda port: up["ok"], wait=0.2)
+            self.assertEqual(d.start("a"), {"ok": True, "project": "a", "port": s.DASH_PORT})
+            self.assertEqual(([p.argv[0] for p in made], d.current()), (["repowise", "node"], "a"))
+            self.assertTrue(d.start("a")["ok"]); self.assertEqual(len(made), 2)            # already up: reused
+            self.assertTrue(d.start("b")["ok"])
+            self.assertEqual(([p.terminated for p in made], d.current()), ([True, True, False, False], "b"))
+            self.assertIn("not indexed", d.start("c")["error"]); self.assertIn("not indexed", d.start("zz")["error"])
+            self.assertEqual(d.start("../a")["error"], "bad project name")
+            made[-1].rc = 1                                                             # the UI died
+            up["ok"] = False
+            out = d.start("b")
+            self.assertFalse(out["ok"]); self.assertEqual(d.current(), "")
+            up["ok"] = True
+            self.assertTrue(d.start("b")["ok"])
+            old_dash, s.DASH = s.DASH, d
+            try:
+                s.reindex("b", run=lambda argv, **kw: type("R", (), {"returncode": 1, "stdout": "", "stderr": "x"})(), wait_src=0)
+                self.assertEqual(d.current(), "")                                       # stopped by the reindex
+            finally:
+                s.DASH = old_dash
+        finally:
+            s.DATA, s.STATE_FILE, s.SRC_ROOT = old
 
     def test_pool_keeps_at_most_size_and_drops_the_least_recent(self):
         made = []

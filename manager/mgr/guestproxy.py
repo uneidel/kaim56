@@ -9,6 +9,7 @@ as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
 import codecs
+import http.client
 import json
 import re
 import socket
@@ -353,6 +354,52 @@ class GuestProxyMixin:
         self.send_header("Content-Type", rct)
         self.end_headers()
         self.wfile.write(body)
+
+
+_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+        "transfer-encoding", "upgrade", "host"}
+_DASH_NOT_UP = _HOP | {"authorization", "cookie", "content-length", "x-forwarded-for", "x-forwarded-host",
+                       "x-forwarded-proto", "x-real-ip", "forwarded"}
+_DASH_NOT_DOWN = _HOP | {"set-cookie", "x-frame-options", "referrer-policy"}   # ours apply (mgr/httpd.end_headers)
+
+
+def dash_relay(h, method, target):
+    """Relay this request unchanged (path, query, method) to the code dashboard
+    in the indexer VM (mgr/indexer.py) and stream the answer back.
+
+    Unlike /i/<name>/ the HTML is NOT sandboxed: it is a JS app that calls its
+    API on its origin. That origin is its own (settings.INDEX_HOST, only a
+    "dash" session is valid there), so its JavaScript never runs with the
+    manager's session. The browser's credentials (Authorization, Cookie) never
+    reach the VM, its cookies never reach the browser."""
+    if target is None:
+        return h._send(b"<p>The code indexer is not running: open the dashboard from the Squad panel.</p>",
+                       "text/html; charset=utf-8", 503)
+    body = h._raw() if method == "POST" else None
+    hdrs = {k: v for k, v in h.headers.items() if k.lower() not in _DASH_NOT_UP}
+    conn = http.client.HTTPConnection(target[0], target[1], timeout=120)
+    try:
+        conn.request(method, h.path, body=body, headers=hdrs)
+        r = conn.getresponse()
+    except OSError as e:
+        conn.close()
+        return h._send(f"dashboard unreachable: {e!r}".encode(), "text/plain; charset=utf-8", 502)
+    try:
+        h.send_response(r.status)
+        for k, v in r.getheaders():
+            if k.lower() not in _DASH_NOT_DOWN:
+                h.send_header(k, v)
+        h.end_headers()
+        while True:                        # chunk by chunk: RSC and job streams arrive in pieces
+            chunk = r.read1(65536)
+            if not chunk:
+                break
+            h.wfile.write(chunk)
+            h.wfile.flush()
+    except OSError:
+        pass
+    finally:
+        conn.close()
 
 
 _WS_KEEP = ("host", "upgrade", "connection", "origin", "user-agent", "pragma", "cache-control")

@@ -10,6 +10,7 @@ one place.
 """
 import base64
 import chatui
+import html
 import json
 import mimetypes
 import os
@@ -24,6 +25,7 @@ from mgr import cfapi as _cfapi
 from mgr import cloud as _cloud
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
+from mgr import auth as _auth
 from mgr import checkout as _checkout
 from mgr import browse as _browse
 from mgr import chats as _chats
@@ -503,6 +505,43 @@ def _rt_aicheck_asset(h):
 @_routes.ROUTER.get("/katfs/", prefix=True, admin=True)
 def _rt_katfs_proxy(h):
     return h._katfs_proxy()
+
+
+def _indexer_page(h, method):
+    """/indexer/open/<project>: start the code dashboard, then on to it;
+    /indexer/ui[/…]: the dashboard itself (mgr/indexer.py). Admin only.
+    Served on its own origin only (settings.INDEX_HOST, mgr/httpd._auth_index):
+    the manager's host redirects the open there and has no /indexer/ui."""
+    p = h.path.split("?", 1)[0]
+    if not _auth.is_index_host(h.headers):
+        if method == "GET" and p.startswith("/indexer/open/") and _settings.INDEX_HOST:
+            h.send_response(302)
+            h.send_header("Location", f"https://{_settings.INDEX_HOST}{p}")
+            h.end_headers()
+            return None
+        return h._json({"error": "not found" if _settings.INDEX_HOST else "code dashboard off (site INDEX_HOST unset)"}, 404)
+    if method == "GET" and p.startswith("/indexer/open/"):
+        why = _indexer.open_dashboard(urllib.parse.unquote(p[len("/indexer/open/"):]).strip("/"))
+        if why:
+            return h._send(f"<p>Code dashboard unavailable: {html.escape(why)}</p>".encode(),
+                           "text/html; charset=utf-8", 503)
+        h.send_response(302)
+        h.send_header("Location", _indexer.DASH_BASE)
+        h.end_headers()
+        return None
+    if p == _indexer.DASH_BASE or p.startswith(_indexer.DASH_BASE + "/"):
+        return _guestproxy.dash_relay(h, method, _indexer.dashboard_target())
+    return h._json({"error": "not found"}, 404)
+
+
+@_routes.ROUTER.get("/indexer/", prefix=True, admin=True)
+def _rt_indexer_get(h):
+    return _indexer_page(h, "GET")
+
+
+@_routes.ROUTER.post("/indexer/", prefix=True, admin=True)
+def _rt_indexer_post(h):
+    return _indexer_page(h, "POST")
 
 
 @_routes.ROUTER.get("/i/", prefix=True, admin=True)

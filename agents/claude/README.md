@@ -11,7 +11,7 @@ Signal (direct chat) ─▶ signalapi ─▶ [ microVM: bridge.py + claude -p ] 
 
 ## Prerequisites (present on this box)
 - `/dev/kvm` (KVM) ✅, VT-x ✅ — checked.
-- `docker`, `curl`, `e2fsprogs` (mkfs.ext4 -d), `iproute2`, `iptables`.
+- `docker`, `curl`, `iproute2`, `iptables` (the ext4 is made in a throwaway Debian container, owners as in the image).
 - The bridge code lives in `../claude-signal-bridge/bridge.py` (gets baked in).
 
 ## Files
@@ -20,7 +20,7 @@ Signal (direct chat) ─▶ signalapi ─▶ [ microVM: bridge.py + claude -p ] 
 | `Dockerfile.rootfs` | contents of the guest rootfs (Debian + Node + Claude Code + python) |
 | `config.env` | bridge configuration in the guest (number, ALLOWED_SENDERS, …) |
 | `guest-init.sh` | PID 1 in the VM: mounts + DNS + starts the bridge |
-| `build.sh` | fetches firecracker + kernel, builds `rootfs.ext4`, injects the login |
+| `build.sh` | fetches firecracker + kernel, then `build-rootfs.sh` builds `rootfs.ext4` |
 | `net.sh` | tap0 + NAT (ROOT) |
 | `vmconfig.json` | Firecracker machine config (2 vCPU, 1536 MB) |
 | `run.sh` | starts the microVM |
@@ -33,9 +33,9 @@ Signal (direct chat) ─▶ signalapi ─▶ [ microVM: bridge.py + claude -p ] 
 cd /home/ulrich/claude-signal-firecracker
 ./build.sh
 ```
-Produces `firecracker`, `vmlinux`, `rootfs.ext4` and places `~/.claude/.credentials.json`
-into the guest (the "use subscription" variant). For your own API key, instead set
-`ANTHROPIC_API_KEY=…` in `config.env` and omit the credentials step in `build.sh`.
+Produces `firecracker`, `vmlinux`, `rootfs.ext4`. No login in the image: the guest fetches
+the host's live credential from the manager at boot. For your own API key, instead set
+`ANTHROPIC_API_KEY=…` in `config.env`.
 
 **2) Network + start** (ROOT — tap/iptables/kvm):
 ```bash
@@ -59,8 +59,8 @@ journalctl -u claude-fc -f
 - **Stronger isolation** than a container: a compromise stays in the VM; access only
   over the network. No `/home` mount, no Docker socket.
 - The trust boundary remains `ALLOWED_SENDERS` (only your number).
-- The login lives in `rootfs.ext4` (OAuth token) — protect the image accordingly.
-  Host and VM share the token (token-rotation note as with the container).
+- The login is fetched from the manager at boot (`/home/node/.claude`), never baked into
+  `rootfs.ext4`. Host and VM share the token (token-rotation note as with the container).
 
 ## Limits / iteration
 - I could **run none of this here** (root/kvm + build are locked) — so the kit

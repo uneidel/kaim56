@@ -10,6 +10,7 @@ const SETTINGS=__SETTINGS__;
 const SETTINGS_SCHEMA=__SETTINGS_SCHEMA__;
 const PERSONAS=__PERSONAS__;
 const SKILLS=__SKILLS__;
+const INDEX_HOST=__INDEX_HOST__;   /* the code dashboard's own origin (site INDEX_HOST); '' = no Dashboard link */
 const CORNERS='';   // registration corners retired (Ulrich, 2026-09-12)
 const I_EDIT='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>';
 const I_RUN='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>';
@@ -992,7 +993,7 @@ async function sqLoad(){
   th.scrollTop=th.scrollHeight;
   sqBoard();sqIndex();sqGit();
 }
-/* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex */
+/* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
 async function sqIndex(){
   const el=document.getElementById('sq-index');
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/index')).json()}catch(e){return}
@@ -1002,7 +1003,8 @@ async function sqIndex(){
   el.innerHTML=`<span class="tag ${d.running?'tag-accent':'tag-neutral'}">${escT(d.instance)} · ${d.running?'running':'stopped'}</span> `+
     (d.pending?sm+'reindex queued … </span>':'')+
     (l.ts?sm+`last index ${new Date(l.ts*1000).toLocaleString()} · ${l.ok?'ok':'failed'}${l.detail?' · '+escT(String(l.detail).slice(0,120)):''}${l.why?' · '+escT(l.why):''} · ${+l.seconds||0} s</span> `:sm+'not indexed yet </span>')+
-    `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`;
+    `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`+
+    (l.ok&&INDEX_HOST?` <a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(SQ)}" target=_blank rel="noopener noreferrer" title="repowise dashboard on its own origin (starts the indexer)">Dashboard</a>`:'');
 }
 async function sqReindex(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}

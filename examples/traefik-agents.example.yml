@@ -21,3 +21,13 @@ http:
         - websecure
       middlewares:
         - agents-auth
+
+    # The code dashboard on its own origin (site.json INDEX_HOST): same manager,
+    # Host passed through (passHostHeader above) — the manager serves only the
+    # dashboard and its OIDC login on this name. No basicAuth here: Basic is not
+    # accepted on that host anyway, and the manager's OIDC login guards it.
+    rtr-index:
+      rule: "Host(`index.example.com`)"
+      service: srv-agents
+      entryPoints:
+        - websecure
