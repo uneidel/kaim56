@@ -344,6 +344,7 @@ HTML_TOP = """</head><body>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
       <div class="field span2"><label>Members</label><div id=sq-members></div></div>
       <div class="field span2"><label>Code index (repowise)</label><div id=sq-index></div></div>
+      <div class="field span2"><label>Git remote (GitHub / Gitea)</label><div id=sq-git></div></div>
     </div>
     <h4 style="margin:16px 0 4px">Proposals</h4>
     <div id=sq-gate></div>
@@ -831,7 +832,10 @@ HTML_BOTTOM = """
   <b>Squad gate</b> (<code>mgr/squadgate.py</code>, <code>squadgate.json</code>): the lead only proposes (<code>squad_propose</code>,
   <code>squad_request_member/merge</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
   sets the budget, enables the squad and creates the tickets (each step recorded, re-approve retries). Before approval only the lead
-  can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.</p></div>
+  can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.
+  <b>Squad git</b> (<code>mgr/squadgit.py</code>): a project's GitHub/Gitea remote; <code>git_push_branch</code>, <code>pr_*</code>, <code>issue_*</code>
+  run on the host with a token from the secret store that never reaches a VM (env header, not argv); pushes only to
+  <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.</p></div>
 
   <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
   <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs

@@ -143,7 +143,8 @@ if ! grep -q "## kAIm56 platform" "$PLATFORM_MD" 2>/dev/null; then
 You run inside a Firecracker microVM on the kAIm56 agent platform. You have
 MCP tools from the "kaim56" server: memory_store, memory_recall, web_search,
 list_skills, load_skill, notify, and squad_post/ask/read/members, squad_propose, ticket_* (your project's
-team channel, plans the user approves, tickets) — USE THOSE. Your session context does not
+team channel, plans the user approves, tickets), git_push_branch/pr_*/issue_* (the project's git remote,
+run by the host — you hold no token) — USE THOSE. Your session context does not
 survive /reset; when the user asks you to remember something, memory_store it.
 The same APIs are reachable with curl as a fallback (base: http://${GW_IP}:8700):
 

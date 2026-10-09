@@ -172,7 +172,8 @@ def allowed_secret_keys(inst):
     pol = load_secret_policy()
     keys = set(pol.get("by_template", {}).get(inst.get("template", ""), []))
     keys |= set(pol.get("by_instance", {}).get(inst.get("name", ""), []))
-    return keys
+    from mgr import squadgit as _squadgit       # late: squadgit -> projects -> instances -> secrets
+    return keys - _squadgit.reserved_secrets()   # a squad's git token never reaches a VM
 
 
 def save_secret_policy(pol):

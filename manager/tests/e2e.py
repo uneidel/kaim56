@@ -1566,6 +1566,36 @@ class AgentSquad(unittest.TestCase):
             self.assertIn(t, a._tools.BUILTIN)
 
 
+    def test_squad_git_tools(self):
+        """git_push_branch / pr_* / issue_* call /api/git/<op> on the manager
+        (no token in the guest); empty arguments are left out; a refusal
+        carries the manager's reason."""
+        import urllib.error
+        a = _load("agent_sqgit_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-sgit-"),
+                                                  "OPENROUTER_API_KEY": "dummy"})
+        tm, c = a._tools_manager, a._mgrclient
+        sent, reply = [], {}
+        c._manager_base = lambda: "http://mgr"
+        c._mgr = lambda base, path, payload=None, timeout=60: (sent.append((path, payload)), json.dumps(reply))[1]
+        reply.update(project="wp", repo="own/rep", number=4, title="Add X", state="open", author="bot",
+                     url="https://github.com/own/rep/pull/4", head="squad/b/wp", base="main")
+        self.assertEqual(tm.t_pr_create("Add X", "body"),
+                         "Opened PR #4 [open] Add X (bot) squad/b/wp -> main https://github.com/own/rep/pull/4")
+        self.assertEqual(sent[-1], ("/api/git/pr-create", {"title": "Add X", "body": "body"}))
+        reply.clear(); reply.update(branch="squad/b/wp", commit="abcdef0123456789", repo="own/rep")
+        self.assertEqual(tm.t_git_push_branch(project="wp"), "Pushed abcdef012345 to squad/b/wp on own/rep.")
+        self.assertEqual(sent[-1], ("/api/git/push", {"project": "wp"}))
+        reply.clear(); reply.update(items=[], repo="own/rep")
+        self.assertEqual(tm.t_issue_list(), "No open issues in own/rep.")
+        self.assertEqual(sent[-1], ("/api/git/issues", {"state": "open"}))
+        def refuse(base, path, payload=None, timeout=60):
+            raise urllib.error.HTTPError(path, 403, "Forbidden", {}, io.BytesIO(b'{"error": "pr_create: writers and the lead only (you are reader)"}'))
+        c._mgr = refuse
+        self.assertEqual(tm.t_pr_create("x"), "Error: pr_create: writers and the lead only (you are reader)")
+        for t in ("git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
+                  "issue_create", "issue_list", "issue_comment"):
+            self.assertIn(t, a._tools.BUILTIN)
+
 def _wtext(path, text):
     with open(path, "w") as fh:
         fh.write(text)
@@ -4396,7 +4426,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual([c[0] for c in created], ["e", "f"])
             e = created[0][2]
             self.assertEqual((e["OPENROUTER_MODEL"], e["SKILLS"]), ("acme/fast", "tdd"))
-            self.assertEqual(e["AGENT_TOOLS"], "bash,squad_post,squad_ask,squad_read,squad_members,ticket_list,ticket_update")
+            self.assertEqual(e["AGENT_TOOLS"], ",".join(["bash", *m._squadgate.MEMBER_TOOLS]))
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
             self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
             self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
@@ -7611,6 +7641,331 @@ class ManagerFunctions(unittest.TestCase):
             m._util.sh = old_sh
 
 
+    # ---- squad git remote: push, fetch, PRs + issues host-side; the token never in a VM --------
+    SG_TOK = "ghp_SeCrEtToKeN0123456789"
+
+    def _sg_env(self):
+        """_squad_env + a worktree project 'wp' (a lead, b writer, d reader) on a
+        git repo, a host secret store with the token, a local bare repo as the
+        remote; every subprocess call recorded (argv, env)."""
+        import subprocess as sp
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        tmp = os.path.dirname(m._projects.PROJECTS_FILE)
+        sg = m._squadgit
+        old = (m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._secrets.SECRETS_FILE, sg.STATE_FILE, sg.git_url,
+               sg.FILE_PROTOCOL, m._util.rate_ok, sp.run, m._secrets.load_secret_policy)
+        m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+        m._secrets.SECRETS_FILE = os.path.join(tmp, "secrets.env")
+        _wtext(m._secrets.SECRETS_FILE, f"SQUAD_GIT_TOKEN={self.SG_TOK}\nOTHER_KEY=x\n")
+        sg.STATE_FILE = os.path.join(tmp, "squadgit.json")
+        repo, g = self._git_repo(tmp)
+        bare = os.path.join(tmp, "remote.git")
+        sp.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        self._sg_git_url = sg.git_url
+        sg.git_url, sg.FILE_PROTOCOL = (lambda cfg: bare), "always"
+        m._util.rate_ok = lambda *a: True
+        calls, real = [], sp.run
+        sp.run = lambda args, *a, **k: (calls.append((list(args), dict(k.get("env") or {}))), real(args, *a, **k))[1]
+        self.assertTrue(m._projects.upsert({"name": "wp", "strategy": "worktree", "source": {"type": "host", "path": repo},
+                                            "members": {"a": "lead", "b": "writer", "d": "reader"}}).get("ok"))
+
+        def undo2():
+            (m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT, m._secrets.SECRETS_FILE, sg.STATE_FILE, sg.git_url,
+             sg.FILE_PROTOCOL, m._util.rate_ok, sp.run, m._secrets.load_secret_policy) = old
+            undo()
+        return tmp, repo, g, bare, calls, undo2
+
+    def _sg_remote(self, provider="github", **kw):
+        st, d = self._sq("/api/squad-git/wp", "127.0.0.1", {"provider": provider, "url": "https://github.com/own/rep",
+                                                             "token_secret": "SQUAD_GIT_TOKEN", **kw})
+        self.assertEqual(st, 200, d)
+        return d
+
+    def _sg_no_token(self, tmp, calls, *texts):
+        """The token is in no argv, no stored file, no answer; only the git env carries it (as a header)."""
+        tok = self.SG_TOK
+        b64 = base64.b64encode(f"x-access-token:{tok}".encode()).decode()
+        for argv, env in calls:
+            self.assertFalse([a for a in argv if tok in a or b64 in a], argv)
+            for k, v in env.items():
+                if tok in v or b64 in v:
+                    self.assertEqual(k, "GIT_CONFIG_VALUE_0"); self.assertTrue(v.startswith("Authorization: Basic "))
+        for d, _dirs, files in os.walk(tmp):
+            for f in files:
+                p = os.path.join(d, f)
+                if p == self.m._secrets.SECRETS_FILE or os.path.islink(p) or "/objects/" in p:
+                    continue
+                with open(p, "rb") as fh:
+                    self.assertNotIn(tok.encode(), fh.read(), p)
+        for t in texts:
+            self.assertNotIn(tok, t)
+
+    def test_squadgit_settings_admin_only_and_token_reserved(self):
+        """Remote settings: admin only (a guest and role user are refused),
+        validated, kept across a project save; the token secret is reserved —
+        never released to an instance even when the policy lists it."""
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        L, B = "127.0.0.1", "172.30.4.2"
+        try:
+            for body, why in (({"url": "http://github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN"}, "url:"),
+                              ({"url": "https://tok@github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN"}, "url:"),
+                              ({"url": "https://github.com/../r", "token_secret": "SQUAD_GIT_TOKEN"}, "url:"),
+                              ({"url": "https://github.com/o/r", "token_secret": "NOPE"}, "token_secret"),
+                              ({"url": "https://github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN", "provider": "svn"}, "provider"),
+                              ({"url": "https://github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN", "base": "squad/x"}, "base"),
+                              ({"url": "https://github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN", "daily_limit": 999}, "daily_limit")):
+                st, d = self._sq("/api/squad-git/wp", L, body)
+                self.assertEqual(st, 400, body); self.assertIn(why, d["error"], body)
+            st, d = self._sq("/api/squad-git/wp", B, {"url": "https://github.com/o/r", "token_secret": "SQUAD_GIT_TOKEN"})
+            self.assertEqual(st, 403)                                                   # a guest: admin route
+            self.assertIsNone(m._squadgit.settings(m._projects.get("wp")))
+            ua = m._auth.user_allowed
+            for meth, path in (("GET", "/api/squad-git/wp"), ("POST", "/api/squad-git/wp"), ("POST", "/api/squad-git/wp/fetch")):
+                self.assertFalse(ua(meth, path), path)                                  # OIDC role user: refused
+            d = self._sg_remote(daily_limit=5)
+            self.assertEqual((d["remote"]["base"], d["remote"]["label"], d["remote"]["daily_limit"]), ("main", "kaim56-squad", 5))
+            p = m._projects.get("wp")
+            m._projects.upsert({k: p[k] for k in ("name", "strategy", "source", "members", "base")})
+            self.assertEqual(m._projects.get("wp")["remote"]["daily_limit"], 5)        # a project save keeps it
+            st, d = self._sq("/api/squad-git/wp", L)
+            self.assertEqual((st, d["remote"]["token_secret"], d["secrets"]), (200, "SQUAD_GIT_TOKEN", ["OTHER_KEY", "SQUAD_GIT_TOKEN"]))
+            # reserved: a policy release does not reach the instance
+            m._secrets.load_secret_policy = lambda: {"by_template": {"openrouter": ["SQUAD_GIT_TOKEN", "OTHER_KEY"]},
+                                                     "by_instance": {}, "guest_readable": ["SQUAD_GIT_TOKEN", "OTHER_KEY"]}
+            inst = next(i for i in self._sq_insts if i["name"] == "b")
+            self.assertEqual(m._secrets.allowed_secret_keys(inst), {"OTHER_KEY"})
+            self.assertEqual(m._secrets.guest_readable_keys(inst), {"OTHER_KEY"})
+            # the real endpoints (tests replace them): GitHub, GitHub Enterprise, Gitea under a path
+            sg = m._squadgit
+            self.assertEqual(sg.api_base({"provider": "github", "url": "https://github.com/own/rep.git"}),
+                             "https://api.github.com/repos/own/rep")
+            self.assertEqual(sg.api_base({"provider": "github", "url": "https://ghe.example/own/rep"}),
+                             "https://ghe.example/api/v3/repos/own/rep")
+            self.assertEqual(sg.api_base({"provider": "gitea", "url": "https://git.kat56.de/own/rep"}),
+                             "https://git.kat56.de/api/v1/repos/own/rep")
+            self.assertEqual(self._sg_git_url({"url": "https://git.kat56.de/g/own/rep/"}), "https://git.kat56.de/g/own/rep.git")
+            st, d = self._sq("/api/squad-git/wp", L, {"remove": True})
+            self.assertEqual((st, m._squadgit.settings(m._projects.get("wp"))), (200, None))
+            self._sg_no_token(tmp, calls)
+        finally:
+            undo()
+
+    def test_squadgit_push_and_fetch_host_side(self):
+        """push: the writer's branch to squad/<writer>/<name> only (base and
+        other prefixes impossible, readers/non-members refused, the lead names
+        a writer); fetch: refs/remotes/kaim56/* only. The token: env header,
+        never argv, files, answers or the log; no remote URL stored in the repo."""
+        import contextlib
+        import subprocess as sp
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        A, B, C, D, L = "172.30.3.2", "172.30.4.2", "172.30.5.2", "172.30.6.2", "127.0.0.1"
+        gb = lambda *a: sp.run(["git", "--git-dir", bare, *a], capture_output=True, text=True).stdout
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                st, d = self._sq("/api/git/push", B, {})
+                self.assertEqual(st, 404); self.assertIn("has a git remote", d["error"])
+                self._sg_remote()
+                _wtext(os.path.join(m._projwt.tree_dir("wp", "b"), "feat.txt"), "feature\n")
+                st, d = self._sq("/api/git/push", B, {})
+                self.assertEqual((st, d["branch"], d["repo"]), (200, "squad/b/wp", "own/rep"), d)
+                self.assertEqual(gb("rev-parse", "refs/heads/squad/b/wp").strip(), g("rev-parse", "proj/wp/b").strip())
+                self.assertEqual(gb("show", "squad/b/wp:feat.txt"), "feature\n")
+                st, d = self._sq("/api/git/push", B, {"name": "main"})
+                self.assertEqual((st, d["branch"]), (200, "squad/b/main"))
+                self.assertEqual(gb("for-each-ref", "--format=%(refname)").split(), ["refs/heads/squad/b/main", "refs/heads/squad/b/wp"])
+                for name in ("../main", "x/../../main", "a/b", "-x", "x.lock", "x" * 61):
+                    self.assertEqual(self._sq("/api/git/push", B, {"name": name})[0], 400, name)
+                self.assertEqual(self._sq("/api/git/push", D, {})[0], 403)             # a reader
+                self.assertEqual(self._sq("/api/git/push", C, {"project": "wp"})[0], 403)   # no member
+                self.assertIn("names the writer", self._sq("/api/git/push", A, {})[1]["error"])
+                self.assertEqual(self._sq("/api/git/push", A, {"writer": "a"})[0], 403)     # the lead has no branch
+                st, d = self._sq("/api/git/push", A, {"writer": "b", "name": "review"})
+                self.assertEqual((st, d["branch"]), (200, "squad/b/review"))
+                self.assertEqual(self._sq("/api/git/push", B, {"writer": "a"})[1]["branch"], "squad/b/wp")  # a writer: always itself
+                # fetch: a branch someone else pushed arrives under refs/remotes/kaim56/, the checkout untouched
+                gb("update-ref", "refs/heads/feature", gb("rev-parse", "squad/b/wp").strip())
+                head = g("rev-parse", "HEAD").strip()
+                st, d = self._sq("/api/squad-git/wp/fetch", L, {})
+                self.assertEqual((st, d["namespace"]), (200, "refs/remotes/kaim56"), d)
+                self.assertEqual(g("rev-parse", "refs/remotes/kaim56/feature").strip(), gb("rev-parse", "feature").strip())
+                self.assertEqual((g("rev-parse", "HEAD").strip(), g("status", "--porcelain")), (head, ""))
+                self.assertNotIn("feature", g("branch", "--list"))
+                st, d = self._sq("/api/git/fetch", D, {})                                # any member may fetch
+                self.assertEqual((st, d["refs"]), (200, 4))
+                # the git process: the token as an env header only, no stored remote
+                pushes = [(a, e) for a, e in calls if "push" in a]
+                self.assertTrue(pushes)
+                self.assertTrue(all(e.get("GIT_CONFIG_KEY_0") == "http.extraHeader" for a, e in pushes))
+                with open(os.path.join(repo, ".git", "config")) as fh:
+                    self.assertNotIn("[remote", fh.read())
+            self._sg_no_token(tmp, calls, out.getvalue())
+            with open(os.path.join(m._audit.AUDIT_DIR, "b.jsonl")) as fh:
+                audit = fh.read()
+            self.assertIn('"tool": "git_push_branch"', audit); self.assertIn("wp own/rep", audit)
+        finally:
+            undo()
+
+    def test_squadgit_prs_and_issues_github_and_gitea(self):
+        """PRs and issues against a fake GitHub and a fake Gitea: the right
+        endpoints and auth headers, the label added (created when missing),
+        PRs filtered out of issue lists, roles, the daily limit, no merge."""
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        A, B, C, D = "172.30.3.2", "172.30.4.2", "172.30.5.2", "172.30.6.2"
+        srv, url, log = _fake_forge()
+        sg = m._squadgit
+        old_api = sg.api_base
+        sg.api_base = lambda cfg: url + ("/api/v1" if cfg["provider"] == "gitea" else "") + "/repos/own/rep"
+        answers = []
+
+        def q(path, ip, body):
+            st, d = self._sq(path, ip, body)
+            answers.append(json.dumps(d))
+            return st, d
+        try:
+            for prov, auth in (("github", f"Bearer {self.SG_TOK}"), ("gitea", f"token {self.SG_TOK}")):
+                log.clear()
+                self._sg_remote(prov, daily_limit=3)
+                st, d = q("/api/git/pr-create", B, {"title": "Add feature", "body": "does X"})
+                self.assertEqual((st, d.get("head"), d.get("base"), d.get("state")), (200, "squad/b/wp", "main", "open"), d)
+                n = d["number"]
+                self.assertEqual(log[0][1:3], ("POST", "/repos/own/rep/pulls"))
+                self.assertEqual(log[0][5]["head"], "squad/b/wp")
+                self.assertIn("squad member `b`", log[0][5]["body"])
+                self.assertTrue(all(e[4].get("authorization") == auth for e in log), prov)
+                lab = [(e[1], e[2]) for e in log[1:]]
+                if prov == "github":
+                    self.assertEqual(lab, [("GET", "/repos/own/rep/labels/kaim56-squad"), ("POST", "/repos/own/rep/labels"),
+                                           ("POST", f"/repos/own/rep/issues/{n}/labels")])
+                    self.assertEqual(log[-1][5], {"labels": ["kaim56-squad"]})
+                    self.assertEqual(log[0][4].get("x-github-api-version"), "2022-11-28")
+                else:
+                    self.assertEqual(lab, [("GET", "/repos/own/rep/labels"), ("POST", "/repos/own/rep/labels"),
+                                           ("POST", f"/repos/own/rep/issues/{n}/labels")])
+                    self.assertEqual(log[-1][5], {"labels": [7]})
+                self.assertEqual(q("/api/git/pr-create", D, {"title": "x"})[0], 403)      # a reader
+                st, d = q("/api/git/issue-create", D, {"title": "Bug", "body": "y" * 50000})
+                self.assertEqual(st, 200, d)
+                body = next(e[5]["body"] for e in reversed(log) if e[1:3] == ("POST", "/repos/own/rep/issues"))
+                self.assertLessEqual(len(body), sg.BODY_MAX + 200)
+                st, d = q("/api/git/prs", D, {"state": "all"})
+                self.assertEqual([i["number"] for i in d["items"]], [n])
+                st, d = q("/api/git/issues", D, {})
+                self.assertEqual([i["title"] for i in d["items"]], ["Bug"])                  # the PR is not an issue
+                if prov == "gitea":
+                    self.assertIn("type=issues", log[-1][3])
+                self.assertEqual(q("/api/git/issues", D, {"state": "nope"})[0], 400)
+                st, d = q("/api/git/pr-comment", D, {"number": n, "body": "LGTM"})
+                self.assertEqual((st, log[-1][1:3], log[-1][5]), (200, ("POST", f"/repos/own/rep/issues/{n}/comments"), {"body": "LGTM"}))
+                st, d = q("/api/git/pr", D, {"number": n})
+                self.assertEqual((st, d["body"].split("\n")[0], d["comments"][0]["body"]), (200, "does X", "LGTM"))
+                st, d = q("/api/git/issue-comment", A, {"number": n + 1, "body": "on it"})
+                self.assertEqual(st, 200)
+                self.assertEqual(q("/api/git/issue-comment", A, {"number": "x", "body": "a"})[0], 400)
+                self.assertEqual(q("/api/git/issues", C, {"project": "wp"})[0], 403)         # no member
+                self.assertEqual(q("/api/git/pr-merge", B, {"number": n})[0], 404)           # merging: not offered
+                # the daily limit: per member (b: 1 PR so far, limit 3)
+                self.assertEqual(q("/api/git/issue-create", B, {"title": "2"})[0], 200)
+                self.assertEqual(q("/api/git/issue-create", B, {"title": "3"})[0], 200)
+                st, d = q("/api/git/issue-create", B, {"title": "4"})
+                self.assertEqual(st, 429); self.assertIn("daily limit", d["error"])
+                self.assertEqual(q("/api/git/issue-create", A, {"title": "lead's"})[0], 200)  # another member
+                os.remove(sg.STATE_FILE)                                                      # next provider: fresh count
+            self.assertTrue(set(sg.TOOLS.values()) <= m._policy.tool_names())               # in the catalog
+            # an instance whose allowlist lacks the tool
+            next(i for i in self._sq_insts if i["name"] == "d")["config"]["AGENT_TOOLS"] = "bash"
+            self.assertEqual(q("/api/git/issues", D, {})[0], 403)
+            self._sg_no_token(tmp, calls, *answers)
+            with open(os.path.join(m._audit.AUDIT_DIR, "b.jsonl")) as fh:
+                audit = fh.read()
+            self.assertIn('"tool": "pr_create"', audit); self.assertIn("own/rep #1", audit)
+        finally:
+            sg.api_base = old_api
+            srv.shutdown(); srv.server_close()
+            undo()
+
+
+def _fake_forge():
+    """A fake GitHub (/repos/…) and Gitea (/api/v1/repos/…) REST API ->
+    (server, base url, log of (provider, method, path, query, headers, body))."""
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    log, items, comments, labels = [], {}, {}, {"github": [], "gitea": []}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, code, obj):
+            b = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def _do(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n)) if n else None
+            path, _, qs = self.path.partition("?")
+            prov = "gitea" if path.startswith("/api/v1/") else "github"
+            path = path[len("/api/v1"):] if prov == "gitea" else path
+            log.append((prov, self.command, path, qs, {k.lower(): v for k, v in self.headers.items()}, body))
+            mine = {k[1]: v for k, v in items.items() if k[0] == prov}
+            r = re.match(r"^/repos/own/rep(/.*)$", path)
+            rest, meth = (r.group(1) if r else ""), self.command
+            mm = re.match(r"^/(pulls|issues)/(\d+)(/comments|/labels)?$", rest)
+            if rest in ("/pulls", "/issues") and meth == "POST":
+                num = len(mine) + 1
+                it = {"number": num, "title": body["title"], "body": body.get("body"), "state": "open",
+                      "user": {"login": "squad-bot"}, "html_url": f"https://forge/own/rep/{rest[1:]}/{num}"}
+                if rest == "/pulls":
+                    it.update(head={"ref": body["head"]}, base={"ref": body["base"]})
+                items[(prov, num)] = it
+                return self._send(201, it)
+            if rest in ("/pulls", "/issues") and meth == "GET":
+                out = []
+                for it in mine.values():
+                    if rest == "/pulls" and "head" not in it:
+                        continue
+                    if rest == "/issues" and "head" in it:
+                        if prov == "gitea":
+                            continue                                  # type=issues
+                        it = {**it, "pull_request": {"url": "x"}}
+                    out.append(it)
+                return self._send(200, out)
+            if mm and not mm.group(3) and meth == "GET" and int(mm.group(2)) in mine:
+                return self._send(200, mine[int(mm.group(2))])
+            if mm and mm.group(3) == "/comments":
+                key = (prov, int(mm.group(2)))
+                if meth == "POST":
+                    c = {"id": 99, "body": body["body"], "user": {"login": "squad-bot"}, "created_at": "now",
+                         "html_url": f"https://forge/c/{mm.group(2)}"}
+                    comments.setdefault(key, []).append(c)
+                    return self._send(201, c)
+                return self._send(200, comments.get(key, []))
+            if mm and mm.group(3) == "/labels" and meth == "POST":
+                return self._send(200, [])
+            if rest == "/labels" and meth == "POST":
+                labels[prov].append(body["name"])
+                return self._send(201, {"id": 7, "name": body["name"]})
+            if rest == "/labels" and meth == "GET" and prov == "gitea":
+                return self._send(200, [{"id": 7, "name": x} for x in labels["gitea"]])
+            if rest.startswith("/labels/") and meth == "GET" and prov == "github":
+                name = urllib.parse.unquote(rest[len("/labels/"):])
+                return self._send(200, {"name": name}) if name in labels["github"] else self._send(404, {"message": "Not Found"})
+            return self._send(404, {"message": "Not Found"})
+
+        do_GET = do_POST = _do
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}", log
+
+
 class IndexerService(unittest.TestCase):
     """agents/indexer/indexer_service.py without repowise: the index steps, the
     tool schema, the JSON-RPC dispatch, a reindex with faked commands, the
@@ -7784,6 +8139,28 @@ class ClaudeGuest(unittest.TestCase):
         km._get = lambda path: json.dumps({"project": "sq", "approved": False, "tickets": []})
         self.assertEqual(km.TOOLS["ticket_list"][0](), "Project sq (squad plan not approved yet):\nno tickets")
 
+
+    def test_claude_mcp_git_tools(self):
+        """The squad git tools are in the claude guest's kaim56 MCP server and
+        call /api/git/<op>; a refusal carries the manager's reason."""
+        import urllib.error
+        src = next((p for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py"),
+                                "/home/ulrich/claude-signal-firecracker/kaim56_mcp.py") if os.path.exists(p)), None)
+        if not src:
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_git", src)
+        for t in ("git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
+                  "issue_create", "issue_list", "issue_comment"):
+            self.assertIn(t, km.TOOLS)
+        sent = []
+        km._post = lambda path, payload, timeout=30: (sent.append((path, payload)), json.dumps(
+            {"number": 2, "url": "https://git.kat56.de/o/r/issues/2#c", "project": "wp"}))[1]
+        self.assertEqual(km.TOOLS["issue_comment"][0](number=2, body="on it"), "Commented on #2: https://git.kat56.de/o/r/issues/2#c")
+        self.assertEqual(sent[-1], ("/api/git/issue-comment", {"number": 2, "body": "on it"}))
+        def refuse(path, payload, timeout=30):
+            raise urllib.error.HTTPError(path, 429, "Too Many", {}, io.BytesIO(b'{"error": "daily limit reached"}'))
+        km._post = refuse
+        self.assertEqual(km.TOOLS["issue_create"][0](title="x"), "Error: daily limit reached")
 
 @unittest.skipUnless(_manager_up(), "manager on 127.0.0.1:8700 not reachable")
 class ManagerHTTP(unittest.TestCase):

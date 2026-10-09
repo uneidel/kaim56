@@ -739,3 +739,62 @@ def t_ticket_create(title, description="", assignee="", depends_on=None, key="",
 
 def t_ticket_assign(id, assignee, project=""):
     return _ticket_done(*_squad_call("/api/squad/ticket-assign", {"id": id, "assignee": assignee, "project": project}))
+
+
+# ---- squad git remote: push, PRs, issues — run on the host (mgr/squadgit.py) --
+def _git_line(i):
+    extra = f" {i['head']} -> {i['base']}" if i.get("head") else ""
+    return f"#{i.get('number')} [{i.get('state')}] {i.get('title')} ({i.get('author')}){extra} {i.get('url')}"
+
+
+def _git_call(op, payload, timeout=180):
+    d, err = _squad_call(f"/api/git/{op}", {k: v for k, v in payload.items() if v not in (None, "")}, timeout)
+    return d or {}, err
+
+
+def t_git_push_branch(name="", writer="", project=""):
+    d, err = _git_call("push", {"name": name, "writer": writer, "project": project})
+    return err or f"Pushed {d.get('commit', '')[:12]} to {d.get('branch')} on {d.get('repo')}."
+
+
+def t_git_fetch(project=""):
+    d, err = _git_call("fetch", {"project": project})
+    return err or f"Fetched {d.get('repo')}: {d.get('refs')} branches in {d.get('namespace')} (base at {d.get('base') or '?'})."
+
+
+def t_pr_create(title, body="", name="", writer="", project=""):
+    d, err = _git_call("pr-create", {"title": title, "body": body, "name": name, "writer": writer, "project": project})
+    return err or f"Opened PR {_git_line(d)}" + (f"\n{d['note']}" if d.get("note") else "")
+
+
+def t_pr_list(state="open", project=""):
+    d, err = _git_call("prs", {"state": state, "project": project}, 60)
+    return err or ("\n".join(_git_line(i) for i in d.get("items") or []) or f"No {state} PRs in {d.get('repo')}.")
+
+
+def t_pr_view(number, project=""):
+    d, err = _git_call("pr", {"number": number, "project": project}, 60)
+    if err:
+        return err
+    cs = "".join(f"\n--- {c.get('author')} ({c.get('created')}):\n{c.get('body')}" for c in d.get("comments") or [])
+    return _git_line(d) + (" (merged)" if d.get("merged") else "") + f"\n\n{d.get('body') or ''}" + cs
+
+
+def t_pr_comment(number, body, project=""):
+    d, err = _git_call("pr-comment", {"number": number, "body": body, "project": project}, 60)
+    return err or f"Commented on #{d.get('number')}: {d.get('url')}"
+
+
+def t_issue_create(title, body="", project=""):
+    d, err = _git_call("issue-create", {"title": title, "body": body, "project": project}, 60)
+    return err or f"Opened issue {_git_line(d)}" + (f"\n{d['note']}" if d.get("note") else "")
+
+
+def t_issue_list(state="open", project=""):
+    d, err = _git_call("issues", {"state": state, "project": project}, 60)
+    return err or ("\n".join(_git_line(i) for i in d.get("items") or []) or f"No {state} issues in {d.get('repo')}.")
+
+
+def t_issue_comment(number, body, project=""):
+    d, err = _git_call("issue-comment", {"number": number, "body": body, "project": project}, 60)
+    return err or f"Commented on #{d.get('number')}: {d.get('url')}"

@@ -990,7 +990,7 @@ async function sqLoad(){
       :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">woke ${escT(m.delivered.join(', '))}</div>`:'')+
     `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
   th.scrollTop=th.scrollHeight;
-  sqBoard();sqIndex();
+  sqBoard();sqIndex();sqGit();
 }
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex */
 async function sqIndex(){
@@ -1008,6 +1008,41 @@ async function sqReindex(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||d.msg||'';
   sqIndex();
+}
+/* squad git remote (mgr/squadgit.py): settings, Fetch now, what the squad opened */
+async function sqGit(){
+  const el=document.getElementById('sq-git'); if(!el)return;
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ))).json()}catch(e){return}
+  if(d.error){el.textContent=d.error;return}
+  const r=d.remote||d.defaults||{}, on=!!d.remote, S=v=>String(v==null?'':v);
+  const opt=(v,cur)=>`<option value="${esc(S(v))}"${v===cur?' selected':''}>${escT(S(v))}</option>`;
+  const url=u=>/^https?:/i.test(S(u))?esc(S(u)):'#';
+  el.innerHTML='<div class=grid2>'+
+    `<div class=field><label>Provider</label><select class=input id=sg-provider>${(d.providers||[]).map(p=>opt(p,r.provider)).join('')}</select></div>`+
+    `<div class=field><label>Repo URL (https)</label><input class="input mono" id=sg-url placeholder="https://github.com/owner/repo" value="${esc(S(r.url))}"></div>`+
+    `<div class=field><label>Token secret (host store, never sent to a VM)</label><select class=input id=sg-token><option value="">— choose —</option>${(d.secrets||[]).map(x=>opt(x,r.token_secret)).join('')}</select></div>`+
+    `<div class=field><label>Base branch</label><input class="input mono" id=sg-base value="${esc(S(r.base||'main'))}"></div>`+
+    `<div class=field><label>Label (empty: none)</label><input class=input id=sg-label value="${esc(S(r.label))}"></div>`+
+    `<div class=field><label>PRs + issues per member and day</label><input class=input type=number min=0 max=200 id=sg-limit value="${+r.daily_limit||0}"></div></div>`+
+    '<div style="display:flex;gap:6px;align-items:center;margin:6px 0"><button class="btn btn-secondary btn-sm" onclick=sqGitSave()>Save remote</button>'+
+    (on?'<button class="btn btn-ghost btn-sm" onclick=sqGitFetch()>Fetch now</button><button class="btn btn-ghost btn-sm" onclick=sqGitSave(true)>Remove</button>':'')+
+    `<span class=text-muted style="font-size:12px" id=sg-msg>${on?'':'no remote set'}${d.strategy!=='worktree'?' · push and PRs need a worktree project':''}</span></div>`+
+    ((d.created||[]).length?'<div style="display:grid;gap:2px;font-size:12.5px">'+d.created.map(c=>
+      `<div class=text-muted>${new Date((+c.ts||0)*1000).toLocaleString()} · ${escT(S(c.by))} · ${c.kind==='pr'?'PR':'issue'} <a href="${url(c.url)}" target=_blank rel=noopener>#${+c.number||0}</a> ${escT(S(c.title))}</div>`).join('')+'</div>'
+      :'<span class=text-muted style="font-size:12px">No PRs or issues opened by the squad yet.</span>');
+}
+async function sqGitSave(remove){
+  if(remove&&!confirm('Remove the git remote of '+SQ+'? The token secret stays in the store.'))return;
+  const v=id=>document.getElementById(id).value;
+  const body=remove?{remove:true}:{provider:v('sg-provider'),url:v('sg-url').trim(),token_secret:v('sg-token'),base:v('sg-base').trim(),label:v('sg-label').trim(),daily_limit:+v('sg-limit')};
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){document.getElementById('sg-msg').textContent=d.error;return}
+  await sqGit(); document.getElementById('sg-msg').textContent=remove?'removed ✓':'saved ✓';
+}
+async function sqGitFetch(){
+  document.getElementById('sg-msg').textContent='fetching …';
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ)+'/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked};
