@@ -109,7 +109,7 @@ On Proxmox VE: [`docs/proxmox.md`](docs/proxmox.md) (a VM with nested virtualiza
 | `espclient/` | MrVoice, the ESP32-S3 client (ESP-IDF via PlatformIO) |
 | `katfs/` | Browser-to-agent folder sharing over iroh (Rust, WASM) |
 | `iroh-gw/` | The iroh transport: host gateway and desktop tunnel (Rust); prebuilt in `dist/` |
-| `voice/`, `embed/`, `mcp-hub/` | Host containers: speech (Parakeet + Piper), embeddings, MCP server processes |
+| `voice/`, `embed/`, `mcp-hub/`, `mcp-browser/` | Host containers: speech (Parakeet + Piper), embeddings, MCP server processes, headless browser (internet only) |
 | `apps/` | Browser front-ends on top of the platform, one folder each (`app.json` + `index.html`), served by the manager under `/apps/<name>/`; `jobboard/` (daily job search), `codeflow/` (a GitHub repo as an agent that draws its data flow) and `corewar/` (a Core War arena where two models rewrite their warriors mid-round) |
 | `examples/` | Templates for the files kept out of the repo (settings, site, MCP catalog) |
 | `docs/` | Screenshots, project page |

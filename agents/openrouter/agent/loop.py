@@ -19,6 +19,7 @@ from . import config as _config
 from . import context as _context
 from . import learn as _learn
 from . import llm as _llm
+from . import mcp as _mcp
 from . import observe as _observe
 from . import persist as _persist
 from . import tools as _tools
@@ -159,6 +160,7 @@ def _tool_loop(hist):
             out = "(time budget exhausted — not executed)" if _out_of_time() else _tools.exec_tool(fn["name"], args)
             _config.log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
             hist.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+        _mcp.attach_images(hist)
     return "(max tool steps reached)"
 
 
@@ -389,6 +391,7 @@ def run_stream(user_message, on_token, image=None, deadline=0.0, kind="stream", 
                 on_token("\n")
                 _config.log("tool", fn["name"], "->", "(redacted)" if fn["name"] == "get_secret" else out[:80].replace("\n", " "))
                 _context._history.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+            _mcp.attach_images(_context._history)
         on_token("\n(max tool steps reached)")
         outcome = "max_steps"
     finally:

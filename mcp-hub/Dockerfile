@@ -15,12 +15,7 @@ RUN pip install --no-cache-dir --break-system-packages mcp-portainer
 # JobSpy (job-board scraping: Indeed, LinkedIn, Glassdoor, …) needs pandas +
 # a TLS-fingerprinting client — hub only, never in a VM. See jobspy_mcp.py.
 RUN pip install --no-cache-dir --break-system-packages python-jobspy
-# Headless browser for the agents (render pages, screenshots, PDFs): Playwright
-# MCP, pinned, with the Chromium build that matches its Playwright version.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npm install -g @playwright/mcp@0.0.83 && npm cache clean --force \
-    && cd "$(npm root -g)/@playwright/mcp" && npx playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/*
+# The headless browser is NOT here: it runs in its own container (mcp-browser/).
 COPY hub.py /app/hub.py
 COPY jobspy_mcp.py /app/jobspy_mcp.py
 EXPOSE 8771

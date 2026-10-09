@@ -125,7 +125,7 @@ for pair in "openrouter:openrouter-agent" "claude:claude-signal-firecracker"; do
   from="${pair%%:*}"; to="${pair##*:}"
   [ -d "$SRC/agents/$from" ] && rsync -a --exclude '__pycache__' "$SRC/agents/$from/" "$BASE/$to/"
 done
-for d in voice embed mcp-hub jev celld apps; do [ -d "$SRC/$d" ] && rsync -a "$SRC/$d/" "$BASE/$d/"; done
+for d in voice embed mcp-hub mcp-browser jev celld apps; do [ -d "$SRC/$d" ] && rsync -a "$SRC/$d/" "$BASE/$d/"; done
 chmod +x "$FC_DIR/run-tests.sh" 2>/dev/null || true
 
 # ── [4] Binaries: firecracker + guest kernel ────────────────────────────────
@@ -161,6 +161,9 @@ if [ "$NO_BUILD" = "0" ]; then
     docker run -d --restart unless-stopped --name kaim56-embed -p 127.0.0.1:8772:8772 kaim56-embed )
   ( cd "$BASE/mcp-hub" && docker build -q -t kaim56-mcp-hub . && docker rm -f kaim56-mcp-hub 2>/dev/null; \
     docker run -d --restart unless-stopped --name kaim56-mcp-hub -p 127.0.0.1:8771:8771 kaim56-mcp-hub )
+  # Headless browser for the "browser" MCP: own container + network (internet only),
+  # the hub is attached to that network — so it runs after the hub.
+  sh "$BASE/mcp-browser/run.sh"
   if [ "$WITH_VOICE" = "1" ]; then
     ( cd "$BASE/voice" && docker build -t kaim56-voice . && docker rm -f kaim56-voice 2>/dev/null; \
       docker run -d --restart unless-stopped --name kaim56-voice -p 127.0.0.1:8770:8770 kaim56-voice )

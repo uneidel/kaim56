@@ -166,6 +166,7 @@ if __name__ == "__main__":
         _mounts.own_guest_dir(_mounts.AGENT_ROOT, 0o755)
         _mounts.own_guest_dir(_mounts.FCMNT_ROOT, 0o755)
     _mounts.retire_root_export()
+    _netfw.ensure_browser_rules()    # also without a VM start (ensure_net_base): the browser runs at boot
     _startup.migrate_secrets_out_of_instances()
     _startup.migrate_mcp_config_out_of_instances()
     threading.Thread(target=_tasks._task_worker, daemon=True).start()

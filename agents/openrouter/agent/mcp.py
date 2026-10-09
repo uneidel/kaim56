@@ -19,26 +19,54 @@ from . import config as _config
 from . import mgrclient as _mgrclient
 
 
+_MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+MAX_ATTACH_B64 = 2_000_000     # a bigger image stays a file only (~1.5 MB PNG)
+_pending_images = []           # (path, data URL) of MCP images not yet shown to the model
+_SHOT = "[screenshot from a tool: "
+
+
 def _content_text(r):
     """An MCP tool result as text for the model. Images (a browser screenshot)
-    become files in the workspace — base64 would only flood the context — and
-    the text names the path, so the agent can send or embed it."""
+    become files in the workspace and the text names the path, so the agent
+    can send or embed it; the image itself is queued for attach_images."""
     parts = []
     for c in r.get("content", []):
         if c.get("type") == "text":
             parts.append(c.get("text", ""))
         elif c.get("type") == "image" and c.get("data"):
-            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(c.get("mimeType"), "bin")
+            mime = c.get("mimeType")
             d = os.path.join(_config.WORKDIR, "screenshots")
             try:
                 os.makedirs(d, exist_ok=True)
-                path = os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}-{len(os.listdir(d))}.{ext}")
+                path = os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}-{len(os.listdir(d))}.{_MIME_EXT.get(mime, 'bin')}")
                 with open(path, "wb") as fh:
                     fh.write(base64.b64decode(c["data"]))
-                parts.append(f"[image saved: {path}]")
+                parts.append(f"saved screenshot: {path}")
+                if mime in _MIME_EXT and len(c["data"]) <= MAX_ATTACH_B64:
+                    _pending_images.append((path, f"data:{mime};base64,{c['data']}"))
             except (OSError, ValueError) as e:
                 parts.append(f"[image not saved: {e!r}]")
     return "\n".join(parts) or json.dumps(r)[:_config.MAX_TOOL_OUT]
+
+
+def attach_images(hist):
+    """Show the model the images of the last tool round: one user message
+    after the tool results (a tool message cannot carry an image). Only the
+    newest round keeps its pixels — older screenshot messages shrink to their
+    text, each image would otherwise ride along on every later call. A model
+    without vision rejects the image; llm.py then strips it and retries, the
+    same path as a photo from the app."""
+    if not _pending_images:
+        return
+    for m in hist:
+        c = m.get("content")
+        if (m.get("role") == "user" and isinstance(c, list) and c
+                and str(c[0].get("text", "")).startswith(_SHOT)):
+            m["content"] = c[0]["text"] + " (image dropped from the context, the file stays)"
+    hist.append({"role": "user", "content": [
+        {"type": "text", "text": _SHOT + ", ".join(p for p, _ in _pending_images) + "]"},
+        *({"type": "image_url", "image_url": {"url": u}} for _, u in _pending_images)]})
+    _pending_images.clear()
 
 
 # --- MCP (stdio) ------------------------------------------------------------

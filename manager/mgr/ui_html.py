@@ -899,7 +899,9 @@ HTML_BOTTOM = """
   fuzzy hit, so &#8220;Gartenhaus denke rechts&#8221; keeps working after STT mishears &#8220;Decke&#8221; &#8212;
   tokens and LAN never reach a VM. Every <code>tools/call</code> lands in the audit trail. A server is
   active only when listed in <code>MCP_SERVERS</code>; the hub respawns dead processes and replays
-  their initialization.</p></div>
+  their initialization. The <code>browser</code> server (Playwright/Chromium) is NOT in the hub: it runs in
+  its own <code>kaim56-browser</code> container on its own network (internet yes; LAN, host, VMs and hub
+  no &#8212; mangle rules in <code>netfw</code>), the hub reaches it over HTTP via <code>mcp-remote</code>.</p></div>
 
   <div class="card blueprint"><span class=card-title>Web UIs</span>
   <p class=card-body>Two pages, both served by the manager, both in the Industry design system:

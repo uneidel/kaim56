@@ -254,7 +254,8 @@ class AgentLogic(unittest.TestCase):
 
     def test_mcp_image_result_becomes_a_workspace_file(self):
         """A browser screenshot from an MCP server (image content) is written
-        to <workspace>/screenshots/ and the model gets the path, not base64."""
+        to <workspace>/screenshots/; the tool text names the path (no base64),
+        the pixels follow as a vision message after the tool round."""
         a = self.a
         tmp = tempfile.mkdtemp(prefix="e2e-mcpimg-")
         old = a._config.WORKDIR
@@ -263,14 +264,33 @@ class AgentLogic(unittest.TestCase):
             png = base64.b64encode(b"\x89PNG fake").decode()
             out = a._mcp._content_text({"content": [{"type": "text", "text": "shot"},
                                                      {"type": "image", "mimeType": "image/png", "data": png}]})
-            path = re.search(r"\[image saved: (.+?)\]", out).group(1)
+            path = re.search(r"saved screenshot: (\S+)", out).group(1)
             self.assertTrue(out.startswith("shot\n"))
             self.assertTrue(path.startswith(os.path.join(tmp, "screenshots")) and path.endswith(".png"))
             self.assertEqual(open(path, "rb").read(), b"\x89PNG fake")
             self.assertNotIn(png, out)
             self.assertIn("not saved", a._mcp._content_text({"content": [{"type": "image", "data": "!!notb64"}]}))
+            # the saved image is also queued for the model: one user message
+            # after the tool round, with the path and the pixels
+            hist = [{"role": "tool", "tool_call_id": "t1", "content": out}]
+            a._mcp.attach_images(hist)
+            self.assertEqual(hist[-1]["role"], "user")
+            self.assertIn(path, hist[-1]["content"][0]["text"])
+            self.assertEqual(hist[-1]["content"][1]["image_url"]["url"], "data:image/png;base64," + png)
+            a._mcp.attach_images(hist)                       # nothing pending -> nothing added
+            self.assertEqual(len(hist), 2)
+            # the next screenshot replaces the pixels of the previous one
+            a._mcp._content_text({"content": [{"type": "image", "mimeType": "image/png", "data": png}]})
+            a._mcp.attach_images(hist)
+            self.assertEqual(sum(isinstance(m.get("content"), list) for m in hist), 1)
+            self.assertIn(path, hist[1]["content"])
+            # too big for the context (or not an image type): file only
+            a._mcp._content_text({"content": [{"type": "image", "mimeType": "image/png",
+                                               "data": "A" * (a._mcp.MAX_ATTACH_B64 + 4)}]})
+            self.assertEqual(a._mcp._pending_images, [])
         finally:
             a._config.WORKDIR = old
+            a._mcp._pending_images.clear()
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_bare_mcp_tool_name_resolves_when_unique(self):
@@ -5407,6 +5427,43 @@ class ManagerFunctions(unittest.TestCase):
             self.assertFalse(any(a[-1] == "REJECT" and "!" in a for a in calls))
         finally:
             m._util.sh, m._netfw.ensure_antispoof = old
+
+    def test_browser_container_egress_is_internet_only(self):
+        """The browser container may reach the internet but nothing private
+        (LAN, host, VMs, hub). Rules sit in mangle/PREROUTING — ahead of the
+        per-tap ACCEPTs in FORWARD — with the hub->browser MCP port and its
+        replies first, and a re-run neither duplicates nor reorders them."""
+        m = self.m
+        rules = []
+        class R:
+            def __init__(self, rc): self.returncode = rc
+        def fake_sh(*a, **k):
+            spec = a[a.index("PREROUTING") + 1:]
+            if "-C" in a:
+                return R(0 if spec in rules else 1)
+            if "-D" in a:
+                rules.remove(spec)
+            elif "-I" in a:
+                rules.insert(int(spec[0]) - 1, spec[1:])
+            return R(0)
+        old = m._util.sh
+        try:
+            m._util.sh = fake_sh
+            m._netfw.ensure_browser_rules()
+            first = list(rules)
+            m._netfw.ensure_browser_rules()
+            self.assertEqual(rules, first)
+            nf = m._netfw
+            self.assertEqual(rules[0], ("-i", nf.BROWSER_BRIDGE, "-s", nf.BROWSER_HUB_IP, "-d", nf.BROWSER_IP,
+                                        "-p", "tcp", "--dport", nf.BROWSER_PORT, "-j", "ACCEPT"))
+            self.assertIn("ESTABLISHED", rules[1])
+            drops = {r[3] for r in rules[2:] if r[-1] == "DROP"}
+            self.assertEqual(len(drops), len(rules) - 2)
+            for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+                        "100.64.0.0/10", "127.0.0.0/8"):
+                self.assertIn(net, drops)
+        finally:
+            m._util.sh = old
 
     def test_sandbox_through_the_task_route_and_the_queue(self):
         """A guest's spawn_subagent/create_task with a sandbox: the route turns

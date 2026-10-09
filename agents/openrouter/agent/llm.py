@@ -144,7 +144,9 @@ def or_chat(messages, tools, model=None):
             return d["choices"][0]["message"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", "replace")[:400]
-            if e.code == 400 and "image" in err_body.lower() \
+            # 404: OpenRouter's answer for a text-only model ("No endpoints
+            # found that support image input") — e.g. an attached screenshot.
+            if e.code in (400, 404) and "image" in err_body.lower() \
                     and _strip_history_images(messages):
                 _b["messages"] = messages
                 body = json.dumps(_b).encode()
@@ -236,7 +238,7 @@ def or_chat_stream(messages, tools, on_token):
                 on_token("\n⚠️ Invalid tool-call JSON from the local model — "
                          "round retried without tools (answer as text).\n")
                 continue
-            if e.code == 400 and "image" in err_body.lower() \
+            if e.code in (400, 404) and "image" in err_body.lower() \
                     and _strip_history_images(messages):
                 body = _build_llm_body(tools_on)
                 on_token("\n⚠️ The provider rejected an image in the history — "

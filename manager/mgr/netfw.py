@@ -40,6 +40,33 @@ def ensure_net_base():
           check=False).returncode != 0:
         _util.sh("iptables", "-A", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP", check=False)
     ensure_guest_input_rules()
+    ensure_browser_rules()
+
+
+# The headless browser (mcp-browser/run.sh) runs in its own container on its own
+# bridge: it loads whatever page an agent names, so it gets the internet but
+# nothing private — no LAN (portainer, HA), no host (manager, its own gateway),
+# no VM, no hub; only the hub may open its MCP port. mangle/PREROUTING on
+# purpose: it sees forwarded AND host-bound packets before any filter rule, so
+# the per-tap ACCEPTs that apply_internet keeps inserting on top of FORWARD
+# (e.g. "-o fcN ! -s POOL") cannot open a path from the browser to a VM.
+BROWSER_BRIDGE, BROWSER_IP, BROWSER_HUB_IP, BROWSER_PORT = "kaim56-br", "172.31.56.2", "172.31.56.3", "8931"
+
+
+def browser_rules():
+    b, tcp = BROWSER_BRIDGE, ("-p", "tcp")
+    return ([("-i", b, "-s", BROWSER_HUB_IP, "-d", BROWSER_IP, *tcp, "--dport", BROWSER_PORT, "-j", "ACCEPT"),
+             ("-i", b, "-s", BROWSER_IP, "-d", BROWSER_HUB_IP, *tcp, "--sport", BROWSER_PORT,
+              "-m", "conntrack", "--ctstate", "ESTABLISHED", "-j", "ACCEPT")]
+            + [("-i", b, "-d", net, "-j", "DROP") for net in _BROWSER_BLOCK])
+
+
+def ensure_browser_rules():
+    """Idempotent, order-preserving: every rule is removed and re-inserted on top."""
+    for spec in reversed(browser_rules()):
+        while _util.sh("iptables", "-t", "mangle", "-C", "PREROUTING", *spec, check=False).returncode == 0:
+            _util.sh("iptables", "-t", "mangle", "-D", "PREROUTING", *spec, check=False)
+        _util.sh("iptables", "-t", "mangle", "-I", "PREROUTING", "1", *spec, check=False)
 
 
 # Guest -> host: what a VM legitimately needs from its gateway (.1 of the /30).
@@ -124,6 +151,8 @@ def setup_tap(inst):
 GUEST_DNS = os.environ.get("GUEST_DNS") or _settings.SITE.get("GUEST_DNS") or "1.1.1.1"
 _PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
                  "100.64.0.0/10", "169.254.0.0/16")     # CGNAT/Tailscale, link-local too
+_BROWSER_BLOCK = _PRIVATE_NETS + ("127.0.0.0/8", "0.0.0.0/8", "192.0.0.0/24",
+                                  "198.18.0.0/15", "224.0.0.0/3")   # + loopback, benchmark, multicast/reserved
 
 
 def _mcp_endpoints(inst):

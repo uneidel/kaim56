@@ -50,18 +50,13 @@
   },
   {
     "name": "browser",
-    "description": "Headless browser (Playwright/Chromium): open pages, click, type, screenshots, page text",
-    "command": "playwright-mcp",
+    "description": "Headless browser (Playwright/Chromium, own container, internet only): open pages, click, type, screenshots, page text",
+    "command": "mcp-remote",
     "args": [
-      "--headless",
-      "--isolated",
-      "--no-sandbox",
-      "--browser",
-      "chromium",
-      "--viewport-size",
-      "1280,800",
-      "--output-dir",
-      "/tmp/pw"
+      "http://kaim56-browser:8931/mcp",
+      "--allow-http",
+      "--transport",
+      "http-only"
     ]
   }
 ]
