@@ -829,6 +829,15 @@ def _rt_squad_propose(h):
                     "warnings": prop.get("warnings") or []})
 
 
+@_routes.ROUTER.get("/api/squad/catalog")
+def _rt_squad_catalog(h):
+    # Read-only: what a lead picks members from (personas, skills, tiers, templates).
+    inst, p, err = _gate_guest(h, "squad_catalog", _routes._qs(h).get("project", [""])[0])
+    if err:
+        return h._json({"error": err}, 403)
+    return h._json({"project": p["name"], **_squadgate.catalog()})
+
+
 @_routes.ROUTER.get("/api/squad/tickets")
 def _rt_squad_tickets(h):
     inst, p, err = _gate_guest(h, "ticket_list", _routes._qs(h).get("project", [""])[0])

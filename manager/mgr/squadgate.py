@@ -7,7 +7,10 @@
 A project's lead PROPOSES; only the operator's approval in the UI acts:
 
 - ``squad``: the plan — goal, members (new or existing instances, with
-  persona, skills, model tier, role), tickets, a daily token budget. One
+  persona — or a ``new_persona`` created only on approval —, skills, model
+  tier, template openrouter|claude, role), tickets, a daily token budget.
+  Each member records who chose each field (``by``: architect, jev (score),
+  you). The lead reads what it can choose from with squad_catalog. One
   pending per project. Approve: create the missing instances, add them to the
   project, set the budget, enable + approve the squad, create the tickets,
   tell the lead. Every step is recorded in the proposal and skips what is
@@ -43,6 +46,7 @@ from mgr import jevsetup as _jevsetup
 from mgr import notify as _notify
 from mgr import paths as _paths
 from mgr import personas as _personas
+from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import router as _router
 from mgr import skills as _skills
@@ -62,8 +66,15 @@ MAX_COMMENTS = 100
 MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
-LEAD_TOOLS = ("squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
+LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
               "project_status", "project_diff")   # a lead created here (the kickoff's architect)
+# The templates a squad member may use, with what the architect is told.
+MEMBER_TEMPLATES = {"openrouter": "API model via OpenRouter (512 MiB); counts against the squad's daily token budget",
+                    "claude": "Claude Code on the user's subscription (1024 MiB); the tier picks haiku/sonnet/opus"}
+CLAUDE_TIER = {"cheap": "haiku", "code": "sonnet", "strong": "opus"}   # no anthropic/* model of the tier in Router
+PERSONA_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
+PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
 _decide = threading.Lock()      # one approval at a time
 
@@ -101,9 +112,36 @@ def approved(proj):
 
 
 # ---- validation -------------------------------------------------------------
-def _member(raw, proj, by, warn):
+def _new_persona(raw, name, strict, warn):
+    """A member's proposed persona -> (persona, '') or (None, why). An existing
+    name: refused for the lead (`strict`), flagged otherwise (approve uses it)."""
+    if not isinstance(raw, dict):
+        return None, f"{name}: new_persona must be an object {{name, description, prompt, tools?}}"
+    pn = _txt(raw.get("name"), 64).lower()
+    if not PERSONA_NAME_RE.match(pn):
+        return None, f"{name}: new_persona name {pn!r}: a-z 0-9 -, at most 32 characters"
+    prompt = str(raw.get("prompt") or "").strip()
+    if not prompt or len(prompt) > PERSONA_PROMPT_MAX:
+        return None, f"{name}: new_persona prompt: 1 to {PERSONA_PROMPT_MAX} characters"
+    if pn in {p.get("name") for p in _personas.load_personas()}:
+        if strict:
+            return None, f"{name}: persona {pn!r} exists — use persona={pn!r} or another name"
+        warn.append(f"{name}: persona {pn!r} exists now — the existing one is used")
+    tl = raw.get("tools") or []
+    tl = [str(x).strip() for x in (tl.split(",") if isinstance(tl, str) else tl) if str(x).strip()][:60]
+    bad = [x for x in tl if x not in _policy.tool_names()]
+    if bad:
+        return None, f"{name}: new_persona tools unknown: {', '.join(bad[:5])}"
+    out = {"name": pn, "description": _txt(raw.get("description"), PERSONA_DESC_MAX), "prompt": prompt}
+    if tl:
+        out["tools"] = tl
+    return out, ""
+
+
+def _member(raw, proj, by, warn, strict=True):
     """One proposed member -> (member, '') or (None, why); unknown persona or
-    skills are kept but flagged in `warn`."""
+    skills are kept but flagged in `warn`. `strict`: the lead's proposal (a
+    new_persona must not exist); False for the operator's edits."""
     if not isinstance(raw, dict):
         return None, "a member must be an object"
     name = _txt(raw.get("name"), 64).lower()
@@ -121,16 +159,21 @@ def _member(raw, proj, by, warn):
     if not existing and name in known:
         return None, f"{name}: an instance of that name exists — set existing=true or pick another name"
     tpl = _txt(raw.get("template") or "openrouter", 64)
-    if not existing and tpl not in {t.get("template") for t in _instances.load_templates()}:
-        return None, f"{name}: unknown template {tpl!r}"
+    if not existing and (tpl not in MEMBER_TEMPLATES or tpl not in {t.get("template") for t in _instances.load_templates()}):
+        return None, f"{name}: unknown template {tpl!r} (a member uses {' or '.join(MEMBER_TEMPLATES)})"
     tier = _txt(raw.get("model_tier"), 16)
     if tier and tier not in _router.TIERS:
         return None, f"{name}: model_tier must be one of {', '.join(_router.TIERS)}"
     model = _txt(raw.get("model"), 160)
     if model and not MODEL_RE.match(model):
         return None, f"{name}: model has characters outside A-Z a-z 0-9 . _ : / @ -"
-    persona = _txt(raw.get("persona"), 64)
-    if persona and persona not in {p.get("name") for p in _personas.load_personas()}:
+    persona, newp = _txt(raw.get("persona"), 64), None
+    if raw.get("new_persona") and not existing:
+        newp, why = _new_persona(raw["new_persona"], name, strict, warn)
+        if not newp:
+            return None, why
+        persona = newp["name"]
+    elif persona and persona not in {p.get("name") for p in _personas.load_personas()}:
         warn.append(f"{name}: persona {persona!r} does not exist")
     sk = raw.get("skills") or []
     sk = [x.strip() for x in (sk.split(",") if isinstance(sk, str) else sk) if str(x).strip()]
@@ -140,8 +183,24 @@ def _member(raw, proj, by, warn):
     have = {s.get("name") for s in _skills.load_skills()}
     if [x for x in sk if x not in have]:
         warn.append(f"{name}: unknown skill(s) {', '.join(x for x in sk if x not in have)}")
-    return {"name": name, "purpose": _txt(raw.get("purpose"), 500), "persona": persona, "skills": sk,
-            "model_tier": tier, "model": model, "template": tpl, "role": role, "existing": existing}, ""
+    out = {"name": name, "purpose": _txt(raw.get("purpose"), 500), "persona": persona, "skills": sk,
+           "model_tier": tier, "model": model, "template": tpl, "role": role, "existing": existing}
+    if newp:
+        out["new_persona"] = newp
+    return out, ""
+
+
+def _chose(m, who, before=None, raw=None):
+    """m["by"]: who chose each set field — `who` for every field (no
+    `before`; a template the `raw` proposal left out is "default"), else the
+    earlier marks and `who` where the value changed."""
+    old = (before or {}).get("by") or {}
+    by = {f: (old.get(f) if before is not None and m.get(f) == before.get(f) else who)
+          for f in PROV_FIELDS if m.get(f) and not (f == "template" and m["existing"])}
+    if raw is not None and not raw.get("template") and "template" in by:
+        by["template"] = "default"
+    m["by"] = {f: v for f, v in by.items() if v}
+    return m
 
 
 def _tickets(raw, assignees, known=frozenset()):
@@ -183,7 +242,7 @@ def _budget(v):
     return v if lo <= v <= hi else None
 
 
-def validate_squad(proj, by, body):
+def validate_squad(proj, by, body, strict=True):
     """The squad plan of a proposal -> (fields, '') or (None, why)."""
     goal = _txt(body.get("goal"), 2000)
     if not goal:
@@ -193,7 +252,7 @@ def validate_squad(proj, by, body):
         return None, f"members: a list of 1 to {MAX_MEMBERS}"
     warn, members = [], []
     for r in raw:
-        m, why = _member(r, proj, by, warn)
+        m, why = _member(r, proj, by, warn, strict)
         if not m:
             return None, why
         if any(x["name"] == m["name"] for x in members):
@@ -207,6 +266,24 @@ def validate_squad(proj, by, body):
         return None, "budget_tokens_per_day must be a number from 0 to %d" % _squads.LIMITS["daily_token_budget"][1]
     return {"goal": goal, "members": members, "tickets": tickets, "budget_tokens_per_day": budget,
             "warnings": warn}, ""
+
+
+# ---- what a lead chooses from (squad_catalog) -------------------------------
+def _summary(p):
+    text = re.sub(r"\s+", " ", p.get("description") or p.get("prompt") or "").strip()
+    return re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0][:200]
+
+
+def catalog():
+    """Personas, skills (standard flagged), model tiers and the member
+    templates — read-only, for the lead's squad_propose."""
+    tiers = _router.load()["tiers"]
+    have = {t.get("template") for t in _instances.load_templates()}
+    return {"personas": [{"name": p["name"], "description": _summary(p), **({"tools": p["tools"]} if p.get("tools") else {})}
+                         for p in _personas.load_personas() if p.get("name")],
+            "skills": _skills.meta(),
+            "tiers": [{"tier": t, "models": sorted(k for k, v in tiers.items() if v == t)} for t in _router.TIERS],
+            "templates": [{"template": t, "note": n} for t, n in MEMBER_TEMPLATES.items() if t in have]}
 
 
 # ---- proposals --------------------------------------------------------------
@@ -245,7 +322,7 @@ def propose(proj, by, kind, body):
         f, why = validate_squad(proj, by, body)
         if not f:
             return None, why
-        prop.update(f)
+        prop.update(f, members=[_chose(m, "architect", raw=r) for m, r in zip(f["members"], body["members"])])
     elif kind == "member":
         if not approved(proj):
             return None, "waiting for approval: propose the squad first (squad_propose)"
@@ -255,7 +332,7 @@ def propose(proj, by, kind, body):
             return None, why
         if m["name"] in (proj.get("members") or {}):
             return None, f"{m['name']} is a member already"
-        prop.update(members=[m], warnings=warn, goal=_txt(body.get("reason"), 1000))
+        prop.update(members=[_chose(m, "architect", raw=body["member"])], warnings=warn, goal=_txt(body.get("reason"), 1000))
     elif kind == "merge":
         writer = _txt(body.get("writer"), 64)
         if proj.get("strategy") != "worktree" or writer not in _projects.writers(proj):
@@ -298,15 +375,19 @@ def fill_suggestions(project, pid, only="", force=False):
         if (only and m["name"] != only) or m["existing"] or not (force or _wants_suggestion(m)):
             continue
         s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""))
-        mark = {"note": s["note"], "ms": s["ms"]}
-        if s["persona"] and (force or not m["persona"]):
+        mark, by = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {})
+        if s["persona"] and (force or not m["persona"]) and not m.get("new_persona"):   # never over a proposed one
             m["persona"], mark["persona"] = s["persona"]["name"], s["persona"]["score"]
+            by["persona"] = f"jev ({s['persona']['score']:.2f})"
         if s["skills"] and (force or not m["skills"]):
             m["skills"], mark["skills"] = [x["name"] for x in s["skills"]], {x["name"]: x["score"] for x in s["skills"]}
+            by["skills"] = f"jev ({max(x['score'] for x in s['skills']):.2f})"
         if s["tier"] and (force or not (m["model_tier"] or m["model"])):
             m["model_tier"], mark["tier"] = s["tier"]["name"], s["tier"]["score"]
+            by["model_tier"] = f"jev ({s['tier']['score']:.2f})"
             if force:
                 m["model"] = ""
+                by.pop("model", None)
         m["suggested"] = mark
         done[m["name"]] = m
     with _lock:
@@ -333,10 +414,38 @@ def suggest_member(project, pid, member):
     return (p, "") if p else (None, "the proposal was decided meanwhile")
 
 
+def _claude_model(m, steps):
+    """ANTHROPIC_MODEL for a claude member: its model (anthropic/<id>, an
+    alias or a claude-* id), else the tier's anthropic/* model from the Router
+    tiers, else the tier's alias (CLAUDE_TIER); otherwise the account default
+    of the claude template (flagged)."""
+    want, why = m["model"], ""
+    if want:
+        backend, _, rest = want.partition("/")
+        if backend == "anthropic" and rest:
+            return {"ANTHROPIC_MODEL": rest}
+        if "/" not in want:
+            return {"ANTHROPIC_MODEL": want}
+        why = f"{want} is no Claude model"
+    elif m["model_tier"]:
+        key = next((k for k, t in sorted(_router.load()["tiers"].items())
+                    if t == m["model_tier"] and k.startswith("anthropic/")), "")
+        model = key.partition("/")[2] or CLAUDE_TIER.get(m["model_tier"], "")
+        if model:
+            return {"ANTHROPIC_MODEL": model}
+        why = f"tier {m['model_tier']} has no Claude model"
+    if why:
+        steps.append({"step": f"model {m['name']}", "ok": False,
+                      "detail": why + " — the claude template's account default kept"})
+    return {}
+
+
 def _model_cfg(m, steps):
     """Config keys for the member's model: explicit model, else the first
     concrete model of its tier, else the persona's model, else the template's
-    default (flagged)."""
+    default (flagged). A claude member: _claude_model."""
+    if m.get("template") == "claude":
+        return _claude_model(m, steps)
     want = m["model"]
     if not want and m["model_tier"]:
         want = next((k for k, t in sorted(_router.load()["tiers"].items()) if t == m["model_tier"]), "")
@@ -371,7 +480,7 @@ def _create(proj, m, steps):
     if pers and pers.get("tools"):                # a tool subset still needs the squad's own tools
         extra = MEMBER_TOOLS + (LEAD_TOOLS if m["role"] == "lead" else ())
         cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(pers["tools"]) + list(extra)))
-    if pers and pers.get("model"):
+    if pers and pers.get("model") and m["template"] != "claude":   # a persona's model is an API model
         cfg["OPENROUTER_MODEL"] = pers["model"]
     cfg.update(_model_cfg(m, steps))
     lines = [(pers or {}).get("prompt") or "",
@@ -382,6 +491,23 @@ def _create(proj, m, steps):
     ok = "created" in str(msg)
     steps.append({"step": f"create {m['name']}", "ok": ok, "detail": str(msg)[:300]})
     return ok
+
+
+def _persona_for(m, steps):
+    """A member's proposed persona, created on approval — never over an
+    existing one (then that one is used, noted)."""
+    np = m.get("new_persona")
+    if not np or m["existing"] or any(i["name"] == m["name"] for i in _instances.load_instances()):
+        return
+    m["persona"] = np["name"]
+    if any(p.get("name") == np["name"] for p in _personas.load_personas()):
+        if not m.get("persona_created"):
+            steps.append({"step": f"persona {np['name']}", "ok": True,
+                          "detail": "exists already — the existing persona is used, the proposed one is dropped"})
+        return
+    msg = _personas.upsert_persona(np["name"], np["prompt"], np.get("tools") or None, description=np.get("description"))
+    m["persona_created"] = True
+    steps.append({"step": f"persona {np['name']}", "ok": "saved" in str(msg), "detail": str(msg)[:300]})
 
 
 def _run(prop, who):
@@ -397,6 +523,8 @@ def _run(prop, who):
         if st == 200 and _indexer.instance():
             steps.append({"step": "reindex", "ok": True, "detail": _indexer.reindex(name, f"merge {prop['writer']}")})
     else:
+        for m in prop["members"]:
+            _persona_for(m, steps)
         made = [m for m in prop["members"] if _create(proj, m, steps)]
         members = {n: {"role": x.get("role")} for n, x in (proj.get("members") or {}).items()}
         add = {m["name"]: m["role"] for m in made if members.get(m["name"], {}).get("role") != m["role"]}
@@ -440,17 +568,18 @@ def decide(project, pid, ok, who, note="", edits=None):
         note = _txt(note, 1000) or prop.get("note", "")
         if ok and edits and prop["status"] == "pending":
             prop["edits"] = edits                 # what the operator changed (the archive keeps it)
+        before = {m["name"]: m for m in prop.get("members") or []}
         if ok and edits and prop["status"] == "pending" and prop["kind"] == "squad":
-            f, why = validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits})
+            f, why = validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits}, strict=False)
             if not f:
                 return None, why
-            prop.update(f)
+            prop.update(f, members=[_chose(m, "you", before.get(m["name"], {})) for m in f["members"]])
         elif ok and edits and prop["status"] == "pending" and prop["kind"] == "member":
             warn = []
-            m, why = _member((edits.get("members") or [None])[0], proj, prop["by"], warn)
+            m, why = _member((edits.get("members") or [None])[0], proj, prop["by"], warn, strict=False)
             if not m:
                 return None, why
-            prop.update(members=[m], warnings=warn)
+            prop.update(members=[_chose(m, "you", before.get(m["name"], {}))], warnings=warn)
         prop.update(status="approved" if ok else "rejected", decided=int(time.time()), decided_by=who, note=note)
         if ok:
             prop["steps"] = _run(prop, who)

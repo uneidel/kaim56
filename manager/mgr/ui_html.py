@@ -334,7 +334,9 @@ HTML_TOP = """</head><body>
       <div id=sk-board hidden></div>
       <div class=sk-thread id=sk-thread aria-live=polite></div>
       <div id=sk-cards></div>
-      <div class=sk-comp><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message onkeydown="if(event.key==='Enter')skSend()">
+      <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
+        <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
+        <input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message onkeydown="if(event.key==='Enter')skSend()">
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
     </div>
@@ -850,6 +852,10 @@ HTML_BOTTOM = """
   <code>squad_request_member/merge</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
   sets the budget, enables the squad and creates the tickets (each step recorded, re-approve retries). Before approval only the lead
   can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.
+  The lead reads <code>squad_catalog</code> (personas, skills, tiers, templates) and picks per member persona or a
+  <code>new_persona</code> (created only on approve, never over an existing one), skills, tier and template
+  (<code>openrouter</code> or <code>claude</code>: tier &#8594; <code>ANTHROPIC_MODEL</code>); the card shows who chose each field
+  (architect, jev, you). A claude guest writes its <code>AGENT_SYSTEM</code> into CLAUDE.md under "Your role" at boot.
   <b>Squad git</b> (<code>mgr/squadgit.py</code>): a project's GitHub/Gitea remote; <code>git_push_branch</code>, <code>pr_*</code>, <code>issue_*</code>
   run on the host with a token from the secret store that never reaches a VM (env header, not argv); pushes only to
   <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.

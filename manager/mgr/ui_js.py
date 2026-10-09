@@ -1093,17 +1093,39 @@ function sqJev(s){
   if(s.tier!=null)parts.push('tier '+f(s.tier));
   return `<div class=text-muted style="font-size:12px">suggested by Jev: ${escT(parts.join(' · ')||s.note||'nothing above the floor')}</div>`;
 }
+/* who chose each field: architect, jev (score), you (an edit here) — mgr/squadgate.py _chose */
+const SQ_F={persona:'persona',new_persona:'new persona',skills:'skills',model_tier:'tier',model:'model',template:'template'};
+function sqBy(m){
+  const b=m.by||{};
+  return `<div class="text-muted sq-by" style="font-size:12px">chosen by: `+Object.keys(SQ_F).filter(k=>b[k]).map(k=>`${SQ_F[k]} <span data-by=${k}>${escT(b[k])}</span>`).join(' · ')+'</div>';
+}
+function sqYou(e){
+  const r=e.target.closest('tr'), k=String(e.target.dataset.k||'').startsWith('np_')?'new_persona':e.target.dataset.k, d=r&&r.querySelector('.sq-by');
+  if(!d||!SQ_F[k])return;
+  const s=d.querySelector('[data-by='+k+']');
+  if(s)s.textContent='you'; else d.insertAdjacentHTML('beforeend',` · ${SQ_F[k]} <span data-by=${k}>you</span>`);
+}
+function sqNewPersona(n){
+  if(!n)return '';
+  return `<details open style="margin-top:4px"><summary class=text-muted style="font-size:12px">new persona — created only on Approve, never over an existing one</summary>`+
+    `<input class=input data-k=np_name value="${esc(n.name)}" placeholder="name (a-z 0-9 -)">`+
+    `<input class=input data-k=np_desc value="${esc(n.description)}" placeholder="one-line description">`+
+    `<textarea class=input data-k=np_prompt rows=4 placeholder="system prompt">${escT(n.prompt)}</textarea>`+
+    `<input class=input data-k=np_tools value="${esc((n.tools||[]).join(', '))}" placeholder="tools (empty = all)"></details>`;
+}
 function sqMemRow(p,m){
   const pers=[...new Set(PERSONAS.map(x=>x.name).concat(p.members.map(x=>x.persona).filter(Boolean)))];
-  return `<tr data-m="${esc(m.name)}"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new · '+escT(m.template)}</span>`+
-      `<div class=text-muted>${escT(m.purpose)}</div>${sqJev(m.suggested)}`+
+  return `<tr data-m="${esc(m.name)}" onchange="sqYou(event)"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new'}</span>`+
+      `<div class=text-muted>${escT(m.purpose)}</div>${m.existing?'':sqBy(m)}${sqJev(m.suggested)}${m.existing?'':sqNewPersona(m.new_persona)}`+
       (m.existing?'':`<button class="btn btn-ghost btn-sm" onclick="sqSuggest('${esc(p.id)}','${esc(m.name)}',this)">Suggest again</button>`)+
       `</td><td>${sqSel('role',['writer','reader','lead'],m.role)}</td><td>${sqSel('persona',pers,m.persona)}</td>`+
       `<td><input class=input data-k=skills value="${esc((m.skills||[]).join(', '))}"></td><td>${sqSel('model_tier',SQB.tiers||[],m.model_tier)}</td>`+
-      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td><td>${SQ_X}</td></tr>`;
+      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td>`+
+      `<td title="claude: Claude Code on your subscription, the tier picks haiku/sonnet/opus; openrouter: API model, counts against the token budget">`+
+      (m.existing?'—':sqSel('template',['openrouter','claude'],m.template))+`</td><td>${SQ_X}</td></tr>`;
 }
 function sqMemRows(p){
-  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th></th></tr></thead><tbody>`+
+  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th>Template</th><th></th></tr></thead><tbody>`+
     p.members.map(m=>sqMemRow(p,m)).join('')+'</tbody></table>';
 }
 async function sqSuggest(id,name,btn){
@@ -1134,13 +1156,25 @@ function sqCard(p){
 function sqDone(p){
   const bad=(p.steps||[]).some(s=>!s.ok);
   return `<div style="font-size:12.5px;margin:6px 0"><b>${SQ_KIND[p.kind]||escT(p.kind)}</b> ${escT(p.id)} · ${escT(p.status)} by ${escT(p.decided_by)}${p.note?' · '+escT(p.note):''}`+
+    (p.members||[]).filter(m=>!m.existing).map(m=>`<div class=text-muted>${escT(m.name)} (${escT(m.template)}) — `+
+      Object.keys(SQ_F).filter(k=>(m.by||{})[k]).map(k=>SQ_F[k]+': '+escT(m.by[k])).join(' · ')+'</div>').join('')+
     (p.steps||[]).map(s=>`<div ${s.ok?'class=text-muted':'style="color:var(--color-warn)"'}>${s.ok?'✓':'✗'} ${escT(s.step)}: ${escT(s.detail)}</div>`).join('')+
     (bad?`<button class="btn btn-ghost btn-sm" onclick="sqDecide('${esc(p.id)}',true)">Retry the failed steps</button>`:'')+'</div>';
 }
 function sqCollect(p,c){
   const v=(r,k)=>r.querySelector('[data-k='+k+']').value, out={};
-  out.members=[...c.querySelectorAll('tr[data-m]')].map(r=>({...p.members.find(m=>m.name===r.dataset.m),role:v(r,'role'),persona:v(r,'persona'),
-    skills:v(r,'skills').split(',').map(s=>s.trim()).filter(Boolean),model_tier:v(r,'model_tier'),model:v(r,'model').trim()}));
+  const list=x=>x.split(',').map(s=>s.trim()).filter(Boolean);
+  out.members=[...c.querySelectorAll('tr[data-m]')].map(r=>{
+    const b=p.members.find(m=>m.name===r.dataset.m), o={...b,role:v(r,'role'),persona:v(r,'persona'),
+      skills:list(v(r,'skills')),model_tier:v(r,'model_tier'),model:v(r,'model').trim()};
+    if(r.querySelector('[data-k=template]'))o.template=v(r,'template');
+    delete o.new_persona;               /* kept only while the persona select still names it */
+    if(b.new_persona&&r.querySelector('[data-k=np_name]')&&o.persona===b.new_persona.name){
+      o.new_persona={name:v(r,'np_name').trim(),description:v(r,'np_desc'),prompt:v(r,'np_prompt'),tools:list(v(r,'np_tools'))};
+      o.persona=o.new_persona.name;
+    }
+    return o;
+  });
   if(p.kind==='squad'){
     out.tickets=[...c.querySelectorAll('tr[data-t]')].map(r=>({...p.tickets.find(t=>t.key===r.dataset.t),title:v(r,'title'),assignee:v(r,'assignee')}));
     out.budget_tokens_per_day=+c.querySelector('[data-k=budget]').value;
@@ -1211,6 +1245,7 @@ function skNew(){
   document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Paste the repository URL and say what the squad should do, e.g. <code>https://github.com/owner/repo add a dark mode with tests</code>. '+
     'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea).</div>';
   document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
+  document.getElementById('sk-arch').hidden=false;
   skMsg('');
 }
 async function skJob(id){
@@ -1218,6 +1253,7 @@ async function skJob(id){
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
+  document.getElementById('sk-arch').hidden=false;
   document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[j.status]||'tag-neutral'}">${escT(j.status)}</span>`;
   document.getElementById('sk-acts').innerHTML=j.status==='failed'?'<button class="btn btn-secondary btn-sm" onclick=skRetry()>Retry</button>'
     :j.status==='done'?`<button class="btn btn-primary btn-sm" data-open="${esc(j.name)}" onclick="skPick(this.dataset.open);loadSquads()">Open squad</button>`:'';
@@ -1237,6 +1273,7 @@ function skPick(name){
   SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND='';
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='@member … or @all … (posted as you)';
+  document.getElementById('sk-arch').hidden=true;
   document.getElementById('sk-board').hidden=true; skMsg(''); skLoad();
 }
 async function skLoad(){
@@ -1298,7 +1335,8 @@ async function skSend(){
   let d={};
   try{
     d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
-       :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+       :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
+         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;

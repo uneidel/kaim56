@@ -694,6 +694,28 @@ def _gate_out(d, err):
             + (" Flags: " + "; ".join(w) if w else ""))
 
 
+def catalog_text(d):
+    """The squad catalog as the lines a lead picks from (shared wording with the Claude guest)."""
+    out = [f"Squad catalog for {d.get('project', '')} — choose per member:", "Personas (persona=<name>):"]
+    out += [f"- {p['name']}: {p.get('description', '')}" + (f" [tools: {', '.join(p['tools'])}]" if p.get("tools") else "")
+            for p in d.get("personas") or []]
+    out.append("  none fits -> new_persona: {name, description, prompt, tools?}")
+    out.append("Skills (skills=[...]; 'standard' ones every agent has already):")
+    out += [f"- {s['name']}{' (standard)' if s.get('default') else ''}: {s.get('description', '')}"
+            for s in d.get("skills") or []]
+    out.append("Model tiers (model_tier=):")
+    out += [f"- {t['tier']}: {', '.join(t['models']) or 'no model assigned'}" for t in d.get("tiers") or []]
+    out.append("Templates (template=):")
+    out += [f"- {t['template']}: {t.get('note', '')}" for t in d.get("templates") or []]
+    return "\n".join(out)
+
+
+def t_squad_catalog(project=""):
+    """Lead: what the members can be made of."""
+    d, err = _squad_call("/api/squad/catalog?" + urllib.parse.urlencode({"project": project}))
+    return err or catalog_text(d)
+
+
 def t_squad_propose(goal, members, tickets=None, budget_tokens_per_day=0, project=""):
     """Lead: the squad plan, for the user to approve."""
     return _gate_out(*_squad_call("/api/squad/propose", {
