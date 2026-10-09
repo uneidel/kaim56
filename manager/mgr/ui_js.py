@@ -992,7 +992,7 @@ async function sqLoad(){
   th.scrollTop=th.scrollHeight;
   sqBoard();sqIndex();
 }
-/* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex */
+/* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
 async function sqIndex(){
   const el=document.getElementById('sq-index');
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/index')).json()}catch(e){return}
@@ -1002,7 +1002,8 @@ async function sqIndex(){
   el.innerHTML=`<span class="tag ${d.running?'tag-accent':'tag-neutral'}">${escT(d.instance)} · ${d.running?'running':'stopped'}</span> `+
     (d.pending?sm+'reindex queued … </span>':'')+
     (l.ts?sm+`last index ${new Date(l.ts*1000).toLocaleString()} · ${l.ok?'ok':'failed'}${l.detail?' · '+escT(String(l.detail).slice(0,120)):''}${l.why?' · '+escT(l.why):''} · ${+l.seconds||0} s</span> `:sm+'not indexed yet </span>')+
-    `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`;
+    `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`+
+    (l.ok?` <a class="btn btn-ghost btn-sm" href="/indexer/open/${encodeURIComponent(SQ)}" target=_blank rel=noopener title="repowise dashboard (starts the indexer)">Dashboard</a>`:'');
 }
 async function sqReindex(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}

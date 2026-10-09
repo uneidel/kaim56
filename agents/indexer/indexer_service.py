@@ -13,6 +13,14 @@ write layer), so repowise's `.repowise/` never touches the source.
   GET  /health                       -> {"ok", "projects": {name: last run}, "busy", "mcp"}
   POST /reindex {"project", "ref"?}  -> {"ok", "commit"|"error", "seconds"}  (synchronous)
   POST /mcp     one JSON-RPC message -> its answer (202 for a notification)
+  POST /dashboard {"project"}        -> {"ok", "project", "port"} | {"ok": false, "error"}
+  POST /dashboard/stop               -> {"ok"}
+
+/dashboard runs repowise's web UI for one indexed project at a time (another
+project replaces it): `repowise serve --no-ui` on loopback plus the Next.js
+UI baked into the image (/opt/repowise-web, built with basePath /indexer/ui)
+on DASH_PORT. The manager reverse-proxies /indexer/ui/ to it, admin only.
+It lives until the VM's idle stop.
 
 /mcp is one MCP server for every project: tools/list is repowise's list with
 a required `project` argument added, tools/call goes to that project's
@@ -26,6 +34,7 @@ import os
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -39,6 +48,10 @@ RPC_TIMEOUT = int(os.environ.get("RPC_TIMEOUT", "120"))
 MAX_MCP = int(os.environ.get("MAX_MCP", "4"))          # live repowise mcp processes (~250 MB each)
 MCP_TOOLS = "+get_dependency_path,+get_execution_flows"  # default set plus the two read-only graph tools
 MAX_BODY = 1024 * 1024
+DASH_PORT = int(os.environ.get("DASH_PORT", "7341"))           # the UI, for the manager
+DASH_API_PORT = int(os.environ.get("DASH_API_PORT", "7342"))   # repowise's API, loopback only
+DASH_WEB = os.environ.get("DASH_WEB", "/opt/repowise-web/packages/web")
+DASH_WAIT = 60
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")    # = mgr/projects.py NAME_RE
 REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
 # Telemetry off (both switches), no editor files, no hints. No LLM key here:
@@ -126,6 +139,9 @@ def reindex(project, ref="HEAD", run=subprocess.run, wait_src=60):
                 shutil.rmtree(wc, ignore_errors=True)        # a half clone from an earlier failure
             indexed = os.path.exists(os.path.join(wc, ".repowise", "state.json"))
             out = {"ok": True}
+            if DASH.current() == project:                    # its server would sync on its own mid-run
+                with DASH.lock:
+                    DASH.stop()
             for argv in index_steps(project, ref, cloned, indexed):
                 r = run(argv, env=ENV, capture_output=True, text=True, timeout=INDEX_TIMEOUT)
                 if r.returncode != 0:
@@ -323,6 +339,80 @@ def handle_rpc(msg, tools=list_tools, call=call_tool):
         return err(-32000, f"{type(e).__name__}: {e}"[:300])
 
 
+# ---- dashboard: repowise's web UI for one project ---------------------------------
+def dashboard_cmds(project):
+    """(cwd, argv, env) of the API and of the UI for this project's clone.
+    The API stays on loopback (no key needed, nothing else reaches it); the
+    UI's middleware forwards /indexer/ui/api/* to it."""
+    wc = os.path.join(DATA, project)
+    api = (wc, ["repowise", "serve", "--no-ui", "--host", "127.0.0.1", "--port", str(DASH_API_PORT)],
+           {**ENV, "REPOWISE_EMBEDDER": "mock"})                     # no embedder prompt, no key
+    ui = (DASH_WEB, ["node", os.path.join(DASH_WEB, "server.js")],
+          {**ENV, "NEXT_TELEMETRY_DISABLED": "1", "HOSTNAME": "0.0.0.0", "PORT": str(DASH_PORT),
+           "REPOWISE_API_URL": f"http://127.0.0.1:{DASH_API_PORT}"})
+    return [api, ui]
+
+
+def _port_open(port):
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
+class Dashboard:
+    def __init__(self, popen=subprocess.Popen, ready=_port_open, wait=DASH_WAIT):
+        self.popen, self.ready, self.wait = popen, ready, wait
+        self.project, self.procs = "", []
+        self.lock = threading.Lock()
+
+    def _alive(self):
+        return bool(self.procs) and all(p.poll() is None for p in self.procs)
+
+    def current(self):
+        return self.project if self._alive() else ""
+
+    def stop(self):
+        for p in self.procs:
+            try:
+                p.terminate()
+                p.wait(timeout=5)
+            except Exception:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+        self.project, self.procs = "", []
+
+    def start(self, project):
+        if not NAME_RE.match(project or ""):
+            return {"ok": False, "error": "bad project name"}
+        if project not in indexed_projects():
+            return {"ok": False, "error": f"project {project!r} is not indexed here (yet)"}
+        with self.lock:
+            if self.project == project and self._alive():
+                return {"ok": True, "project": project, "port": DASH_PORT}
+            self.stop()
+            logf = open(os.path.join(DATA, "dashboard.log"), "w")
+            for cwd, argv, env in dashboard_cmds(project):
+                self.procs.append(self.popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                             stdout=logf, stderr=subprocess.STDOUT))
+            logf.close()
+            self.project = project
+            end = time.time() + self.wait
+            while not (self.ready(DASH_API_PORT) and self.ready(DASH_PORT)):
+                if not self._alive() or time.time() >= end:
+                    self.stop()
+                    return {"ok": False, "error": "dashboard did not start (see dashboard.log in the indexer)"}
+                time.sleep(0.5)
+        log(project, "dashboard up on", DASH_PORT)
+        return {"ok": True, "project": project, "port": DASH_PORT}
+
+
+DASH = Dashboard()
+
+
 # ---- HTTP -------------------------------------------------------------------
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -340,7 +430,8 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.split("?")[0] == "/health":
-            return self._json(200, {"ok": True, "projects": load_state(), "busy": busy(), "mcp": MCP.live()})
+            return self._json(200, {"ok": True, "projects": load_state(), "busy": busy(), "mcp": MCP.live(),
+                                    "dashboard": DASH.current()})
         if self.path.split("?")[0] == "/mcp":
             return self._json(405, {"error": "no server-sent stream; POST JSON-RPC"})
         self._json(404, {"error": "not found"})
@@ -357,6 +448,13 @@ class H(BaseHTTPRequestHandler):
         if path == "/reindex" and isinstance(b, dict):
             out = reindex(str(b.get("project") or ""), str(b.get("ref") or "HEAD"))
             return self._json(200 if "seconds" in out else 400, out)     # a failed run is a result, bad input is not
+        if path == "/dashboard" and isinstance(b, dict):
+            out = DASH.start(str(b.get("project") or ""))
+            return self._json(200 if out["ok"] else 400, out)
+        if path == "/dashboard/stop":
+            with DASH.lock:
+                DASH.stop()
+            return self._json(200, {"ok": True})
         if path == "/mcp":
             out = handle_rpc(b)
             return self._json(202) if out is None else self._json(200, out)

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Code index: the Squad panel's Dashboard (admin only) opens repowise's web UI for the project — `/indexer/open/<project>` starts the indexer and the UI (Next.js built into the image with basePath `/indexer/ui`, node 22), `/indexer/ui/` is reverse-proxied to the VM without the browser's credentials and counts as use for the idle stop.
 - Code index (repowise): template `indexer` (`agents/indexer`, 4 vCPU/4 GiB, offline, persistent disk) indexes the git projects as a reader on demand — after a ticket reaches done, an approved merge or the Squad panel's Reindex — and stops after 30 min idle (`mgr/indexer.py`); members query it as MCP server `repowise` straight through the manager (project checked against their memberships).
 - Tests: all temp dirs of a run live under one parent removed at exit (no more ~100 leftovers in /tmp per run).
 - Squads (phase 3, Jev setup): per-instance skills (config `SKILLS`, catalog-checked, served with the standard skills to both agents; replaces `SQUAD_SKILLS`); Jev suggests persona, skills and tier/model from a purpose (`mgr/jevsetup.py`, admin `POST /api/setup/suggest`) in New instance and for squad members (scores shown, "Suggest again"); nothing applies before Create/Approve.

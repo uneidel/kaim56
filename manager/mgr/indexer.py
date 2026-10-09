@@ -17,6 +17,11 @@
   initialize/tools/list are answered here (tools cached), so a member
   booting does not boot the indexer; a call does, and is retried once.
 - idle_sweep (task worker): stop the VM after IDLE_STOP s without a call.
+- Dashboard (admin only): GET /indexer/open/<project> starts the indexer and
+  repowise's web UI for that project (open_dashboard), then /indexer/ui/ is
+  reverse-proxied to it (mgr/guestproxy.py _dash_proxy). The UI is built with
+  that basePath (agents/indexer/Dockerfile.rootfs): paths pass unchanged.
+  Every proxied request counts as use for the idle stop.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -38,6 +43,8 @@ from mgr import vm as _vm
 TEMPLATE = "indexer"
 SERVER = "repowise"                  # the MCP catalog entry members get (MCP_SERVERS=…,repowise)
 PORT = 7340                          # indexer_service.py in the guest
+DASH_PORT = 7341                     # its dashboard UI (repowise web, Next.js)
+DASH_BASE = "/indexer/ui"            # the UI's basePath = the manager path it is served at
 IDLE_STOP = int(os.environ.get("INDEXER_IDLE_STOP", "1800"))
 HEALTH_WAIT = 180                    # boot + service start, bounded
 INDEX_TIMEOUT = 3600
@@ -200,6 +207,42 @@ def idle_sweep(now=None):
     _vm.stop(inst)
     print(f"[indexer] {inst['name']} idle {IDLE_STOP}s -> stopped", flush=True)
     return "stopped"
+
+
+# ---- dashboard: repowise's web UI, proxied at DASH_BASE ------------------------------
+def open_dashboard(project):
+    """Start the indexer when stopped and its dashboard for this project -> '' or why not."""
+    inst = instance()
+    if inst is None:
+        return "no indexer instance (create one from template 'indexer')"
+    if _projects.get(project) is None:
+        return "unknown project"
+    touch()
+    try:
+        no = ensure_up(inst)
+        if no:
+            return no
+        r = _http(inst, "/dashboard", {"project": project}, timeout=90)
+    except urllib.error.HTTPError as e:
+        try:
+            r = json.loads(e.read() or b"{}")
+        except ValueError:
+            r = {}
+        return str(r.get("error") or f"indexer HTTP {e.code}")[:300]
+    except (OSError, ValueError) as e:
+        return f"indexer unreachable: {e!r}"[:300]
+    finally:
+        touch()
+    return "" if r.get("ok") else str(r.get("error") or "dashboard did not start")[:300]
+
+
+def dashboard_target():
+    """(guest ip, port) of the dashboard while the indexer runs, else None. A use."""
+    inst = instance()
+    if inst is None or not _instances.is_running(inst):
+        return None
+    touch()
+    return _instances.net_of(inst)["guest"], DASH_PORT
 
 
 # ---- MCP: the members' 'repowise' server -------------------------------------------

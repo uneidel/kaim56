@@ -842,7 +842,10 @@ HTML_BOTTOM = """
   result in <code>indexer.json</code>); stopped after 30 minutes unused. Members get the MCP server <code>repowise</code>
   (<code>MCP_SERVERS</code>): their calls go from <code>/api/mcp</code> straight to the indexer&#8217;s <code>:7340/mcp</code>, not through the hub,
   and every tool takes a <code>project</code> the manager checks against the caller&#8217;s memberships. initialize and the (cached) tool list
-  are answered by the manager, so only a real query boots the VM &#8212; a failed call starts it and is retried once.</p></div>
+  are answered by the manager, so only a real query boots the VM &#8212; a failed call starts it and is retried once.
+  The Squad panel&#8217;s <b>Dashboard</b> (admin only) opens repowise&#8217;s web UI for the project: <code>/indexer/open/&#8249;name&#8250;</code>
+  starts the VM and the UI (Next.js, built into the image with basePath <code>/indexer/ui</code>; its API on loopback),
+  then <code>/indexer/ui/</code> is reverse-proxied unchanged to <code>:7341</code>, without the browser&#8217;s credentials.</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).

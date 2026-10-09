@@ -4704,6 +4704,98 @@ class ManagerFunctions(unittest.TestCase):
             finally:
                 m._instances.load_templates, m._instances.load_instances, m._instances.save_instance = old
 
+    def test_indexer_dashboard_route_admin_only_starts_indexer_and_proxies(self):
+        """/indexer/open/<p> starts the stopped indexer and the dashboard, then
+        redirects to /indexer/ui; /indexer/ui/... is relayed unchanged (method,
+        path, query, body) without the browser's credentials, upstream cookies
+        dropped; counts as use. Admin only: not for guests, not for role user."""
+        import http.server
+        m = self.m
+        x = m._indexer
+        running, calls, answers, woke, undo = self._idx_env()
+        seen = []
+
+        class D(http.server.BaseHTTPRequestHandler):
+            def _answer(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                seen.append((self.command, self.path, dict(self.headers), self.rfile.read(n)))
+                out = b"<html>dash</html>"
+                self.send_response(308 if self.path == "/indexer/ui/" else 200)
+                self.send_header("Location", "/indexer/ui")
+                self.send_header("Set-Cookie", "x=1")
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+            do_GET = do_POST = _answer
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), D)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (x.DASH_PORT, m._instances.net_of)
+        x.DASH_PORT = srv.server_address[1]
+        m._instances.net_of = lambda inst: {"guest": "127.0.0.1"}
+        L = "127.0.0.1"
+        try:
+            for meth, path in (("GET", "/indexer/open/sq"), ("GET", "/indexer/ui/repos/r"), ("POST", "/indexer/ui/api/x")):
+                self.assertTrue(m._routes.ROUTER.resolve(meth, path)[1])                 # admin: no guest
+                self.assertFalse(m._auth.user_allowed(meth, path))                       # no role user
+            h = self._handler("/indexer/ui/repos/r", "172.30.4.2")                      # a guest
+            h._do_GET()
+            self.assertEqual((self._status(h), seen), (403, []))
+            h = self._handler("/indexer/ui/repos/r", L)
+            h.principal = m._oidc.Principal("u1", "User", "", "user")
+            self.assertTrue(h._dispatch("GET"))
+            self.assertEqual((self._status(h), seen), (403, []))
+
+            h = self._handler("/indexer/ui", L)                                         # indexer stopped
+            h._do_GET()
+            self.assertEqual((self._status(h), seen), (503, []))
+            answers["/dashboard"] = {"ok": True, "project": "sq", "port": 7341}
+            x._last_use[0] = 0
+            h = self._handler("/indexer/open/sq", L)
+            h._do_GET()
+            self.assertEqual(self._status(h), 302)
+            self.assertIn(b"Location: /indexer/ui\r\n", h.wfile.getvalue())
+            self.assertEqual((running, calls[-1]), ({"idx"}, ("/dashboard", {"project": "sq"})))
+            self.assertGreater(x._last_use[0], 0)                                       # a use
+
+            x._last_use[0] = 0
+            h = self._handler("/indexer/ui/repos/r?tab=1", L, auth="Basic eDp5")
+            h.headers["Cookie"] = "kaim56_sid=secret"
+            h.headers["RSC"] = "1"
+            h._do_GET()
+            raw = h.wfile.getvalue()
+            self.assertEqual(self._status(h), 200)
+            self.assertTrue(raw.endswith(b"<html>dash</html>")); self.assertNotIn(b"Set-Cookie", raw)
+            meth, path, hdrs, _ = seen[-1]
+            self.assertEqual((meth, path, hdrs.get("RSC")), ("GET", "/indexer/ui/repos/r?tab=1", "1"))
+            self.assertFalse({"Authorization", "Cookie"} & set(hdrs))
+            self.assertGreater(x._last_use[0], 0)
+            h = self._handler("/indexer/ui/", L)
+            h._do_GET()
+            self.assertEqual(self._status(h), 308)                                      # redirects pass through
+            h = self._post_handler("/indexer/ui/api/search", L, b'{"q":"x"}')
+            h._do_POST()
+            self.assertEqual((self._status(h), seen[-1][0], seen[-1][1], seen[-1][3]),
+                             (200, "POST", "/indexer/ui/api/search", b'{"q":"x"}'))
+            h = self._handler("/indexer/other", L)
+            h._do_GET()
+            self.assertEqual(self._status(h), 404)
+
+            answers["/dashboard"] = urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b'{"error": "not indexed here (yet)"}'))
+            h = self._handler("/indexer/open/sq", L)
+            h._do_GET()
+            self.assertEqual(self._status(h), 503); self.assertIn(b"not indexed here", h.wfile.getvalue())
+            h = self._handler("/indexer/open/nope", L)
+            h._do_GET()
+            self.assertIn(b"unknown project", h.wfile.getvalue())
+        finally:
+            x.DASH_PORT, m._instances.net_of = old
+            srv.shutdown(); srv.server_close()
+            undo()
+
     # ---- Jev setup suggestions (mgr/jevsetup.py), per-instance SKILLS ----------------
     def _fake_jev(self):
         """A Jev on a free port: entailment by substring; records each call's
@@ -7693,6 +7785,68 @@ class IndexerService(unittest.TestCase):
             self.assertEqual(s.reindex("p", "--upload-pack=x", run=run)["error"], "bad ref")
         finally:
             s.DATA, s.SRC_ROOT, s.STATE_FILE = old
+
+    def test_dashboard_starts_once_per_project_and_stops(self):
+        """API on loopback, UI on the VM's network with the API behind it; one
+        project at a time; a dead process or no port in time -> stopped, error;
+        only indexed projects; a reindex of the shown project stops it."""
+        s = self.s
+        tmp = tempfile.mkdtemp(prefix="e2e-idxdash-")
+        old = (s.DATA, s.STATE_FILE, s.SRC_ROOT)
+        s.DATA, s.STATE_FILE, s.SRC_ROOT = tmp, os.path.join(tmp, "state.json"), os.path.join(tmp, "src")
+        os.makedirs(os.path.join(s.SRC_ROOT, "b", ".git"))
+        made = []
+
+        class P:
+            def __init__(self, argv, **kw):
+                self.argv, self.kw, self.rc, self.terminated = argv, kw, None, False
+                made.append(self)
+
+            def poll(self):
+                return self.rc
+
+            def terminate(self):
+                self.terminated, self.rc = True, -15
+
+            def wait(self, timeout=None):
+                return self.rc
+        up = {"ok": True}
+        try:
+            for p in ("a", "b"):
+                os.makedirs(os.path.join(tmp, p, ".repowise"))
+                open(os.path.join(tmp, p, ".repowise", "state.json"), "w").close()
+            s._save_state({"a": {"ok": True}, "b": {"ok": True}, "c": {"ok": False}})
+            api, ui = s.dashboard_cmds("a")
+            self.assertEqual(api[0], os.path.join(tmp, "a"))
+            self.assertEqual(api[1][:3] + api[1][4:6], ["repowise", "serve", "--no-ui", "127.0.0.1", "--port"])
+            self.assertEqual((ui[2]["HOSTNAME"], ui[2]["PORT"], ui[2]["REPOWISE_API_URL"]),
+                             ("0.0.0.0", str(s.DASH_PORT), f"http://127.0.0.1:{s.DASH_API_PORT}"))
+            for env in (api[2], ui[2]):
+                self.assertEqual((env["DO_NOT_TRACK"], env["REPOWISE_TELEMETRY_DISABLED"]), ("1", "1"))
+            self.assertEqual(ui[2]["NEXT_TELEMETRY_DISABLED"], "1"); self.assertEqual(api[2]["REPOWISE_EMBEDDER"], "mock")
+
+            d = s.Dashboard(popen=P, ready=lambda port: up["ok"], wait=0.2)
+            self.assertEqual(d.start("a"), {"ok": True, "project": "a", "port": s.DASH_PORT})
+            self.assertEqual(([p.argv[0] for p in made], d.current()), (["repowise", "node"], "a"))
+            self.assertTrue(d.start("a")["ok"]); self.assertEqual(len(made), 2)            # already up: reused
+            self.assertTrue(d.start("b")["ok"])
+            self.assertEqual(([p.terminated for p in made], d.current()), ([True, True, False, False], "b"))
+            self.assertIn("not indexed", d.start("c")["error"]); self.assertIn("not indexed", d.start("zz")["error"])
+            self.assertEqual(d.start("../a")["error"], "bad project name")
+            made[-1].rc = 1                                                             # the UI died
+            up["ok"] = False
+            out = d.start("b")
+            self.assertFalse(out["ok"]); self.assertEqual(d.current(), "")
+            up["ok"] = True
+            self.assertTrue(d.start("b")["ok"])
+            old_dash, s.DASH = s.DASH, d
+            try:
+                s.reindex("b", run=lambda argv, **kw: type("R", (), {"returncode": 1, "stdout": "", "stderr": "x"})(), wait_src=0)
+                self.assertEqual(d.current(), "")                                       # stopped by the reindex
+            finally:
+                s.DASH = old_dash
+        finally:
+            s.DATA, s.STATE_FILE, s.SRC_ROOT = old
 
     def test_pool_keeps_at_most_size_and_drops_the_least_recent(self):
         made = []
