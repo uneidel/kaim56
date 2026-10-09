@@ -4425,7 +4425,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, p["status"], p["decided_by"]), (200, "approved", "admin"), p)
             self.assertEqual([c[0] for c in created], ["e", "f"])
             e = created[0][2]
-            self.assertEqual((e["OPENROUTER_MODEL"], e["SKILLS"]), ("acme/fast", "tdd"))
+            self.assertEqual((e["OPENROUTER_MODEL"], e["SKILLS"], e["TRANSPORT"]), ("acme/fast", "tdd", "web"))   # reachable by wake
             self.assertEqual(e["AGENT_TOOLS"], ",".join(["bash", *m._squadgate.MEMBER_TOOLS]))
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
             self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])

@@ -356,7 +356,12 @@ def _create(proj, m, steps):
     """The member's instance (created when missing)."""
     if any(i["name"] == m["name"] for i in _instances.load_instances()):
         return True
-    cfg = {"SKILLS": ",".join(m["skills"])} if m["skills"] else {}
+    # TRANSPORT=web: a squad member is reached through its web bridge (wake =
+    # task -> _chat_post); a template's own default (signal) left the first
+    # live architect deaf to every message (2026-10-09).
+    cfg = {"TRANSPORT": "web"}
+    if m["skills"]:
+        cfg["SKILLS"] = ",".join(m["skills"])
     pers = next((p for p in _personas.load_personas() if p.get("name") == m["persona"]), None) if m["persona"] else None
     if m["persona"] and not pers:
         steps.append({"step": f"persona {m['name']}", "ok": False, "detail": f"persona {m['persona']!r} not found — none set"})
