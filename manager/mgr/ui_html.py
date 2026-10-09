@@ -113,6 +113,10 @@ HTML_TOP = """</head><body>
         <div class=field><label>Instance name</label><input class=input id=nm placeholder="e.g. fabric-gpt4o"></div>
         <div class=field><label>Persona / system prompt (optional)</label>
           <select class=input id=persona><option value="">— Default —</option></select></div>
+        <div class="field span2"><label>Purpose (optional) — Jev suggests persona, model and skills; change anything before you create</label>
+          <div style="display:flex;gap:6px"><input class=input id=purpose maxlength=1000 placeholder="e.g. review the backend's pull requests for security issues" style="flex:1;min-width:0">
+          <button type=button class="btn btn-secondary" id=suggestbtn onclick=jevSuggest()>Suggest</button></div>
+          <span class=text-muted id=suggestmsg style="font-size:12px"></span></div>
       </div>
       <div class=grid2 id=params style="margin-top:20px"></div>
       <div class=grid2 style="margin-top:20px">
@@ -129,6 +133,8 @@ HTML_TOP = """</head><body>
             <span class=text-muted style="font-size:12px">Host path → guest path · pick with 📁 · "ro" = read-only · the agent writes as host user <code>kaim56-guest</code>, so a "rw" folder must let that user in · no host folder? <a href="#sharing">share one from your browser via katfs</a></span>
           </div>
         </div>
+        <div class="field span2"><label>Skills (optional, in addition to the standard skills)</label>
+          <div id=skillpick style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 16px;max-height:200px;overflow:auto"></div></div>
         <div class="field span2"><label>Capabilities</label>
           <label class=radio style="margin:2px 0 8px"><input type=checkbox id=cap-net checked><span class=dot></span>Internet access (LAN + web) — without it the agent only reaches the manager broker and <b>cannot</b> query the LLM</label>
           <div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
@@ -859,7 +865,10 @@ HTML_BOTTOM = """
   difficulty as entailment probabilities (~6.5&nbsp;s). The policy maps the classes (above a confidence floor) to a tier preference; the candidates are the
   models the <b>running</b> instances use, and only those the operator gave a tier (cheap / strong / code / local) &#8212; no new provider is ever reached.
   The decision holds for the whole turn (no model switch inside a tool loop); the proxy rewrites model, upstream and key (the Jetson&#8217;s llama.cpp as a
-  keyless upstream). Jev slow, down or undecided: the instance&#8217;s own model. Every decision lands in <code>route_log</code> (Models tab, trace).</p></div>
+  keyless upstream). Jev slow, down or undecided: the instance&#8217;s own model. Every decision lands in <code>route_log</code> (Models tab, trace).
+  <b>Setup suggestion</b> (<code>mgr/jevsetup.py</code>, <code>POST /api/setup/suggest</code>): from a purpose, Jev scores the personas, the skills (word
+  pre-filter, max 16 hypotheses per call) and the same task/difficulty questions &#8212; persona, skills (config <code>SKILLS</code>, listed to the agent like
+  standard skills) and tier + model pre-filled in New instance and in a squad proposal; nothing applies without Create / Approve.</p></div>
 
   <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
   <p class=card-body>After a long successful turn the agent distils a skill proposal; nothing enters the catalog without the operator&#8217;s click. The distiller

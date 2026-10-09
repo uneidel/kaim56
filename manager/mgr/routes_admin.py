@@ -32,6 +32,7 @@ from mgr import guestchat as _guestchat
 from mgr import guestproxy as _guestproxy
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
+from mgr import jevsetup as _jevsetup
 from mgr import katfs as _katfs
 from mgr import mcp as _mcp
 from mgr import missions as _missions
@@ -321,6 +322,9 @@ def _squad_post(h, name, sub):
         r, why = _squadgate.decide(name, str(b.get("id") or ""), bool(b.get("approve")), who,
                                    b.get("note"), edits or None)
         return h._json(r) if r else h._json({"error": why}, 400)
+    if sub == "suggest":                     # {id, member}: Jev suggests that member's setup again
+        r, why = _squadgate.suggest_member(name, str(b.get("id") or ""), str(b.get("member") or ""))
+        return h._json(r) if r else h._json({"error": why}, 400)
     if sub == "ticket":                      # {id, status?, assignee?, comment?}: the operator, any time
         body = {k: b[k] for k in ("status", "assignee", "comment") if k in b}
         t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")
@@ -361,6 +365,12 @@ def _rt_router(h):
     return h._json({"jev": health, "url": _router.jev_url(), "tiers": conf["tiers"], "tier_names": list(_router.TIERS),
                     "policies": sorted(conf["policies"]), "candidates": _router.candidates(),
                     "recent": _store.routes_read(limit=int((_routes._qs(h).get("limit", ["30"])[0]) or 30))})
+
+
+@_routes.ROUTER.post("/api/setup/suggest", admin=True)
+def _rt_setup_suggest(h):
+    # {purpose} -> Jev's persona / skills / tier+model suggestion for a new instance (mgr/jevsetup.py)
+    return h._json(_jevsetup.suggest((h._body() or {}).get("purpose")))
 
 
 @_routes.ROUTER.post("/api/router/tiers", admin=True)
@@ -939,6 +949,11 @@ def _rt_instance_create(h):
     tools = [t for t in (body.get("tools") or []) if t in names]
     if tools and set(tools) != names:
         cfg["AGENT_TOOLS"] = ",".join(tools)
+    skills = ",".join(str(x).strip() for x in (body.get("skills") or []) if str(x).strip())
+    if _skills.names_error(skills):
+        return "error: " + _skills.names_error(skills)
+    if skills:
+        cfg["SKILLS"] = skills
     return _instances.create_instance(body.get("name", ""), body.get("template", ""), cfg,
                            body.get("mounts", []), internet=body.get("internet", True))
 

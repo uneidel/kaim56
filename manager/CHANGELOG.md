@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Squads (phase 3, Jev setup): per-instance skills (config `SKILLS`, catalog-checked, served with the standard skills to both agents; replaces `SQUAD_SKILLS`); Jev suggests persona, skills and tier/model from a purpose (`mgr/jevsetup.py`, admin `POST /api/setup/suggest`) in New instance and for squad members (scores shown, "Suggest again"); nothing applies before Create/Approve.
 - MCP `browser`: own container `kaim56-browser` on its own network (internet only; LAN/host/VMs/hub dropped by `netfw` mangle rules, IPv6 off — fixes ERR_ABORTED on v6 sites); `browser_run_code_unsafe` + `browser_file_upload` removed; screenshots go to the model as images.
 - OIDC: a stale or crossed web login restarts once by itself; the error page names the reason.
 - OIDC: session cookie SameSite=Lax (opening kAIm56 from a link/app keeps the login); idle sessions refresh their IdP token every 6 h so it does not lapse.
