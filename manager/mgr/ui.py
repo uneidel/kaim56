@@ -53,6 +53,8 @@ IC_AUDIT = _SVG % (16, 16, '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2
                    '<path d="M14 2v5h6M16 13H8M16 17H8M10 9H8"></path>')
 IC_FILES = _SVG % (16, 16, '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9'
                    'A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>')
+IC_CFG = _SVG % (16, 16, '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path>'
+                 '<circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle>')
 IC_DEL = _SVG % (16, 16, '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>')
 
 
@@ -113,6 +115,7 @@ def _card(inst):
              f"onclick=\"act('{name}','{'stop' if run else 'start'}')\">{'Stop' if run else 'Start'}</button>")
     acts += (f"<div class=ic-icons>"
              f"<button class='btn btn-icon' title=Activity aria-label=Activity onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>"
+             f"<button class='btn btn-icon' title=Config aria-label=Config onclick=\"editConfig('{name}')\">{IC_CFG}</button>"
              f"<button class='btn btn-icon' title=Folders aria-label=Folders onclick=\"editMounts('{name}')\">{IC_FILES}</button>"
              f"<button class='btn btn-icon' title=Delete aria-label=Delete onclick=\"del('{name}')\">{IC_DEL}</button></div>")
     return (f"<article class=icard data-name='{h(name)}' data-state={state} "

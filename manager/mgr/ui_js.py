@@ -2024,6 +2024,59 @@ function copyKey(){
   if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(inp.value).then(done,()=>{inp.select()});
   else{inp.select();try{document.execCommand('copy');done()}catch(e){h.textContent='select + copy manually'}}
 }
+/* Config editor: every key of the instance's config, edited in place; Save
+   posts only the changes (one /config call each, the server validates). */
+let CFDLG='', CFORIG={};
+async function editConfig(name){
+  const inst=(await (await fetch('/api/instances')).json()).find(i=>i.name===name)||{};
+  CFDLG=name; CFORIG={...(inst.config||{})};
+  document.getElementById('cfdlgname').textContent=name;
+  document.getElementById('cfdlgmsg').textContent='';
+  document.getElementById('cfdlgrestart').style.display='none';
+  const box=document.getElementById('cfdlgrows'); box.innerHTML='';
+  Object.keys(CFORIG).sort().forEach(k=>cfAddRow(k,CFORIG[k],false));
+  document.getElementById('cfdlg').style.display='grid';
+}
+function cfAddRow(k,v,isNew){
+  const row=document.createElement('div'); row.className='cf-row'; row.dataset.orig=isNew?'':k;
+  const key=document.createElement('input'); key.className='input'; key.value=k; key.placeholder='KEY';
+  key.readOnly=!isNew; key.spellcheck=false;
+  const val=document.createElement('textarea'); val.className='input cf-v'; val.value=v==null?'':String(v);
+  val.rows=Math.min(8,Math.max(1,val.value.split('\\n').length,Math.ceil(val.value.length/70)));
+  const del=document.createElement('button'); del.type='button'; del.className='btn btn-icon'; del.title='Remove key';
+  del.setAttribute('aria-label','Remove key'); del.textContent='✕';
+  del.onclick=()=>{if(isNew)row.remove();else row.classList.toggle('del')};
+  row.append(key,val,del); document.getElementById('cfdlgrows').append(row);
+  if(isNew)key.focus();
+}
+async function saveConfig(){
+  const out=[], rows=[...document.querySelectorAll('#cfdlgrows .cf-row')];
+  for(const r of rows){
+    const [ki,vi]=r.querySelectorAll('.input'), k=ki.value.trim(), orig=r.dataset.orig;
+    let value=null;
+    if(orig&&r.classList.contains('del'))value='';
+    else if(orig&&vi.value!==String(CFORIG[orig]??''))value=vi.value;
+    else if(!orig&&k&&vi.value!=='')value=vi.value;
+    if(value===null)continue;
+    try{
+      const d=await (await fetch(`/api/instances/${CFDLG}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:orig||k,value})})).json();
+      const m=String(d.msg||'');
+      out.push((/^error/.test(m)?'⚠️ ':'✓ ')+(orig||k)+(/^error/.test(m)?': '+m.replace(/^error:\\s*/,''):value===''?' removed':' saved')
+        +(/after stop\\/start/.test(m)?' (after restart)':/at once/.test(m)?' (live)':''));
+    }catch(e){out.push('⚠️ '+(orig||k)+': '+e)}
+  }
+  const msg=document.getElementById('cfdlgmsg');
+  msg.textContent=out.length?out.join(' · '):'No changes.';
+  if(out.some(x=>/after restart/.test(x))){
+    const b=document.getElementById('cfdlgrestart'); b.style.display='';
+    b.onclick=()=>act(CFDLG,'restart');
+  }
+  if(out.length){const inst=(await (await fetch('/api/instances')).json()).find(i=>i.name===CFDLG)||{};CFORIG={...(inst.config||{})};
+    [...document.querySelectorAll('#cfdlgrows .cf-row')].forEach(r=>r.remove());
+    Object.keys(CFORIG).sort().forEach(k=>cfAddRow(k,CFORIG[k],false));}
+}
+function cfdlgClose(){document.getElementById('cfdlg').style.display='none'}
 async function act(n,a){await fetch(`/api/instances/${n}/${a}`,{method:'POST'});location.reload()}
 async function togglePersist(n,on){
   const r=await fetch(`/api/instances/${n}/persist`,{method:'POST',

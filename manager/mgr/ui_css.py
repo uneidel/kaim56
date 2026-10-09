@@ -312,6 +312,12 @@ main>.screen{margin-bottom:var(--space-8)}
 .icard{background:var(--app-card);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .icard:hover{background:var(--app-card-hover)}
 .icard[hidden]{display:none}
+.cf-rows{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow:auto;margin:10px 0}
+.cf-row{display:grid;grid-template-columns:minmax(120px,220px) minmax(0,1fr) 32px;gap:8px;align-items:start}
+.cf-row .input{font-family:var(--font-mono,monospace);font-size:12.5px}
+.cf-row textarea.input{min-height:36px;resize:vertical}
+.cf-row.del{opacity:.45}.cf-row.del .input{text-decoration:line-through}
+@media (max-width:640px){.cf-row{grid-template-columns:minmax(0,1fr) 32px}.cf-row .cf-v{grid-column:1/2}}
 /* Collapsed by default: only the head line; the triangle opens the full card. */
 .icard:not(.open) .ic-more{display:none}
 .icard:not(.open) .ic-body{padding-bottom:var(--space-6)}

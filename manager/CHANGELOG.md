@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- UI: config editor on the instance card (all keys: edit, add, remove; saves only changes via /config; offers Restart when needed).
 - Template openrouter: TRANSPORT defaults to web (was signal) — instances created through the API were unreachable by chat and squad wakes.
 - UI: instance cards start collapsed to their head line; a rotating triangle opens the full card (remembered per browser).
 - Squads: members (and the kickoff's architect) are created with TRANSPORT=web — the template default (signal) left them deaf to squad wakes.

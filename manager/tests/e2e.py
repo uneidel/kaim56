@@ -2399,6 +2399,19 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._skills.load_skills = old
 
+    def test_instance_card_collapses_and_has_config_editor(self):
+        """A card starts collapsed (details in .ic-more, a triangle toggles)
+        and offers the config editor, which only uses the validated /config route."""
+        m = self.m
+        card = m._ui._card({"name": "cardx", "index": 3, "template": "openrouter", "rootfs": "x",
+                            "config": {"TRANSPORT": "web", "OPENROUTER_MODEL": "a/b"}, "mounts": []})
+        self.assertIn("class=ic-tog aria-expanded=false", card)
+        self.assertIn("ic-more", card)
+        self.assertIn("editConfig('cardx')", card)
+        page = m._ui.render()
+        self.assertIn("id=cfdlg", page)
+        self.assertIn("/api/instances/${CFDLG}/config", page)
+
     def test_footer_code_link_optional(self):
         """The editor link is host-specific (site.json CODE_URL): set = link in
         the footer, unset = no placeholder left over in the page."""
