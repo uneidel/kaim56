@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Templates: openrouter/orcarouter/llama 512 MiB (were 1024), claude 1024 (was 1536) — idle VMs use ~130 MB; existing instances changed alike (applies on restart).
 - Squads: the channel shows per recipient whether the wake turn ran (received / not received + reason), not only that it was queued.
 - UI: config editor on the instance card (all keys: edit, add, remove; saves only changes via /config; offers Restart when needed).
 - Template openrouter: TRANSPORT defaults to web (was signal) — instances created through the API were unreachable by chat and squad wakes.

@@ -3,7 +3,7 @@
   "description": "OrcaRouter agent (OpenAI-compatible gateway, tool calling)",
   "rootfs": "instances/openrouter-rootfs.ext4",
   "vcpus": 2,
-  "mem_mib": 1024,
+  "mem_mib": 512,
   "params": [
     {
       "key": "TRANSPORT",
