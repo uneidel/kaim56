@@ -117,16 +117,19 @@ def _card(inst):
              f"<button class='btn btn-icon' title=Delete aria-label=Delete onclick=\"del('{name}')\">{IC_DEL}</button></div>")
     return (f"<article class=icard data-name='{h(name)}' data-state={state} "
             f"data-cpu='{int(inst.get('vcpus', 2))}' data-mem='{int(inst.get('mem_mib', 1024))}'>"
-            f"<div class=ic-body><div class=ic-head><div class=ic-id><div class=ic-av>{h(name[:1].upper())}</div>"
+            f"<div class=ic-body><div class=ic-head>"
+            f"<button class=ic-tog aria-expanded=false aria-label='Show details of {h(name)}' onclick=\"icToggle(this)\">"
+            f"<svg width=14 height=14 viewBox='0 0 24 24' fill=currentColor aria-hidden=true><path d='M8 5l10 7-10 7z'/></svg></button>"
+            f"<div class=ic-id><div class=ic-av>{h(name[:1].upper())}</div>"
             f"<div style='min-width:0'><div class=ic-name>{h(name)}</div><div class=ic-desc>{h(desc)}</div></div></div>{pill}</div>"
-            f"{model_box}"
+            f"<div class=ic-more>{model_box}"
             f"<div class=ic-stats><div><div class=ic-k>vCPU / RAM</div><div class=ic-v>{int(inst.get('vcpus', 2))} / {int(inst.get('mem_mib', 1024))} MiB</div></div>"
             f"<div><div class=ic-k>Guest IP</div><div class='ic-v mono'>{h(_instances.net_of(inst)['guest'])}</div></div>"
             f"<div><div class=ic-k>Spend</div><div class='ic-v ic-cost'>—</div></div></div>"
             f"<div class=ic-use><div class=ic-usel><span class=ic-today>Today 0</span><span class=ic-total>Total 0</span></div>"
             f"<div class=track><i class=ic-bar></i></div></div>"
-            f"<div class=ic-chips>{chips}</div>{mounts}</div>"
-            f"<div class=ic-acts>{acts}</div></article>")
+            f"<div class=ic-chips>{chips}</div>{mounts}</div></div>"
+            f"<div class='ic-acts ic-more'>{acts}</div></article>")
 
 
 def render():

@@ -312,6 +312,18 @@ main>.screen{margin-bottom:var(--space-8)}
 .icard{background:var(--app-card);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .icard:hover{background:var(--app-card-hover)}
 .icard[hidden]{display:none}
+/* Collapsed by default: only the head line; the triangle opens the full card. */
+.icard:not(.open) .ic-more{display:none}
+.icard:not(.open) .ic-body{padding-bottom:var(--space-6)}
+.ic-more{display:flex;flex-direction:column;gap:var(--space-4)}
+.ic-acts.ic-more{flex-direction:row}
+.ic-tog{flex:none;width:28px;height:28px;margin:6px -4px 0 -8px;border:0;border-radius:var(--radius-md);background:transparent;
+  color:var(--color-neutral-500);display:grid;place-items:center;cursor:pointer}
+.ic-tog:hover{background:var(--app-chip);color:var(--color-text)}
+.ic-tog svg{transition:transform .15s ease}
+.icard.open .ic-tog svg{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.ic-tog svg{transition:none}}
+.ic-head .ic-id{flex:1}
 .ic-body{padding:var(--space-6) var(--space-6) var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
 .ic-head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-2)}
 .ic-id{display:flex;gap:12px;align-items:center;min-width:0}

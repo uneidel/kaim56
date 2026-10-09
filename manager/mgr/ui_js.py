@@ -744,7 +744,19 @@ async function refreshUsage(){
 /* — Instances dashboard: fleet counts from the server-rendered cards — */
 const HOST_MEM_MIB=__HOSTMEM__;
 let FLEET_F='all';
+/* Instance cards start collapsed; which ones are open is remembered per browser. */
+function icOpenSet(){try{return new Set(JSON.parse(localStorage.getItem('icOpen')||'[]'))}catch(e){return new Set()}}
+function icToggle(btn){
+  const c=btn.closest('.icard'), o=c.classList.toggle('open'), s=icOpenSet();
+  btn.setAttribute('aria-expanded',o);
+  o?s.add(c.dataset.name):s.delete(c.dataset.name);
+  try{localStorage.setItem('icOpen',JSON.stringify([...s]))}catch(e){}
+}
+function icRestore(){const s=icOpenSet();
+  document.querySelectorAll('.icard').forEach(c=>{if(s.has(c.dataset.name)){c.classList.add('open');
+    const b=c.querySelector('.ic-tog');if(b)b.setAttribute('aria-expanded','true');}});}
 function fleetInit(){
+  icRestore();
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
   const run=n('run')+n('old'), off=n('off'), old=n('old'), on=cards.filter(c=>c.dataset.state!=='off');
   const circ=2*Math.PI*34;
