@@ -27,7 +27,8 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish", "/api/ha-alias", "/api/ha-control",
                     "/api/katfs/write", "/api/katfs/delete",   # own share only (katfs_share_for)
-                    "/api/project/merge")                       # a lead, when the project allows it
+                    "/api/project/merge",                       # a lead, when the project allows it
+                    "/api/squad/post", "/api/squad/ask")        # members of a project (mgr/squads.py)
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/")
 
 # GET paths a guest VM must never reach: the admin UI, the web chat, the katfs

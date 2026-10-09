@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify. The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, and the squad tools (squad_post/ask/read/members: the project channel). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -16,6 +16,8 @@ Stdlib only, newline-delimited JSON-RPC as the MCP stdio transport demands.
 import json
 import socket
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -70,6 +72,60 @@ def t_notify(title, message=""):
     return _post("/api/notify", {"title": title, "message": message})
 
 
+def _squad(fn):
+    """A refused squad call says why (the manager's error text), not just 'HTTP 403'."""
+    def run(**kw):
+        try:
+            return fn(**kw)
+        except urllib.error.HTTPError as e:
+            try:
+                return "Error: " + json.loads(e.read().decode("utf-8", "replace")).get("error", f"HTTP {e.code}")
+            except ValueError:
+                return f"Error: HTTP {e.code}"
+    return run
+
+
+def _q(**kw):
+    return urllib.parse.urlencode({k: v for k, v in kw.items() if v})
+
+
+def t_squad_post(text, to="", reply_to="", project=""):
+    d = json.loads(_post("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None, "project": project}))
+    st = ("delivered to " + ", ".join(d["delivered"])) if d.get("delivered") else \
+        ("not delivered: " + d["blocked"] if d.get("blocked") else "stored")
+    return f"Posted #{d['id']} in {d['project']} ({st})."
+
+
+def t_squad_ask(to, question, wait=True, timeout=600, project=""):
+    d = json.loads(_post("/api/squad/ask", {"to": to, "question": question, "project": project}))
+    if d.get("blocked"):
+        return f"Question #{d['id']} not delivered: {d['blocked']}"
+    if not wait:
+        return f"Asked #{d['id']}; the answer appears in squad_read as a reply to #{d['id']}."
+    end = time.time() + max(10, min(int(timeout or 600), 1800))
+    while time.time() < end:
+        time.sleep(5)
+        a = json.loads(_get(f"/api/squad/answer/{d['id']}"))
+        if a.get("status") == "answered":
+            return f"{a.get('from', to)} answered: {a.get('answer', '')}"
+        if a.get("status") == "expired":
+            return f"No answer to #{d['id']}: {a.get('reason', 'expired')}"
+    return f"No answer to #{d['id']} yet; check later with squad_read."
+
+
+def t_squad_read(since="", project=""):
+    d = json.loads(_get("/api/squad/read?" + _q(since=since, project=project)))
+    return "\n".join(f"#{m['id']} {m['from']} -> {', '.join(m['to'])}"
+                     f"{' (re ' + str(m['reply_to']) + ')' if m.get('reply_to') else ''} [{m['kind']}]: {m['text']}"
+                     for m in d.get("messages") or []) or f"No new messages in {d.get('project')}."
+
+
+def t_squad_members(project=""):
+    d = json.loads(_get("/api/squad/members?" + _q(project=project)))
+    return f"Project {d['project']}: " + ", ".join(f"{m['name']} ({m['role']})" for m in d.get("members") or [])
+
+
+_PROJ = {"type": "string", "description": "optional when you are in one squad"}
 TOOLS = {
     "memory_store": (t_memory_store,
         "Store a value in the platform's long-term memory (survives /reset and VM restarts).",
@@ -96,6 +152,32 @@ TOOLS = {
         {"type": "object",
          "properties": {"name": {"type": "string", "description": "name from list_skills"}},
          "required": ["name"]}),
+    "squad_post": (_squad(t_squad_post),
+        "Post to your project's squad channel. Members you address (to, or @name / @all in the text) are "
+        "woken to act on it. Reply with reply_to=<message id>. Address only those who need to act.",
+        {"type": "object",
+         "properties": {"text": {"type": "string"},
+                        "to": {"type": "string", "description": "member name(s), comma-separated, or 'all' (empty with reply_to = its sender)"},
+                        "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
+                        "project": _PROJ},
+         "required": ["text"]}),
+    "squad_ask": (_squad(t_squad_ask),
+        "Ask ONE squad member; it is woken and answers with squad_post reply_to. wait=true blocks until the answer.",
+        {"type": "object",
+         "properties": {"to": {"type": "string"}, "question": {"type": "string"},
+                        "wait": {"type": "boolean", "description": "default true"},
+                        "timeout": {"type": "integer", "description": "seconds, default 600"},
+                        "project": _PROJ},
+         "required": ["to", "question"]}),
+    "squad_read": (_squad(t_squad_read),
+        "Read your squad channel: messages to you or to all, and your own (oldest first).",
+        {"type": "object",
+         "properties": {"since": {"type": "string", "description": "optional: only messages after this id"},
+                        "project": _PROJ},
+         "required": []}),
+    "squad_members": (_squad(t_squad_members),
+        "The members of your squad (project) and their roles.",
+        {"type": "object", "properties": {"project": _PROJ}, "required": []}),
     "notify": (t_notify,
         "Push a notification to the user's devices (app + web bell).",
         {"type": "object",

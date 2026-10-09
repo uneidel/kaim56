@@ -39,6 +39,7 @@ from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import skills as _skills
+from mgr import squads as _squads
 from mgr import store as _store
 from mgr import tasks as _tasks
 from mgr import ui as _ui
@@ -719,6 +720,72 @@ def _rt_project_merge_guest(h):
         return h._json({"error": "merging is left to the operator in this project — report the result instead"}, 403)
     r, st = _projects.member_op(p["name"], "merge", str(b.get("member") or ""))
     return h._json(r, st)
+
+
+# ---- squads: the members of a project talk (mgr/squads.py) ------------------
+def _squad_guest(h, tool, project):
+    """(instance, project, '') for a member guest allowed `tool`, else (None, None, why)."""
+    inst = h._guest()
+    if inst is None:
+        return None, None, "guests only"
+    if not _policy.tool_allowed(inst, tool):
+        return None, None, f"{tool} not allowed for this instance"
+    p, why = _squads.resolve(inst["name"], str(project or "").strip())
+    return (inst, p, "") if p else (None, None, why)
+
+
+@_routes.ROUTER.post("/api/squad/post")
+@_routes.ROUTER.post("/api/squad/ask")
+def _rt_squad_send(h):
+    # The sender is the calling VM; it and every recipient must be members.
+    # A post made during a squad-woken turn inherits that turn's depth.
+    b = h._body() or {}
+    ask = h.path.split("?", 1)[0].endswith("/ask")
+    inst, p, err = _squad_guest(h, "squad_ask" if ask else "squad_post", b.get("project"))
+    if err:
+        return h._json({"error": err}, 403)
+    if not _util.rate_ok(("squad", inst["name"]), 60, 300):
+        return h._json({"error": "rate limit: 60 squad messages per 5 minutes"}, 429)
+    name = inst["name"]
+    if ask:
+        m, why = _squads.post(p, name, [str(b.get("to") or "")], b.get("question"), kind="ask",
+                              depth=_squads.turn_depth(name) + 1)
+    else:
+        m, why = _squads.post(p, name, b.get("to"), b.get("text"), reply_to=b.get("reply_to"),
+                              depth=_squads.turn_depth(name) + 1)
+    _audit.audit_append(name, "squad_ask" if ask else "squad_post",
+                        f"{p['name']} -> {','.join(m['to']) if m else b.get('to')}", m is not None,
+                        err=why, result=(m or {}).get("blocked") or str(b.get("text") or b.get("question") or ""))
+    if m is None:
+        return h._json({"error": why}, 400)
+    return h._json(m)
+
+
+@_routes.ROUTER.get("/api/squad/read")
+def _rt_squad_read(h):
+    q = _routes._qs(h)
+    inst, p, err = _squad_guest(h, "squad_read", q.get("project", [""])[0])
+    if err:
+        return h._json({"error": err}, 403)
+    since = q.get("since", ["0"])[0]
+    return h._json({"project": p["name"], "messages": _squads.read(p["name"], inst["name"], int(since) if since.isdigit() else 0)})
+
+
+@_routes.ROUTER.get("/api/squad/members")
+def _rt_squad_members(h):
+    inst, p, err = _squad_guest(h, "squad_members", _routes._qs(h).get("project", [""])[0])
+    if err:
+        return h._json({"error": err}, 403)
+    return h._json({"project": p["name"], "members": _squads.members(p), "settings": _squads.settings(p)})
+
+
+@_routes.ROUTER.get("/api/squad/answer/", prefix=True)
+def _rt_squad_answer(h):
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    r = _squads.answer(_routes._tail(h, "/api/squad/answer/")[0], inst["name"])
+    return h._json(r) if r else h._json({"error": "no such question of yours"}, 404)
 
 
 # ---- katfs (guest: own share only; admin: browser) -------------------------

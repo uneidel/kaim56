@@ -324,6 +324,24 @@ HTML_TOP = """</head><body>
     <thead><tr><th style="width:18%">Project</th><th>Source</th><th>Members</th><th style="width:1%"></th></tr></thead>
     <tbody id=projrows></tbody>
   </table>
+  <div class="panel blueprint" id=sq-panel style="display:none;margin-top:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h4 style="margin:0" id=sq-head>Squad</h4>
+      <span><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
+    <p class=text-muted style="font-size:12.5px;margin:0 0 12px">The members talk in one channel; a message wakes the members it names (<code>@name</code>, <code>@all</code>) as a new turn. Blocked messages are kept with the reason.</p>
+    <div class=grid2>
+      <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
+      <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
+      <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
+      <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
+      <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
+        <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
+      <div class="field span2"><label>Members</label><div id=sq-members></div></div>
+    </div>
+    <div id=sq-thread style="max-height:440px;overflow:auto;display:grid;gap:8px;margin:12px 0"></div>
+    <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="@member … or @all … (posted as you)" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
+      <button class="btn btn-secondary" onclick=sqSend()>Send</button></div>
+    <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
+  </div>
   <div class="panel blueprint" style="margin-top:32px">
     <h4 style="margin:0 0 16px" id=pj-head>New project</h4>
     <div class=grid2>
@@ -793,7 +811,10 @@ HTML_BOTTOM = """
   <code>GIT_DIR</code>/<code>GIT_WORK_TREE</code>, no hooks/fsmonitor/ext-diff; merge = <code>git merge --no-ff</code> on a clean checkout or
   <code>merge-tree</code>+<code>update-ref</code>, conflicts change nothing. The operator reviews in the Projects tab; a lead agent via
   <code>project_status/diff/merge</code> (merge only with <code>lead_may_merge</code>). The task worker runs one lane per instance, up to
-  <code>WORKER_PARALLEL</code> at once. <code>overlay</code> is next (docs/design-projects.md).</p></div>
+  <code>WORKER_PARALLEL</code> at once. <code>overlay</code> is next (docs/design-projects.md).
+  <b>Squads</b> (<code>mgr/squads.py</code>, <code>squad.db</code>): a project's members post to one channel (<code>squad_post/ask/read/members</code>);
+  each addressed member is woken as a one-off task in its lane, unless a guard (enabled, paused, wakes/hour, the members' tokens today,
+  reply depth) blocks it &#8212; the message is kept with the reason. A post during a woken turn inherits its depth.</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).

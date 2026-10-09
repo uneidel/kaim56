@@ -21,6 +21,7 @@ manager/memory.json
 manager/inbox_wm.json
 # Aufgaben-History inkl. SQLite-WAL-Sidecars (-wal/-shm)
 manager/history.db*
+manager/squad.db*
 # OIDC login sessions (token hashes, IdP refresh tokens)
 manager/sessions.db*
 manager/notifications.json
