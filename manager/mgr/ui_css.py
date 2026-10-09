@@ -403,4 +403,50 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
     letter-spacing:.08em;text-transform:uppercase;
     color:color-mix(in srgb,var(--color-text) 55%,transparent)}
 }
+/* — squad proposal card (ui_js sqCard): one block per member, label | field | who chose it — */
+.sq-card{padding:14px;border:1px solid var(--app-line);border-radius:var(--radius-lg);margin:8px 0;background:var(--app-card)}
+.sq-head{display:flex;justify-content:space-between;gap:4px 8px;flex-wrap:wrap;align-items:baseline}
+.sq-mem{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:10px 12px;border:1px solid var(--app-line);border-radius:var(--radius-md);background:var(--app-bg)}
+.sq-old{flex-direction:row;flex-wrap:wrap;align-items:center;padding:4px 4px 4px 12px;font-size:13px}
+.sq-mh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sq-sp{flex:1}
+.sq-purp{font-size:13px;color:var(--color-neutral-800)}
+.sq-role{font:inherit;font-size:12px;padding:2px 6px;border-radius:999px;border:1px solid var(--app-line);background:var(--app-chip);color:var(--color-text);cursor:pointer}
+.sq-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:4px 10px;align-items:start}
+.sq-row>label,.sq-lab{font-size:12px;padding-top:9px;color:color-mix(in srgb,var(--color-text) 70%,transparent)}
+.sq-by{font-size:11px;padding:3px 8px;margin-top:7px;border-radius:999px;background:var(--app-chip);color:var(--color-neutral-800);white-space:nowrap}
+.sq-by:empty{visibility:hidden}
+.sq-empty{color:var(--color-warn);background:transparent;border:1px dashed color-mix(in srgb,var(--color-warn) 55%,transparent)}
+.sq-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sq-chip{display:inline-flex;align-items:center;font-size:12.5px;padding:2px 2px 2px 10px;border-radius:999px;background:var(--color-accent-100);color:var(--color-accent-800)}
+.sq-chip button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px;line-height:1;padding:2px 7px;border-radius:999px}
+.sq-chip button:hover{background:var(--color-accent-200)}
+.sq-add{width:auto;flex:1 1 140px;max-width:240px;min-height:30px;padding:3px 10px;font-size:13px}
+.sq-hint{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;font-size:12px}
+.sq-ghost{font:inherit;font-size:12px;padding:2px 10px;border-radius:999px;border:1px dashed var(--color-accent-300);background:transparent;color:var(--color-accent);cursor:pointer}
+.sq-ghost:hover{background:color-mix(in srgb,var(--color-accent) 10%,transparent)}
+.sq-seg{display:inline-flex;gap:2px;padding:3px;border-radius:var(--radius-lg);background:var(--app-chip)}
+.sq-seg label{padding:5px 14px;border-radius:var(--radius-md);font-size:13px;cursor:pointer;color:var(--color-neutral-700)}
+.sq-seg input{position:absolute;opacity:0;width:0;height:0}
+.sq-seg label:has(input:checked){background:var(--color-accent-300);color:#fff}
+.sq-seg label:has(input:focus-visible){outline:2px solid var(--color-accent);outline-offset:1px}
+.sq-np{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.sq-np[hidden]{display:none}
+.sq-sub{margin:14px 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+.sq-tk{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--app-line);font-size:13px}
+.sq-tk>.input{flex:1 1 220px;min-width:0;width:auto}
+.sq-tk>select.input{flex:0 1 180px}
+.sq-key{min-width:40px}
+.sq-tkd{flex-basis:100%;font-size:12px}
+.sq-foot{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;margin:12px -14px -14px;padding:10px 14px;
+  background:var(--app-card);border-top:1px solid var(--app-line);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+.sq-foot .input{flex:1 1 200px;min-width:0;width:auto}
+@media (max-width:640px){
+  .sq-row{grid-template-columns:minmax(0,1fr) auto}
+  .sq-row>.sq-fld{grid-column:1/-1;grid-row:2}
+  .sq-row>label,.sq-lab{padding-top:3px}
+  .sq-by{margin-top:0}
+  .sq-foot .input{flex-basis:100%}
+  .sq-foot .btn{flex:1}
+}
 </style>"""

@@ -2431,6 +2431,17 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._skills.load_skills = old
 
+    def test_squad_card_is_member_blocks_not_a_table(self):
+        """The squad proposal card: one block per member with label rows,
+        skill chips + "+ add", provenance badges, model as "<Tier> — <model>",
+        a two-option Runs-on radio — no longer the wide member table."""
+        page = self.m._ui.render()
+        for s in ("function sqMem(", "function sqModelOpts(", "class=sq-chip", "list=sq-skl",
+                  "role=radiogroup", "'empty — choose'", "sq-foot", ".sq-row{"):
+            self.assertIn(s, page)
+        for s in ("<th>Member</th>", "<th>Template</th>", "chosen by:", "from the tier\" data-k", "sqMemRows"):
+            self.assertNotIn(s, page)
+
     def test_instance_card_collapses_and_has_config_editor(self):
         """A card starts collapsed (details in .ic-more, a triangle toggles)
         and offers the config editor, which only uses the validated /config route."""
@@ -4499,6 +4510,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(msg["delivered"], ["a"])
             board = self._sq("/api/projects/sq/squad/board", "127.0.0.1")[1]
             self.assertEqual(([p["status"] for p in board["proposals"]], board["approved"]), (["pending"], False))
+            self.assertEqual(sorted(board["tier_models"]), sorted(m._squadgate._router.TIERS))  # the card's model labels
         finally:
             undo()
 

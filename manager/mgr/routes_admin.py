@@ -301,7 +301,10 @@ def _squad_get(h, name, sub):
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "board":                       # proposals + tickets (also role user)
+        tm = _router.load()["tiers"]         # the card's model select: "<Tier> — <concrete model>"
         return h._json({"project": name, "approved": _squadgate.approved(p), "tiers": list(_router.TIERS),
+                        "tier_models": {t: sorted(k for k, v in tm.items() if v == t) for t in _router.TIERS},
+                        "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
                         "statuses": list(_squadgate.STATUSES), "members": _squads.members(p)})
     if sub:
