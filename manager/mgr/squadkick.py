@@ -14,8 +14,10 @@ a. token: the host secret ``SQUAD_GIT_TOKEN_<HOST>`` (github.com → ``…_GITHU
    git.kat56.de → ``…_GIT_KAT56_DE``); without one the clone is tried
    anonymously, and an auth failure names the secret to create. These names
    are reserved: never released to a VM (mgr/squadgit.reserved_secrets).
-b. clone on the host into SQUADS_DIR/<name> (site setting; default
-   ~<manager owner>/squads, made 0750) as that folder's owner, umask 022:
+b. the squad record (mgr/squadrec.py: squad ID, folder SQUADS_DIR/<id>__<name>),
+   then the clone on the host into <folder>/projects/<name>/repo (SQUADS_DIR:
+   site setting; default ~<manager owner>/squads, made 0750) as that folder's
+   owner, umask 022:
    full history, no submodules, no hooks, no system/global git config, the
    token only in the environment (squadgit.auth_env) — never argv, the stored
    URL or a log. A timeout and a size cap (SQUAD_MAX_BYTES, default 2 GB,
@@ -30,7 +32,8 @@ f. squad enabled, NOT approved (only the lead can be woken), budget 2M
 g. the goal, posted as user:<name> to @<name>-architect: propose the squad.
 
 Each step skips what is done (a retry resumes). A failure removes what THIS
-job created (instance, project, clone) — never anything it found.
+job created (instance, project, clone, squad record + folder) — never anything
+it found.
 
 Jobs live in memory (the last KEEP_JOBS). Part of the mgr package: no import
 from manager.py. Sibling modules are used as ``_name.func`` (module
@@ -47,13 +50,13 @@ import uuid
 
 from mgr import indexer as _indexer
 from mgr import instances as _instances
-from mgr import paths as _paths
 from mgr import projects as _projects
 from mgr import projwt as _projwt
 from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import squadgate as _squadgate
 from mgr import squadgit as _squadgit
+from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 
 URL_IN_TEXT = re.compile(r"https://[^\s<>\"'`]+")
@@ -77,14 +80,7 @@ class Stop(Exception):
 
 # ---- settings -----------------------------------------------------------------
 def squads_dir():
-    d = str(_settings.SITE.get("SQUADS_DIR") or "").strip()
-    if d:
-        return os.path.realpath(d)
-    try:
-        home = pwd.getpwuid(os.stat(_paths.BASE).st_uid).pw_dir
-    except (KeyError, OSError):
-        home = os.path.expanduser("~")
-    return os.path.join(home, "squads")
+    return _squadrec.squads_dir()
 
 
 def hosts():
@@ -135,6 +131,7 @@ def parse(text):
 
 def _taken(name):
     return (_projects.get(name) is not None or os.path.lexists(os.path.join(squads_dir(), name))
+            or _squadrec.name_taken(name)
             or any(i["name"] == name + ARCH_SUFFIX for i in _instances.load_instances())
             or any(j["name"] == name for j in _jobs.values() if j["status"] != "failed"))
 
@@ -232,6 +229,8 @@ def _cleanup(job):
                 _squadgate.purge(job["name"])
             elif what == "clone":
                 shutil.rmtree(job["path"], ignore_errors=True)
+            elif what == "squad":
+                _squadrec.drop(job["squad_id"])
         except Exception as e:
             _say(job, f"cleanup of the {what} failed: {e!r}"[:300], ok=False)
     if job["made"]:
@@ -252,18 +251,6 @@ def step_token(job):
         _say(job, f"No host secret {job['token_secret']}: cloning without a token (a public repo).")
 
 
-def _squads_root():
-    root = squads_dir()
-    if not os.path.isdir(root):
-        st = os.stat(os.path.dirname(root))
-        os.makedirs(root, 0o750, exist_ok=True)
-        os.chmod(root, 0o750)
-        if os.geteuid() == 0:
-            os.chown(root, st.st_uid, st.st_gid)
-    st = os.stat(root)
-    return root, st.st_uid, st.st_gid
-
-
 def _du(path):
     total = 0
     for d, _dirs, files in os.walk(path):
@@ -276,12 +263,20 @@ def _du(path):
 
 
 def step_clone(job):
-    root, uid, gid = _squads_root()
-    dest = job["path"] = os.path.join(root, job["name"])
+    root, uid, gid = _squadrec.root()
+    if "squad" not in job["made"]:
+        rec = _squadrec.create(job["name"], job["name"])
+        job["squad_id"] = rec["id"]
+        job["made"].append("squad")
+        _say(job, f"Squad ID {rec['id']}, folder {_squadrec.folder(rec)}.")
+    rec = next(r for r in _squadrec.records() if r["id"] == job["squad_id"])
+    dest = job["path"] = _squadrec.repo_dir(rec, job["name"])
     if "clone" in job["made"] and os.path.isdir(os.path.join(dest, ".git")):
         return _say(job, f"Clone: {dest} is there.")
     if os.path.lexists(dest):
         raise Stop(f"{dest} exists and is not this kickoff's — remove it or rename the squad")
+    _squadrec.mkdirs(os.path.dirname(dest))
+    _squadrec.set_repo(rec, job["name"], dest)
     tok = _token(job)
     try:
         home = pwd.getpwuid(uid).pw_dir
@@ -393,7 +388,8 @@ def step_squad(job):
         proj = _projects.get(name)
         s, _why = _squads.normalize_settings({"enabled": True, "approved": False, "paused": False,
                                               "daily_token_budget": BUDGET}, proj.get("squad"))
-        _projects.set_squad(name, s)
+        _squads.save_settings(name, s)
+        _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})
         job["done"].append("squad")
         _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — waiting for your approval of the plan.")
     if "index" not in job["done"]:
@@ -433,7 +429,11 @@ def overview():
             continue
         last = _squads.read(p["name"], None, 0, 1)
         pend = sum(1 for x in _squadgate.proposals(p["name"]) if x.get("status") == "pending")
-        out.append({"name": p["name"], "lead": _squadgate.lead(p),
+        rec = _squadrec.of_project(p["name"]) or {}
+        out.append({"name": p["name"], "lead": _squadgate.lead(p), "id": rec.get("id", ""),
+                    "folder": _squadrec.folder(rec) if rec else "",
+                    "members_ids": [{"name": m["instance"], "role": m.get("role", ""), "member_id": m["member_id"]}
+                                    for m in rec.get("members") or [] if not m.get("left")],
                     "status": "paused" if s["paused"] else "running" if s["approved"] else "waiting for approval",
                     "pending": pend, "members": len(p.get("members") or {}),
                     "last_id": last[-1]["id"] if last else 0, "last_ts": last[-1]["ts"] if last else 0,

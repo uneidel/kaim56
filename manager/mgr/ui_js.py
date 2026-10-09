@@ -1235,6 +1235,7 @@ async function skRetry(){
 }
 function skPick(name){
   SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND='';
+  document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='@member … or @all … (posted as you)';
   document.getElementById('sk-board').hidden=true; skMsg(''); skLoad();
 }
@@ -1247,7 +1248,15 @@ async function skLoad(){
   const st=d.settings||{}, s=SK_LIST.find(x=>x.name===name)||{};
   const status=st.paused?'paused':st.approved?'running':'waiting for approval';
   document.getElementById('sk-title').textContent=name;
-  document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[status]}">${status}</span>`+(s.lead?` <span class=text-muted style="font-size:12px">lead ${escT(s.lead)}</span>`:'');
+  const cp='onclick="navigator.clipboard&&navigator.clipboard.writeText(this.textContent)" style="cursor:pointer;font-size:11px"';
+  const stH=`<span class="tag ${SK_TAG[status]}">${status}</span>`+(s.lead?` <span class=text-muted style="font-size:12px">lead ${escT(s.lead)}</span>`:'')+
+    (s.id?` <code class=text-muted title="Squad ID — click to copy" ${cp}>${escT(s.id)}</code>`+
+      ` <details style="display:inline-block;position:relative;font-size:12px"><summary class=text-muted style="cursor:pointer">members · folder</summary>`+
+      `<div class=sk-bub style="position:absolute;z-index:5;max-width:none;white-space:nowrap;margin-top:4px">`+
+      (s.members_ids||[]).map(m=>`${escT(m.name)} <span class=text-muted>${escT(m.role)}</span> <code title="Member ID — click to copy" ${cp}>${escT(m.member_id)}</code>`).join('<br>')+
+      `<div class=text-muted style="margin-top:6px" title="Archive: squad.json, conversations, proposals, tickets.jsonl">Folder <code ${cp}>${escT(s.folder)}</code></div></div></details>`:'');
+  const stEl=document.getElementById('sk-status');
+  if(stEl.dataset.h!==stH){stEl.dataset.h=stH;stEl.innerHTML=stH}   /* an open members list stays open */
   document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skBoard()>Board</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skPause(${st.paused?'false':'true'})>${st.paused?'Resume':'Pause'}</button>`+
     (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+

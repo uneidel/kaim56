@@ -678,7 +678,10 @@ def t_squad_members(project=""):
     d, err = _squad_call("/api/squad/members?" + urllib.parse.urlencode({"project": project}))
     if err:
         return err
-    return f"Project {d['project']}: " + ", ".join(f"{m['name']} ({m['role']})" for m in d.get("members") or [])
+    head = f"Project {d['project']}" + (f" (squad id {d['squad_id']}; your member id {d.get('you') or '-'})"
+                                        if d.get("squad_id") else "")
+    return head + ": " + ", ".join(f"{m['name']} ({m['role']}" + (f", {m['member_id']}" if m.get("member_id") else "")
+                                   + ")" for m in d.get("members") or [])
 
 
 # ---- squad gate: the lead proposes, the user approves; tickets (mgr/squadgate.py)

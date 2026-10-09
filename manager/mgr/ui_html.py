@@ -854,8 +854,11 @@ HTML_BOTTOM = """
   run on the host with a token from the secret store that never reaches a VM (env header, not argv); pushes only to
   <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.
   <b>Squad kickoff</b> (<code>mgr/squadkick.py</code>, Squads page, admin): a repo URL + goal → host-side clone into
-  <code>SQUADS_DIR</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
-  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made.</p></div>
+  <code>SQUADS_DIR/&#8249;id&#8250;__&#8249;name&#8250;/projects/&#8249;name&#8250;/repo</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
+  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made.
+  <b>Squad records</b> (<code>mgr/squadrec.py</code>): a squad ID and per-membership member IDs, assigned once, a list of projects;
+  the archive folder holds <code>squad.json</code>, the channel and every wake turn as day-JSONL, proposals and ticket events
+  (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.</p></div>
 
   <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
   <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs

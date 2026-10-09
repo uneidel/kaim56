@@ -118,6 +118,7 @@ from mgr import skills as _skills            # noqa: F401
 from mgr import squadgate as _squadgate      # noqa: F401
 from mgr import squadgit as _squadgit        # noqa: F401
 from mgr import squadkick as _squadkick      # noqa: F401
+from mgr import squadrec as _squadrec
 from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store
@@ -181,6 +182,10 @@ if __name__ == "__main__":
     _startup.migrate_secrets_out_of_instances()
     _startup.migrate_mcp_config_out_of_instances()
     _personas.seed_missing()         # new built-in personas join an existing personas.json
+    try:
+        _squadrec.migrate()          # squad IDs, archive folders, history once; a running member's clone stays put
+    except Exception as e:
+        print(f"[migrate] squads: {e!r}", flush=True)
     threading.Thread(target=_tasks._task_worker, daemon=True).start()
     threading.Thread(target=_signal_mod._signal_receiver, daemon=True).start()
     threading.Thread(target=_mail._mail_receiver, daemon=True).start()

@@ -307,7 +307,8 @@ def _squad_get(h, name, sub):
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
-                    "members": _squads.members(p), "tokens_today": _squads.tokens_today(p)})
+                    "members": _squads.members(p), "tokens_today": _squads.tokens_today(p),
+                    "squad_id": _squads.squad_id(p)})
 
 
 def _squad_post(h, name, sub):
@@ -341,7 +342,7 @@ def _squad_post(h, name, sub):
     s, why = _squads.normalize_settings(b, p.get("squad"))
     if s is None:
         return h._json({"error": why}, 400)
-    _projects.set_squad(name, s)
+    _squads.save_settings(name, s)
     return h._json({"ok": True, "settings": s})
 
 
