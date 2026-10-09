@@ -30,6 +30,7 @@ from mgr import chats as _chats
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat
 from mgr import guestproxy as _guestproxy
+from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
 from mgr import jevsetup as _jevsetup
@@ -295,6 +296,8 @@ def _squad_get(h, name, sub):
         since = _routes._qs(h).get("since", ["0"])[0]
         return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
                         "messages": _squads.read(name, None, int(since) if since.isdigit() else 0)})
+    if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
+        return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "board":                       # proposals + tickets (also role user)
         return h._json({"project": name, "approved": _squadgate.approved(p), "tiers": list(_router.TIERS),
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
@@ -325,6 +328,8 @@ def _squad_post(h, name, sub):
     if sub == "suggest":                     # {id, member}: Jev suggests that member's setup again
         r, why = _squadgate.suggest_member(name, str(b.get("id") or ""), str(b.get("member") or ""))
         return h._json(r) if r else h._json({"error": why}, 400)
+    if sub == "reindex":                     # queue a code index run (admin only)
+        return h._json({"msg": _indexer.reindex(name, "operator " + who)})
     if sub == "ticket":                      # {id, status?, assignee?, comment?}: the operator, any time
         body = {k: b[k] for k in ("status", "assignee", "comment") if k in b}
         t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")

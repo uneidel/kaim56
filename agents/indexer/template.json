@@ -1,0 +1,19 @@
+{
+  "template": "indexer",
+  "description": "Code index (repowise) for the squad projects — started on demand by the manager",
+  "rootfs": "instances/indexer-rootfs.ext4",
+  "overlay": true,
+  "persist_disk": true,
+  "internet": false,
+  "vcpus": 4,
+  "mem_mib": 4096,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport (the indexer chats with nobody)",
+      "type": "select",
+      "options": ["none"],
+      "default": "none"
+    }
+  ]
+}

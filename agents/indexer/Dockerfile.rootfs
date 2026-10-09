@@ -1,0 +1,21 @@
+# Rootfs of the indexer microVM: python + repowise (pinned), git, the NFS
+# client for the read-only project mounts. Nothing here needs the internet
+# at runtime: repowise indexes offline with --no-prose (no LLM, no embedder).
+FROM python:3.12-slim
+
+ENV DO_NOT_TRACK=1 REPOWISE_TELEMETRY_DISABLED=1 REPOWISE_SKIP_EDITOR_SETUP=1 REPOWISE_NO_HINTS=1 \
+    PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git iproute2 nfs-common curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install repowise==0.55.0 \
+    && useradd -m -u 1000 -s /bin/sh indexer \
+    && git config --system safe.directory '*' \
+    && mkdir -p /var/lib/indexer /project && chown indexer:indexer /var/lib/indexer \
+    && su indexer -c 'repowise telemetry disable' >/dev/null
+
+COPY indexer_service.py /app/indexer_service.py
+COPY config.env         /app/config.env
+COPY guest-init.sh      /init
+RUN chmod +x /init

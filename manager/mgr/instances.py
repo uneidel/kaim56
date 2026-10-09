@@ -178,6 +178,10 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
             "template": template, "config": cfg}
     if tpl.get("overlay"):          # folder templates say it; the built-in images are known to vm.py
         inst["overlay"] = True
+        if tpl.get("persist_disk"):     # e.g. agents/indexer: its clones and indexes outlive a stop
+            inst["persist_disk"] = True
+    if tpl.get("internet") is False:    # a template that must never leave its /30 (agents/indexer)
+        inst["internet"] = False
     clean = [{"host": str(m.get("host", "")).strip(),
               "guest": str(m.get("guest", "")).strip(),
               "readonly": bool(m.get("readonly"))}

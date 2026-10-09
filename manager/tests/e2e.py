@@ -4505,6 +4505,205 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    # ---- code indexer (mgr/indexer.py): reindex, hooks, idle stop, the repowise MCP ----
+    def _idx_env(self):
+        """_squad_env plus an indexer instance 'idx' (index 20, stopped), the
+        project folder a git repo, the VM and its HTTP faked (recorded):
+        start/stop flip `running`, /health is ok while running, /reindex and
+        /mcp answer from `answers`. Runs inline instead of in a thread."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        x = m._indexer
+        tmp = os.path.dirname(m._projects.PROJECTS_FILE)
+        os.makedirs(os.path.join(tmp, "repo", ".git"), exist_ok=True)
+        self._sq_insts.append({"name": "idx", "index": 20, "template": "indexer", "rootfs": "instances/indexer-rootfs.ext4",
+                               "mounts": [], "config": {}})
+        running, calls, answers = set(), [], {}
+        old = (x.STATE_FILE, x._spawn, x._http, x.HEALTH_WAIT, m._vm.start, m._vm.stop, m._instances.is_running,
+               m._mounts.apply_live, x._last_use[0])
+        x.STATE_FILE = os.path.join(tmp, "indexer.json")
+        x._spawn = lambda fn, *a: fn(*a)
+        x.HEALTH_WAIT = 0
+
+        def http(inst, path, body=None, timeout=10):
+            calls.append((path, body))
+            if inst["name"] not in running:
+                raise ConnectionRefusedError("down")
+            a = answers.get(path, {"ok": True})
+            if isinstance(a, list):                      # one answer per call; an exception is raised
+                a = a.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        x._http = http
+        m._vm.start = lambda inst: running.add(inst["name"]) or "started"
+        m._vm.stop = lambda inst: running.discard(inst["name"]) or "stopped"
+        m._instances.is_running = lambda inst: inst["name"] in running
+        m._mounts.apply_live = lambda *a: None
+
+        def undo2():
+            (x.STATE_FILE, x._spawn, x._http, x.HEALTH_WAIT, m._vm.start, m._vm.stop, m._instances.is_running,
+             m._mounts.apply_live, x._last_use[0]) = old
+            x._pending.clear()
+            undo()
+        return running, calls, answers, woke, undo2
+
+    def test_indexer_reindex_starts_the_stopped_vm_joins_as_reader_and_posts(self):
+        m = self.m
+        running, calls, answers, woke, undo = self._idx_env()
+        try:
+            answers["/reindex"] = {"ok": True, "commit": "abc123"}
+            self.assertEqual(m._indexer.reindex("sq", "test"), "reindex queued")
+            self.assertEqual(running, {"idx"})                                         # started on demand
+            self.assertEqual(calls[-1], ("/reindex", {"project": "sq", "ref": "HEAD"}))
+            self.assertEqual(m._projects.get("sq")["members"]["idx"]["role"], "reader")  # ensure_member
+            st = m._indexer.project_status("sq")
+            self.assertEqual((st["instance"], st["running"], st["member"], st["last"]["ok"], st["last"]["detail"]),
+                             ("idx", True, True, True, "abc123"))
+            self.assertEqual(m._indexer.ensure_member("sq"), "")                       # idempotent
+            answers["/reindex"] = {"ok": False, "error": "git fetch: exit 128"}
+            m._indexer.reindex("sq", "again")
+            self.assertEqual(m._indexer.project_status("sq")["last"]["detail"], "git fetch: exit 128")
+            items = m._projects.load(); items[0]["source"]["path"] = os.path.join(os.path.dirname(m._projects.PROJECTS_FILE), "nogit")
+            m._projects._save(items)
+            self.assertIn("not a git repository", m._indexer.reindex("sq"))
+            m._indexer._pending.add("other")
+            self.assertEqual(m._indexer.reindex("nope"), "unknown project")
+            # the squad channel never wakes the indexer: @all reaches the agents only
+            woke.clear()
+            m._squads.post(m._projects.get("sq"), "user:admin", ["all"], "hello")
+            self.assertEqual(sorted(w[0] for w in woke), ["a", "b", "d"])
+        finally:
+            undo()
+
+    def test_indexer_hooks_ticket_done_and_merge_approve(self):
+        m = self.m
+        running, calls, answers, woke, undo = self._idx_env()
+        g = m._squadgate
+        old = (g.GATE_FILE, m._projects.member_op, m._util.rate_ok, g._spawn, m._indexer.reindex)
+        g.GATE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-sgi-"), "squadgate.json")
+        g._spawn = lambda fn, *a: None
+        m._util.rate_ok = lambda *a: True
+        m._projects.member_op = lambda n, op, w: ({"commit": "abc123"}, 200)
+        fired = []
+        m._indexer.reindex = lambda project, why="": fired.append((project, why)) or "reindex queued"
+        L = "127.0.0.1"
+        try:
+            t, why = g._ticket_add("sq", {"key": "T1", "title": "feature", "assignee": "b"}, "admin"), ""
+            self.assertEqual(self._sq("/api/projects/sq/squad/ticket", L, {"id": t["id"], "status": "doing"})[0], 200)
+            self.assertEqual(fired, [])
+            st, d = self._sq("/api/projects/sq/squad/ticket", L, {"id": t["id"], "status": "done"})
+            self.assertEqual((st, d["reindex"], fired), (200, "reindex queued", [("sq", "ticket T1 done")]))
+            self._sq("/api/projects/sq/squad/ticket", L, {"id": t["id"], "comment": "still done"})
+            self.assertEqual(len(fired), 1)                                            # only the step to done
+            items = m._projects.load(); items[0]["strategy"] = "worktree"; m._projects._save(items)
+            st, d = self._sq("/api/squad/request-merge", "172.30.3.2", {"writer": "b", "summary": "feature done"})
+            self.assertEqual(st, 200, d)
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
+            self.assertEqual((st, [s["step"] for s in p["steps"]], fired[-1]), (200, ["merge b", "reindex"], ("sq", "merge b")))
+        finally:
+            (g.GATE_FILE, m._projects.member_op, m._util.rate_ok, g._spawn, m._indexer.reindex) = old
+            undo()
+
+    def test_indexer_idle_stop_after_30_minutes(self):
+        m = self.m
+        running, calls, answers, woke, undo = self._idx_env()
+        x = m._indexer
+        try:
+            self.assertEqual(x.idle_sweep(), "")                                       # stopped: nothing to do
+            running.add("idx")
+            x._last_use[0] = 1000.0
+            self.assertEqual(x.idle_sweep(now=1000.0 + 29 * 60), "")
+            x._pending.add("sq")
+            self.assertEqual(x.idle_sweep(now=1000.0 + 31 * 60), "")                   # a run is queued
+            x._pending.clear()
+            self.assertEqual(x.idle_sweep(now=1000.0 + 31 * 60), "stopped")
+            self.assertEqual(running, set())
+        finally:
+            undo()
+
+    def test_indexer_mcp_on_demand_start_retry_and_membership(self):
+        """/api/mcp for 'repowise': initialize and the cached tool list without
+        a boot; a call starts the stopped indexer; a failed call restarts and
+        retries once; the project must be one of the caller's; other servers
+        still go to the hub."""
+        m = self.m
+        running, calls, answers, woke, undo = self._idx_env()
+        old = (m._mcp.load_mcps, m._mcp.MCP_HUB)
+        m._mcp.load_mcps = lambda: [{"name": "repowise", "command": "kaim56-indexer", "args": []},
+                                    {"name": "browser", "command": "mcp-remote", "args": ["http://x/mcp"]}]
+        m._mcp.MCP_HUB = "http://127.0.0.1:9"                                          # no hub in this test
+        b = next(i for i in self._sq_insts if i["name"] == "b")
+        b["config"]["MCP_SERVERS"] = "repowise,browser"
+        call = lambda server, payload: m._mcp.mcp_hub_call(dict(b), server, payload)
+        tc = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "get_overview", "arguments": {}}}
+        try:
+            m._indexer.ensure_member("sq")
+            st, out = call("repowise", {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            self.assertEqual((st, out["result"]["serverInfo"]["name"], running, calls), (200, "kaim56-indexer", set(), []))
+            self.assertEqual(call("repowise", {"jsonrpc": "2.0", "method": "notifications/initialized"}), (200, {}))
+            answers["/mcp"] = [{"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "get_overview", "inputSchema": {
+                "type": "object", "properties": {"project": {"type": "string"}}}}]}}]
+            st, out = call("repowise", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            self.assertEqual(out["result"]["tools"][0]["inputSchema"]["properties"]["project"]["enum"], ["sq"])
+            running.clear(); n = len(calls)
+            st, out = call("repowise", {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+            self.assertEqual((st, len(calls), running), (200, n, set()))                # cached: no boot
+            answers["/mcp"] = [{"jsonrpc": "2.0", "id": 7, "result": {"content": []}}]
+            st, out = call("repowise", tc)                                              # stopped -> started
+            self.assertEqual((st, out["id"], running), (200, 7, {"idx"}))
+            self.assertEqual(calls[-1][1]["params"]["arguments"], {"project": "sq"})     # the one project filled in
+            answers["/mcp"] = [ConnectionRefusedError("vm gone"), {"jsonrpc": "2.0", "id": 7, "result": {"content": []}}]
+            st, out = call("repowise", tc)                                              # retried once
+            self.assertEqual((st, [c[0] for c in calls[-3:]]), (200, ["/mcp", "/health", "/mcp"]))
+            answers["/mcp"] = [ConnectionRefusedError("1"), ConnectionRefusedError("2")]
+            self.assertEqual(call("repowise", tc)[0], 502)                             # and only once
+            n = len(calls)
+            bad = dict(tc, params={"name": "get_overview", "arguments": {"project": "other"}})
+            st, out = call("repowise", bad)
+            self.assertEqual((st, len(calls)), (200, n)); self.assertIn("project 'other'", out["error"]["message"])
+            c = next(i for i in self._sq_insts if i["name"] == "c")                    # no member of sq
+            c["config"]["MCP_SERVERS"] = "repowise"
+            st, out = m._mcp.mcp_hub_call(dict(c), "repowise", tc)
+            self.assertIn("none", out["error"]["message"])
+            running.clear(); n = len(calls)
+            st, out = call("browser", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            self.assertEqual((st, len(calls), running), (502, n, set()))               # the hub path, untouched
+            self.assertEqual(m._mcp.mcp_hub_call(dict(b, config={}), "repowise", tc)[0], 403)   # not assigned
+        finally:
+            m._mcp.load_mcps, m._mcp.MCP_HUB = old
+            undo()
+
+    def test_indexer_reindex_route_is_admin_only_and_template_defaults(self):
+        m = self.m
+        running, calls, answers, woke, undo = self._idx_env()
+        try:
+            self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/sq/squad/reindex")[1])
+            self.assertTrue(m._routes.ROUTER.resolve("GET", "/api/projects/sq/squad/index")[1])
+            self.assertFalse(m._auth.user_allowed("POST", "/api/projects/sq/squad/reindex"))
+            self.assertFalse(m._auth.user_allowed("GET", "/api/projects/sq/squad/index"))
+            st, d = self._sq("/api/projects/sq/squad/reindex", "127.0.0.1", {})
+            self.assertEqual((st, d["msg"], calls[-1][0]), (200, "reindex queued", "/reindex"))
+            st, d = self._sq("/api/projects/sq/squad/index", "127.0.0.1")
+            self.assertEqual((st, d["instance"], d["last"]["ok"]), (200, "idx", True))
+            self.assertEqual(self._sq("/api/projects/sq/squad/reindex", "172.30.4.2", {})[0], 403)   # a guest
+        finally:
+            undo()
+        # a folder template may ask for a persistent disk and no internet
+        tpl = os.path.join(os.path.dirname(FC_DIR), "agents", "indexer", "template.json")
+        if os.path.exists(tpl):
+            t = _readj(tpl)
+            self.assertEqual((t["vcpus"], t["mem_mib"], t["overlay"], t["persist_disk"], t["internet"]), (4, 4096, True, True, False))
+            saved, old = [], (m._instances.load_templates, m._instances.load_instances, m._instances.save_instance)
+            m._instances.load_templates = lambda: [t]
+            m._instances.load_instances = lambda: []
+            m._instances.save_instance = saved.append
+            try:
+                m._instances.create_instance("idx", "indexer")
+                self.assertEqual((saved[0]["persist_disk"], saved[0]["internet"], saved[0]["mem_mib"]), (True, False, 4096))
+            finally:
+                m._instances.load_templates, m._instances.load_instances, m._instances.save_instance = old
+
     # ---- Jev setup suggestions (mgr/jevsetup.py), per-instance SKILLS ----------------
     def _fake_jev(self):
         """A Jev on a free port: entailment by substring; records each call's
@@ -7410,6 +7609,112 @@ class ManagerFunctions(unittest.TestCase):
                     self.assertEqual(c[4:], spec)
         finally:
             m._util.sh = old_sh
+
+
+class IndexerService(unittest.TestCase):
+    """agents/indexer/indexer_service.py without repowise: the index steps, the
+    tool schema, the JSON-RPC dispatch, a reindex with faked commands, the
+    process pool."""
+    PATH = os.path.join(os.path.dirname(FC_DIR), "agents", "indexer", "indexer_service.py")
+
+    @classmethod
+    def setUpClass(cls):
+        if not os.path.exists(cls.PATH):
+            raise unittest.SkipTest("agents/indexer not next to this tree")
+        cls.s = _load("indexer_service_e2e", cls.PATH)
+
+    def test_index_steps_clone_once_init_then_update(self):
+        s = self.s
+        first = s.index_steps("p", "main", cloned=False, indexed=False)
+        self.assertEqual(first[0][:2], ["git", "clone"]); self.assertEqual(first[0][-2:], [s.SRC_ROOT + "/p", s.DATA + "/p"])
+        self.assertEqual(first[1][-2:], ["origin", "main"])
+        self.assertIn("-e", first[3]); self.assertEqual(first[3][-1], ".repowise")       # the index survives the clean
+        self.assertEqual(first[-1][:3], ["repowise", "init", "--no-prose"])
+        self.assertIn("--no-editor-setup", first[-1]); self.assertIn("--no-hook", first[-1])
+        later = s.index_steps("p", "HEAD", cloned=True, indexed=True)
+        self.assertEqual([a[:2] for a in later], [["git", "-C"]] * 3 + [["repowise", "update"]])
+        self.assertEqual((s.ENV["DO_NOT_TRACK"], s.ENV["REPOWISE_TELEMETRY_DISABLED"]), ("1", "1"))
+
+    def test_tools_get_a_required_project_and_lose_repo(self):
+        tools = [{"name": "get_risk", "inputSchema": {"type": "object", "properties": {"targets": {}, "repo": {}},
+                                                       "required": ["targets", "repo"]}}, {"name": "bare"}]
+        out = self.s.with_project_arg(tools)
+        self.assertEqual(list(out[0]["inputSchema"]["properties"]), ["project", "targets"])
+        self.assertEqual(out[0]["inputSchema"]["required"], ["project", "targets"])
+        self.assertEqual(out[1]["inputSchema"]["required"], ["project"])
+        self.assertIn("repo", tools[0]["inputSchema"]["properties"])                    # the cache stays untouched
+
+    def test_handle_rpc(self):
+        s, seen = self.s, []
+        h = lambda msg: s.handle_rpc(msg, tools=lambda: [{"name": "t"}],
+                                     call=lambda p, n, a: (seen.append((p, n, a)), ({"content": []}, ""))[1])
+        self.assertEqual(h({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]["serverInfo"]["name"], "kaim56-indexer")
+        self.assertIsNone(h({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        self.assertEqual(h({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"], [{"name": "t"}])
+        self.assertEqual(h({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "t", "arguments": {}}})["error"]["code"], -32602)
+        r = h({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "t", "arguments": {"project": "p", "repo": "x", "k": 1}}})
+        self.assertEqual((r["result"], seen), ({"content": []}, [("p", "t", {"k": 1})]))
+        self.assertEqual(h({"jsonrpc": "2.0", "id": 5, "method": "nope"})["error"]["code"], -32601)
+        boom = s.handle_rpc({"jsonrpc": "2.0", "id": 6, "method": "tools/list"}, tools=lambda: 1 / 0)
+        self.assertIn("ZeroDivisionError", boom["error"]["message"])
+
+    def test_reindex_runs_the_steps_and_records(self):
+        s = self.s
+        tmp = tempfile.mkdtemp(prefix="e2e-idxsvc-")
+        old = (s.DATA, s.SRC_ROOT, s.STATE_FILE)
+        s.DATA, s.SRC_ROOT, s.STATE_FILE = os.path.join(tmp, "data"), os.path.join(tmp, "project"), os.path.join(tmp, "data", "state.json")
+        os.makedirs(os.path.join(s.SRC_ROOT, "p", ".git")); os.makedirs(s.DATA)
+        ran = []
+
+        class R:
+            def __init__(self, rc=0, out=""):
+                self.returncode, self.stdout, self.stderr = rc, out, "boom" if rc else ""
+
+        def run(argv, **kw):
+            ran.append(argv)
+            if argv[:2] == ["git", "clone"]:
+                os.makedirs(os.path.join(argv[-1], ".git"))
+            return R(out="abc123\n") if argv[-2:] == ["rev-parse", "HEAD"] else R()
+        try:
+            out = s.reindex("p", "main", run=run, wait_src=0)
+            self.assertEqual((out["ok"], out["commit"]), (True, "abc123"))
+            self.assertEqual(ran[0][:2], ["git", "clone"]); self.assertEqual(ran[-2][:2], ["repowise", "init"])
+            self.assertEqual(s.load_state()["p"]["commit"], "abc123")
+            os.makedirs(os.path.join(s.DATA, "p", ".repowise")); open(os.path.join(s.DATA, "p", ".repowise", "state.json"), "w").close()
+            ran.clear()
+            self.assertTrue(s.reindex("p", "main", run=run, wait_src=0)["ok"])
+            self.assertEqual(ran[-2][:2], ["repowise", "update"]); self.assertNotIn(["git", "clone"], [a[:2] for a in ran])
+            self.assertEqual(s.indexed_projects(), ["p"])
+            fail = s.reindex("p", "main", run=lambda argv, **kw: R(rc=1), wait_src=0)
+            self.assertEqual(fail["ok"], False); self.assertIn("exit 1: boom", fail["error"])
+            self.assertEqual(s.indexed_projects(), [])                                  # the last run failed
+            self.assertIn("no git repository", s.reindex("q", run=run, wait_src=0)["error"])
+            self.assertEqual(s.reindex("../x", run=run)["error"], "bad project name")
+            self.assertEqual(s.reindex("p", "--upload-pack=x", run=run)["error"], "bad ref")
+        finally:
+            s.DATA, s.SRC_ROOT, s.STATE_FILE = old
+
+    def test_pool_keeps_at_most_size_and_drops_the_least_recent(self):
+        made = []
+
+        class F:
+            def __init__(self, project):
+                self.project, self.used, self.dead = project, time.time(), False
+                made.append(project)
+
+            def alive(self):
+                return not self.dead
+
+            def kill(self):
+                self.dead = True
+        pool = self.s.Pool(factory=F, size=2)
+        a = pool.get("a"); a.used -= 10
+        pool.get("b"); pool.get("a")
+        pool.get("c")                                                                   # a is the least recent
+        self.assertEqual((pool.live(), a.dead), (["b", "c"], True))
+        pool.drop("b")
+        self.assertEqual(pool.live(), ["c"])
+        self.assertEqual(made, ["a", "b", "c"])
 
 
 # ===========================================================================

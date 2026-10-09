@@ -990,7 +990,24 @@ async function sqLoad(){
       :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">woke ${escT(m.delivered.join(', '))}</div>`:'')+
     `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
   th.scrollTop=th.scrollHeight;
-  sqBoard();
+  sqBoard();sqIndex();
+}
+/* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex */
+async function sqIndex(){
+  const el=document.getElementById('sq-index');
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/index')).json()}catch(e){return}
+  if(d.error||!el)return;
+  if(!d.instance){el.innerHTML='<span class=text-muted style="font-size:12.5px">No indexer: create an instance from template <code>indexer</code>.</span>';return}
+  const l=d.last||{}, sm='<span class=text-muted style="font-size:12.5px">';
+  el.innerHTML=`<span class="tag ${d.running?'tag-accent':'tag-neutral'}">${escT(d.instance)} · ${d.running?'running':'stopped'}</span> `+
+    (d.pending?sm+'reindex queued … </span>':'')+
+    (l.ts?sm+`last index ${new Date(l.ts*1000).toLocaleString()} · ${l.ok?'ok':'failed'}${l.detail?' · '+escT(String(l.detail).slice(0,120)):''}${l.why?' · '+escT(l.why):''} · ${+l.seconds||0} s</span> `:sm+'not indexed yet </span>')+
+    `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`;
+}
+async function sqReindex(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('sqmsg').textContent=d.error||d.msg||'';
+  sqIndex();
 }
 async function sqSave(){
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked};

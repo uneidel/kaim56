@@ -20,6 +20,7 @@ from mgr import auth as _auth
 from mgr import chats as _chats
 from mgr import guestchat as _guestchat
 from mgr import guests as _guests
+from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import memfs as _memfs
 from mgr import missions as _missions
@@ -544,6 +545,10 @@ def _task_worker():
                 _vm.image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
                 _util._wlog(f"image-sweep failed: {e!r}")
+            try:
+                _indexer.idle_sweep()      # the code indexer stops after 30 min unused
+            except Exception as e:
+                _util._wlog(f"indexer-idle failed: {e!r}")
 
 
 

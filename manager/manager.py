@@ -77,6 +77,7 @@ from mgr import haalias as _haalias
 from mgr import hindsight as _hindsight
 from mgr import host as _host
 from mgr import httpd as _httpd
+from mgr import indexer as _indexer            # noqa: F401  (registers the 'repowise' MCP hook)
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
 from mgr import jevsetup as _jevsetup        # noqa: F401

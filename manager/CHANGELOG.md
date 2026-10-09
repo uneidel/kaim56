@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Code index (repowise): template `indexer` (`agents/indexer`, 4 vCPU/4 GiB, offline, persistent disk) indexes the git projects as a reader on demand — after a ticket reaches done, an approved merge or the Squad panel's Reindex — and stops after 30 min idle (`mgr/indexer.py`); members query it as MCP server `repowise` straight through the manager (project checked against their memberships).
 - Tests: all temp dirs of a run live under one parent removed at exit (no more ~100 leftovers in /tmp per run).
 - Squads (phase 3, Jev setup): per-instance skills (config `SKILLS`, catalog-checked, served with the standard skills to both agents; replaces `SQUAD_SKILLS`); Jev suggests persona, skills and tier/model from a purpose (`mgr/jevsetup.py`, admin `POST /api/setup/suggest`) in New instance and for squad members (scores shown, "Suggest again"); nothing applies before Create/Approve.
 - MCP `browser`: own container `kaim56-browser` on its own network (internet only; LAN/host/VMs/hub dropped by `netfw` mangle rules, IPv6 off — fixes ERR_ABORTED on v6 sites); `browser_run_code_unsafe` + `browser_file_upload` removed; screenshots go to the model as images.
