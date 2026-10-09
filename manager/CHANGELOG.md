@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-09
+- Template openrouter: TRANSPORT defaults to web (was signal) — instances created through the API were unreachable by chat and squad wakes.
 - UI: instance cards start collapsed to their head line; a rotating triangle opens the full card (remembered per browser).
 - Squads: members (and the kickoff's architect) are created with TRANSPORT=web — the template default (signal) left them deaf to squad wakes.
 - Squads page (Work): a chat per squad (channel, inline proposal cards with Approve/Reject/edit, Board, Pause, Dashboard) and admin kickoff from one line — repo URL + goal: host-side clone into `SQUADS_DIR` (site; token secret `SQUAD_GIT_TOKEN_<HOST>`, reserved; Gitea hosts `SQUAD_GITEA_HOSTS`, size cap `SQUAD_MAX_BYTES`), worktree project, remote, `<name>-architect` (code-architect, tier strong) as lead, squad not approved, goal posted (`mgr/squadkick.py`, `/api/squads*`); personas `qa-engineer`, `ui-developer` seeded into existing installs.

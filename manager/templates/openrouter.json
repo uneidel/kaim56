@@ -10,10 +10,10 @@
       "label": "Transport",
       "type": "select",
       "options": [
-        "signal",
-        "web"
+        "web",
+        "signal"
       ],
-      "default": "signal"
+      "default": "web"
     },
     {
       "key": "SIGNAL_NUMBER",
