@@ -29,6 +29,7 @@ import re
 import time
 import urllib.request
 
+from mgr import decision as _decision
 from mgr import instances as _instances
 from mgr import personas as _personas
 from mgr import router as _router
@@ -115,18 +116,71 @@ def tier_of(policy, classes):
 
 def empty(note):
     return {"persona": None, "skills": [], "tier": None, "model": "", "model_key": "",
-            "classes": {}, "ms": 0, "note": note}
+            "classes": {}, "ms": 0, "note": note, "backend": "jev"}
+
+
+TIER_TEXT = {"cheap": "cheap, fast model for simple, routine work",
+             "strong": "strongest general model for hard reasoning, planning and review",
+             "code": "model specialised in writing and fixing code",
+             "local": "local model on the LAN, private, slower and weaker"}
+MAX_LLM_SKILLS = 6
+
+
+def _desc(text):
+    return re.sub(r"\s+", " ", str(text or "")).strip()[:_decision.DESC_MAX]
+
+
+def llm_suggest(purpose, context, be):
+    """The suggestion from an LLM decision backend (mgr/decision.py): ONE
+    request with the full persona and skill catalogs (no word pre-filter, no
+    16-hypothesis limit), the tiers, the purpose and the context. Every name
+    is checked against the catalogs there; raises on failure."""
+    pers = {p["name"]: _desc(p.get("description") or p.get("prompt", "")) for p in _personas.load_personas() if p.get("name")}
+    sks = {s["name"]: _desc(s.get("description")) for s in _skills.unique(_skills.load_skills())
+           if s.get("name") and not s.get("default")}
+    have = set(_router.load()["tiers"].values())
+    tiers = {t: TIER_TEXT.get(t, t) for t in _router.TIERS if t in have or not have}
+    qs = {"persona": {"type": "choice", "instructions": "Which persona should this team member get?", "criteria": pers},
+          "tier": {"type": "choice", "instructions": "Which model tier fits this member's work?", "criteria": tiers}}
+    if sks:
+        qs["skills"] = {"type": "multi", "max": MAX_LLM_SKILLS, "criteria": sks,
+                        "instructions": f"Which skills (0 to {MAX_LLM_SKILLS}) does this member need?"}
+    state = f"Team member purpose: {purpose}" + (f"\nContext: {context}" if context else "")
+    ans, ms = _decision.ask({"state": state, "questions": qs}, be)
+    best = lambda d: max(d.items(), key=lambda t: t[1]) if d else None
+    p, t = best(ans.get("persona") or {}), best(ans.get("tier") or {})
+    tier = {"name": t[0], "score": t[1]} if t else None
+    key, model = model_for(tier["name"]) if tier else ("", "")
+    return {"persona": {"name": p[0], "score": p[1]} if p else None,
+            "skills": [{"name": k, "score": v} for k, v in (ans.get("skills") or {}).items()],
+            "tier": tier, "model": model, "model_key": key, "classes": {}, "ms": ms, "backend": be,
+            "note": f"{be}: {len(pers)} personas, {len(sks)} skills, {len(tiers)} tiers in one request"}
 
 
 def suggest(purpose, context=""):
-    """{persona, skills, tier, model, model_key, classes, ms, note} for a
-    purpose. `context` (the squad goal, the repo profile's keywords —
+    """{persona, skills, tier, model, model_key, classes, ms, note, backend}
+    for a purpose. `context` (the squad goal, the repo profile's keywords —
     mgr/repoprofile.py) goes into the premise after the purpose, within the
-    cap, and into the word pre-filter."""
+    cap, and into the word pre-filter. With an LLM decision backend
+    (DECISION_BACKEND) llm_suggest() answers; its failure falls back to Jev,
+    noted."""
     purpose = re.sub(r"\s+", " ", str(purpose or "")).strip()[:PURPOSE_MAX]
     if not purpose:
         return empty("no purpose given")
     context = re.sub(r"\s+", " ", str(context or "")).strip()
+    be, fell = _decision.backend(), ""
+    if be != "jev":
+        try:
+            return llm_suggest(purpose, context[:4000], be)
+        except Exception as e:
+            fell = f"{be} failed ({_decision.safe_err(e)}) — Jev used. "
+            _decision._log_fallback(be, e)
+    out = _jev_suggest(purpose, context)
+    out["note"] = fell + out["note"]
+    return out
+
+
+def _jev_suggest(purpose, context):
     premise = (purpose + " Context: " + context)[:PURPOSE_MAX] if context else purpose
     words = purpose + " " + context
     if not _router.jev_url():
@@ -158,5 +212,5 @@ def suggest(purpose, context=""):
     key, model = model_for(tier["name"]) if tier else ("", "")
     return {"persona": {"name": best[1]["name"], "score": round(best[0], 3)} if best[1] and best[0] >= FLOOR else None,
             "skills": skills, "tier": tier, "model": model, "model_key": key,
-            "classes": {q: [c, round(p, 3)] for q, (c, p) in classes.items()}, "ms": ms,
+            "classes": {q: [c, round(p, 3)] for q, (c, p) in classes.items()}, "ms": ms, "backend": "jev",
             "note": f"{len(pers)} personas, {len(sks)} skills (word pre-filter), {len(qs)} router questions"}

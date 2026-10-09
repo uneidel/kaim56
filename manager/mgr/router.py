@@ -29,6 +29,7 @@ import threading
 import time
 import urllib.request
 
+from mgr import decision as _decision
 from mgr import instances as _instances
 from mgr import paths as _paths
 from mgr import settings as _settings
@@ -143,6 +144,14 @@ def premise(payload):
 
 
 def classify(policy, text):
+    """({question: (class, prob)}, ms): from the decision backend when
+    DECISION_ROUTER is on (mgr/decision.py, falls back to Jev), else Jev."""
+    if _decision.router_on():
+        return _decision.classify(policy, text)
+    return jev_classify(policy, text)
+
+
+def jev_classify(policy, text):
     """{question: (class, prob)} from Jev, one batched call; raises on failure."""
     hyps, index = [], []
     for q, classes in policy["questions"].items():
@@ -181,7 +190,7 @@ def route(inst, payload, turn):
     instead of the instance's own model, or None (= its own model). Cached per
     (instance, turn); every fresh decision is recorded (store.route_add)."""
     name_ = (inst.get("config") or {}).get("MODEL_ROUTER", "").strip()
-    if not name_ or not turn or not jev_url():
+    if not name_ or not turn or not (jev_url() or _decision.router_on()):
         return None
     now = time.time()
     with _lock:
