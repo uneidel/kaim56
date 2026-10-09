@@ -1082,67 +1082,107 @@ async function sqSend(){
 /* squad gate: proposals the user approves, tickets (mgr/squadgate.py) */
 let SQB={};
 const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request'};
-function sqSel(k,opts,cur){return `<select class=input data-k=${k}><option value="">—</option>`+
+function sqSel(k,opts,cur,lab){return `<select class=input data-k=${k}${lab?` aria-label="${esc(lab)}"`:''}><option value="">—</option>`+
   opts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${escT(o)}</option>`).join('')+'</select>'}
-const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" onclick="this.closest('tr').remove()">✕</button>`;
-function sqJev(s){
-  if(!s)return '';
-  const f=v=>(+v).toFixed(2), parts=[];
-  if(s.persona!=null)parts.push('persona '+f(s.persona));
-  if(s.skills)parts.push('skills '+Object.entries(s.skills).map(([n,v])=>n+' '+f(v)).join(', '));
-  if(s.tier!=null)parts.push('tier '+f(s.tier));
-  const h=s.hint||{}, hp=[];   /* not filled in (below 0.8; skills only on Suggest again): the user applies them */
-  if(h.persona)hp.push('persona '+h.persona.name+' '+f(h.persona.score));
-  if(h.skills)hp.push('skills '+Object.entries(h.skills).map(([n,v])=>n+' '+f(v)).join(', '));
-  if(h.tier)hp.push('tier '+h.tier.name+' '+f(h.tier.score));
-  return `<div class=text-muted style="font-size:12px">suggested by Jev: ${escT(parts.join(' · ')||(hp.length?'nothing sure enough to fill in':s.note||'nothing above the floor'))}</div>`+
-    (hp.length?`<div class=text-muted style="font-size:12px">Jev hints, not applied: ${escT(hp.join(' · '))}</div>`:'');
-}
+const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" aria-label="remove" onclick="this.closest('[data-t]').remove()">✕</button>`;
 /* the repo profile the proposal was made with (mgr/repoprofile.py) */
 function sqProfile(r){
   if(!r)return '';
   const row=(k,v)=>v?`<div><b>${k}</b> ${escT(v)}</div>`:'';
-  return `<details style="margin:6px 0;font-size:12px"><summary class=text-muted>Repo profile — what the choice is based on</summary>`+
+  return `<details style="margin:10px 0 0;font-size:12px"><summary class=text-muted>Repo profile — what the choice is based on</summary>`+
     row('keywords',(r.keywords||[]).join(', '))+row('languages',(r.languages||[]).map(x=>x[0]+' ('+x[1]+')').join(', '))+
     row('frameworks',(r.frameworks||[]).join(', '))+row('entry points',(r.entry_points||[]).join('; '))+
     row('main dirs',(r.main_dirs||[]).map(x=>x[0]+' ('+x[1]+')').join(', '))+row('README',r.readme)+
     (r.commit?`<div class=text-muted>commit ${escT(String(r.commit).slice(0,10))}</div>`:'')+'</details>';
 }
-/* who chose each field: architect, jev (score), you (an edit here) — mgr/squadgate.py _chose */
+/* who chose each field: architect, jev (score), you (an edit here), default — mgr/squadgate.py _chose */
 const SQ_F={persona:'persona',new_persona:'new persona',skills:'skills',model_tier:'tier',model:'model',template:'template'};
-function sqBy(m){
-  const b=m.by||{}, empty={persona:!m.persona&&!m.new_persona,skills:!(m.skills||[]).length,model_tier:!m.model_tier&&!m.model};
-  return `<div class="text-muted sq-by" style="font-size:12px">chosen by: `+Object.keys(SQ_F).filter(k=>b[k]||empty[k]).map(k=>`${SQ_F[k]} `+
-    (b[k]?`<span data-by=${k}>${escT(b[k])}</span>`:`<span data-by=${k} style="color:var(--color-warn)">empty — choose</span>`)).join(' · ')+'</div>';
+const SQ_ROLE={lead:'Lead',writer:'Writer',reader:'Reader'};
+const sqCap=s=>s?s[0].toUpperCase()+s.slice(1):'';
+function sqBadge(v,empty){
+  return v?`<span class=sq-by>${escT(v.startsWith('jev (')?'Jev '+v.slice(5,-1):sqCap(v))}</span>`
+    :`<span class="sq-by${empty?' sq-empty':''}">${empty?'empty — choose':''}</span>`;
 }
+function sqRow(lab,fid,inner,badge){
+  return `<div class=sq-row>${fid?`<label for="${fid}">${lab}</label>`:`<span class=sq-lab>${lab}</span>`}<div class=sq-fld>${inner}</div>${badge}</div>`;
+}
+function sqMark(row){const s=row&&row.querySelector('.sq-by');if(s){s.textContent='You';s.classList.remove('sq-empty')}}
 function sqYou(e){
-  const r=e.target.closest('tr'), k=String(e.target.dataset.k||'').startsWith('np_')?'new_persona':e.target.dataset.k, d=r&&r.querySelector('.sq-by');
-  if(!d||!SQ_F[k])return;
-  const s=d.querySelector('[data-by='+k+']');
-  if(s){s.textContent='you';s.style.color=''} else d.insertAdjacentHTML('beforeend',` · ${SQ_F[k]} <span data-by=${k}>you</span>`);
+  const t=e.target; if(!t.dataset.k||t.dataset.k==='role')return;
+  if(t.dataset.k==='persona'){const np=t.closest('.sq-row').querySelector('.sq-np');if(np)np.hidden=t.value!==np.dataset.n}
+  if(t.dataset.k==='template'){const s=t.closest('[data-m]').querySelector('[data-k=model]');s.innerHTML=sqModelOpts(t.value,s.value,s.value.split("|")[1])}
+  sqMark(t.closest('.sq-row'));
 }
-function sqNewPersona(n){
+/* model: "<Tier> — <concrete model>"; value tier|model. The tier's first model is sent as tier only
+   (the gate takes the first model of the tier), unless the proposal named it explicitly */
+function sqModelOpts(tpl,cur,keep){
+  const tm=SQB.tier_models||{}, ct=SQB.claude_tier||{}, out=[['','— choose a model']];
+  (SQB.tiers||[]).forEach(t=>{const ms=tm[t]||[];
+    if(tpl==='claude'){const a=ms.find(x=>x.startsWith('anthropic/'));out.push([t+'|',sqCap(t)+' — '+(a?a.slice(10):ct[t]||'account default')])}
+    else if(!ms.length)out.push([t+'|',sqCap(t)+' — no model in the Router (template default)']);
+    else ms.forEach((x,i)=>out.push([t+'|'+(i||x===keep?x:''),sqCap(t)+' — '+x]));
+  });
+  if(cur&&!out.some(o=>o[0]===cur)){const [t,x]=cur.split('|');out.push([cur,(sqCap(t)||'Custom')+' — '+(x||'from the tier')])}
+  return out.map(([v,l])=>`<option value="${esc(v)}"${v===cur?' selected':''}>${escT(l)}</option>`).join('');
+}
+function sqChip(n){return `<span class=sq-chip data-s="${esc(n)}">${escT(n)}<button type=button aria-label="remove skill ${esc(n)}" onclick="sqSkill(this)">×</button></span>`}
+function sqSkill(el,add){
+  const row=el.closest('.sq-row'), box=row.querySelector('.sq-chips'), inp=row.querySelector('.sq-add');
+  if(add===undefined){el.closest('.sq-chip').remove();inp.focus()}
+  else{
+    add=add.trim(); if(!SKILLS.some(s=>s.name===add)){if(add)inp.select();return}
+    if(![...box.querySelectorAll('.sq-chip')].some(c=>c.dataset.s===add))inp.insertAdjacentHTML('beforebegin',sqChip(add));
+    if(el===inp)inp.value=''; else el.remove();
+  }
+  sqMark(row);
+}
+function sqPick(el){   /* a Jev hint (persona or tier) the user applies */
+  const s=el.closest('.sq-row').querySelector('select'), v=el.dataset.v;
+  if(![...s.options].some(o=>o.value===v))s.insertAdjacentHTML('beforeend',`<option value="${esc(v)}">${escT(v)}</option>`);
+  s.value=v; s.dispatchEvent(new Event('change',{bubbles:true})); el.remove();
+}
+function sqSkl(){   /* one datalist for every "+ add" field: the catalog without the standard skills */
+  if(document.getElementById('sq-skl'))return;
+  document.body.insertAdjacentHTML('beforeend','<datalist id=sq-skl>'+SKILLS.filter(s=>!s.default).map(s=>`<option value="${esc(s.name)}">${escT(s.description)}</option>`).join('')+'</datalist>');
+}
+function sqNewPersona(n,shown){
   if(!n)return '';
-  return `<details open style="margin-top:4px"><summary class=text-muted style="font-size:12px">new persona — created only on Approve, never over an existing one</summary>`+
-    `<input class=input data-k=np_name value="${esc(n.name)}" placeholder="name (a-z 0-9 -)">`+
-    `<input class=input data-k=np_desc value="${esc(n.description)}" placeholder="one-line description">`+
-    `<textarea class=input data-k=np_prompt rows=4 placeholder="system prompt">${escT(n.prompt)}</textarea>`+
-    `<input class=input data-k=np_tools value="${esc((n.tools||[]).join(', '))}" placeholder="tools (empty = all)"></details>`;
+  return `<div class=sq-np data-n="${esc(n.name)}"${shown?'':' hidden'}><span class=text-muted style="font-size:12px">New persona — created only on Approve, never over an existing one</span>`+
+    `<input class=input data-k=np_name value="${esc(n.name)}" placeholder="name (a-z 0-9 -)" aria-label="new persona name">`+
+    `<input class=input data-k=np_desc value="${esc(n.description)}" placeholder="one-line description" aria-label="new persona description">`+
+    `<textarea class=input data-k=np_prompt rows=4 placeholder="system prompt" aria-label="new persona system prompt">${escT(n.prompt)}</textarea>`+
+    `<input class=input data-k=np_tools value="${esc((n.tools||[]).join(', '))}" placeholder="tools (empty = all)" aria-label="new persona tools"></div>`;
 }
-function sqMemRow(p,m){
+function sqMem(p,m){
+  const nm=esc(m.name), b=m.by||{}, h=(m.suggested||{}).hint||{}, f=v=>(+v).toFixed(2), fid=esc('sq-'+p.id+'-'+m.name+'-');
+  const rm=`<button class="btn btn-ghost btn-sm" aria-label="remove member ${nm}" title="remove" onclick="this.closest('[data-m]').remove()">✕</button>`;
+  if(m.existing)return `<div class="sq-mem sq-old" data-m="${nm}"><b>${escT(m.name)}</b><span class="tag tag-neutral">EXISTING</span>`+
+    `<span class=text-muted>${escT(SQ_ROLE[m.role]||m.role)}${m.persona?' · '+escT(m.persona):''}</span><span class=sq-sp></span>${rm}</div>`;
   const pers=[...new Set(PERSONAS.map(x=>x.name).concat(p.members.map(x=>x.persona).filter(Boolean)))];
-  return `<tr data-m="${esc(m.name)}" onchange="sqYou(event)"><td><b>${escT(m.name)}</b> <span class="tag ${m.existing?'tag-neutral':'tag-accent'}">${m.existing?'existing':'new'}</span>`+
-      `<div class=text-muted>${escT(m.purpose)}</div>${m.existing?'':sqBy(m)}${sqJev(m.suggested)}${m.existing?'':sqNewPersona(m.new_persona)}`+
-      (m.existing?'':`<button class="btn btn-ghost btn-sm" onclick="sqSuggest('${esc(p.id)}','${esc(m.name)}',this)">Suggest again</button>`)+
-      `</td><td>${sqSel('role',['writer','reader','lead'],m.role)}</td><td>${sqSel('persona',pers,m.persona)}</td>`+
-      `<td><input class=input data-k=skills value="${esc((m.skills||[]).join(', '))}"></td><td>${sqSel('model_tier',SQB.tiers||[],m.model_tier)}</td>`+
-      `<td><input class=input data-k=model value="${esc(m.model)}" placeholder="from the tier"></td>`+
-      `<td title="claude: Claude Code on your subscription, the tier picks haiku/sonnet/opus; openrouter: API model, counts against the token budget">`+
-      (m.existing?'—':sqSel('template',['openrouter','claude'],m.template))+`</td><td>${SQ_X}</td></tr>`;
-}
-function sqMemRows(p){
-  return `<table class=table style="font-size:12.5px"><thead><tr><th>Member</th><th>Role</th><th>Persona</th><th>Skills</th><th>Tier</th><th>Model</th><th>Template</th><th></th></tr></thead><tbody>`+
-    p.members.map(m=>sqMemRow(p,m)).join('')+'</tbody></table>';
+  const ghost=(v,txt,fn)=>`<button type=button class=sq-ghost data-v="${esc(v)}" onclick="${fn}">+ ${escT(txt)}</button>`;
+  const hk=Object.entries(h.skills||{}).filter(([n])=>!(m.skills||[]).includes(n));
+  const cur=m.model_tier||m.model?(m.model_tier||'')+'|'+(m.model||''):'', tpl=m.template||'openrouter';
+  const pnew=!!(m.new_persona&&m.persona===m.new_persona.name);
+  return `<div class=sq-mem data-m="${nm}" onchange="sqYou(event)"><div class=sq-mh><b>${escT(m.name)}</b><span class="tag tag-accent">NEW</span>`+
+    `<select class=sq-role data-k=role aria-label="role of ${nm}">`+Object.entries(SQ_ROLE).map(([v,l])=>`<option value=${v}${v===m.role?' selected':''}>${l}</option>`).join('')+'</select>'+
+    `<span class=sq-sp></span><button class="btn btn-ghost btn-sm" onclick="sqSuggest('${esc(p.id)}','${nm}',this)">Suggest again</button>${rm}</div>`+
+    (m.purpose?`<div class=sq-purp>${escT(m.purpose)}</div>`:'')+
+    sqRow('Persona',fid+'p',`<select class=input id="${fid}p" data-k=persona><option value="">— choose a persona</option>`+
+      pers.map(o=>`<option value="${esc(o)}"${o===m.persona?' selected':''}>${escT(o)}${m.new_persona&&o===m.new_persona.name?' (new)':''}</option>`).join('')+'</select>'+
+      (h.persona?`<div class=sq-hint><span class=text-muted>Hint:</span>${ghost(h.persona.name,h.persona.name+' '+f(h.persona.score),'sqPick(this)')}</div>`:'')+
+      sqNewPersona(m.new_persona,pnew),
+      sqBadge(b.persona||b.new_persona,!m.persona&&!m.new_persona))+
+    sqRow('Skills',fid+'s',`<div class=sq-chips>${(m.skills||[]).map(sqChip).join('')}`+
+      `<input class="input sq-add" id="${fid}s" list=sq-skl placeholder="+ add skill" autocomplete=off onchange="event.stopPropagation();sqSkill(this,this.value)" `+
+      `onkeydown="if(event.key==='Enter'){event.preventDefault();sqSkill(this,this.value)}"></div>`+
+      (hk.length?`<div class=sq-hint><span class=text-muted>Hints:</span>${hk.map(([n,v])=>ghost(n,n+' '+f(v),'sqSkill(this,this.dataset.v)')).join('')}</div>`:''),
+      sqBadge(b.skills,!(m.skills||[]).length))+
+    sqRow('Model',fid+'m',`<select class=input id="${fid}m" data-k=model>${sqModelOpts(tpl,cur,m.model)}</select>`+
+      (h.tier?`<div class=sq-hint><span class=text-muted>Hint:</span>${ghost(h.tier.name+'|',sqCap(h.tier.name)+' '+f(h.tier.score),'sqPick(this)')}</div>`:''),
+      sqBadge(b.model||b.model_tier,!m.model_tier&&!m.model))+
+    sqRow('Runs on','',`<div class=sq-seg role=radiogroup aria-label="runs on" title="claude: Claude Code on your subscription, the tier picks haiku/sonnet/opus; openrouter: API model, counts against the token budget">`+
+      [['openrouter','OpenRouter'],['claude','Claude']].map(([v,l])=>`<label><input type=radio name="${fid}t" data-k=template value=${v}${v===tpl?' checked':''}>${l}</label>`).join('')+'</div>',
+      sqBadge(b.template))+'</div>';
 }
 async function sqSuggest(id,name,btn){
   btn.disabled=true; btn.textContent='asking Jev…';
@@ -1150,23 +1190,26 @@ async function sqSuggest(id,name,btn){
   const p=(SQB.proposals||[]).find(x=>x.id===id), m=(d.members||[]).find(x=>x.name===name);
   if(d.error||!p||!m){btn.disabled=false;btn.textContent='Suggest again';document.getElementById('sqmsg').textContent=d.error||'';return}
   p.members=p.members.map(x=>x.name===name?m:x);
-  btn.closest('tr').outerHTML=sqMemRow(p,m);           // only this row: the other rows keep the user's edits
+  btn.closest('[data-m]').outerHTML=sqMem(p,m);         // only this member: the others keep the user's edits
 }
 function sqTicketRows(p){
   const names=[...new Set(p.members.map(m=>m.name).concat((SQB.members||[]).map(m=>m.name)))];
-  return `<table class=table style="font-size:12.5px"><thead><tr><th>Key</th><th>Title</th><th>Assignee</th><th>After</th><th></th></tr></thead><tbody>`+
-    p.tickets.map(t=>`<tr data-t="${esc(t.key)}"><td>${escT(t.key)}</td><td><input class=input data-k=title value="${esc(t.title)}"><div class=text-muted>${escT(t.description)}</div></td>`+
-      `<td>${sqSel('assignee',names,t.assignee)}</td><td>${escT(t.depends_on.join(', '))}</td><td>${SQ_X}</td></tr>`).join('')+'</tbody></table>';
+  return `<div class=sq-sub>Tickets</div>`+p.tickets.map(t=>`<div class=sq-tk data-t="${esc(t.key)}"><span class="mono sq-key">${escT(t.key)}</span>`+
+    `<input class=input data-k=title value="${esc(t.title)}" aria-label="title of ${esc(t.key)}">${sqSel('assignee',names,t.assignee,'assignee of '+t.key)}`+
+    (t.depends_on.length?`<span class=text-muted>after ${escT(t.depends_on.join(', '))}</span>`:'')+SQ_X+
+    (t.description?`<div class="text-muted sq-tkd">${escT(t.description)}</div>`:'')+'</div>').join('');
 }
 function sqCard(p){
+  sqSkl();
   const id=esc(p.id);
   let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
   if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
-  else body+=(p.goal?`<p style="white-space:pre-wrap">${escT(p.goal)}</p>`:'')+sqProfile(p.profile)+sqMemRows(p)+(p.kind==='squad'?sqTicketRows(p)+
-    `<div class=field><label>Daily token budget (all members)</label><input class=input type=number min=0 data-k=budget value="${+p.budget_tokens_per_day||0}"></div>`:'');
-  return `<div id="sqp-${id}" style="padding:12px;border:1px solid var(--app-line);border-radius:8px;margin:8px 0">`+
-    `<div style="display:flex;justify-content:space-between;gap:8px"><b>${SQ_KIND[p.kind]||escT(p.kind)}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+
-    body+`<div style="display:flex;gap:6px;margin-top:8px"><input class=input data-k=note placeholder="Note to the lead (optional)" style="flex:1;min-width:0">`+
+  else body+=(p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+p.members.map(m=>sqMem(p,m)).join('')+(p.kind==='squad'?sqTicketRows(p)+
+    `<div class=sq-row style="margin-top:10px"><label for="sqb-${id}">Budget</label><div class=sq-fld style="display:flex;gap:8px;align-items:center">`+
+    `<input class=input id="sqb-${id}" type=number min=0 data-k=budget value="${+p.budget_tokens_per_day||0}" style="max-width:180px"><span class=text-muted style="font-size:12px">tokens a day, all members</span></div></div>`:'')+
+    sqProfile(p.profile);
+  return `<div id="sqp-${id}" class=sq-card><div class=sq-head><b>${SQ_KIND[p.kind]||escT(p.kind)}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+
+    body+`<div class=sq-foot><input class=input data-k=note placeholder="Note to the lead (optional)" aria-label="note to the lead">`+
     `<button class="btn btn-secondary" onclick="sqDecide('${id}',false)">Reject</button><button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div></div>`;
 }
 function sqDone(p){
@@ -1180,10 +1223,12 @@ function sqDone(p){
 function sqCollect(p,c){
   const v=(r,k)=>r.querySelector('[data-k='+k+']').value, out={};
   const list=x=>x.split(',').map(s=>s.trim()).filter(Boolean);
-  out.members=[...c.querySelectorAll('tr[data-m]')].map(r=>{
-    const b=p.members.find(m=>m.name===r.dataset.m), o={...b,role:v(r,'role'),persona:v(r,'persona'),
-      skills:list(v(r,'skills')),model_tier:v(r,'model_tier'),model:v(r,'model').trim()};
-    if(r.querySelector('[data-k=template]'))o.template=v(r,'template');
+  out.members=[...c.querySelectorAll('[data-m]')].map(r=>{
+    const b=p.members.find(m=>m.name===r.dataset.m);
+    if(b.existing)return {...b};
+    const [tier,model]=(v(r,'model')||'|').split('|'), t=r.querySelector('[data-k=template]:checked');
+    const o={...b,role:v(r,'role'),persona:v(r,'persona'),skills:[...r.querySelectorAll('.sq-chip')].map(x=>x.dataset.s),
+      model_tier:tier,model:model||'',template:t?t.value:b.template};
     delete o.new_persona;               /* kept only while the persona select still names it */
     if(b.new_persona&&r.querySelector('[data-k=np_name]')&&o.persona===b.new_persona.name){
       o.new_persona={name:v(r,'np_name').trim(),description:v(r,'np_desc'),prompt:v(r,'np_prompt'),tools:list(v(r,'np_tools'))};
@@ -1192,7 +1237,7 @@ function sqCollect(p,c){
     return o;
   });
   if(p.kind==='squad'){
-    out.tickets=[...c.querySelectorAll('tr[data-t]')].map(r=>({...p.tickets.find(t=>t.key===r.dataset.t),title:v(r,'title'),assignee:v(r,'assignee')}));
+    out.tickets=[...c.querySelectorAll('[data-t]')].map(r=>({...p.tickets.find(t=>t.key===r.dataset.t),title:v(r,'title'),assignee:v(r,'assignee')}));
     out.budget_tokens_per_day=+c.querySelector('[data-k=budget]').value;
   }
   return out;
