@@ -27,6 +27,7 @@ from mgr import missions as _missions
 from mgr import notify as _notify
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
+from mgr import squads as _squads
 from mgr import store as _store
 from mgr import util as _util
 from mgr import vm as _vm
@@ -390,6 +391,11 @@ def _execute(t):
         except Exception as e:
             ok, res = False, f"worker-exception (run): {e!r}"
             _util._wlog(f"{t['id']}: {res}")
+        if t.get("squad"):                   # a squad wake: tell the channel how it ended
+            try:
+                _squads.wake_result((t["squad"] or {}).get("msg"), t["instance"], ok, res)
+            except Exception as e:
+                _util._wlog(f"{t['id']}: squad wake_result: {e!r}")
         def done_mut(fresh, _tid=t["id"], _ok=ok, _res=res, _sched=sched):
             tt = next((x for x in fresh if x["id"] == _tid), None)
             if tt is None:

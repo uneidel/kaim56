@@ -4241,6 +4241,32 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._store.TASKS_FILE = old
 
+    def test_squad_wake_outcome_reaches_the_channel(self):
+        """'delivered' only means a wake turn was queued: the task worker books
+        how it ended, so the channel shows received / not received + reason
+        (live 2026-10-09: an architect on TRANSPORT=signal never got anything
+        while the chat said 'delivered')."""
+        woke, tasks, undo = self._squad_env()
+        m, A = self.m, "172.30.3.2"
+        try:
+            st, msg = self._sq("/api/squad/post", A, {"to": ["b", "d"], "text": "hi"})
+            self.assertEqual((st, msg["delivered"], msg["received"], msg["failed"]), (200, ["b", "d"], [], {}))
+            m._squads.wake_result(msg["id"], "b", True, "done")
+            m._squads.wake_result(msg["id"], "d", False, "instance 'd' not ready")
+            got = next(x for x in m._squads.read("sq", "a") if x["id"] == msg["id"])
+            self.assertEqual((got["received"], got["failed"]), (["b"], {"d": "instance 'd' not ready"}))
+            # the worker calls it for a squad task, success or not
+            calls, old = [], (m._tasks._run_task_now, m._squads.wake_result)
+            m._tasks._run_task_now = lambda *a, **k: (False, "error: no web bridge")
+            m._squads.wake_result = lambda *a: calls.append(a)
+            try:
+                m._tasks._execute({"id": "t1", "instance": "d", "message": "x", "squad": {"project": "sq", "depth": 1, "msg": msg["id"]}})
+            finally:
+                m._tasks._run_task_now, m._squads.wake_result = old
+            self.assertEqual(calls, [(msg["id"], "d", False, "error: no web bridge")])
+        finally:
+            undo()
+
     def test_squad_ask_answer_roundtrip(self):
         """ask -> the one member is woken; its reply_to post is the answer
         (wakes nobody); only the asker may poll it."""

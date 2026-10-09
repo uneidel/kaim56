@@ -45,7 +45,7 @@ KEEP = 500                      # messages kept per project
 ASK_TTL = 3600                  # an unanswered ask expires after this
 _MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,63})", re.I)
 _lock = threading.Lock()        # guard check + insert: the hourly wake count stays honest
-_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked")
+_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome")
 
 
 def _conn():
@@ -57,6 +57,10 @@ def _conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, project TEXT, sender TEXT,
         rcpt TEXT, text TEXT, reply_to INTEGER, kind TEXT, depth INTEGER, woke TEXT, blocked TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_squad_proj ON squad_msg(project, id)")
+    try:                    # per member: "ok" or the reason the wake turn failed
+        c.execute("ALTER TABLE squad_msg ADD COLUMN outcome TEXT")
+    except sqlite3.OperationalError:
+        pass                # already there
     return c
 
 
@@ -73,9 +77,14 @@ def _db():
 def _out(row):
     r = dict(zip(_COLS, row))
     woke = json.loads(r.pop("woke") or "{}")
+    outcome = json.loads(r.pop("outcome") or "{}")
     return {"id": r["id"], "ts": r["ts"], "project": r["project"], "from": r["sender"],
             "to": json.loads(r.pop("rcpt") or "[]"), "text": r["text"], "reply_to": r["reply_to"],
-            "kind": r["kind"], "depth": r["depth"], "delivered": sorted(woke), "blocked": r["blocked"] or ""}
+            "kind": r["kind"], "depth": r["depth"], "delivered": sorted(woke), "blocked": r["blocked"] or "",
+            # "delivered" = a wake turn was queued; "received" = that turn ran;
+            # "failed" = it did not reach the member (VM down, no web bridge, timeout)
+            "received": sorted(m for m, v in outcome.items() if v == "ok"),
+            "failed": {m: v for m, v in outcome.items() if v != "ok"}}
 
 
 def _get(mid):
@@ -235,6 +244,22 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
             with _db() as c:
                 c.execute("UPDATE squad_msg SET woke=?, blocked=? WHERE id=?", (json.dumps(woke), blocked, mid))
     return _get(mid), ""
+
+
+def wake_result(msg_id, member, ok, result):
+    """Book how a wake turn ended (called by the task worker): the channel shows
+    whether the member really got the message, not just that a turn was queued."""
+    try:
+        msg_id = int(msg_id)
+    except (TypeError, ValueError):
+        return
+    with _db() as c:
+        row = c.execute("SELECT outcome FROM squad_msg WHERE id=?", (msg_id,)).fetchone()
+        if row is None:
+            return
+        outcome = json.loads(row[0] or "{}")
+        outcome[str(member)] = "ok" if ok else (str(result or "failed").strip()[:200] or "failed")
+        c.execute("UPDATE squad_msg SET outcome=? WHERE id=?", (json.dumps(outcome), msg_id))
 
 
 def answer(ask_id, asker):

@@ -755,6 +755,15 @@ function icToggle(btn){
 function icRestore(){const s=icOpenSet();
   document.querySelectorAll('.icard').forEach(c=>{if(s.has(c.dataset.name)){c.classList.add('open');
     const b=c.querySelector('.ic-tog');if(b)b.setAttribute('aria-expanded','true');}});}
+/* How a squad message reached its recipients: queued (sent), the wake turn ran
+   (received), or it failed (VM down, no web bridge, timeout) — with the reason. */
+function sqDelivery(m){
+  if(m.blocked)return `<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`;
+  const got=m.received||[], bad=m.failed||{}, sent=(m.delivered||[]).filter(x=>!got.includes(x)&&!(x in bad));
+  return (got.length?`<div class=text-muted style="font-size:12px">received by ${escT(got.join(', '))}</div>`:'')+
+    (sent.length?`<div class=text-muted style="font-size:12px">sent to ${escT(sent.join(', '))} · waiting</div>`:'')+
+    Object.keys(bad).map(x=>`<div style="font-size:12px;color:var(--color-warn)">not received by ${escT(x)}: ${escT(bad[x])}</div>`).join('');
+}
 function fleetInit(){
   icRestore();
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
@@ -999,8 +1008,7 @@ async function sqLoad(){
     `<div class=text-muted style="font-size:12px">#${m.id} · ${new Date(m.ts*1000).toLocaleString()} · <b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))}`+
     `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
     `<div style="white-space:pre-wrap;word-break:break-word;margin:4px 0">${escT(m.text)}</div>`+
-    (m.blocked?`<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`
-      :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">woke ${escT(m.delivered.join(', '))}</div>`:'')+
+    sqDelivery(m)+
     `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
   th.scrollTop=th.scrollHeight;
   sqBoard();sqIndex();sqGit();
@@ -1248,11 +1256,10 @@ async function skLoad(){
   if(last!==SK_LAST){
     SK_LAST=last; skSeen(name,last);
     const th=document.getElementById('sk-thread');
-    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.blocked?' bad':''}">`+
+    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
       `<div class=text-muted style="font-size:12px"><b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))} · ${new Date(m.ts*1000).toLocaleString()}${m.kind!=='post'?' · '+escT(m.kind):''}</div>`+
       `<div style="white-space:pre-wrap;margin-top:2px">${escT(m.text)}</div>`+
-      (m.blocked?`<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`
-        :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">delivered to ${escT(m.delivered.join(', '))}</div>`:'')+'</div>').join('')
+      sqDelivery(m)+'</div>').join('')
       :'<span class=text-muted>No messages yet.</span>';
     th.scrollTop=th.scrollHeight;
   }
