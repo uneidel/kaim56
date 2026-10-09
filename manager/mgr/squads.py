@@ -30,6 +30,7 @@ import sqlite3
 import threading
 import time
 
+from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
 from mgr import paths as _paths
 from mgr import projects as _projects
@@ -187,7 +188,9 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1):
         return None, "text missing"
     if len(text) > TEXT_MAX:
         return None, f"text longer than {TEXT_MAX} characters"
-    names = set(proj.get("members") or {})
+    # The code indexer (template 'indexer', mgr/indexer.py) reads the project and takes no turns.
+    idx = {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
+    names = set(proj.get("members") or {}) - idx
     if isinstance(to, str):
         to = [x for x in re.split(r"[,\s]+", to) if x]
     to = [str(x).strip().lstrip("@") for x in (to or []) if str(x).strip()]

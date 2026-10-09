@@ -36,6 +36,7 @@ import time
 import uuid
 
 from mgr import audit as _audit
+from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import jevsetup as _jevsetup
 from mgr import notify as _notify
@@ -380,6 +381,8 @@ def _run(prop, who):
         r, st = _projects.member_op(name, "merge", prop["writer"])
         steps.append({"step": f"merge {prop['writer']}", "ok": st == 200,
                       "detail": (r.get("error") or r.get("note") or r.get("commit") or "merged") if isinstance(r, dict) else str(r)[:300]})
+        if st == 200 and _indexer.instance():
+            steps.append({"step": "reindex", "ok": True, "detail": _indexer.reindex(name, f"merge {prop['writer']}")})
     else:
         made = [m for m in prop["members"] if _create(proj, m, steps)]
         members = {n: {"role": x.get("role")} for n, x in (proj.get("members") or {}).items()}
@@ -517,7 +520,7 @@ def update_ticket(proj, who, tid, body, may, depth=1):
         if why:
             return None, why
         before = {x["key"] for x in mine if _ready(x, mine)}
-        old_assignee = t["assignee"]
+        old_assignee, old_status = t["assignee"], t["status"]
         if status:
             t["status"] = status
         if assignee is not None:
@@ -531,6 +534,9 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             or (x is t and assignee and assignee != old_assignee)]
     out = dict(t)
     out["woke"] = {x["key"]: _wake(proj, x, who, depth) or "woken" for x in wake}
+    # A finished feature: refresh the code index (mgr/indexer.py; queued, never blocks).
+    if t["status"] == "done" and old_status != "done" and _indexer.instance():
+        out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
     return out, ""
 
 

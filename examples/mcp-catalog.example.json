@@ -58,5 +58,11 @@
       "--transport",
       "http-only"
     ]
+  },
+  {
+    "name": "repowise",
+    "description": "Code index (repowise) of your squad projects: dependency graph, blast radius, change risk, dead code, health. Served by the indexer VM through the manager (mgr/indexer.py), not by a hub process; name the project in every call",
+    "command": "kaim56-indexer",
+    "args": []
   }
 ]

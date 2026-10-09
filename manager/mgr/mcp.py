@@ -103,6 +103,9 @@ def mcp_required_secrets(names):
 
 
 HUB_TZ = "UTC"      # set by manager.py from the host zone (see HOST_TZ)
+# Servers the manager answers itself instead of a hub process: name ->
+# fn(inst, payload) -> (status, body). mgr/indexer.py registers 'repowise'.
+SERVER_HOOKS: "dict[str, Callable[[dict, dict], tuple]]" = {}
 
 
 def hub_env(spec_env):
@@ -120,6 +123,8 @@ def mcp_hub_call(inst, server, payload):
     names = [n for n in (inst.get("config", {}).get("MCP_SERVERS", "") or "").split(",") if n]
     if server not in names:
         return 403, {"error": f"server '{server}' not assigned to this instance"}
+    if server in SERVER_HOOKS:
+        return SERVER_HOOKS[server](inst, payload)
     blob = build_mcp_config([server], allowed=allowed_secret_keys(inst))
     spec = (json.loads(blob).get("mcpServers") or {}).get(server) if blob else None
     if not spec or not spec.get("command"):

@@ -343,6 +343,7 @@ HTML_TOP = """</head><body>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
       <div class="field span2"><label>Members</label><div id=sq-members></div></div>
+      <div class="field span2"><label>Code index (repowise)</label><div id=sq-index></div></div>
     </div>
     <h4 style="margin:16px 0 4px">Proposals</h4>
     <div id=sq-gate></div>
@@ -831,6 +832,17 @@ HTML_BOTTOM = """
   <code>squad_request_member/merge</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
   sets the budget, enables the squad and creates the tickets (each step recorded, re-approve retries). Before approval only the lead
   can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.</p></div>
+
+  <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
+  <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs
+  <a href="https://github.com/repowise-dev/repowise">repowise</a> &#8212; dependency graph, blast radius, change risk, dead code, health &#8212;
+  for the git projects (<code>mgr/indexer.py</code>). It joins a project as a <b>reader</b> and indexes its own clone of
+  <code>/project/&#8249;name&#8250;</code>, so <code>.repowise/</code> never touches the source; no LLM, telemetry off. Started on demand: a squad ticket
+  reaching <b>done</b>, an approved <b>merge</b> or the Reindex button in the Squad panel queues a run (background, one at a time,
+  result in <code>indexer.json</code>); stopped after 30 minutes unused. Members get the MCP server <code>repowise</code>
+  (<code>MCP_SERVERS</code>): their calls go from <code>/api/mcp</code> straight to the indexer&#8217;s <code>:7340/mcp</code>, not through the hub,
+  and every tool takes a <code>project</code> the manager checks against the caller&#8217;s memberships. initialize and the (cached) tool list
+  are answered by the manager, so only a real query boots the VM &#8212; a failed call starts it and is retried once.</p></div>
 
   <div class="card blueprint"><span class=card-title>katfs</span>
   <p class=card-body>P2P file share between this host and the user PC (node on :8790, loopback).
