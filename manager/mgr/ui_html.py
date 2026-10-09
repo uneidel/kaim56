@@ -29,6 +29,7 @@ HTML_TOP = """</head><body>
       <a href="#tasks"><span>Tasks</span></a>
       <a href="#missions"><span>Missions</span></a>
       <a href="#projects"><span>Projects</span></a>
+      <a href="#squads"><span>Squads</span></a>
     </div>
     <div class=navgrp><div class=navlbl>Apps</div>
       <a href="#apps"><span>Apps</span></a>
@@ -322,6 +323,22 @@ HTML_TOP = """</head><body>
     <span class=text-muted style="font-size:13px">…</span>
   </div>
   <p class=text-muted style="font-size:12.5px;margin-top:14px">Any agent creates a mission itself when a job needs several steps — e.g. via chat: "… — as a mission". The owner plans, the steps run on whichever instance has the needed tools.</p>
+</section>
+
+<section class="screen" id=s-squads>
+  <p class=lede>One chat per squad · start one with a repo URL and a goal · its architect proposes members, tickets and a budget — nothing runs before you approve</p>
+  <div class=sk>
+    <nav class="panel blueprint sk-list" id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
+    <div class="panel blueprint sk-chat">
+      <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
+      <div id=sk-board hidden></div>
+      <div class=sk-thread id=sk-thread aria-live=polite></div>
+      <div id=sk-cards></div>
+      <div class=sk-comp><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message onkeydown="if(event.key==='Enter')skSend()">
+        <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
+      <span id=sk-msg class=msg style="margin-top:6px"></span>
+    </div>
+  </div>
 </section>
 
 <section class="screen" id=s-projects>
@@ -835,7 +852,10 @@ HTML_BOTTOM = """
   can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.
   <b>Squad git</b> (<code>mgr/squadgit.py</code>): a project's GitHub/Gitea remote; <code>git_push_branch</code>, <code>pr_*</code>, <code>issue_*</code>
   run on the host with a token from the secret store that never reaches a VM (env header, not argv); pushes only to
-  <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.</p></div>
+  <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.
+  <b>Squad kickoff</b> (<code>mgr/squadkick.py</code>, Squads page, admin): a repo URL + goal → host-side clone into
+  <code>SQUADS_DIR</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
+  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made.</p></div>
 
   <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
   <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs

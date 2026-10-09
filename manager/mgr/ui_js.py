@@ -849,7 +849,7 @@ function showTab(t){
 /* below 860px the sidebar is a drawer */
 function navToggle(on){document.body.classList.toggle('navopen',!!on)}
 /* several pages hold an element whose id equals the hash: start a page at its top, not there */
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);scrollTo(0,0);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);scrollTo(0,0);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='squads'){sqClose();loadSquads()}if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
 document.getElementById('crange').onclick=e=>{const b=e.target.closest('[data-r]');if(b)loadSeries(b.dataset.r)};
 document.getElementById('cchips').onclick=e=>{const b=e.target.closest('[data-n]');if(b)chartPick(b.dataset.n)};
 document.getElementById('ffilt').onclick=e=>{const b=e.target.closest('[data-f]');if(b)fleetFilter(b.dataset.f)};
@@ -969,7 +969,7 @@ async function pjDiscard(){
 let SQ='';
 async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
   await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
-function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none'}
+function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none';document.getElementById('sq-gate').innerHTML=''}
 async function sqLoad(){
   if(!SQ)return;
   const base='/api/projects/'+encodeURIComponent(SQ)+'/squad';
@@ -1152,14 +1152,133 @@ async function sqDecide(id,ok){
   const body={id,approve:ok,note:c?c.querySelector('[data-k=note]').value:''};
   if(ok&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
-  document.getElementById('sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Decided':' ✓'));
-  if(!d.error){sqLoad();loadProjects()}
+  const sk=location.hash==='#squads';                  /* the Squads page shows the same card */
+  document.getElementById(sk?'sk-msg':'sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Projects → Squad':' ✓'));
+  if(!d.error){if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}}
 }
 async function sqTicket(id,change){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'';
   sqLoad();
 }
+/* — Squads: one chat per squad; a kickoff from one line (mgr/squadkick.py) — */
+let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false;
+const SK_SEEN=(()=>{try{return JSON.parse(localStorage.getItem('sk-seen')||'{}')}catch(e){return {}}})();
+function skSeen(n,id){SK_SEEN[n]=id;try{localStorage.setItem('sk-seen',JSON.stringify(SK_SEEN))}catch(e){}}
+const SK_TAG={running:'tag-accent',paused:'tag-neutral','waiting for approval':'tag-neutral',failed:'tag-neutral'};
+function skMsg(t){document.getElementById('sk-msg').textContent=t||''}
+async function loadSquads(){
+  let d={}; try{d=await (await fetch('/api/squads')).json()}catch(e){return}
+  SK_LIST=d.squads||[];
+  let jobs=[]; try{jobs=((await (await fetch('/api/squads/kickoff')).json()).jobs||[]).filter(j=>j.status!=='done')}catch(e){}
+  const item=(attr,cur,title,sub)=>`<button class=sk-item ${attr}${cur?' aria-current=true':''}>${title}<small>${sub}</small></button>`;
+  document.getElementById('sk-list').innerHTML=
+    item('data-new=1',!SK&&!SK_JOB,'<b>+ New squad</b>','repo URL + goal')+
+    jobs.map(j=>item(`data-job="${esc(j.id)}"`,SK_JOB===j.id,escT(j.name),'kickoff · '+escT(j.status))).join('')+
+    SK_LIST.map(s=>item(`data-n="${esc(s.name)}"`,SK===s.name,escT(s.name)+(s.last_id>(SK_SEEN[s.name]||0)&&SK!==s.name?' <span class="tag tag-accent">new</span>':''),
+      escT(s.status)+(s.pending?' · '+(+s.pending)+' to approve':''))).join('');
+  if(!SK&&!SK_JOB)skNew();
+}
+document.getElementById('sk-list').onclick=e=>{
+  const b=e.target.closest('.sk-item'); if(!b)return;
+  if(b.dataset.n)skPick(b.dataset.n); else if(b.dataset.job)skJob(b.dataset.job); else {SK='';SK_JOB='';skNew()}
+  loadSquads();
+};
+function skNew(){
+  document.getElementById('sk-title').textContent='New squad';
+  document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
+  document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML='';
+  document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Paste the repository URL and say what the squad should do, e.g. <code>https://github.com/owner/repo add a dark mode with tests</code>. '+
+    'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea).</div>';
+  document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
+  skMsg('');
+}
+async function skJob(id){
+  SK='';SK_JOB=id;
+  let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
+  if(j.error){skMsg(j.error);return}
+  document.getElementById('sk-title').textContent='Kickoff · '+j.name;
+  document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[j.status]||'tag-neutral'}">${escT(j.status)}</span>`;
+  document.getElementById('sk-acts').innerHTML=j.status==='failed'?'<button class="btn btn-secondary btn-sm" onclick=skRetry()>Retry</button>'
+    :j.status==='done'?`<button class="btn btn-primary btn-sm" data-open="${esc(j.name)}" onclick="skPick(this.dataset.open);loadSquads()">Open squad</button>`:'';
+  document.getElementById('sk-cards').innerHTML='';
+  const th=document.getElementById('sk-thread');
+  th.innerHTML=`<div class="sk-bub me"><div class=text-muted style="font-size:12px">${escT(j.who)}</div>${escT(j.url)} ${escT(j.goal)}</div>`+
+    (j.log||[]).map(l=>`<div class="sk-bub${l.ok?'':' bad'}"><div class=text-muted style="font-size:12px">kickoff · ${new Date(l.ts*1000).toLocaleTimeString()}</div>${escT(l.text)}</div>`).join('');
+  th.scrollTop=th.scrollHeight;
+  if(j.status==='running'&&!SK_POLL){SK_POLL=true;setTimeout(()=>{SK_POLL=false;if(SK_JOB===id&&location.hash==='#squads')skJob(id)},1500)}
+  if(j.status==='done'&&SK_JOB===id){SK_JOB='';skPick(j.name);loadSquads()}
+}
+async function skRetry(){
+  let d={}; try{d=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(SK_JOB)+'/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error||''); if(!d.error)skJob(SK_JOB);
+}
+function skPick(name){
+  SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND='';
+  document.getElementById('sk-text').placeholder='@member … or @all … (posted as you)';
+  document.getElementById('sk-board').hidden=true; skMsg(''); skLoad();
+}
+async function skLoad(){
+  if(!SK)return;
+  const name=SK, base='/api/projects/'+encodeURIComponent(name)+'/squad';
+  let d={},b={}; try{d=await (await fetch(base+'/messages')).json();b=await (await fetch(base+'/board')).json()}catch(e){skMsg('manager not reachable');return}
+  if(SK!==name)return;
+  if(d.error){skMsg(d.error);return}
+  const st=d.settings||{}, s=SK_LIST.find(x=>x.name===name)||{};
+  const status=st.paused?'paused':st.approved?'running':'waiting for approval';
+  document.getElementById('sk-title').textContent=name;
+  document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[status]}">${status}</span>`+(s.lead?` <span class=text-muted style="font-size:12px">lead ${escT(s.lead)}</span>`:'');
+  document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skBoard()>Board</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick=skPause(${st.paused?'false':'true'})>${st.paused?'Resume':'Pause'}</button>`+
+    (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
+    `<button class="btn btn-ghost btn-sm" onclick=skProject()>Project</button>`;
+  const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
+  if(last!==SK_LAST){
+    SK_LAST=last; skSeen(name,last);
+    const th=document.getElementById('sk-thread');
+    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.blocked?' bad':''}">`+
+      `<div class=text-muted style="font-size:12px"><b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))} · ${new Date(m.ts*1000).toLocaleString()}${m.kind!=='post'?' · '+escT(m.kind):''}</div>`+
+      `<div style="white-space:pre-wrap;margin-top:2px">${escT(m.text)}</div>`+
+      (m.blocked?`<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`
+        :m.delivered&&m.delivered.length?`<div class=text-muted style="font-size:12px">delivered to ${escT(m.delivered.join(', '))}</div>`:'')+'</div>').join('')
+      :'<span class=text-muted>No messages yet.</span>';
+    th.scrollTop=th.scrollHeight;
+  }
+  if(b.error)return;
+  SQB=b;
+  const pend=(b.proposals||[]).filter(p=>p.status==='pending'), key=pend.map(p=>p.id+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join();
+  if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')}   /* never under the user's edits */
+  if(!document.getElementById('sk-board').hidden)skBoardRender();
+}
+function skBoard(){const el=document.getElementById('sk-board');el.hidden=!el.hidden;if(!el.hidden)skBoardRender()}
+function skBoardRender(){
+  const cols=SQB.statuses||[], ts=SQB.tickets||[];
+  document.getElementById('sk-board').innerHTML=ts.length?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:12px">'+
+    cols.map(c=>`<div><div class=text-muted style="font-size:12px;margin-bottom:4px">${escT(c)} · ${ts.filter(t=>t.status===c).length}</div>`+
+      ts.filter(t=>t.status===c).map(t=>`<div class=sk-bub style="max-width:none;margin-bottom:6px;font-size:12.5px"><b>${escT(t.key)}</b> ${escT(t.title)}`+
+        `<div class=text-muted>${t.assignee?escT(t.assignee):'unassigned'}${t.depends_on.length?' · after '+escT(t.depends_on.join(', ')):''}</div></div>`).join('')+'</div>').join('')+'</div>'
+    :'<p class=text-muted style="font-size:12.5px;margin:12px 0 0">No tickets yet — they come with the approved plan. Edit tickets in Projects → Squad.</p>';
+}
+async function skPause(on){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:on})})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error||(on?'paused':'resumed')); skLoad(); loadSquads();
+}
+function skProject(){const n=SK;location.hash='#projects';setTimeout(()=>sqOpen(n),300)}
+async function skSend(){
+  const el=document.getElementById('sk-text'), text=el.value.trim(); if(!text)return;
+  const btn=document.getElementById('sk-send'); btn.disabled=true;
+  let d={};
+  try{
+    d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
+       :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+  }catch(e){d={error:'manager not reachable'}}
+  btn.disabled=false; skMsg(d.error||'');
+  if(d.error)return;
+  el.value='';
+  if(SK)skLoad(); else {skJob(d.id);loadSquads()}
+}
+setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad()},5000);
+setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 async function delProject(name){
   if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;
   await fetch('/api/projects/'+encodeURIComponent(name)+'/delete',{method:'POST'});
@@ -1971,6 +2090,7 @@ function saveSecrets(){
 }
 window.onload=()=>{
   showTab(location.hash.slice(1));
+  if(location.hash==='#squads')loadSquads();
   renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
   // Tasks, policy and the usage numbers used to arrive only on page load —

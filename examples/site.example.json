@@ -8,5 +8,8 @@
   "HOSTIF": "eth0",
   "CODE_URL": "http://192.168.0.10:8443/",
   "CODE_ROOT": "/home/coder/firecracker",
-  "AGENT_SRC": "/opt/kaim56/agents/openrouter"
+  "AGENT_SRC": "/opt/kaim56/agents/openrouter",
+  "SQUADS_DIR": "/home/kaim56/squads",
+  "SQUAD_GITEA_HOSTS": "git.example.org",
+  "SQUAD_MAX_BYTES": 2147483648
 }

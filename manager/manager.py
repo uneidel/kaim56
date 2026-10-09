@@ -106,6 +106,7 @@ from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its rout
 from mgr import routes_auth as _routes_auth  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_guest as _routes_guest  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_squadgit as _routes_squadgit  # noqa: F401  (registers its routes in ROUTER on import)
+from mgr import routes_squadkick as _routes_squadkick  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import rules as _rules
 from mgr import saddler as _saddler_mod
 from mgr import secrets as _secrets
@@ -116,6 +117,7 @@ from mgr import mail as _mail
 from mgr import skills as _skills            # noqa: F401
 from mgr import squadgate as _squadgate      # noqa: F401
 from mgr import squadgit as _squadgit        # noqa: F401
+from mgr import squadkick as _squadkick      # noqa: F401
 from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store
@@ -178,6 +180,7 @@ if __name__ == "__main__":
     _netfw.ensure_browser_rules()    # also without a VM start (ensure_net_base): the browser runs at boot
     _startup.migrate_secrets_out_of_instances()
     _startup.migrate_mcp_config_out_of_instances()
+    _personas.seed_missing()         # new built-in personas join an existing personas.json
     threading.Thread(target=_tasks._task_worker, daemon=True).start()
     threading.Thread(target=_signal_mod._signal_receiver, daemon=True).start()
     threading.Thread(target=_mail._mail_receiver, daemon=True).start()
