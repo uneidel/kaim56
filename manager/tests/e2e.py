@@ -1566,6 +1566,24 @@ class AgentSquad(unittest.TestCase):
             self.assertIn(t, a._tools.BUILTIN)
 
 
+    def test_squad_catalog_tool(self):
+        """squad_catalog GETs /api/squad/catalog and lists what a lead picks
+        from; squad_propose documents template and new_persona."""
+        a = _load("agent_sqcat_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-sc-"),
+                                                  "OPENROUTER_API_KEY": "dummy"})
+        tm, c = a._tools_manager, a._mgrclient
+        got = []
+        c._manager_base = lambda: "http://mgr"
+        c._mgr_get = lambda base, path, timeout=30: (got.append(path), json.dumps(_CATALOG))[1]
+        out = tm.t_squad_catalog()
+        self.assertEqual(got, ["/api/squad/catalog?project="])
+        for line in ("- coder: You code. [tools: bash]", "new_persona", "- std (standard): s", "- strong: openrouter/acme/big",
+                     "- local: no model assigned", "- claude: Claude Code"):
+            self.assertIn(line, out)
+        self.assertIn("squad_catalog", a._tools.BUILTIN)
+        props = a._tools.BUILTIN["squad_propose"][2]["members"]["items"]["properties"]
+        self.assertEqual(props["template"]["enum"], ["openrouter", "claude"]); self.assertIn("new_persona", props)
+
     def test_squad_git_tools(self):
         """git_push_branch / pr_* / issue_* call /api/git/<op> on the manager
         (no token in the guest); empty arguments are left out; a refusal
@@ -1595,6 +1613,12 @@ class AgentSquad(unittest.TestCase):
         for t in ("git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                   "issue_create", "issue_list", "issue_comment"):
             self.assertIn(t, a._tools.BUILTIN)
+
+_CATALOG = {"project": "sq", "personas": [{"name": "coder", "description": "You code.", "tools": ["bash"]}],
+            "skills": [{"name": "std", "description": "s", "default": True}],
+            "tiers": [{"tier": "strong", "models": ["openrouter/acme/big"]}, {"tier": "local", "models": []}],
+            "templates": [{"template": "claude", "note": "Claude Code on the user's subscription"}]}
+
 
 def _wtext(path, text):
     with open(path, "w") as fh:
@@ -5019,6 +5043,8 @@ class ManagerFunctions(unittest.TestCase):
             h = next(x for x in p["members"] if x["name"] == "h")
             self.assertEqual((h["persona"], h["skills"], h["model_tier"]), ("coder", ["tdd"], "cheap"))
             self.assertEqual(h["suggested"], {"note": "n", "ms": 12, "persona": 0.91, "skills": {"tdd": 0.88}, "tier": 0.77})
+            self.assertEqual(h["by"], {"persona": "jev (0.91)", "skills": "jev (0.88)", "model_tier": "jev (0.77)",
+                                       "template": "default"})                           # who chose it, on the card
             self.assertNotIn("suggested", next(x for x in p["members"] if x["name"] == "e"))
             self.assertEqual(created, [])
             st, d2 = self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "f"})
@@ -5034,6 +5060,150 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._sq("/api/projects/sq/squad/suggest", L, {"id": d["id"], "member": "h"})[0], 400)
         finally:
             m._jevsetup.suggest, m._router.jev_url = old
+            undo()
+
+    # ---- squad catalog, new personas, claude members, provenance -------------------
+    def _cat_env(self):
+        """_gate_env + both member templates, a persona list upsert_persona
+        writes to (recorded), an anthropic-less strong tier."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        pers = [{"name": "coder", "prompt": "You code. Carefully.", "tools": ["bash"]},
+                {"name": "writer-x", "description": "Writes things. Well.", "prompt": "You write."}]
+        ups, old = [], m._personas.upsert_persona
+        m._instances.load_templates = lambda: [{"template": "openrouter"}, {"template": "claude"}, {"template": "orcarouter"}]
+        m._personas.load_personas = lambda: pers
+        m._skills.load_skills = lambda: [{"name": "tdd", "description": "test first"}, {"name": "std", "description": "s", "default": True}]
+        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "openrouter/acme/big": "strong"}, "policies": {}}
+
+        def upsert(name, prompt, tools=None, model=None, description=None):
+            ups.append((name, prompt, tools, description))
+            pers.append({"name": name, "prompt": prompt, "description": description})
+            return f"persona '{name}' saved"
+        m._personas.upsert_persona = upsert
+
+        def undo2():
+            m._personas.upsert_persona = old
+            undo()
+        return created, pers, ups, undo2
+
+    def test_squad_catalog_member_only_and_content(self):
+        """squad_catalog: guests of the project only (a non-member and the
+        host are refused); personas with a one-line description (and tools),
+        skills with the standard ones flagged, tiers with their models, the
+        member templates with a note. Read-only."""
+        m = self.m
+        created, pers, ups, undo = self._cat_env()
+        try:
+            self.assertEqual(self._sq("/api/squad/catalog", "172.30.5.2")[0], 403)          # c: no member
+            self.assertEqual(self._sq("/api/squad/catalog", "127.0.0.1")[0], 403)           # not a guest
+            st, d = self._sq("/api/squad/catalog?project=sq", "172.30.3.2")
+            self.assertEqual(st, 200, d)
+            self.assertEqual(d["personas"], [{"name": "coder", "description": "You code.", "tools": ["bash"]},
+                                             {"name": "writer-x", "description": "Writes things."}])
+            self.assertEqual(d["skills"], [{"name": "tdd", "description": "test first", "default": False},
+                                           {"name": "std", "description": "s", "default": True}])
+            self.assertEqual({t["tier"]: t["models"] for t in d["tiers"]},
+                             {"cheap": ["openrouter/acme/fast"], "strong": ["openrouter/acme/big"], "code": [], "local": []})
+            self.assertEqual([t["template"] for t in d["templates"]], ["openrouter", "claude"])
+            self.assertIn("subscription", d["templates"][1]["note"]); self.assertIn("budget", d["templates"][0]["note"])
+            self.assertIn("squad_catalog", m._squadgate.LEAD_TOOLS)
+            self.assertIn("squad_catalog", m._policy.tool_names())
+            self.assertEqual((created, ups), ([], []))
+        finally:
+            undo()
+
+    def test_squadgate_new_persona_claude_member_and_provenance(self):
+        """A member may bring new_persona (validated; an existing name refused
+        for the lead); template is openrouter or claude; nothing is created
+        before Approve; then the persona is created — a name taken meanwhile
+        is used, never overwritten. A claude member gets TRANSPORT=web, the
+        tier as ANTHROPIC_MODEL (alias without an anthropic/* model; a tier
+        with none keeps the account default, noted) and AGENT_SYSTEM. Each
+        field records who chose it: architect, then you for an edit."""
+        m = self.m
+        created, pers, ups, undo = self._cat_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        npx = {"name": "doc-writer", "description": "Writes docs", "prompt": "You write docs."}
+        good = [{"name": "h", "purpose": "docs", "template": "claude", "model_tier": "strong", "skills": ["tdd"],
+                 "new_persona": npx},
+                {"name": "i", "template": "claude", "model_tier": "local", "persona": "coder"},
+                {"name": "j", "persona": "coder", "new_persona": {"name": "rev2", "prompt": "You review (new)."}}]
+        try:
+            for mem, why in (({"name": "e", "new_persona": {"name": "coder", "prompt": "x"}}, "exists"),
+                             ({"name": "e", "new_persona": {"name": "Bad_N", "prompt": "x"}}, "a-z 0-9"),
+                             ({"name": "e", "new_persona": {"name": "ok", "prompt": "x" * 7000}}, "prompt"),
+                             ({"name": "e", "new_persona": {"name": "ok", "prompt": "x", "tools": ["nope"]}}, "tools unknown"),
+                             ({"name": "e", "new_persona": "x"}, "an object"),
+                             ({"name": "e", "template": "orcarouter"}, "openrouter or claude")):
+                st, d = self._sq("/api/squad/propose", A, {"goal": "g", "members": [mem]})
+                self.assertEqual(st, 400, mem); self.assertIn(why, d["error"])
+            st, d = self._sq("/api/squad/propose", A, {"goal": "g", "members": good})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(d["warnings"], [])
+            prop = self._sq("/api/projects/sq/squad/board", L)[1]["proposals"][0]          # the card's data
+            h, i, j = prop["members"]
+            self.assertEqual((h["persona"], h["new_persona"], h["template"]), ("doc-writer", npx, "claude"))
+            self.assertEqual(h["by"], {"persona": "architect", "new_persona": "architect", "skills": "architect",
+                                       "model_tier": "architect", "template": "architect"})
+            self.assertEqual(j["by"]["template"], "default")
+            self.assertEqual((created, ups), ([], []))                                       # only on approve
+            pers.append({"name": "rev2", "prompt": "You review (old)."})                     # taken meanwhile
+            i2 = dict(i, skills=["tdd"])                                                      # the operator's edit
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True, "members": [h, i2, j]})
+            self.assertEqual(st, 200, p)
+            self.assertEqual(ups, [("doc-writer", "You write docs.", None, "Writes docs")])   # rev2 not overwritten
+            self.assertEqual([x for x in pers if x["name"] == "rev2"], [{"name": "rev2", "prompt": "You review (old)."}])
+            steps = {s["step"]: s for s in p["steps"]}
+            self.assertIn("exists already", steps["persona rev2"]["detail"])
+            self.assertTrue(steps["persona doc-writer"]["ok"])
+            self.assertIn("account default", steps["model i"]["detail"])
+            cfg = {c[0]: (c[1], c[2]) for c in created}
+            self.assertEqual(sorted(cfg), ["h", "i", "j"])
+            tpl, ch = cfg["h"]
+            self.assertEqual((tpl, ch["TRANSPORT"], ch["ANTHROPIC_MODEL"], ch["SKILLS"]), ("claude", "web", "opus", "tdd"))
+            self.assertNotIn("OPENROUTER_MODEL", ch)
+            self.assertTrue(ch["AGENT_SYSTEM"].startswith("You write docs.")); self.assertIn("writer in the squad of project sq", ch["AGENT_SYSTEM"])
+            self.assertEqual(cfg["i"][0], "claude"); self.assertNotIn("ANTHROPIC_MODEL", cfg["i"][1])
+            self.assertIn("squad_post", cfg["i"][1]["AGENT_TOOLS"])                           # coder's tool subset + squad tools
+            self.assertTrue(cfg["j"][1]["AGENT_SYSTEM"].startswith("You review (old)."))
+            self.assertEqual(cfg["j"][0], "openrouter")
+            by = {x["name"]: x["by"] for x in p["members"]}
+            self.assertEqual((by["i"]["skills"], by["i"]["persona"], by["h"]["persona"]), ("you", "architect", "architect"))
+            st, p2 = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})   # retry: nothing again
+            self.assertEqual((st, len(ups), len(created)), (200, 1, 3))
+            # claude, explicit model: anthropic/<id> -> ANTHROPIC_MODEL; an API model is no Claude model
+            steps = []
+            self.assertEqual(m._squadgate._model_cfg({"name": "x", "template": "claude", "model": "anthropic/claude-opus-5",
+                                                      "model_tier": ""}, steps), {"ANTHROPIC_MODEL": "claude-opus-5"})
+            self.assertEqual(m._squadgate._model_cfg({"name": "x", "template": "claude", "model": "acme/big",
+                                                      "model_tier": ""}, steps), {})
+            self.assertIn("no Claude model", steps[0]["detail"])
+        finally:
+            undo()
+
+    def test_squadkick_claude_architect(self):
+        """architect_template=claude: the architect is a claude instance (web,
+        tier strong -> ANTHROPIC_MODEL, lead tools incl. squad_catalog); the
+        goal message asks for squad_catalog first; another template is refused."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        L = "127.0.0.1"
+        m._instances.load_templates = lambda: [{"template": "openrouter"}, {"template": "claude"}]
+        try:
+            st, d = self._sq("/api/squads/kickoff", L, {"text": "https://github.com/own/repo x", "architect_template": "llama"})
+            self.assertEqual(st, 400); self.assertIn("architect_template", d["error"])
+            st, j = self._sq("/api/squads/kickoff", L, {"text": "https://github.com/own/repo add dark mode",
+                                                        "architect_template": "claude"})
+            self.assertEqual((st, j["arch_template"]), (200, "claude"), j)
+            self.assertEqual(m._squadkick.get(j["id"])["status"], "done", m._squadkick.get(j["id"])["log"])
+            name, tpl, cfg = created[0]
+            self.assertEqual((name, tpl, cfg["TRANSPORT"], cfg["ANTHROPIC_MODEL"]), ("repo-architect", "claude", "web", "opus"))
+            self.assertNotIn("OPENROUTER_MODEL", cfg)
+            self.assertTrue({"squad_catalog", "squad_propose"} <= set(cfg["AGENT_TOOLS"].split(",")))
+            self.assertIn("Call squad_catalog first", woke[0][1]); self.assertIn("new_persona", woke[0][1])
+            self.assertIn("(openrouter or claude)", woke[0][1])
+        finally:
             undo()
 
     # ---- checkout: a GitHub repo into an instance's workspace ------------------------
@@ -8913,6 +9083,50 @@ class ClaudeGuest(unittest.TestCase):
         km._get = lambda path: json.dumps({"project": "sq", "approved": False, "tickets": []})
         self.assertEqual(km.TOOLS["ticket_list"][0](), "Project sq (squad plan not approved yet):\nno tickets")
 
+
+    def test_claude_mcp_squad_catalog(self):
+        """squad_catalog in the claude guest's MCP server: same listing; squad_propose documents template/new_persona."""
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py")
+        if not os.path.exists(src):
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_cat", src)
+        got = []
+        km._get = lambda path: (got.append(path), json.dumps(_CATALOG))[1]
+        out = km.TOOLS["squad_catalog"][0]()
+        self.assertEqual(got, ["/api/squad/catalog?"])
+        for line in ("- coder: You code. [tools: bash]", "new_persona", "- std (standard): s", "- claude: Claude Code"):
+            self.assertIn(line, out)
+        props = km.TOOLS["squad_propose"][2]["properties"]["members"]["items"]["properties"]
+        self.assertEqual(props["template"]["enum"], ["openrouter", "claude"]); self.assertIn("new_persona", props)
+
+    def test_claude_guest_init_role_section(self):
+        """guest-init.sh writes AGENT_SYSTEM into CLAUDE.md under "## Your role"
+        between markers: replaced on the next boot, removed without one, the
+        rest of the file kept, shell characters literal."""
+        import subprocess as sp
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "guest-init.sh")
+        if not os.path.exists(src):
+            self.skipTest("guest-init.sh not found")
+        with open(src) as fh:
+            text = fh.read()
+        block = text[text.index("# >>> kaim56-role"):text.index("# <<< kaim56-role")]
+        self.assertIn('role_section "$PLATFORM_MD"', text)
+        d = tempfile.mkdtemp(prefix="e2e-role-")
+        md = os.path.join(d, "CLAUDE.md")
+        _wtext(md, "# mine\n")
+        run = lambda sysp: sp.run(["sh", "-c", block + '\nrole_section "$1"', "sh", md], check=True,
+                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "AGENT_SYSTEM": sysp})
+        run("You code.\n\nYou are e, writer. $HOME `id` 100%")
+        run("You review.")
+        with open(md) as fh:
+            self.assertEqual(fh.read(), "# mine\n<!-- kaim56-role -->\n## Your role\n\nYou review.\n<!-- /kaim56-role -->\n")
+        run("You code.\n\nYou are e, writer. $HOME `id` 100%")
+        with open(md) as fh:
+            self.assertIn("You are e, writer. $HOME `id` 100%\n<!-- /kaim56-role -->", fh.read())
+        run("")
+        with open(md) as fh:
+            self.assertEqual(fh.read(), "# mine\n")
+        shutil.rmtree(d, ignore_errors=True)
 
     def test_claude_mcp_git_tools(self):
         """The squad git tools are in the claude guest's kaim56 MCP server and

@@ -293,20 +293,34 @@ BUILTIN = {
                    []),
     "squad_members": (_tools_manager.t_squad_members, "The members of your squad (project) and their roles.",
                       {"project": {"type": "string", "description": "optional when you are in one squad"}}, []),
+    "squad_catalog": (_tools_manager.t_squad_catalog,
+                      "Lead: what squad members can be made of — personas, skills (standard ones flagged), "
+                      "model tiers with their models, templates (openrouter, claude). Call it before squad_propose.",
+                      {"project": {"type": "string", "description": "optional when you lead one project"}}, []),
     "squad_propose": (_tools_manager.t_squad_propose,
                       "Lead only: propose the squad plan to the user — goal, members (new or existing instances) "
-                      "and tickets. NOTHING is created or started until the user approves it in the UI; the "
-                      "decision arrives as a squad message. One pending plan per project.",
+                      "and tickets. Pick each member's persona, skills, model_tier and template from squad_catalog; "
+                      "when no persona fits, give new_persona (created only if the user approves). NOTHING is "
+                      "created or started until the user approves it in the UI; the decision arrives as a squad "
+                      "message. One pending plan per project.",
                       {"goal": {"type": "string"},
                        "members": {"type": "array", "description": "the team", "items": {"type": "object", "properties": {
                            "name": {"type": "string", "description": "a-z 0-9 -"},
                            "purpose": {"type": "string"},
                            "role": {"type": "string", "enum": ["writer", "reader", "lead"]},
                            "existing": {"type": "boolean", "description": "an instance that exists already"},
-                           "persona": {"type": "string"}, "skills": {"type": "array", "items": {"type": "string"}},
+                           "persona": {"type": "string", "description": "a persona name from squad_catalog"},
+                           "new_persona": {"type": "object", "description": "only when no persona fits; created on approval",
+                                           "properties": {"name": {"type": "string", "description": "a-z 0-9 -, not existing"},
+                                                          "description": {"type": "string", "description": "one line"},
+                                                          "prompt": {"type": "string", "description": "the system prompt"},
+                                                          "tools": {"type": "array", "items": {"type": "string"}}}},
+                           "skills": {"type": "array", "items": {"type": "string"}},
                            "model_tier": {"type": "string", "enum": ["cheap", "strong", "code", "local"]},
                            "model": {"type": "string", "description": "optional concrete model"},
-                           "template": {"type": "string", "description": "default openrouter"}}}},
+                           "template": {"type": "string", "enum": ["openrouter", "claude"],
+                                        "description": "openrouter (API model, counts against the token budget, default) "
+                                                       "or claude (Claude Code on the user's subscription)"}}}},
                        "tickets": {"type": "array", "items": {"type": "object", "properties": {
                            "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
                            "assignee": {"type": "string", "description": "a member name"},

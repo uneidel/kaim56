@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -130,6 +130,22 @@ def _proposed(path, payload):
     w = d.get("warnings") or []
     return (f"Proposal {d['id']} ({d['kind']}) in {d['project']} is waiting for the user's approval — nothing "
             "happens before; a squad message brings the decision." + (" Flags: " + "; ".join(w) if w else ""))
+
+
+def t_squad_catalog(project=""):
+    d = json.loads(_get("/api/squad/catalog?" + _q(project=project)))
+    out = [f"Squad catalog for {d.get('project', '')} — choose per member:", "Personas (persona=<name>):"]
+    out += [f"- {p['name']}: {p.get('description', '')}" + (f" [tools: {', '.join(p['tools'])}]" if p.get("tools") else "")
+            for p in d.get("personas") or []]
+    out.append("  none fits -> new_persona: {name, description, prompt, tools?}")
+    out.append("Skills (skills=[...]; 'standard' ones every agent has already):")
+    out += [f"- {s['name']}{' (standard)' if s.get('default') else ''}: {s.get('description', '')}"
+            for s in d.get("skills") or []]
+    out.append("Model tiers (model_tier=):")
+    out += [f"- {t['tier']}: {', '.join(t['models']) or 'no model assigned'}" for t in d.get("tiers") or []]
+    out.append("Templates (template=):")
+    out += [f"- {t['template']}: {t.get('note', '')}" for t in d.get("templates") or []]
+    return "\n".join(out)
 
 
 def t_squad_propose(goal, members, tickets=None, budget_tokens_per_day=0, project=""):
@@ -286,18 +302,32 @@ TOOLS = {
     "squad_members": (_squad(t_squad_members),
         "The members of your squad (project) and their roles.",
         {"type": "object", "properties": {"project": _PROJ}, "required": []}),
+    "squad_catalog": (_squad(t_squad_catalog),
+        "Lead: what squad members can be made of — personas, skills (standard ones flagged), model tiers with "
+        "their models, templates (openrouter, claude). Call it before squad_propose.",
+        {"type": "object", "properties": {"project": _PROJ}, "required": []}),
     "squad_propose": (_squad(t_squad_propose),
         "Lead only: propose the squad plan to the user — goal, members (new or existing instances) and tickets. "
-        "NOTHING is created or started until the user approves it in the UI; the decision arrives as a squad message.",
+        "Pick each member's persona, skills, model_tier and template from squad_catalog; when no persona fits, give "
+        "new_persona (created only if the user approves). NOTHING is created or started until the user approves "
+        "it in the UI; the decision arrives as a squad message.",
         {"type": "object",
          "properties": {"goal": {"type": "string"},
                         "members": {"type": "array", "items": {"type": "object", "properties": {
                             "name": {"type": "string", "description": "a-z 0-9 -"}, "purpose": {"type": "string"},
                             "role": {"type": "string", "enum": ["writer", "reader", "lead"]},
-                            "existing": {"type": "boolean"}, "persona": {"type": "string"},
+                            "existing": {"type": "boolean"},
+                            "persona": {"type": "string", "description": "a persona name from squad_catalog"},
+                            "new_persona": {"type": "object", "description": "only when no persona fits; created on approval",
+                                            "properties": {"name": {"type": "string", "description": "a-z 0-9 -, not existing"},
+                                                           "description": {"type": "string"}, "prompt": {"type": "string"},
+                                                           "tools": {"type": "array", "items": {"type": "string"}}}},
                             "skills": {"type": "array", "items": {"type": "string"}},
                             "model_tier": {"type": "string", "enum": ["cheap", "strong", "code", "local"]},
-                            "model": {"type": "string"}, "template": {"type": "string"}}}},
+                            "model": {"type": "string"},
+                            "template": {"type": "string", "enum": ["openrouter", "claude"],
+                                         "description": "openrouter (API model, counts against the token budget, default) "
+                                                        "or claude (Claude Code on the user's subscription)"}}}},
                         "tickets": {"type": "array", "items": {"type": "object", "properties": {
                             "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
                             "assignee": {"type": "string"}, "depends_on": {"type": "array", "items": {"type": "string"}}}}},

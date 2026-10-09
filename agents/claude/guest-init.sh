@@ -142,7 +142,7 @@ if ! grep -q "## kAIm56 platform" "$PLATFORM_MD" 2>/dev/null; then
 
 You run inside a Firecracker microVM on the kAIm56 agent platform. You have
 MCP tools from the "kaim56" server: memory_store, memory_recall, web_search,
-list_skills, load_skill, notify, and squad_post/ask/read/members, squad_propose, ticket_* (your project's
+list_skills, load_skill, notify, and squad_post/ask/read/members, squad_catalog, squad_propose, ticket_* (your project's
 team channel, plans the user approves, tickets), git_push_branch/pr_*/issue_* (the project's git remote,
 run by the host — you hold no token) — USE THOSE. Your session context does not
 survive /reset; when the user asks you to remember something, memory_store it.
@@ -179,6 +179,20 @@ if [ -n "$STD" ]; then
   printf '<!-- kaim56-standard-skills -->\n## Standard skills\n\nWhen a task matches one of these, load_skill it BEFORE you start and follow it:\n%s\n<!-- /kaim56-standard-skills -->\n' "$STD" >> "$PLATFORM_MD"
   chown node:node "$PLATFORM_MD" 2>/dev/null
 fi
+
+# The instance's persona (AGENT_SYSTEM from the config disk: a persona, or a
+# squad member's persona + role line) — Claude reads CLAUDE.md, not the env.
+# Replaced at every boot between markers; removed when the instance has none.
+# (tests/e2e.py runs this block against a temp file.)
+# >>> kaim56-role
+role_section() {  # <CLAUDE.md>
+  sed -i '/<!-- kaim56-role -->/,/<!-- \/kaim56-role -->/d' "$1" 2>/dev/null
+  [ -n "$AGENT_SYSTEM" ] || return 0
+  printf '<!-- kaim56-role -->\n## Your role\n\n%s\n<!-- /kaim56-role -->\n' "$AGENT_SYSTEM" >> "$1"
+}
+# <<< kaim56-role
+role_section "$PLATFORM_MD"
+chown node:node "$PLATFORM_MD" 2>/dev/null
 
 echo "[init] agent=claude(node) transport=$TRANSPORT workdir=$WORKDIR"
 cd "$WORKDIR"

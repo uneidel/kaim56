@@ -67,6 +67,7 @@ AGENT_TOOLS_CATALOG = [
     {"name": "squad_ask", "desc": "Squad: ask one member and wait for the answer"},
     {"name": "squad_read", "desc": "Squad: read the project channel"},
     {"name": "squad_members", "desc": "Squad: the project's members and roles"},
+    {"name": "squad_catalog", "desc": "Squad lead: personas, skills, model tiers, templates to propose members from"},
     {"name": "squad_propose", "desc": "Squad lead: propose the plan (members, tickets) for approval"},
     {"name": "squad_request_member", "desc": "Squad lead: ask the user for one more member"},
     {"name": "squad_request_merge", "desc": "Squad lead: ask the user to merge a writer's branch"},

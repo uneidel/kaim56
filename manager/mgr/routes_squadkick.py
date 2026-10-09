@@ -8,7 +8,7 @@
   reads the channel and posts through the existing /api/projects/<p>/squad/
   routes).
 - admin only (default deny in mgr/auth.py): ``POST /api/squads/kickoff``
-  {text}, ``GET /api/squads/kickoff`` (the jobs), ``GET …/kickoff/<id>`` (one,
+  {text, architect_template?: openrouter|claude}, ``GET /api/squads/kickoff`` (the jobs), ``GET …/kickoff/<id>`` (one,
   polled), ``POST …/kickoff/<id>/retry``.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
@@ -48,7 +48,7 @@ def _rt_kick_post(h):
     b = h._body() or {}
     who = _who(h)
     if not rest:
-        j, why = _squadkick.start(b.get("text"), who)
+        j, why = _squadkick.start(b.get("text"), who, b.get("architect_template"))
     elif rest.endswith("/retry"):
         j, why = _squadkick.retry(rest[:-len("/retry")])
     else:

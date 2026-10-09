@@ -24,9 +24,10 @@ b. the squad record (mgr/squadrec.py: squad ID, folder SQUADS_DIR/<id>__<name>),
    watched while cloning and checked after) abort and clean up.
 c. project <name>: worktree strategy, the clone as source, its default branch as base.
 d. git remote (squadgit) with the token secret — skipped, with a note, without one.
-e. instance <name>-architect: template openrouter, persona code-architect,
-   model of router tier "strong" (else the template default, said in the
-   chat) — squadgate's creation path; the project's lead.
+e. instance <name>-architect: template openrouter (or claude, the
+   composer's choice), persona code-architect, model of router tier "strong"
+   (else the template default, said in the chat) — squadgate's creation
+   path; the project's lead.
 f. squad enabled, NOT approved (only the lead can be woken), budget 2M
    tokens/day; reindex when an indexer exists (queued, never blocks).
 g. the goal, posted as user:<name> to @<name>-architect: propose the squad.
@@ -151,8 +152,8 @@ def _spawn(fn, *args):
 
 
 def view(job):
-    return {k: job[k] for k in ("id", "name", "arch", "url", "repo", "provider", "goal", "status", "log",
-                                "created", "who")}
+    return {k: job[k] for k in ("id", "name", "arch", "arch_template", "url", "repo", "provider", "goal", "status",
+                                "log", "created", "who")}
 
 
 def jobs():
@@ -164,8 +165,11 @@ def get(jid):
     return view(j) if j else None
 
 
-def start(text, who):
+def start(text, who, architect_template=""):
     """A new kickoff -> (job view, '') or (None, why). The steps run in a thread."""
+    tpl = str(architect_template or "openrouter").strip()
+    if tpl not in _squadgate.MEMBER_TEMPLATES:
+        return None, f"architect_template must be {' or '.join(_squadgate.MEMBER_TEMPLATES)}"
     f, why = parse(text)
     if not f:
         return None, why
@@ -174,7 +178,7 @@ def start(text, who):
         if not name:
             return None, f"no free squad name for {f['repo']}"
         job = {**f, "id": uuid.uuid4().hex[:10], "name": name, "arch": name + ARCH_SUFFIX, "who": who,
-               "status": "running", "log": [], "made": [], "done": [], "created": time.time(), "base": ""}
+               "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(), "base": ""}
         _jobs[job["id"]] = job
         for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
             _jobs.pop(old["id"], None)
@@ -357,7 +361,7 @@ def step_architect(job):
         raise Stop(f"an instance {arch} exists and is not this kickoff's")
     if inst is None:
         m = {"name": arch, "purpose": f"architect and lead of squad {name} ({job['url']})", "persona": ARCH_PERSONA,
-             "skills": [], "model_tier": ARCH_TIER, "model": "", "template": "openrouter", "role": "lead",
+             "skills": [], "model_tier": ARCH_TIER, "model": "", "template": job["arch_template"], "role": "lead",
              "existing": False}
         steps = []
         ok = _squadgate._create(_projects.get(name), m, steps)
@@ -369,8 +373,8 @@ def step_architect(job):
         if not ok:
             raise Stop(f"creating {arch} failed: " + next((s["detail"] for s in steps if s["step"].startswith("create")), "?"))
         inst = next((i for i in _instances.load_instances() if i["name"] == arch), {})
-        model = (inst.get("config") or {}).get("OPENROUTER_MODEL")
-        _say(job, f"Instance {arch}: persona {ARCH_PERSONA}, model "
+        model = (inst.get("config") or {}).get("ANTHROPIC_MODEL" if job["arch_template"] == "claude" else "OPENROUTER_MODEL")
+        _say(job, f"Instance {arch} ({job['arch_template']}): persona {ARCH_PERSONA}, model "
                   + (model or "the template default") + (f" (tier {ARCH_TIER})" if model else ""))
     proj = _projects.get(name)
     members = {n: {"role": x.get("role")} for n, x in (proj.get("members") or {}).items()}
@@ -403,9 +407,10 @@ def step_post(job):
         return
     arch = job["arch"]
     text = (f"@{arch} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
-            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\nStudy the code, then propose the squad with squad_propose: "
-            f"members (persona, skills, model tier, role), tickets with their dependencies, and a daily token "
-            f"budget (default {BUDGET}). Nothing else runs before I approve.")
+            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\nStudy the code. Call squad_catalog first. For each member choose "
+            f"persona (or propose new_persona if none fits), skills from the catalog, model tier and template "
+            f"(openrouter or claude), and a role. Then call squad_propose with the members, tickets with their "
+            f"dependencies, and a daily token budget (default {BUDGET}). Nothing else runs before I approve.")
     m, why = _squads.post(_projects.get(job["name"]), "user:" + job["who"], [arch], text)
     if not m:
         raise Stop("posting the goal failed: " + why)

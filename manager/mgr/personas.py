@@ -92,7 +92,7 @@ def save_personas(items):
         return -1
 
 
-def upsert_persona(name, prompt, tools=None, model=None):
+def upsert_persona(name, prompt, tools=None, model=None, description=None):
     name = re.sub(r"[^a-z0-9_-]", "", (name or "").lower())
     if not name:
         return "invalid name (only a-z 0-9 _ -)"
@@ -112,6 +112,9 @@ def upsert_persona(name, prompt, tools=None, model=None):
         keep = [t for t in tl if t in _policy.tool_names()]
         if keep:
             ent["tools"] = keep
+    desc = prev.get("description") if description is None else str(description).strip()[:300]
+    if desc:
+        ent["description"] = desc
     if model is None:
         if prev.get("model"):
             ent["model"] = prev["model"]
