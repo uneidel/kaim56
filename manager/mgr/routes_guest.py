@@ -826,7 +826,7 @@ def _rt_squad_propose(h):
     if prop is None:
         return h._json({"error": why}, 400)
     return h._json({"id": prop["id"], "project": p["name"], "kind": kind, "status": prop["status"],
-                    "warnings": prop.get("warnings") or []})
+                    "version": prop.get("version", 1), "warnings": prop.get("warnings") or []})
 
 
 @_routes.ROUTER.get("/api/squad/catalog")

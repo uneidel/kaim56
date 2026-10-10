@@ -302,7 +302,9 @@ BUILTIN = {
                       "and tickets. Pick each member's persona, skills, model_tier and template from squad_catalog; "
                       "when no persona fits, give new_persona (created only if the user approves). NOTHING is "
                       "created or started until the user approves it in the UI; the decision arrives as a squad "
-                      "message. One pending plan per project.",
+                      "message. One pending plan per project. The user may ask for changes instead (a squad "
+                      "message 'Revise proposal <id>'): then call squad_propose again with the whole updated plan "
+                      "— it replaces that proposal as its next version.",
                       {"goal": {"type": "string"},
                        "members": {"type": "array", "description": "the team", "items": {"type": "object", "properties": {
                            "name": {"type": "string", "description": "a-z 0-9 -"},

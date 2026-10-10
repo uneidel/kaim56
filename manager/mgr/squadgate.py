@@ -21,6 +21,14 @@ A project's lead PROPOSES; only the operator's approval in the UI acts:
 - ``member``: one more member later (after the squad is approved).
 - ``merge``: a writer's branch to the project's base, by the existing merge path.
 
+Revising: the operator may "request changes" (a comment, plus the card's edits
+as a summary) instead of approve/reject -> status changes_requested; the lead
+is woken and its next squad_propose (or squad_request_member for the same
+member) replaces the proposal as the next version of the same id — earlier
+versions in prop["versions"], what differs in prop["changes"]. A proposal is
+replaceable only once the operator answered it (request changes, or a channel
+message to the lead while it waits: ``revisable``); otherwise one pending.
+
 Tickets: per project, {id, key, title, description, assignee, status,
 depends_on (keys), comments}. The lead creates and assigns them only after the
 squad is approved; the assignee or the lead updates them; the operator edits
@@ -68,6 +76,10 @@ MAX_MEMBERS, MAX_TICKETS, MAX_SKILLS, MAX_DEPS = 8, 50, 10, 10
 MAX_PENDING = 10                # pending proposals per project
 KEEP_PROPOSALS = 200
 MAX_COMMENTS = 100
+MAX_VERSIONS = 10               # earlier versions a revised proposal keeps
+OPEN = ("pending", "changes_requested")      # not decided yet
+PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status")
+DIFF_FIELDS = ("role", "purpose", "persona", "skills", "model_tier", "model", "template")
 MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
@@ -212,15 +224,21 @@ def _chose(m, who, before=None, raw=None):
     return m
 
 
-def _tickets(raw, assignees, known=frozenset()):
+def _tickets(raw, assignees, known=frozenset(), avoid=()):
     """The proposed tickets -> (tickets, '') or (None, why). `known`: keys of
-    tickets that exist already (a dependency may name them)."""
+    tickets that exist already (a dependency may name them); `avoid`: keys an
+    automatic key must not take (the proposal's, so an added ticket never
+    looks like a removed one)."""
     if not isinstance(raw, list) or len(raw) > MAX_TICKETS:
         return None, f"tickets: a list of at most {MAX_TICKETS}"
     out, keys = [], set()
+    taken = {_txt(t.get("key"), 16) for t in raw if isinstance(t, dict)} | set(known) | set(avoid)
     for i, t in enumerate(raw):
         t = t if isinstance(t, dict) else {}
-        key = _txt(t.get("key") or f"T{i + 1}", 16)
+        key = _txt(t.get("key"), 16)
+        if not key:                               # auto: the first free T<n>
+            key = next(f"T{n}" for n in range(i + 1, 10 ** 6) if f"T{n}" not in taken)
+            taken.add(key)
         if not KEY_RE.match(key) or key in keys or key in known:
             return None, f"ticket key {key!r}: A-Z a-z 0-9 -, at most 16, unique"
         title = _txt(t.get("title"), 200)
@@ -251,7 +269,7 @@ def _budget(v):
     return v if lo <= v <= hi else None
 
 
-def validate_squad(proj, by, body, strict=True):
+def validate_squad(proj, by, body, strict=True, avoid=()):
     """The squad plan of a proposal -> (fields, '') or (None, why)."""
     goal = _txt(body.get("goal"), 2000)
     if not goal:
@@ -267,7 +285,8 @@ def validate_squad(proj, by, body, strict=True):
         if any(x["name"] == m["name"] for x in members):
             return None, f"{m['name']} twice"
         members.append(m)
-    tickets, why = _tickets(body.get("tickets") or [], {m["name"] for m in members} | set(proj.get("members") or {}))
+    tickets, why = _tickets(body.get("tickets") or [], {m["name"] for m in members} | set(proj.get("members") or {}),
+                            avoid=avoid)
     if tickets is None:
         return None, why
     budget = _budget(body.get("budget_tokens_per_day"))
@@ -320,8 +339,8 @@ def _put(prop):
     with _lock:
         d = _load()
         d["proposals"] = [p for p in d["proposals"] if p.get("id") != prop["id"]] + [prop]
-        keep = [p for p in d["proposals"] if p.get("status") == "pending"]
-        done = [p for p in d["proposals"] if p.get("status") != "pending"]
+        keep = [p for p in d["proposals"] if p.get("status") in OPEN]
+        done = [p for p in d["proposals"] if p.get("status") not in OPEN]
         d["proposals"] = keep + done[-KEEP_PROPOSALS:]
         _save(d)
     _squadrec.log_proposal(prop)
@@ -331,15 +350,10 @@ def propose(proj, by, kind, body):
     """A lead's proposal -> (proposal, '') or (None, why). Notifies the user."""
     if lead(proj) != by:
         return None, f"only the lead of {proj['name']} may propose"
-    mine = proposals(proj["name"])
-    pending = [p for p in mine if p.get("status") == "pending"]
-    if len(pending) >= MAX_PENDING:
-        return None, f"{MAX_PENDING} proposals are waiting already"
+    pending = [p for p in proposals(proj["name"]) if p.get("status") in OPEN]
     prop = {"id": uuid.uuid4().hex[:10], "project": proj["name"], "kind": kind, "status": "pending",
             "by": by, "created": int(time.time())}
     if kind == "squad":
-        if any(p.get("kind") == "squad" for p in pending):
-            return None, "a squad proposal is waiting for approval already"
         f, why = validate_squad(proj, by, body)
         if not f:
             return None, why
@@ -364,17 +378,150 @@ def propose(proj, by, kind, body):
         prop.update(writer=writer, summary=summary)
     else:
         return None, "unknown kind"
+    same = next((p for p in pending if p.get("kind") == kind and kind != "merge"
+                 and (kind == "squad" or p["members"][0]["name"] == prop["members"][0]["name"])), None)
+    if same and not same.get("revisable"):
+        what = "a squad proposal" if kind == "squad" else f"a proposal for {prop['members'][0]['name']}"
+        return None, (f"{what} ({same['id']}) is waiting for approval already — it can be revised "
+                      "once the user asks for changes")
+    if not same and len(pending) >= MAX_PENDING:
+        return None, f"{MAX_PENDING} proposals are waiting already"
     if kind != "merge":
         prop["profile"] = profile(proj)          # what the choices are based on (the card shows it)
+    if same:                                     # the next version of the same proposal
+        prop.update(id=same["id"], created=same["created"], updated=prop["created"],
+                    version=same.get("version", 1) + 1, comments=same.get("comments") or [],
+                    versions=((same.get("versions") or []) + [_snapshot(same)])[-MAX_VERSIONS:],
+                    changes=diff(same, prop))
     _put(prop)
     if kind != "merge" and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
-        _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval",
+        _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval"
+                           + (f" (v{prop['version']})" if prop.get("version") else ""),
                            f"{kind} proposal by {by} — review it in Projects → Squad", link="projects")
     except Exception as e:                       # the proposal stands without the bell
         print(f"[quiet] squad notify failed: {e!r}", flush=True)
     return prop, ""
+
+
+def _snapshot(p):
+    """One earlier version, as the history keeps it."""
+    v = p.get("version", 1)
+    return {"version": v, "ts": p.get("updated") or p.get("created"), "by": p.get("by"),
+            **{k: p[k] for k in PLAN_FIELDS if k in p},
+            "comments": [c for c in p.get("comments") or [] if c.get("version", 1) == v]}
+
+
+def _fmt(v):
+    if isinstance(v, int):
+        return str(v)
+    v = ", ".join(map(str, v)) if isinstance(v, list) else str(v if v not in (None, "") else "")
+    return repr(v[:200]) if v else "—"
+
+
+def diff(old, new):
+    """What differs from `old` to `new` (two plans) -> lines, for the card and the lead."""
+    out = []
+    if (old.get("goal") or "") != (new.get("goal") or ""):
+        out.append(f"goal: {_fmt(new.get('goal'))}")
+    if old.get("budget_tokens_per_day") != new.get("budget_tokens_per_day"):
+        out.append(f"budget: {_fmt(old.get('budget_tokens_per_day'))} -> {_fmt(new.get('budget_tokens_per_day'))}")
+    om = {m["name"]: m for m in old.get("members") or []}
+    nm = {m["name"]: m for m in new.get("members") or []}
+    out += [f"member added: {n}" for n in nm if n not in om]
+    out += [f"member removed: {n}" for n in om if n not in nm]
+    for n in (x for x in nm if x in om):
+        ch = [f"{f} {_fmt(om[n].get(f))} -> {_fmt(nm[n].get(f))}" for f in DIFF_FIELDS
+              if _fmt(om[n].get(f)) != _fmt(nm[n].get(f))]
+        if ch:
+            out.append(f"member {n}: " + "; ".join(ch))
+    ot = {t["key"]: t for t in old.get("tickets") or []}
+    nt = {t["key"]: t for t in new.get("tickets") or []}
+    out += [f"ticket added: {k} {_fmt(t['title'])}" for k, t in nt.items() if k not in ot]
+    out += [f"ticket removed: {k} {_fmt(t['title'])}" for k, t in ot.items() if k not in nt]
+    for k in (x for x in nt if x in ot):
+        ch = [f"{f} {_fmt(nt[k].get(f))}" if f == "description" else f"{f} {_fmt(ot[k].get(f))} -> {_fmt(nt[k].get(f))}"
+              for f in ("title", "description", "assignee", "depends_on") if _fmt(ot[k].get(f)) != _fmt(nt[k].get(f))]
+        if ch:
+            out.append(f"ticket {k}: " + "; ".join(ch))
+    return out[:60]
+
+
+def _edited(proj, prop, edits):
+    """The proposal's plan with the operator's card edits -> (fields, '') or (None, why)."""
+    if prop["kind"] == "squad":
+        return validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits}, strict=False,
+                              avoid={t["key"] for t in prop.get("tickets") or []})
+    warn = []
+    m, why = _member((edits.get("members") or [None])[0], proj, prop["by"], warn, strict=False)
+    return ({"members": [m], "warnings": warn}, "") if m else (None, why)
+
+
+def request_changes(project, pid, who, comment, edits=None):
+    """The operator asks the lead to revise (comment required; the card's edits
+    so far go along as a summary) -> (proposal, '') or (None, why)."""
+    comment = _txt(comment, 2000)
+    if not comment:
+        return None, "say what should change (comment missing)"
+    with _decide:
+        prop = _get(project, pid)
+        proj = _projects.get(project)
+        if prop is None or proj is None:
+            return None, "unknown proposal"
+        if prop["status"] not in OPEN:
+            return None, f"proposal is {prop['status']} already"
+        if prop["kind"] == "merge":
+            return None, "a merge is approved or rejected (with a note)"
+        summary = []
+        if edits:
+            f, why = _edited(proj, prop, edits)
+            if not f:
+                return None, why
+            summary = diff(prop, {**prop, **f})
+        v = prop.get("version", 1)
+        prop["comments"] = ((prop.get("comments") or [])
+                            + [{"ts": int(time.time()), "by": who, "text": comment, "version": v,
+                                **({"edits": summary} if summary else {})}])[-MAX_COMMENTS:]
+        prop.update(status="changes_requested", revisable=True)
+        if edits:
+            prop["edits"] = edits
+        _put(prop)
+    _audit.audit_append(prop["by"], "squad_decision", f"{project} {prop['kind']} {pid}", True,
+                        result=f"changes requested by {who}: {comment}"[:500])
+    tool = "squad_propose" if prop["kind"] == "squad" else "squad_request_member (same member)"
+    text = (f"Revise proposal {pid} (v{v}): {comment}"
+            + (" The user already changed in the card: " + "; ".join(summary) + "." if summary else "")
+            + f" Call {tool} again with the updated plan; it replaces this proposal as v{v + 1}.")
+    lead_ = lead(proj) or prop["by"]
+    _squads.post(proj, "user:" + who, [lead_], text)
+    return prop, ""
+
+
+def revise_hint(proj):
+    """The open proposals the lead may revise, as one line for its wake (a
+    channel message from the operator) — '' when there is none."""
+    ps = [p for p in proposals(proj["name"]) if p.get("status") in OPEN and p["kind"] != "merge"]
+    return " ".join(f"(Proposal {p['id']} v{p.get('version', 1)} is waiting for approval: if this message asks for "
+                    f"changes, revise it with {'squad_propose' if p['kind'] == 'squad' else 'squad_request_member'} "
+                    f"— it becomes v{p.get('version', 1) + 1}.)" for p in ps)
+
+
+def operator_post(proj, who, body):
+    """The operator writes in the channel (no addressee = the lead). A lead
+    woken while a proposal waits is told it may revise it; that proposal
+    becomes replaceable. -> (message, '') or (None, why)."""
+    ld, hint = lead(proj), revise_hint(proj)
+    m, why = _squads.post(proj, "user:" + who, body.get("to"), body.get("text"), reply_to=body.get("reply_to"),
+                          hints={ld: hint} if ld and hint else None)
+    if m and ld and hint and ld in m["delivered"]:
+        with _lock:
+            d = _load()
+            for p in d["proposals"]:
+                if p.get("project") == proj["name"] and p.get("status") in OPEN:
+                    p["revisable"] = True
+            _save(d)
+    return m, why
 
 
 # ---- Jev's suggestions (mgr/jevsetup.py): filled into the pending proposal ---
@@ -399,7 +546,7 @@ def fill_suggestions(project, pid, only="", force=False):
     force ('Suggest again'): that member gets all three, whatever the score.
     Written only while the proposal is pending; the user approves."""
     prop = _get(project, pid)
-    if prop is None or prop.get("status") != "pending" or prop["kind"] == "merge":
+    if prop is None or prop.get("status") not in OPEN or prop["kind"] == "merge":
         return None
     done = {}
     for m in prop["members"]:
@@ -436,7 +583,7 @@ def fill_suggestions(project, pid, only="", force=False):
     with _lock:
         d = _load()
         cur = next((p for p in d["proposals"] if p.get("id") == pid), None)
-        if cur is None or cur.get("status") != "pending":
+        if cur is None or cur.get("status") not in OPEN or cur.get("version") != prop.get("version"):
             return None
         cur["members"] = [done.get(m["name"], m) for m in cur["members"]]
         _save(d)
@@ -446,7 +593,7 @@ def fill_suggestions(project, pid, only="", force=False):
 def suggest_member(project, pid, member):
     """'Suggest again' on the approval card -> (proposal, '') or (None, why)."""
     prop = _get(project, pid)
-    if prop is None or prop.get("status") != "pending":
+    if prop is None or prop.get("status") not in OPEN:
         return None, "no pending proposal " + pid
     m = next((x for x in prop.get("members") or [] if x["name"] == member), None)
     if m is None or m["existing"]:
@@ -611,23 +758,17 @@ def decide(project, pid, ok, who, note="", edits=None):
         proj = _projects.get(project)
         if proj is None:
             return None, "unknown project"
-        if prop["status"] == "rejected" or (not ok and prop["status"] != "pending"):
+        if prop["status"] == "rejected" or (not ok and prop["status"] not in OPEN):
             return None, f"proposal is {prop['status']} already"
         note = _txt(note, 1000) or prop.get("note", "")
-        if ok and edits and prop["status"] == "pending":
-            prop["edits"] = edits                 # what the operator changed (the archive keeps it)
         before = {m["name"]: m for m in prop.get("members") or []}
-        if ok and edits and prop["status"] == "pending" and prop["kind"] == "squad":
-            f, why = validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits}, strict=False)
+        if ok and edits and prop["status"] in OPEN and prop["kind"] != "merge":
+            f, why = _edited(proj, prop, edits)
             if not f:
                 return None, why
+            prop["edits"] = edits                 # what the operator changed (the archive keeps it)
             prop.update(f, members=[_chose(m, "you", before.get(m["name"], {})) for m in f["members"]])
-        elif ok and edits and prop["status"] == "pending" and prop["kind"] == "member":
-            warn = []
-            m, why = _member((edits.get("members") or [None])[0], proj, prop["by"], warn, strict=False)
-            if not m:
-                return None, why
-            prop.update(members=[_chose(m, "you", before.get(m["name"], {}))], warnings=warn)
+        prop.pop("revisable", None)
         prop.update(status="approved" if ok else "rejected", decided=int(time.time()), decided_by=who, note=note)
         if ok:
             prop["steps"] = _run(prop, who)

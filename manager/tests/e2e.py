@@ -1553,6 +1553,9 @@ class AgentSquad(unittest.TestCase):
         self.assertEqual(sent[-1], ("/api/squad/propose", {"goal": "ship", "members": [{"name": "e"}], "tickets": [{"title": "t"}],
                                                            "budget_tokens_per_day": 1000, "project": ""}))
         self.assertIn("waiting for the user's approval", out); self.assertIn("persona 'x'", out)
+        reply.update(version=2)
+        self.assertIn("Proposal p1 is now v2, waiting for approval", tm.t_squad_propose("ship", [{"name": "e"}]))
+        self.assertIn("Revise proposal", a._tools.BUILTIN["squad_propose"][1])
         reply.clear(); reply.update(id=1, key="T1", status="done", title="tests", assignee="e", depends_on=[],
                                     woke={"T2": "woken"})
         self.assertEqual(tm.t_ticket_update("1", "done"), "#1 T1 [done] tests -> e\nT2: woken")
@@ -4403,13 +4406,15 @@ class ManagerFunctions(unittest.TestCase):
             m._projects.upsert({k: p[k] for k in ("name", "strategy", "source", "members")})
             self.assertEqual(m._projects.get("sq")["squad"]["max_depth"], 5)            # a project save keeps it
             self._sq("/api/projects/sq/squad", L, {"paused": False})
-            self.assertEqual(self._sq("/api/projects/sq/squad/post", L, {"text": "nobody named"})[0], 400)
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "nobody named"})   # no addressee: the lead
+            self.assertEqual((st, d["to"], d["delivered"]), (200, ["a"], ["a"]))
+            self.assertNotIn("Proposal", woke[-1][1]); del woke[:]
             st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "@b please rebase"})
             self.assertEqual((st, d["from"], d["to"], d["delivered"]), (200, "user:admin", ["b"], ["b"]))
             self.assertEqual(woke[0][1].split(":")[0], "[squad sq] from user")
             st, d = self._sq("/api/squad/post", "172.30.4.2", {"text": "done", "reply_to": d["id"]})
             self.assertEqual((d["to"], d["delivered"]), (["user:admin"], []))           # a reply to the operator wakes nobody
-            self.assertEqual(len(self._sq("/api/projects/sq/squad/messages", L)[1]["messages"]), 2)
+            self.assertEqual(len(self._sq("/api/projects/sq/squad/messages", L)[1]["messages"]), 3)
             for path in ("/api/projects/sq/squad", "/api/projects/sq/squad/messages", "/api/projects/sq/squad/post"):
                 self.assertTrue(m._routes.ROUTER.resolve("GET" if "messages" in path else "POST", path)[1])   # admin-only for guests
             ua = m._auth.user_allowed
@@ -4561,6 +4566,88 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, created[-1][0], m._projects.get("sq")["members"]["g"]["role"]), (200, "g", "reader"))
             self.assertEqual(self._sq("/api/projects/sq/delete", L, {})[0], 200)               # purge goes with it
             self.assertEqual((m._squadgate.proposals("sq"), m._squadgate.tickets("sq")), ([], []))
+        finally:
+            undo()
+
+    def test_squadgate_request_changes_versions_and_card_edits(self):
+        """Request changes needs a comment, sets changes_requested, wakes the
+        lead with the comment and the card's edits; the lead's next proposal
+        replaces it as v2 (history, diff); without the operator's answer a
+        second proposal stays blocked; a channel message to the lead (no
+        addressee) carries the revise hint and opens it again; goal / ticket
+        description / add / remove edits are validated and applied on
+        approve; the archive keeps the versions; admin only."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        plan, D = self._SG_PLAN, "/api/projects/sq/squad/decide"
+        try:
+            self._sq("/api/projects/sq/squad", L, {"enabled": True})                         # the squad record (archive)
+            pid = self._sq("/api/squad/propose", A, plan)[1]["id"]
+            st, d = self._sq("/api/squad/propose", A, plan)                                   # a new one: still blocked
+            self.assertEqual(st, 400); self.assertIn("waiting for approval already", d["error"])
+            self.assertEqual(self._sq(D, L, {"id": pid, "changes": True, "note": " "})[0], 400)   # comment required
+            edits = {"goal": "ship v2 as an app", "members": plan["members"], "budget_tokens_per_day": 500000,
+                     "tickets": [dict(plan["tickets"][0], description="pytest only"),
+                                 {"title": "app shell", "assignee": "e", "depends_on": ["T1"]}]}
+            st, p = self._sq(D, L, {"id": pid, "changes": True, "note": "no web ui, a simple app", **edits})
+            self.assertEqual((st, p["status"], p["comments"][0]["text"]), (200, "changes_requested", "no web ui, a simple app"), p)
+            self.assertEqual(created, [])
+            w = woke[-1]
+            self.assertEqual(w[0], "a")
+            for part in (f"Revise proposal {pid} (v1): no web ui, a simple app", "goal: 'ship v2 as an app'",
+                         "ticket added: T3 'app shell'", "ticket removed: T2 'review'", "ticket T1: description 'pytest only'",
+                         "replaces this proposal as v2"):
+                self.assertIn(part, w[1])
+            st, d = self._sq(D, L, {"id": pid, "changes": True, "note": "x", **edits, "tickets": [{"title": "t", "assignee": "zz"}]})
+            self.assertEqual(st, 400); self.assertIn("no member", d["error"])                 # edits validated
+            # the lead revises: same id, v2, history and diff
+            plan2 = {**plan, "goal": "ship v2 as an app", "members": plan["members"][:1] + plan["members"][2:],
+                     "tickets": [plan["tickets"][0]]}
+            st, d = self._sq("/api/squad/propose", A, plan2)
+            self.assertEqual((st, d["id"], d["version"], d["status"]), (200, pid, 2, "pending"), d)
+            p = m._squadgate._get("sq", pid)
+            self.assertEqual([v["version"] for v in p["versions"]], [1])
+            self.assertEqual((p["versions"][0]["status"], p["versions"][0]["goal"], len(p["versions"][0]["comments"])),
+                             ("changes_requested", "ship v2", 1))
+            self.assertIn("member removed: f", p["changes"]); self.assertIn("ticket removed: T2 'review'", p["changes"])
+            self.assertIn("goal: 'ship v2 as an app'", p["changes"])
+            self.assertEqual(len([x for x in m._squadgate.proposals("sq")]), 1)
+            st, d = self._sq("/api/squad/propose", A, plan2)                                  # no answer yet: blocked
+            self.assertEqual(st, 400); self.assertIn("waiting for approval already", d["error"])
+            # a plain channel message goes to the lead, with the revise hint; then v3 may come
+            st, msg = self._sq("/api/projects/sq/squad/post", L, {"text": "please no web ui, a simple app ui"})
+            self.assertEqual((st, msg["to"], msg["delivered"]), (200, ["a"], ["a"]), msg)
+            self.assertIn(f"Proposal {pid} v2 is waiting for approval", woke[-1][1]); self.assertIn("squad_propose", woke[-1][1])
+            self.assertNotIn("Proposal", msg["text"])                                          # the channel keeps the text
+            self.assertEqual(self._sq("/api/squad/propose", A, plan2)[1]["version"], 3)
+            self.assertIsNone(m._squadgate.diff(plan2, plan2) or None)
+            # approve with card edits: goal, a description, a ticket added (key auto) and one removed
+            st, d = self._sq(D, L, {"id": pid, "approve": True, **edits, "tickets": [{"title": "x", "depends_on": ["T9"]}]})
+            self.assertEqual(st, 400); self.assertIn("no other ticket", d["error"])
+            ed = {"goal": "an app", "members": plan2["members"], "budget_tokens_per_day": 1000,
+                  "tickets": [{"key": "T1", "title": "write tests", "description": "pytest", "assignee": "e"},
+                              {"key": "", "title": "build app", "description": "tk", "assignee": "b", "depends_on": ["T1"]}]}
+            st, p = self._sq(D, L, {"id": pid, "approve": True, **ed})
+            self.assertEqual((st, p["status"], p["goal"]), (200, "approved", "an app"), p)
+            self.assertEqual([(t["key"], t["title"], t["description"], t["depends_on"]) for t in m._squadgate.tickets("sq")],
+                             [("T1", "write tests", "pytest", []), ("T2", "build app", "tk", ["T1"])])
+            self.assertEqual(self._sq(D, L, {"id": pid, "changes": True, "note": "more"})[0], 400)   # decided
+            fold = m._squadrec.folder(m._squadrec.of_project("sq"))
+            with open(os.path.join(fold, "proposals", pid + ".json")) as fh:
+                pj = json.load(fh)
+            self.assertEqual(([v["version"] for v in pj["versions"]], pj["version"], pj["status"], pj["comments"][0]["by"]),
+                             ([1, 2], 3, "approved", "admin"))
+            # a member request: the same member is revised, another one is a new proposal
+            st, r1 = self._sq("/api/squad/request-member", A, {"member": {"name": "g"}, "reason": "docs"})
+            self.assertEqual(self._sq("/api/squad/request-member", A, {"member": {"name": "g"}})[0], 400)
+            self._sq(D, L, {"id": r1["id"], "changes": True, "note": "a reader"})
+            st, r2 = self._sq("/api/squad/request-member", A, {"member": {"name": "g", "role": "reader"}})
+            self.assertEqual((st, r2["id"], r2["version"]), (200, r1["id"], 2))
+            self.assertIn("member g: role 'writer' -> 'reader'", m._squadgate._get("sq", r1["id"])["changes"])
+            st, r3 = self._sq("/api/squad/request-member", A, {"member": {"name": "h"}})
+            self.assertEqual(st, 200); self.assertNotEqual(r3["id"], r1["id"])
+            self.assertFalse(m._auth.user_allowed("POST", "/api/projects/sq/squad/decide"))   # role user: no
         finally:
             undo()
 
@@ -9465,6 +9552,9 @@ class ClaudeGuest(unittest.TestCase):
             self.assertIn(t, km.TOOLS)
         km._post = lambda path, payload, timeout=30: json.dumps({"id": "p1", "project": "sq", "kind": "merge", "status": "pending"})
         self.assertIn("waiting for the user's approval", km.TOOLS["squad_request_merge"][0](writer="b", summary="done"))
+        km._post = lambda path, payload, timeout=30: json.dumps({"id": "p1", "project": "sq", "kind": "squad", "status": "pending", "version": 3})
+        self.assertIn("Proposal p1 is now v3, waiting for approval", km.TOOLS["squad_propose"][0](goal="g", members=[{"name": "e"}]))
+        self.assertIn("Revise proposal", km.TOOLS["squad_propose"][1])
         km._get = lambda path: json.dumps({"project": "sq", "approved": False, "tickets": []})
         self.assertEqual(km.TOOLS["ticket_list"][0](), "Project sq (squad plan not approved yet):\nno tickets")
 

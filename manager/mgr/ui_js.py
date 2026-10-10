@@ -1009,7 +1009,7 @@ async function sqLoad(){
     `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
     `<div style="white-space:pre-wrap;word-break:break-word;margin:4px 0">${escT(m.text)}</div>`+
     sqDelivery(m)+
-    `</div>`).join(''):'<span class=text-muted>No messages yet. Address members with @name or @all.</span>';
+    `</div>`).join(''):'<span class=text-muted>No messages yet. A message goes to the lead, or to @name / @all.</span>';
   th.scrollTop=th.scrollHeight;
   sqBoard();sqIndex();sqGit();
 }
@@ -1192,25 +1192,51 @@ async function sqSuggest(id,name,btn){
   p.members=p.members.map(x=>x.name===name?m:x);
   btn.closest('[data-m]').outerHTML=sqMem(p,m);         // only this member: the others keep the user's edits
 }
+const sqNames=p=>[...new Set(p.members.map(m=>m.name).concat((SQB.members||[]).map(m=>m.name)))];
+function sqTk(t,names){
+  const k=esc(t.key);
+  return `<div class=sq-tk data-t="${k}"><span class="mono sq-key">${escT(t.key)}</span>`+
+    `<input class=input data-k=title value="${esc(t.title)}" placeholder="title" aria-label="title of ${k}">${sqSel('assignee',names,t.assignee,'assignee of '+t.key)}`+
+    `<input class="input sq-dep" data-k=deps value="${esc((t.depends_on||[]).join(', '))}" placeholder="after keys" title="depends on (ticket keys, comma-separated)" aria-label="depends on, for ${k}">`+SQ_X+
+    `<details class=sq-tkd${t.open?' open':''}><summary class=text-muted>Description${t.description?'':' (empty)'}</summary>`+
+    `<textarea class=input data-k=desc rows=3 aria-label="description of ${k}">${escT(t.description||'')}</textarea></details></div>`;
+}
 function sqTicketRows(p){
-  const names=[...new Set(p.members.map(m=>m.name).concat((SQB.members||[]).map(m=>m.name)))];
-  return `<div class=sq-sub>Tickets</div>`+p.tickets.map(t=>`<div class=sq-tk data-t="${esc(t.key)}"><span class="mono sq-key">${escT(t.key)}</span>`+
-    `<input class=input data-k=title value="${esc(t.title)}" aria-label="title of ${esc(t.key)}">${sqSel('assignee',names,t.assignee,'assignee of '+t.key)}`+
-    (t.depends_on.length?`<span class=text-muted>after ${escT(t.depends_on.join(', '))}</span>`:'')+SQ_X+
-    (t.description?`<div class="text-muted sq-tkd">${escT(t.description)}</div>`:'')+'</div>').join('');
+  return `<div class=sq-sub>Tickets</div><div class=sq-tks>`+p.tickets.map(t=>sqTk(t,sqNames(p))).join('')+'</div>'+
+    `<button type=button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="sqAddTk('${esc(p.id)}',this)">+ Ticket</button>`;
+}
+function sqAddTk(id,btn){   /* key auto: the first free T<n> */
+  const p=(SQB.proposals||[]).find(x=>x.id===id), box=btn.previousElementSibling;
+  const have=new Set([...box.querySelectorAll('[data-t]')].map(r=>r.dataset.t).concat(p.tickets.map(t=>t.key),(SQB.tickets||[]).map(t=>t.key)));
+  let n=1; while(have.has('T'+n))n++;
+  box.insertAdjacentHTML('beforeend',sqTk({key:'T'+n,title:'',description:'',assignee:'',depends_on:[],open:true},sqNames(p)));
+  box.lastElementChild.querySelector('[data-k=title]').focus();
+}
+/* a revised proposal: what differs from the previous version, and the operator's comments */
+function sqHistory(p){
+  const v=p.version||1, ch=p.changes||[], cs=p.comments||[];
+  return (v>1?`<details class=sq-chg><summary>Changes from v${v-1} (${ch.length})</summary>`+
+      (ch.length?'<ul>'+ch.map(x=>`<li>${escT(x)}</li>`).join('')+'</ul>':'<div class=text-muted>no differences</div>')+'</details>':'')+
+    (cs.length?`<details class=sq-chg${p.status==='changes_requested'?' open':''}><summary>Comments (${cs.length})</summary>`+
+      cs.map(c=>`<div class=sq-cmt><div class=text-muted>${escT(c.by)} · v${+c.version||1} · ${new Date(c.ts*1000).toLocaleString()}</div>`+
+        `<div style="white-space:pre-wrap">${escT(c.text)}</div>`+
+        ((c.edits||[]).length?'<ul class=text-muted>'+c.edits.map(x=>`<li>${escT(x)}</li>`).join('')+'</ul>':'')+'</div>').join('')+'</details>':'');
 }
 function sqCard(p){
   sqSkl();
   const id=esc(p.id);
   let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
   if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
-  else body+=(p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+p.members.map(m=>sqMem(p,m)).join('')+(p.kind==='squad'?sqTicketRows(p)+
+  else body+=sqHistory(p)+(p.kind==='squad'?`<div class=sq-sub>Goal</div><textarea class="input sq-goal" data-k=goal rows=3 aria-label="squad goal">${escT(p.goal||'')}</textarea>`
+    :p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+p.members.map(m=>sqMem(p,m)).join('')+(p.kind==='squad'?sqTicketRows(p)+
     `<div class=sq-row style="margin-top:10px"><label for="sqb-${id}">Budget</label><div class=sq-fld style="display:flex;gap:8px;align-items:center">`+
     `<input class=input id="sqb-${id}" type=number min=0 data-k=budget value="${+p.budget_tokens_per_day||0}" style="max-width:180px"><span class=text-muted style="font-size:12px">tokens a day, all members</span></div></div>`:'')+
     sqProfile(p.profile);
-  return `<div id="sqp-${id}" class=sq-card><div class=sq-head><b>${SQ_KIND[p.kind]||escT(p.kind)}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+
-    body+`<div class=sq-foot><input class=input data-k=note placeholder="Note to the lead (optional)" aria-label="note to the lead">`+
-    `<button class="btn btn-secondary" onclick="sqDecide('${id}',false)">Reject</button><button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div></div>`;
+  return `<div id="sqp-${id}" class=sq-card><div class=sq-head><b>${SQ_KIND[p.kind]||escT(p.kind)}${(p.version||1)>1?` <span class="tag tag-accent">v${+p.version}</span>`:''}${p.status==='changes_requested'?' <span class="tag tag-neutral">changes requested</span>':''}</b><span class=text-muted style="font-size:12px">${id} · by ${escT(p.by)} · ${new Date(p.created*1000).toLocaleString()}</span></div>`+
+    body+`<div class=sq-foot><input class=input data-k=note placeholder="Note to the lead (required for Request changes)" aria-label="note to the lead">`+
+    `<button class="btn btn-secondary" onclick="sqDecide('${id}',false)">Reject</button>`+
+    (p.kind!=='merge'?`<button class="btn btn-secondary" onclick="sqDecide('${id}',false,true)" title="the note and your edits go to the lead; it sends a new version">Request changes</button>`:'')+
+    `<button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div></div>`;
 }
 function sqDone(p){
   const bad=(p.steps||[]).some(s=>!s.ok);
@@ -1237,16 +1263,18 @@ function sqCollect(p,c){
     return o;
   });
   if(p.kind==='squad'){
-    out.tickets=[...c.querySelectorAll('[data-t]')].map(r=>({...p.tickets.find(t=>t.key===r.dataset.t),title:v(r,'title'),assignee:v(r,'assignee')}));
+    out.goal=v(c,'goal');
+    out.tickets=[...c.querySelectorAll('[data-t]')].map(r=>({key:r.dataset.t,title:v(r,'title'),description:v(r,'desc'),assignee:v(r,'assignee'),depends_on:list(v(r,'deps'))}));
     out.budget_tokens_per_day=+c.querySelector('[data-k=budget]').value;
   }
   return out;
 }
+const sqOpenP=p=>p.status==='pending'||p.status==='changes_requested';
 async function sqBoard(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/board')).json()}catch(e){return}
   if(d.error)return;
   SQB=d;
-  const ps=d.proposals||[], pend=ps.filter(p=>p.status==='pending'), done=ps.filter(p=>p.status!=='pending').slice(0,10);
+  const ps=d.proposals||[], pend=ps.filter(sqOpenP), done=ps.filter(p=>!sqOpenP(p)).slice(0,10);
   document.getElementById('sq-gate').innerHTML=(d.approved?'':'<p class=text-muted style="font-size:12.5px;margin:0">No approved plan yet: only the lead can be woken. It proposes with squad_propose.</p>')+
     pend.map(sqCard).join('')+(done.length?`<details><summary class=text-muted style="font-size:12.5px">Decided (${done.length})</summary>${done.map(sqDone).join('')}</details>`:'');
   const cols=d.statuses||[], ts=d.tickets||[], mem=(d.members||[]).map(m=>m.name);
@@ -1261,13 +1289,15 @@ async function sqBoard(){
         mem.map(n=>`<option value="${esc(n)}"${n===t.assignee?' selected':''}>${escT(n)}</option>`).join('')+'</select></div></div>').join('')+'</div>').join('')+'</div>'
     :'<span class=text-muted style="font-size:12.5px">No tickets yet.</span>';
 }
-async function sqDecide(id,ok){
-  const c=document.getElementById('sqp-'+id), p=(SQB.proposals||[]).find(x=>x.id===id);
-  if(!ok&&!confirm('Reject this proposal? The note goes to the lead.'))return;
-  const body={id,approve:ok,note:c?c.querySelector('[data-k=note]').value:''};
-  if(ok&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
+async function sqDecide(id,ok,changes){
+  const c=document.getElementById('sqp-'+id), p=(SQB.proposals||[]).find(x=>x.id===id), sk=location.hash==='#squads';
+  const note=c?c.querySelector('[data-k=note]'):null;
+  if(changes&&note&&!note.value.trim()){document.getElementById(sk?'sk-msg':'sqmsg').textContent='Request changes: write in the note what should change.';note.focus();return}
+  if(!ok&&!changes&&!confirm('Reject this proposal? The note goes to the lead.'))return;
+  const body={id,approve:ok,changes:!!changes,note:note?note.value:''};
+  if((ok||changes)&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
-  const sk=location.hash==='#squads';                  /* the Squads page shows the same card */
+  /* the Squads page shows the same card */
   document.getElementById(sk?'sk-msg':'sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Projects → Squad':' ✓'));
   if(!d.error){if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}}
 }
@@ -1333,7 +1363,7 @@ async function skRetry(){
 function skPick(name){
   SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND='';
   document.getElementById('sk-status').dataset.h='';
-  document.getElementById('sk-text').placeholder='@member … or @all … (posted as you)';
+  document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
   document.getElementById('sk-arch').hidden=true;
   document.getElementById('sk-board').hidden=true; skMsg(''); skLoad();
 }
@@ -1372,7 +1402,7 @@ async function skLoad(){
   }
   if(b.error)return;
   SQB=b;
-  const pend=(b.proposals||[]).filter(p=>p.status==='pending'), key=pend.map(p=>p.id+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join();
+  const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')}   /* never under the user's edits */
   if(!document.getElementById('sk-board').hidden)skBoardRender();
 }
