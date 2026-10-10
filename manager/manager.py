@@ -190,6 +190,12 @@ if __name__ == "__main__":
         _squadrec.migrate()          # squad IDs, archive folders, history once; a running member's clone stays put
     except Exception as e:
         print(f"[migrate] squads: {e!r}", flush=True)
+    try:
+        n = _skills.migrate_categories()   # a category for every skill that has none (backup first)
+        if n:
+            print(f"[migrate] skills: {n} categories set", flush=True)
+    except Exception as e:
+        print(f"[migrate] skills: {e!r}", flush=True)
     threading.Thread(target=_tasks._task_worker, daemon=True).start()
     threading.Thread(target=_signal_mod._signal_receiver, daemon=True).start()
     threading.Thread(target=_mail._mail_receiver, daemon=True).start()

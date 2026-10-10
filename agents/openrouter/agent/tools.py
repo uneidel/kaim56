@@ -209,7 +209,10 @@ BUILTIN = {
                     "query='…' searches names AND descriptions. Before specialized "
                     "tasks, check whether a matching skill exists.",
                     {"query": {"type": "string",
-                               "description": "optional: filter, e.g. 'docker' or 'security'"}},
+                               "description": "optional: filter, e.g. 'docker'"},
+                     "category": {"type": "string",
+                                  "description": "optional: coding, design, devops, data, research, writing, meta, "
+                                                 "personal or security (security only when enabled for you)"}},
                     []),
 
     "load_skill": (_tools_manager.t_load_skill, "Load an expert skill (knowledge document) into the context and follow it.",

@@ -60,8 +60,11 @@ def t_web_search(query, count=5):
     return json.loads(_get("/api/websearch?" + q)).get("result", "")
 
 
-def t_list_skills():
-    arr = json.loads(_get("/api/skills?meta=1"))
+def t_list_skills(category=""):
+    arr = json.loads(_get("/api/skills?meta=1" + (f"&category={urllib.parse.quote(category)}" if category else "")))
+    if category == "security" and not arr:
+        return ("Security skills are not enabled for this instance "
+                "(operator: SECURITY_SKILLS=1, or the squad's 'Security skills').")
     return "\n".join(f"- {s.get('name')}: {s.get('description', '')}" for s in arr)
 
 
@@ -281,8 +284,10 @@ TOOLS = {
                         "count": {"type": "integer", "description": "1-10, default 5"}},
          "required": ["query"]}),
     "list_skills": (t_list_skills,
-        "List the platform's expert skills (name + description).",
-        {"type": "object", "properties": {}, "required": []}),
+        "List the platform's expert skills (name + description), optionally one category.",
+        {"type": "object", "properties": {"category": {"type": "string", "description":
+            "optional: coding, design, devops, data, research, writing, meta, personal or security "
+            "(security only when enabled for you)"}}, "required": []}),
     "load_skill": (t_load_skill,
         "Load one expert skill document into context.",
         {"type": "object",

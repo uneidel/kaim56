@@ -1036,6 +1036,9 @@ def _rt_skills_delete(h):
         return _skills.delete_skill(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()))
     if len(parts) == 4 and parts[3] == "default":           # {"on": bool}: standard skill or on demand
         return _skills.set_default(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()), bool((h._body() or {}).get("on")))
+    if len(parts) == 4 and parts[3] == "category":          # {"category": one of skills.CATEGORIES}
+        return _skills.set_category(re.sub(r"[^a-z0-9_-]", "", parts[2].lower()),
+                                    str((h._body() or {}).get("category") or ""))
     return "unknown"
 
 
@@ -1053,8 +1056,9 @@ def _rt_instance_create(h):
     if tools and set(tools) != names:
         cfg["AGENT_TOOLS"] = ",".join(tools)
     skills = ",".join(str(x).strip() for x in (body.get("skills") or []) if str(x).strip())
-    if _skills.names_error(skills):
-        return "error: " + _skills.names_error(skills)
+    sec = str((body.get("config") or {}).get("SECURITY_SKILLS") or "") == "1"
+    if _skills.names_error(skills, sec):
+        return "error: " + _skills.names_error(skills, sec)
     if skills:
         cfg["SKILLS"] = skills
     return _instances.create_instance(body.get("name", ""), body.get("template", ""), cfg,

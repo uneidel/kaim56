@@ -161,9 +161,12 @@ def sandbox_config(caller, sandbox):
     if pobj and pobj.get("model") and "OPENROUTER_MODEL" not in cfg:
         cfg["OPENROUTER_MODEL"] = str(pobj["model"])[:120]
     if skill:
-        body = next((s.get("content", "") for s in _skills.load_skills() if s.get("name") == skill), None)
-        if body is None:
+        sk = next((s for s in _skills.load_skills() if s.get("name") == skill), None)
+        if sk is None:
             return {}, True, f"skill '{skill}' unknown"
+        if _skills.category(sk) == "security" and not _skills.security_allowed(caller):
+            return {}, True, f"skill '{skill}' is a security skill — not enabled for {caller.get('name', 'this instance') if caller else 'this instance'}"
+        body = sk.get("content", "")
         cfg["AGENT_SYSTEM"] = f"{base}\n\n[Skill: {skill}] Follow this skill for the task:\n{str(body)[:20000]}"
     elif pobj:
         cfg["AGENT_SYSTEM"] = base

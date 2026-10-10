@@ -2436,7 +2436,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual({s["name"]: s["default"] for s in m._skills.meta()}, {"ponytail": True, "other": False})
             h = self._handler("/api/skills?default=1", "10.0.0.9"); h._do_GET()
             body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
-            self.assertEqual(body, [{"name": "ponytail", "description": "lazier", "default": True}])   # no bodies
+            self.assertEqual(body, [{"name": "ponytail", "description": "lazier", "default": True, "category": "coding"}])   # no bodies
             self.assertIn('"default": true', m._ui.render().replace('"default":true', '"default": true'))
             self.assertIn("on demand", m._skills.set_default("ponytail", False))
             self.assertEqual([s["name"] for s in m._skills.meta() if s["default"]], [])
@@ -4410,34 +4410,35 @@ class ManagerFunctions(unittest.TestCase):
         if re.search(r"^[^#]*\bcurl\s+-", init, re.M):
             self.assertRegex(docker, r"apt-get install[^\n]*\n?[^\n]*\bcurl\b")
 
-    def test_squad_catalog_fits_the_goal_and_leaves_out_security_material(self):
-        """The lead's catalog lists at most CATALOG_SKILLS skills, those matching
-        the repo/goal first (standard ones kept); offensive-security skills and
-        personas only when the goal is about security (live: a Claude architect
-        was cut off by its vendor's cyber safeguards)."""
+    def test_squad_catalog_fits_the_goal_and_security_needs_the_squad_switch(self):
+        """The lead's catalog lists the standard skills plus at most
+        CATALOG_SKILLS matching the repo/goal, best first; category security and
+        the security personas only with the squad's 'Security skills' (live: a
+        Claude architect was cut off by its vendor's cyber safeguards)."""
         m = self.m
         g = m._squadgate
         old = (m._skills.meta, m._personas.load_personas, g.profile)
-        m._skills.meta = lambda: ([{"name": "durable-objects", "description": "Cloudflare Durable Objects"},
-                                   {"name": "ponytail", "description": "lean code", "default": True},
-                                   {"name": "social-engineering-jailbreak", "description": "x"},
-                                   {"name": "stack-smashing", "description": "exploit memory"},
-                                   {"name": "security-audit", "description": "security review", "default": True}]
-                                  + [{"name": f"misc-{i}", "description": "cloudflare helper"} for i in range(30)])
-        m._personas.load_personas = lambda: [{"name": "coder", "prompt": "You code."},
-                                             {"name": "osint", "prompt": "Open source intelligence."}]
+        cat = lambda n, d="": m._skills.guess_category(n, d)
+        raw = ([("durable-objects", "Cloudflare Durable Objects", False), ("ponytail", "lean code", True),
+                ("social-engineering-jailbreak", "x", False), ("stack-smashing", "exploit memory", False),
+                ("security-audit", "security review", True)]
+               + [(f"misc-{i}", "cloudflare helper", False) for i in range(30)])
+        m._skills.meta = lambda: [{"name": n, "description": d, "default": dflt, "category": cat(n, d)} for n, d, dflt in raw]
+        m._personas.load_personas = lambda: [{"name": "coder", "prompt": "You code."}, {"name": "osint", "prompt": "Intel."}]
         g.profile = lambda proj: None
         try:
             c = g.catalog(None, "a UI for the Cloudflare Durable Objects CLI")
             names = [k["name"] for k in c["skills"]]
-            self.assertEqual([n for n in names if n != "ponytail"][0], "durable-objects")   # best match first after the standard ones
-            self.assertIn("ponytail", names)
+            self.assertEqual(names[0], "ponytail")                                   # standard first
+            self.assertEqual(names[1], "durable-objects")                            # then the best match
             self.assertLessEqual(len(names), g.CATALOG_SKILLS)
             for bad in ("social-engineering-jailbreak", "stack-smashing", "security-audit"):
                 self.assertNotIn(bad, names)
             self.assertEqual([p["name"] for p in c["personas"]], ["coder"])
-            sec = [k["name"] for k in g.catalog(None, "security audit of the CLI")["skills"]]
-            self.assertIn("security-audit", sec)
+            on = {"name": "sq", "squad": {"enabled": True, "security_skills": True}}
+            c2 = g.catalog(on, "security audit of the CLI")
+            self.assertIn("security-audit", [k["name"] for k in c2["skills"]])
+            self.assertEqual([p["name"] for p in c2["personas"]], ["coder", "osint"])
         finally:
             m._skills.meta, m._personas.load_personas, g.profile = old
 
@@ -4446,6 +4447,66 @@ class ManagerFunctions(unittest.TestCase):
         self.assertTrue(m._tasks._api_failure("API Error: Opus 4.8's safeguards flagged this message for a cybersecurity topic."))
         self.assertTrue(m._tasks._api_failure("Failed to authenticate. OAuth session expired"))
         self.assertFalse(m._tasks._api_failure("Done. Note: the API error handling now retries."))
+
+    def test_skill_categories_and_security_opt_in(self):
+        """Skills carry a category (guessed, a stored one wins, the startup
+        migration fills only missing ones and backs up); security skills reach
+        a guest only with SECURITY_SKILLS=1 or its squad's 'Security skills':
+        hidden in /api/skills (also the standard block), refused on load, in
+        SKILLS validation and the squad catalog."""
+        m = self.m
+        sk = m._skills
+        g = sk.guess_category
+        for n, c in (("security-audit", "security"), ("security-audit-hunting", "security"), ("stack-smashing", "security"),
+                     ("social-engineering-jailbreak", "security"), ("redteaming-code", "security"), ("hacker-mindset", "security"),
+                     ("page-cache-lpe-mitigation", "security"), ("daily-job-search-nrw", "personal"), ("docker", "devops"),
+                     ("codebase-design", "design"), ("ponytail", "coding"), ("code-reviewer", "coding"), ("postgres-expert", "data")):
+            self.assertEqual(g(n, ""), c, n)
+        self.assertEqual(g("helper", "teaches a jailbreak"), "security")             # unambiguous description term
+        self.assertEqual(g("reviewer", "a review that also checks security"), "coding")
+        tmp = tempfile.mkdtemp(prefix="e2e-skcat-")
+        old = (sk.SKILLS_FILE, m._guests.instance_by_ip, m._projects.memberships)
+        sk.SKILLS_FILE = os.path.join(tmp, "skills.json")
+        _wtext(sk.SKILLS_FILE, json.dumps([
+            {"name": "ponytail", "description": "lean", "content": "P", "default": True},
+            {"name": "security-audit", "description": "audit", "content": "S", "default": True},
+            {"name": "stack-smashing", "description": "x", "content": "X"},
+            {"name": "docker", "description": "containers", "content": "D", "category": "data"}]))   # stored wins
+        insts = {"172.30.3.2": {"name": "plain", "config": {}}, "172.30.4.2": {"name": "sec", "config": {"SECURITY_SKILLS": "1"}}}
+        m._guests.instance_by_ip = lambda ip: insts.get(ip)
+        m._projects.memberships = lambda name: []
+        def get(path, ip):
+            h = self._handler(path, ip); h._do_GET()
+            body = h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]
+            return self._status(h), body
+        try:
+            self.assertEqual(sk.category({"name": "docker", "category": "data"}), "data")
+            names = lambda ip, q="meta=1": [x["name"] for x in json.loads(get("/api/skills?" + q, ip)[1])]
+            self.assertEqual(names("172.30.3.2"), ["ponytail", "docker"])
+            self.assertEqual(names("172.30.4.2"), ["ponytail", "security-audit", "stack-smashing", "docker"])
+            self.assertEqual(names("172.30.3.2", "default=1"), ["ponytail"])                 # standard set: no security
+            self.assertEqual(names("172.30.4.2", "default=1"), ["ponytail", "security-audit"])
+            self.assertEqual(names("172.30.4.2", "meta=1&category=security"), ["security-audit", "stack-smashing"])
+            self.assertEqual(get("/api/skills/stack-smashing", "172.30.3.2")[0], 403)
+            st, body = get("/api/skills/stack-smashing", "172.30.4.2")
+            self.assertEqual((st, body), (200, b"X"))
+            self.assertIn("SECURITY_SKILLS", sk.names_error("docker,stack-smashing", False))
+            self.assertEqual(sk.names_error("docker,stack-smashing", True), "")
+            # squad switch
+            m._projects.memberships = lambda name: [({"name": "sq", "squad": {"enabled": True, "security_skills": True}}, "writer")]
+            self.assertTrue(sk.security_allowed({"name": "plain", "config": {}}))
+            m._projects.memberships = lambda name: []
+            # migration: only missing categories, with a backup
+            self.assertEqual(sk.migrate_categories(), 3)
+            self.assertTrue(os.path.exists(sk.SKILLS_FILE + ".bak-categories"))
+            stored = {x["name"]: x["category"] for x in json.load(open(sk.SKILLS_FILE))}
+            self.assertEqual(stored, {"ponytail": "coding", "security-audit": "security", "stack-smashing": "security", "docker": "data"})
+            self.assertEqual(sk.migrate_categories(), 0)
+            self.assertIn("must be one of", sk.set_category("docker", "nonsense"))
+            sk.set_category("docker", "devops")
+            self.assertEqual(sk.category(next(x for x in sk.load_skills() if x["name"] == "docker")), "devops")
+        finally:
+            sk.SKILLS_FILE, m._guests.instance_by_ip, m._projects.memberships = old
 
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
@@ -5528,7 +5589,7 @@ class ManagerFunctions(unittest.TestCase):
                 "classes": {}, "ms": 12, "note": "n"}
         asked = []
         old = (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="": asked.append((purpose, context)) or json.loads(json.dumps(sugg))
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: asked.append((purpose, context)) or json.loads(json.dumps(sugg))
         m._router.jev_url = lambda: "http://jev"
         g._spawn = lambda fn, *a: fn(*a)                                       # synchronous here
         try:
@@ -5568,7 +5629,7 @@ class ManagerFunctions(unittest.TestCase):
         sugg = {"persona": {"name": "code-architect", "score": 0.96}, "skills": [], "tier": None, "model": "",
                 "model_key": "", "classes": {}, "ms": 1, "note": "n"}
         old = (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="": json.loads(json.dumps(sugg))
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: json.loads(json.dumps(sugg))
         m._router.jev_url = lambda: "http://jev"
         g._spawn = lambda fn, *a: fn(*a)
         try:
@@ -5885,7 +5946,7 @@ class ManagerFunctions(unittest.TestCase):
         src = m._projects.get("sq")["source"]["path"]
         self._rp_node(src)
         asked, old = [], (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="": asked.append(context) or m._jevsetup.empty("x")
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: asked.append(context) or m._jevsetup.empty("x")
         m._router.jev_url = lambda: "http://jev"
         m._squadgate._spawn = lambda fn, *a: fn(*a)
         try:
@@ -5943,8 +6004,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 200, d)
             self.assertEqual(d["personas"], [{"name": "coder", "description": "You code.", "tools": ["bash"]},
                                              {"name": "writer-x", "description": "Writes things."}])
-            self.assertEqual(d["skills"], [{"name": "tdd", "description": "test first", "default": False},
-                                           {"name": "std", "description": "s", "default": True}])
+            self.assertEqual(d["skills"], [{"name": "tdd", "description": "test first", "default": False, "category": "coding"},
+                                           {"name": "std", "description": "s", "default": True, "category": "coding"}])
             self.assertEqual({t["tier"]: t["models"] for t in d["tiers"]},
                              {"cheap": ["openrouter/acme/fast"], "strong": ["openrouter/acme/big"], "code": [], "local": []})
             self.assertEqual([t["template"] for t in d["templates"]], ["openrouter", "claude"])

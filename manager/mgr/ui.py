@@ -151,6 +151,8 @@ def render():
                 # catalog the contents are ~1 MB, and the UI needs them only
                 # when editing (then it fetches GET /api/skills/<name>).
                 .replace("__SKILLS__", _util.js_json(_skills.meta(), ensure_ascii=False))
+                .replace("__SKCATLIST__", _util.js_json(list(_skills.CATEGORIES)))
+                .replace("__SKCATS__", "".join(f"<option>{c}</option>" for c in _skills.CATEGORIES))
                 .replace("__HOSTIF__", _host.HOSTIF).replace("__POOL__", _netfw.POOL)
                 .replace("__PUBLIC_HOST__", _settings.PUBLIC_HOST)
                 .replace("__INDEX_HOST__", _util.js_json(_settings.INDEX_HOST))

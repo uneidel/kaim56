@@ -201,9 +201,13 @@ def _member(raw, proj, by, warn, strict=True):
     if len(sk) > MAX_SKILLS:
         return None, f"{name}: at most {MAX_SKILLS} skills"
     sk = [_txt(x, 48) for x in sk]
-    have = {s.get("name") for s in _skills.load_skills()}
+    have = {s.get("name"): s for s in _skills.load_skills()}
     if [x for x in sk if x not in have]:
         warn.append(f"{name}: unknown skill(s) {', '.join(x for x in sk if x not in have)}")
+    sec = [x for x in sk if x in have and _skills.category(have[x]) == "security"]
+    if sec and not security_on(proj):
+        sk = [x for x in sk if x not in sec]
+        warn.append(f"{name}: security skill(s) {', '.join(sec)} dropped — the squad's 'Security skills' is off")
     out = {"name": name, "purpose": _txt(raw.get("purpose"), 500), "persona": persona, "skills": sk,
            "model_tier": tier, "model": model, "template": tpl, "role": role, "existing": existing}
     if newp:
@@ -311,17 +315,19 @@ def profile(proj):
         return None
 
 
-# Offensive-security material in a planning context trips the model vendors'
-# cyber safeguards (live 2026-10-10: a Claude architect was cut off after
-# squad_catalog listed jailbreak / stack-smashing / LPE skills for a UI task).
-_SENSITIVE = re.compile(r"secur|exploit|jailbreak|red.?team|hack|\blpe\b|-lpe-|attack|stack-smash|malware|"
-                        r"social.engineer|pentest|osint|forbidden|vulnerab|redteam", re.I)
-_SECURITY_GOAL = re.compile(r"secur|audit|pentest|vulnerab|harden|cve\b", re.I)
+# Security skills and these personas only for a squad with "Security skills"
+# on (mgr/skills.py: category security; the vendors' cyber safeguards cut a
+# Claude architect off over a catalog full of them, live 2026-10-10).
+SECURITY_PERSONAS = {"osint", "security-reviewer"}
 CATALOG_SKILLS = 20
 
 
 def _words(text):
     return {w for w in re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
+
+
+def security_on(proj):
+    return bool(proj) and bool(_squads.settings(proj).get("security_skills"))
 
 
 def catalog(proj=None, goal=""):
@@ -334,9 +340,9 @@ def catalog(proj=None, goal=""):
         last = sorted(proposals(proj["name"]), key=lambda p: p.get("updated") or p.get("created") or 0)
         goal = (last[-1].get("goal") if last else "") or ""
     ctx = " ".join([goal, _repoprofile.context(prof) or ""])
-    sec_ok = bool(_SECURITY_GOAL.search(ctx))
+    sec_ok = security_on(proj)
     want = _words(ctx)
-    pool = [k for k in _skills.meta() if sec_ok or not _SENSITIVE.search(k["name"] + " " + (k.get("description") or ""))]
+    pool = [k for k in _skills.meta() if sec_ok or k["category"] != "security"]
     score = lambda k: len(want & _words(k["name"].replace("-", " ") + " " + (k.get("description") or "")))
     if want:                                 # standard ones (every agent has them) + the best matches
         std = [k for k in pool if k.get("default")]
@@ -348,7 +354,7 @@ def catalog(proj=None, goal=""):
     have = {t.get("template") for t in _instances.load_templates()}
     return {"personas": [{"name": p["name"], "description": _summary(p), **({"tools": p["tools"]} if p.get("tools") else {})}
                          for p in _personas.load_personas()
-                         if p.get("name") and (sec_ok or not _SENSITIVE.search(p["name"] + " " + _summary(p)))],
+                         if p.get("name") and (sec_ok or p["name"] not in SECURITY_PERSONAS)],
             "skills": picked,
             "skills_note": (f"{len(picked)} of {len(_skills.meta())} skills shown — those matching the repo and goal; "
                             "list_skills has the full catalog"),
@@ -583,7 +589,8 @@ def fill_suggestions(project, pid, only="", force=False):
     for m in prop["members"]:
         if (only and m["name"] != only) or m["existing"] or not (force or _wants_suggestion(m)):
             continue
-        s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""), jev_context(prop))
+        s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""), jev_context(prop),
+                              allow_security=security_on(_projects.get(project)))
         mark, by, hint = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {}), {}
         if s["persona"] and (force or not m["persona"]) and not m.get("new_persona"):   # never over a proposed one
             lead_only = s["persona"]["name"] in LEAD_PERSONAS and m["role"] != "lead"

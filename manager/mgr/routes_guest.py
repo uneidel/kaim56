@@ -61,6 +61,12 @@ def _rt_skills(h):
     # bodies — the agents call this on every list_skills and never need them.
     q = urllib.parse.parse_qs(h.path.partition("?")[2])
     items = _skills.load_skills()
+    guest = h._guest()
+    if guest is not None:                                # security skills only on opt-in (mgr/skills.py)
+        items = _skills.visible(items, _skills.security_allowed(guest))
+    cat = q.get("category", [""])[0]
+    if cat:
+        items = [x for x in items if _skills.category(x) == cat]
     if q.get("default", ["0"])[0] == "1":                # the standard skills (agents, each turn)
         mine = set(_skills.of_instance(h._guest()))      # + the instance's own (config SKILLS)
         items = [x for x in items if x.get("default") or x.get("name") in mine]
@@ -76,6 +82,9 @@ def _rt_skill(h):
     nm = re.sub(r"[^a-z0-9_-]", "", h.path.split("?", 1)[0].split("/api/skills/", 1)[1].lower())
     sk = next((x for x in _skills.load_skills() if x.get("name") == nm), None)
     inst = h._guest()
+    if sk and inst is not None and _skills.category(sk) == "security" and not _skills.security_allowed(inst):
+        return h._json({"error": f"skill '{nm}' is a security skill — not enabled for this instance "
+                                 "(operator: SECURITY_SKILLS=1 or the squad's 'Security skills')"}, 403)
     if sk and inst is not None:
         _store.skill_use_add(inst["name"], nm, _routes._qs(h).get("turn", [""])[0])
     return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),

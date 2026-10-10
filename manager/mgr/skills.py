@@ -55,7 +55,8 @@ def upsert_skill(name, description, content, default=None):
     prev = next((s for s in load_skills() if s.get("name") == name), {})
     items = [s for s in load_skills() if s.get("name") != name]
     entry = {"name": name, "description": description or "", "content": content or "",
-             "added": prev.get("added") or int(time.time())}
+             "added": prev.get("added") or int(time.time()),
+             "category": prev.get("category") if prev.get("category") in CATEGORIES else guess_category(name, description)}
     if (prev.get("default") if default is None else default):
         entry["default"] = True
     items.append(entry)
@@ -94,18 +95,116 @@ def unique(items):
     return out
 
 
+# ---- categories; security skills only on explicit opt-in --------------------
+# A catalog with jailbreak / exploit / LPE material in a planning context trips
+# the model vendors' cyber safeguards (live 2026-10-10), and most agents never
+# need it: category "security" is hidden from guests unless the instance
+# (config SECURITY_SKILLS=1) or one of its squads ("Security skills") opts in.
+CATEGORIES = ("coding", "design", "devops", "data", "research", "writing", "meta", "personal", "security")
+_RULES = (  # checked against the NAME first (first match wins), then the description
+    ("security", r"secur|exploit|jailbreak|red.?team|social.?engineer|stack.?smash|\blpe\b|-lpe-|hacker|malware|"
+                 r"pentest|osint|forbidden.tool|attack|vulnerab"),
+    ("personal", r"job.?search|jobsuche|saddler|weekly.review"),
+    ("devops", r"docker|kubernetes|nginx|linux|github|\bgit\b|git-|deploy|bootstrap|\bci\b"),
+    ("data", r"\bdata\b|data-|postgres|\bsql\b|ml-engineer|analyst"),
+    ("design", r"design|architecture|\badr\b|\bui\b|\bux\b"),
+    ("coding", r"code|coding|tdd|test|standard|error|perf|scaffold|api|pbt|refactor|review|bench"),
+    ("writing", r"naming|narrative|caveman|agents-md|\bdocs?\b|writ"),
+    ("research", r"research|investigat|discovery|-eval|eval-|alpha(evolve|proof)|quantum|sequence|search"),
+    ("meta", r"skill|prompt|\bagents?\b|agent-|claude|harness|karpathy|reasoning|approach|failure.modes|flinch|"
+             r"qualia|matilda|dogfood|context|verification|rubric|problem"),
+)
+# In a description only unambiguous offensive terms make a skill "security"
+# ("a code review that checks security" is a coding skill).
+_DESC_SECURITY = r"jailbreak|exploit(ation)?\b|red.?team|social.?engineer|stack.?smash|privilege escalation|malware"
+
+
+def guess_category(name, description=""):
+    n, d = (name or "").lower(), (description or "").lower()
+    hit = next((c for c, rx in _RULES if re.search(rx, n)), None)
+    if hit:
+        return hit
+    if re.search(_DESC_SECURITY, d):
+        return "security"
+    return next((c for c, rx in _RULES[1:] if re.search(rx, d)), "coding")
+
+
+def category(sk):
+    c = (sk or {}).get("category")
+    return c if c in CATEGORIES else guess_category((sk or {}).get("name", ""), (sk or {}).get("description", ""))
+
+
+def security_allowed(inst):
+    """May this guest see / load security skills? Its own SECURITY_SKILLS=1, or
+    a squad it belongs to with 'Security skills' on."""
+    if not inst:
+        return False
+    if str((inst.get("config") or {}).get("SECURITY_SKILLS") or "") == "1":
+        return True
+    from mgr import projects as _projects          # projects -> instances -> skills: imported late
+    from mgr import squads as _squads
+    return any(_squads.settings(p).get("enabled") and _squads.settings(p).get("security_skills")
+               for p, _m in _projects.memberships(inst["name"]))
+
+
+def visible(items, allowed):
+    """The skills a caller may see: all, or all but category security."""
+    return list(items) if allowed else [x for x in items if category(x) != "security"]
+
+
+def set_category(name, cat):
+    if cat not in CATEGORIES:
+        return f"category must be one of: {', '.join(CATEGORIES)}"
+    items = load_skills()
+    hit = [s for s in items if s.get("name") == name]
+    if not hit:
+        return f"unknown skill '{name}'"
+    for s in hit:
+        s["category"] = cat
+    save_skills(items)
+    return f"skill '{name}': {cat}"
+
+
+def migrate_categories():
+    """Startup, once per skill: write the guessed category where none is
+    stored (never over an operator's choice); a backup of the store first."""
+    items = load_skills()
+    todo = [s for s in items if s.get("category") not in CATEGORIES]
+    if not todo:
+        return 0
+    bak = SKILLS_FILE + ".bak-categories"
+    if not os.path.exists(bak):
+        try:
+            with open(SKILLS_FILE) as src, open(bak, "w") as dst:
+                dst.write(src.read())
+        except OSError:
+            return 0
+    for s in todo:
+        s["category"] = guess_category(s.get("name", ""), s.get("description", ""))
+    save_skills(items)
+    return len(todo)
+
+
 def meta(items=None):
-    """name, description, default — what agents and the UI list (each name once)."""
-    return [{"name": x.get("name", ""), "description": x.get("description", ""), "default": bool(x.get("default"))}
+    """name, description, default, category — what agents and the UI list (each name once)."""
+    return [{"name": x.get("name", ""), "description": x.get("description", ""), "default": bool(x.get("default")),
+             "category": category(x)}
             for x in unique(load_skills() if items is None else items)]
 
 
-def names_error(value):
-    """'' when every name of a comma list is in the catalog, else the complaint
-    (config key SKILLS: the skills an instance gets in addition to the standard ones)."""
-    have = {s.get("name") for s in load_skills()}
-    bad = [n for n in (x.strip() for x in str(value or "").split(",")) if n and n not in have]
-    return f"unknown skill(s): {', '.join(bad)}" if bad else ""
+def names_error(value, security=True):
+    """'' when every name of a comma list is in the catalog (and, without
+    `security`, none is a security skill), else the complaint (config key
+    SKILLS: the skills an instance gets in addition to the standard ones)."""
+    items = load_skills()
+    have = {s.get("name"): s for s in items}
+    names = [n for n in (x.strip() for x in str(value or "").split(",")) if n]
+    bad = [n for n in names if n not in have]
+    if bad:
+        return f"unknown skill(s): {', '.join(bad)}"
+    sec = [n for n in names if not security and category(have[n]) == "security"]
+    return (f"security skill(s) {', '.join(sec)} need SECURITY_SKILLS=1 (or the squad's 'Security skills')"
+            if sec else "")
 
 
 def of_instance(inst):
