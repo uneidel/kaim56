@@ -40,6 +40,7 @@ SETTINGS_SCHEMA = [
     {"key": "CF_ACCOUNT_ID", "label": "Cloudflare account id — for sending an app to Cloudflare (Apps tab → Upload)"},
     {"key": "CF_API_TOKEN", "label": "Cloudflare API token (Workers Scripts:Edit + Account Settings:Read)"},
     {"key": "CF_APP_SECRET", "label": "Cloudflare default secret — an app's login there (admin + this); e.g. openssl rand -base64 32"},
+    {"key": "CF_LLM_KEY", "label": "Cloudflare: OpenRouter key for apps that call an LLM there (agents) — bound as a Worker secret; use a separate key with a credit limit, the manager's budget does not see these calls"},
     {"key": "CELLD_URL", "label": "Apps hosting — celld (self-hosted Workers/Durable Objects) serving /apps/<name>/ behind the manager login; blank = the manager serves the apps itself, e.g. http://127.0.0.1:9876"},
     {"key": "JEV_URL", "label": "Jev model router — classifier service (OpenJev) the key proxy asks for instances with a router policy; blank = off, e.g. http://127.0.0.1:8891"},
     {"key": "DECISION_BACKEND", "label": "Decision backend — who scores the setup suggestion (persona, skills, tier) and, if allowed below, the model router", "options": [

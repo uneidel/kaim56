@@ -6,6 +6,8 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Login lockout per iroh device: iroh-gw puts "PROXY IROH <node-id>" before each manager connection (believed from loopback only, first line only, allow-listed ids only); the lockout key is the node-id instead of the gateway's 127.0.0.1 — one phone's wrong password no longer locks every app/tunnel client. Deploy the manager before the new iroh-gw.
+- Agents app on Cloudflare: upload assembles `agentsRoute` (one Durable Object per agent, export/import across all of them, reserved names) into the worker; the LLM there is OpenRouter with `CF_LLM_KEY` as a Worker secret (no manager budget/usage for those calls); celld uses the same router from `do/agents.js`.
 - Skills: categories (coding/design/devops/data/research/writing/meta/personal/security; guessed, editable, migrated once with backup); security skills reach a guest only with SECURITY_SKILLS=1 or the squad's 'Security skills' — hidden in lists/standard set/catalog/Jev, refused on load and in SKILLS.
 - Squads: squad_catalog lists ≤20 skills matching the repo/goal (standard ones kept), security material only for security goals — the full list tripped Claude's cyber safeguards; a turn answered with a provider API error counts as failed.
 - Claude guest image installs curl — guest-init needs it for the host-folder mounts (/project) and the skills block; Claude members had neither.

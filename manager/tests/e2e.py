@@ -6591,6 +6591,52 @@ class ManagerFunctions(unittest.TestCase):
             for srv in servers:
                 srv.shutdown()
 
+    def test_agents_worker_for_cloudflare(self):
+        """The agents app (celld/do/agents.js) assembled for Cloudflare: its own
+        router (one object per agent, export/import over all), the LLM at
+        OpenRouter with CF_LLM_KEY as a Worker secret — never in the code; no
+        key, no upload. One-object apps keep the plain route."""
+        import email, re as _re
+        m = self.m
+        cl, cf = m._cloud, m._cfapi
+        apps = os.path.join(FC_DIR, "..", "apps")
+        if not os.path.isfile(os.path.join(FC_DIR, "..", "celld", "do", "agents.js")):
+            self.skipTest("no repo checkout (celld/do/agents.js)")
+        old = m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cf.request
+        try:
+            m._settings.SITE["APPS_DIR"] = apps
+            w = cl.worker_source("agents", "tok", "https://m.example")
+            self.assertIn('return agentsRoute(env.APP_DO, url, request, url.pathname.slice(5) || "/");', w)
+            self.assertNotIn("idFromName(KAIM_APP)", w)
+            self.assertEqual(len(_re.findall(r"^import ", w, _re.M)), 1)
+            self.assertIn("async function agentsRoute(", w); self.assertNotIn("export async function", w)
+            self.assertIn("export class AgentState extends DurableObject", w)
+            self.assertIn('parts[0] === "export"', w); self.assertIn('parts[0] === "import"', w)
+            self.assertIn("this.env.LLM_KEY", w)
+            m._settings.load_settings = lambda: {}
+            with self.assertRaises(ValueError):
+                cl.llm_bindings("agents")
+            m._settings.load_settings = lambda: {"CF_LLM_KEY": "sk-or-test"}
+            llm = cl.llm_bindings("agents")
+            self.assertEqual(llm, [{"type": "plain_text", "name": "LLM_URL", "text": "https://openrouter.ai/api/v1/chat/completions"},
+                                   {"type": "secret_text", "name": "LLM_KEY", "text": "sk-or-test"}])
+            self.assertNotIn("sk-or-test", w)
+            self.assertEqual(cl.llm_bindings("codeflow"), [])
+            self.assertIn("idFromName(KAIM_APP)", cl.worker_source("codeflow", "tok", "https://m.example"))
+            sent = []
+            cf.request = lambda method, path, token, body=None, ctype=None, **kw: sent.append((body, ctype)) or ([] if method == "GET" else {})
+            cf.upload_script("acct", "kaim56-agents", "t", module_name="worker.mjs", module_src=w, cls="AgentState",
+                             binding="APP_DO", secret="s", compat_date="2026-09-01", extra_bindings=llm)
+            body, ctype = sent[-1]
+            msg = email.message_from_bytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + body)
+            meta = json.loads(msg.get_payload()[0].get_payload(decode=True))
+            self.assertEqual([(b["type"], b["name"]) for b in meta["bindings"]],
+                             [("durable_object_namespace", "APP_DO"), ("secret_text", "CFDO_SECRET"),
+                              ("plain_text", "LLM_URL"), ("secret_text", "LLM_KEY")])
+            self.assertEqual(meta["migrations"], {"new_tag": "v1", "new_sqlite_classes": ["AgentState"]})
+        finally:
+            m._settings.SITE["APPS_DIR"], m._settings.load_settings, cf.request = old
+
     def test_cloudflare_lists_every_worker(self):
         """cloud.cf_workers: every script on the account — the ones deployed
         from here carry their app, the others (wrangler, cfdo, dashboard) app
@@ -8605,6 +8651,56 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m._auth.auth_client_key("192.168.1.20", "203.0.113.5"), "192.168.1.20")   # LAN client: XFF ignored
         finally:
             m._guests.instance_by_ip, m._auth.PW, m._auth.USER = old
+            m._auth._auth_fails.clear()
+
+    def test_iroh_device_lockout(self):
+        """iroh-gw puts "PROXY IROH <node-id>" before each connection's HTTP:
+        believed from loopback only, first line only, allow-listed ids only.
+        Then the lockout is per device — one phone's typos no longer lock
+        every iroh client (all of them arrive from 127.0.0.1)."""
+        m = self.m
+        a, b, c = "a" * 64, "b" * 64, "c" * 64
+        tmp = tempfile.mkdtemp(prefix="e2e-iroh-")
+        allow = os.path.join(tmp, "allow.txt")
+        _wtext(allow, f"{a}  # phone\n{b.upper()}\n")
+        old = m._irohgw.ALLOW_FILE, m._guests.instance_by_ip, m._auth.PW, m._auth.USER
+
+        def conn(ip, first, auth="", path="/api/agents"):
+            h = self._handler(path, ip)
+            req = f"GET {path} HTTP/1.1\r\n".encode()
+            h.rfile = io.BytesIO((req if first.startswith(b"PROXY") else b"") + f"Authorization: {auth}\r\n\r\n".encode())
+            h.raw_requestline = first
+            return h, h.parse_request()
+        try:
+            m._irohgw.ALLOW_FILE = allow
+            m._guests.instance_by_ip = lambda ip: None
+            m._auth.PW, m._auth.USER = "s3cret", "admin"
+            m._auth._auth_fails.clear()
+            hdr = lambda n: f"PROXY IROH {n}\r\n".encode()
+            h, ok = conn("127.0.0.1", hdr(a))
+            self.assertTrue(ok); self.assertEqual((h.iroh_node, h.command, h.path), (a, "GET", "/api/agents"))
+            h.raw_requestline = hdr(b)                      # a second header on the same connection
+            self.assertFalse(h.parse_request())
+            for ip, line in (("10.0.0.9", hdr(a)), ("172.17.0.3", hdr(a)), ("127.0.0.1", hdr(c)),   # not trusted / not allowed
+                             ("127.0.0.1", hdr("A" * 64)), ("127.0.0.1", b"PROXY IROH " + a.encode() + b" x\r\n"),
+                             ("127.0.0.1", b"PROXY TCP4 1.2.3.4 5.6.7.8 1 2\r\n")):
+                self.assertFalse(conn(ip, line)[1], (ip, line))
+            h, ok = conn("127.0.0.1", b"GET /api/agents HTTP/1.1\r\n")    # plain local client: as before
+            self.assertTrue(ok); self.assertEqual(h.iroh_node, "")
+            self.assertEqual(m._auth.auth_client_key("127.0.0.1", "203.0.113.5", a), "iroh:" + a)   # XFF can't move it
+            good = "Basic " + base64.b64encode(b"admin:s3cret").decode()
+            bad = "Basic " + base64.b64encode(b"admin:nope").decode()
+            for _ in range(m._auth.AUTH_FAILS_MAX):
+                h, _ok = conn("127.0.0.1", hdr(a), bad)
+                self.assertFalse(h._auth())
+            h, _ok = conn("127.0.0.1", hdr(a), good)
+            self.assertFalse(h._auth()); self.assertEqual(self._status(h), 429)    # that phone: locked
+            h, _ok = conn("127.0.0.1", hdr(b), good)
+            self.assertTrue(h._auth())                                               # the other phone: not
+            h, _ok = conn("127.0.0.1", b"GET /api/agents HTTP/1.1\r\n", good)
+            self.assertTrue(h._auth())                                               # nor a local client
+        finally:
+            m._irohgw.ALLOW_FILE, m._guests.instance_by_ip, m._auth.PW, m._auth.USER = old
             m._auth._auth_fails.clear()
 
     def test_instance_json_is_operator_readable(self):

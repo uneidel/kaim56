@@ -162,10 +162,10 @@ def migration(cls, tag, applied):
 
 
 def upload_script(account, script, token, *, module_name, module_src, cls, binding, secret,
-                  compat_date, assets_jwt=None, tag="v1", **kw):
+                  compat_date, assets_jwt=None, tag="v1", extra_bindings=(), **kw):
     _, applied = deployed_tag(account, script, token, **kw)
     bindings = [{"type": "durable_object_namespace", "name": binding, "class_name": cls},
-                {"type": "secret_text", "name": "CFDO_SECRET", "text": secret}]
+                {"type": "secret_text", "name": "CFDO_SECRET", "text": secret}, *extra_bindings]
     meta = {"main_module": module_name, "compatibility_date": compat_date, "bindings": bindings}
     if assets_jwt is not None:
         bindings.append({"type": "assets", "name": "ASSETS"})
