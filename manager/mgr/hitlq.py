@@ -107,12 +107,31 @@ def squad_of(inst_name):
     return next((p for p, _m in _projects.memberships(inst_name) if _squads.settings(p)["enabled"]), None)
 
 
+# Tools the MANAGER executes (squad git/PR/issue, mgr/squadgit.py): their
+# approval is enforced in the manager's own route, not trusted to the VM's hook
+# — a compromised guest could skip the hook and call /api/git/* directly.
+SERVER_GATED = {"git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
+                "issue_create", "issue_list", "issue_comment"}
+
+
 def policy(inst_name):
-    """What a guest's tool hook asks: its squad, the tools that need approval, the bash pattern."""
+    """What a guest's tool hook asks: its squad, the tools it must gate itself
+    (server-gated ones are left to the manager), the bash pattern."""
     p = squad_of(inst_name) if inst_name else None
     if p is None:
         return {"squad": "", "tools": [], "bash_re": ""}
-    return {"squad": p["name"], "tools": list(_squads.settings(p)["approval_tools"]), "bash_re": BASH_RE}
+    return {"squad": p["name"], "tools": [t for t in _squads.settings(p)["approval_tools"] if t not in SERVER_GATED],
+            "bash_re": BASH_RE}
+
+
+def server_gate(inst_name, tool, target, p):
+    """For a manager-executed tool on project `p` (the one the call acts on):
+    None = go ahead (no squad there, not gated, or an approval for this very
+    call was used up now), else the open approval item to wait for."""
+    if p is None or not _squads.settings(p)["enabled"] or tool not in _squads.settings(p)["approval_tools"]:
+        return None
+    it = approval(inst_name, tool, target, p)
+    return None if it["status"] == "approved" else it
 
 
 def _ticket(project, ref):

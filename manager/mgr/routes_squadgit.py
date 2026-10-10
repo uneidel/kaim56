@@ -18,6 +18,7 @@ one place.
 import urllib.parse
 
 from mgr import audit as _audit
+from mgr import hitlq as _hitlq
 from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import routes as _routes
@@ -40,6 +41,17 @@ def _rt_git_guest(h):
     if not _util.rate_ok(("squadgit", inst["name"]), 60, 300):
         return h._json({"error": "rate limit: 60 git/PR/issue calls per 5 minutes"}, 429)
     b = h._body() or {}
+    # Human in the loop, enforced HERE (the VM's hook is only a convenience):
+    # a gated call waits for an approval of exactly this call.
+    target = f"{op}: " + " ".join(str(b.get(k) or "") for k in ("project", "name", "title", "number") if b.get(k))
+    try:
+        gproj = _squadgit.resolve(inst["name"], b.get("project"))[0]
+    except _squadgit.Refused:
+        gproj = None                           # call() below refuses it with the right status
+    wait = _hitlq.server_gate(inst["name"], tool, target.strip(), gproj)
+    if wait is not None:
+        return h._json({"error": f"waiting for approval {wait['id']} — end your turn; you will be woken with the decision",
+                        "waiting": wait["id"]}, 403)
     try:
         r, project, repo, num = _squadgit.call(inst["name"], op, b)
     except _squadgit.Refused as e:

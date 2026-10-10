@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- HITL: squad git/PR/issue calls are gated by the manager itself (the VM hook only gates what runs in the VM).
 - Human in the loop (`mgr/hitlq.py`, persistent queue): squad approval tools (setting `approval_tools`, default git_push_branch/pr_create/issue_create + risky bash) answer "waiting for approval <id>" and the decision wakes the member (same call passes once; Claude members via a PreToolUse hook), `ask_human` (openrouter + Claude MCP) blocks the ticket until the answer wakes it, autonomy `supervised` turns a member's done into a review; `GET/POST /api/waiting` (admin decides, role user reads), "Waiting for you" page + cards in the squad chat, notify + archive per item; `/api/hitl` is a facade (Signal optional, no longer required to block).
 - UI: Squads tab — the squad list is a slim bar of pills on top; the chat takes the full width.
 

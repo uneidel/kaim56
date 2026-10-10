@@ -4807,7 +4807,7 @@ class ManagerFunctions(unittest.TestCase):
         B, C, L = "172.30.4.2", "172.30.5.2", "127.0.0.1"
         try:
             st, pol = self._sq("/api/hitl/policy", B)
-            self.assertEqual((st, pol["squad"], pol["tools"]), (200, "sq", ["git_push_branch", "pr_create", "issue_create", "bash"]))
+            self.assertEqual((st, pol["squad"], pol["tools"]), (200, "sq", ["bash"]))     # git/PR/issue: gated by the manager
             self.assertEqual(pol["bash_re"], m._hitlq.BASH_RE)
             self.assertEqual(self._sq("/api/hitl/policy", C)[1], {"squad": "", "tools": [], "bash_re": ""})
             req = {"tool": "git_push_branch", "target": '{"name": "x"}', "async": True}
@@ -4848,6 +4848,32 @@ class ManagerFunctions(unittest.TestCase):
                              [("create", "open"), ("decide", "approved"), ("create", "open"), ("decide", "denied")])
             self.assertTrue(ev[0]["member_id"].startswith(rec["id"] + "-"))
         finally:
+            undo()
+
+    def test_hitl_manager_executed_git_tools_are_gated_by_the_manager(self):
+        """git_push_branch / pr_create / issue_create run in the manager, so the
+        manager demands the approval itself — a guest that skips its hook and
+        calls /api/git/* directly still waits; an approval of that call lets it
+        through once."""
+        m = self.m
+        woke, notes, undo = self._hq_env()
+        B, L = "172.30.4.2", "127.0.0.1"
+        sg, old = m._squadgit, (m._squadgit.resolve, m._squadgit.call)
+        sg.resolve = lambda inst, project="": (m._projects.get("sq"), "writer")      # a squad project with a remote
+        sg.call = lambda inst, op, b: ({"url": "u"}, "sq", "own/rep", 1)
+        try:
+            st, d = self._sq("/api/git/issue-create", B, {"title": "Bug", "body": "x"})
+            self.assertEqual(st, 403); self.assertIn("waiting for approval", d["error"]); hid = d["waiting"]
+            st, d2 = self._sq("/api/git/issue-create", B, {"title": "Bug", "body": "x"})
+            self.assertEqual(d2["waiting"], hid)                                     # same call, same item
+            self._sq(f"/api/waiting/{hid}", L, {"action": "approve"})
+            st, d3 = self._sq("/api/git/issue-create", B, {"title": "Bug", "body": "x"})
+            self.assertNotIn("waiting", d3)                                          # passed the gate (no remote here)
+            st, d4 = self._sq("/api/git/issue-create", B, {"title": "Bug", "body": "x"})
+            self.assertIn("waiting", d4)                                             # once
+            self.assertEqual(self._sq("/api/git/issues", B, {})[1].get("waiting"), None)   # not in the list: not gated
+        finally:
+            sg.resolve, sg.call = old
             undo()
 
     def test_hitl_waiting_api_contract_errors_and_roles(self):
