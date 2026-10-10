@@ -379,6 +379,11 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sq-turn summary{cursor:pointer;white-space:pre-wrap;word-break:break-word;margin:4px 0}
 .sq-work{font-size:12.5px;margin:2px 0}
 .sk-comp{display:flex;gap:6px}
+.sk-at{position:absolute;left:0;bottom:calc(100% + 4px);min-width:220px;max-height:240px;overflow:auto;z-index:30;padding:4px;
+  background:var(--app-card);border:1px solid var(--app-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
+.sk-at div{padding:6px 10px;border-radius:var(--radius-md);cursor:pointer;font-size:13px;display:flex;justify-content:space-between;gap:12px}
+.sk-at div[aria-selected=true],.sk-at div:hover{background:var(--app-chip)}
+.sk-at small{color:var(--color-neutral-600)}
 @media(max-width:860px){
   .grid2,.grid3{grid-template-columns:1fr}
   .shell{display:block}

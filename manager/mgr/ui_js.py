@@ -1380,7 +1380,30 @@ async function sqTicket(id,change){
   sqLoad();
 }
 /* — Squads: one chat per squad; a kickoff from one line (mgr/squadkick.py) — */
-let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false;
+let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false, SK_MEMBERS=[], SK_AT=0;
+/* @-mentions in the composer: typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes. */
+function skAtWord(){const i=document.getElementById('sk-text'), pre=i.value.slice(0,i.selectionStart), m=pre.match(/(^|\s)@([\w.-]*)$/);return m?m[2]:null}
+function skAtClose(){const a=document.getElementById('sk-at');if(a){a.hidden=true;document.getElementById('sk-text').setAttribute('aria-expanded','false')}}
+function skAt(){
+  const a=document.getElementById('sk-at'), w=skAtWord();
+  if(w===null||!SK){skAtClose();return}
+  const opts=[...SK_MEMBERS,{name:'all',role:'everyone'}].filter(m=>m.name.toLowerCase().startsWith(w.toLowerCase()));
+  if(!opts.length){skAtClose();return}
+  SK_AT=Math.min(SK_AT,opts.length-1);
+  a.innerHTML=opts.map((m,i)=>`<div role=option data-n="${esc(m.name)}" aria-selected=${i===SK_AT} onmousedown="event.preventDefault();skAtPick('${esc(m.name)}')">@${escT(m.name)}<small>${escT(m.role||'')}</small></div>`).join('');
+  a.hidden=false; document.getElementById('sk-text').setAttribute('aria-expanded','true');
+}
+function skAtPick(n){
+  const i=document.getElementById('sk-text'), pos=i.selectionStart, pre=i.value.slice(0,pos).replace(/@([\w.-]*)$/,'@'+n+' ');
+  i.value=pre+i.value.slice(pos); i.setSelectionRange(pre.length,pre.length); i.focus(); SK_AT=0; skAtClose();
+}
+function skAtKey(e){
+  const a=document.getElementById('sk-at'), open=a&&!a.hidden, items=open?[...a.querySelectorAll('[role=option]')]:[];
+  if(open&&(e.key==='ArrowDown'||e.key==='ArrowUp')){e.preventDefault();SK_AT=(SK_AT+(e.key==='ArrowDown'?1:items.length-1))%items.length;skAt();return}
+  if(open&&(e.key==='Enter'||e.key==='Tab')&&items[SK_AT]){e.preventDefault();skAtPick(items[SK_AT].dataset.n);return}
+  if(open&&e.key==='Escape'){e.preventDefault();skAtClose();return}
+  if(e.key==='Enter')skSend();
+}
 const SK_SEEN=(()=>{try{return JSON.parse(localStorage.getItem('sk-seen')||'{}')}catch(e){return {}}})();
 function skSeen(n,id){SK_SEEN[n]=id;try{localStorage.setItem('sk-seen',JSON.stringify(SK_SEEN))}catch(e){}}
 const SK_TAG={running:'tag-accent',paused:'tag-neutral','waiting for approval':'tag-neutral',failed:'tag-neutral'};
@@ -1446,6 +1469,7 @@ async function skLoad(){
   let d={},b={}; try{d=await (await fetch(base+'/messages')).json();b=await (await fetch(base+'/board')).json()}catch(e){skMsg('manager not reachable');return}
   if(SK!==name)return;
   if(d.error){skMsg(d.error);return}
+  SK_MEMBERS=(b.members||[]).filter(m=>m.name!=='indexer').map(m=>({name:m.name,role:m.role||''}));
   const st=d.settings||{}, s=SK_LIST.find(x=>x.name===name)||{};
   const status=st.paused?'paused':st.approved?'running':'waiting for approval';
   document.getElementById('sk-title').textContent=name;

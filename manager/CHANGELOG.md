@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- UI: Squads composer — typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes.
 - UI: Approve/Reject/Request changes lock their buttons while the manager works and show the result or any error inside the card (a browser-side error used to stop silently).
 - UI: squad actions in the Squads tab sent an empty project name after a reload ('unknown operation' on Approve) — they use the proposal's / tab's project now.
 - UI: Skills tab keyword filter (every word must match name or description), next to the category filter.

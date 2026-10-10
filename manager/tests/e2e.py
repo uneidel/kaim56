@@ -2603,6 +2603,7 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIn("editConfig('cardx')", card)
         self.assertIn("id=skq", m._ui.render())                                  # Skills tab: keyword filter
         self.assertNotIn("encodeURIComponent(SQ)", m._ui.render())                # squad calls: never an empty project name
+        self.assertIn("aria-controls=sk-at", m._ui.render())                     # Squads composer: @-mention list
         page = m._ui.render()
         self.assertIn("id=cfdlg", page)
         self.assertIn("/api/instances/${CFDLG}/config", page)

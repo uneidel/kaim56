@@ -348,7 +348,9 @@ HTML_TOP = """</head><body>
       <div id=sk-cards></div>
       <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
-        <input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message onkeydown="if(event.key==='Enter')skSend()">
+        <span style="flex:1;min-width:0;position:relative;display:flex"><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message autocomplete=off
+          role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)">
+          <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
     </div>
