@@ -4410,6 +4410,43 @@ class ManagerFunctions(unittest.TestCase):
         if re.search(r"^[^#]*\bcurl\s+-", init, re.M):
             self.assertRegex(docker, r"apt-get install[^\n]*\n?[^\n]*\bcurl\b")
 
+    def test_squad_catalog_fits_the_goal_and_leaves_out_security_material(self):
+        """The lead's catalog lists at most CATALOG_SKILLS skills, those matching
+        the repo/goal first (standard ones kept); offensive-security skills and
+        personas only when the goal is about security (live: a Claude architect
+        was cut off by its vendor's cyber safeguards)."""
+        m = self.m
+        g = m._squadgate
+        old = (m._skills.meta, m._personas.load_personas, g.profile)
+        m._skills.meta = lambda: ([{"name": "durable-objects", "description": "Cloudflare Durable Objects"},
+                                   {"name": "ponytail", "description": "lean code", "default": True},
+                                   {"name": "social-engineering-jailbreak", "description": "x"},
+                                   {"name": "stack-smashing", "description": "exploit memory"},
+                                   {"name": "security-audit", "description": "security review", "default": True}]
+                                  + [{"name": f"misc-{i}", "description": "cloudflare helper"} for i in range(30)])
+        m._personas.load_personas = lambda: [{"name": "coder", "prompt": "You code."},
+                                             {"name": "osint", "prompt": "Open source intelligence."}]
+        g.profile = lambda proj: None
+        try:
+            c = g.catalog(None, "a UI for the Cloudflare Durable Objects CLI")
+            names = [k["name"] for k in c["skills"]]
+            self.assertEqual([n for n in names if n != "ponytail"][0], "durable-objects")   # best match first after the standard ones
+            self.assertIn("ponytail", names)
+            self.assertLessEqual(len(names), g.CATALOG_SKILLS)
+            for bad in ("social-engineering-jailbreak", "stack-smashing", "security-audit"):
+                self.assertNotIn(bad, names)
+            self.assertEqual([p["name"] for p in c["personas"]], ["coder"])
+            sec = [k["name"] for k in g.catalog(None, "security audit of the CLI")["skills"]]
+            self.assertIn("security-audit", sec)
+        finally:
+            m._skills.meta, m._personas.load_personas, g.profile = old
+
+    def test_task_whose_answer_is_an_api_error_counts_as_failed(self):
+        m = self.m
+        self.assertTrue(m._tasks._api_failure("API Error: Opus 4.8's safeguards flagged this message for a cybersecurity topic."))
+        self.assertTrue(m._tasks._api_failure("Failed to authenticate. OAuth session expired"))
+        self.assertFalse(m._tasks._api_failure("Done. Note: the API error handling now retries."))
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason

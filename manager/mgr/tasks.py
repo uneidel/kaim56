@@ -10,6 +10,7 @@ one place.
 """
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -459,6 +460,17 @@ def restart_members(proj):
     return out
 
 
+# A turn whose whole answer is the model provider's refusal / error (e.g.
+# Claude Code's "API Error: … safeguards flagged …") did not get the work done;
+# it counted as "received" in the squad channel (live 2026-10-10).
+_API_FAIL = re.compile(r"^\s*(API Error\b|Error: API\b|Failed to authenticate|Credit balance is too low|"
+                       r"Invalid API key)|safeguards flagged this message", re.I)
+
+
+def _api_failure(res):
+    return bool(_API_FAIL.search(str(res or "")[:600]))
+
+
 def _execute(t):
     """Run one claimed task and book its outcome — in its own lane thread."""
     try:
@@ -478,6 +490,8 @@ def _execute(t):
         except Exception as e:
             ok, res, level = False, f"worker-exception (run): {e!r}", None
             _util._wlog(f"{t['id']}: {res}")
+        if ok and _api_failure(res):          # the agent answered with its provider's error text
+            ok = False
         if t.get("squad"):                   # a squad wake: tell the channel how it ended
             try:
                 _squads.wake_result((t["squad"] or {}).get("msg"), t["instance"], ok, res)

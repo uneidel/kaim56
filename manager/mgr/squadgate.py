@@ -311,16 +311,47 @@ def profile(proj):
         return None
 
 
-def catalog(proj=None):
-    """Personas, skills (standard flagged), model tiers, the member
-    templates and the project's repo profile — read-only, for the lead's
-    squad_propose."""
+# Offensive-security material in a planning context trips the model vendors'
+# cyber safeguards (live 2026-10-10: a Claude architect was cut off after
+# squad_catalog listed jailbreak / stack-smashing / LPE skills for a UI task).
+_SENSITIVE = re.compile(r"secur|exploit|jailbreak|red.?team|hack|\blpe\b|-lpe-|attack|stack-smash|malware|"
+                        r"social.engineer|pentest|osint|forbidden|vulnerab|redteam", re.I)
+_SECURITY_GOAL = re.compile(r"secur|audit|pentest|vulnerab|harden|cve\b", re.I)
+CATALOG_SKILLS = 20
+
+
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
+
+
+def catalog(proj=None, goal=""):
+    """Personas, the skills that fit the repo profile and the goal (standard
+    flagged, at most CATALOG_SKILLS), model tiers, the member templates and the
+    repo profile — read-only, for the lead's squad_propose. Security material
+    only when the goal is about security."""
     prof = profile(proj) if proj else None
+    if proj is not None and not goal:
+        last = sorted(proposals(proj["name"]), key=lambda p: p.get("updated") or p.get("created") or 0)
+        goal = (last[-1].get("goal") if last else "") or ""
+    ctx = " ".join([goal, _repoprofile.context(prof) or ""])
+    sec_ok = bool(_SECURITY_GOAL.search(ctx))
+    want = _words(ctx)
+    pool = [k for k in _skills.meta() if sec_ok or not _SENSITIVE.search(k["name"] + " " + (k.get("description") or ""))]
+    score = lambda k: len(want & _words(k["name"].replace("-", " ") + " " + (k.get("description") or "")))
+    if want:                                 # standard ones (every agent has them) + the best matches
+        std = [k for k in pool if k.get("default")]
+        hits = sorted((k for k in pool if not k.get("default") and score(k)), key=lambda k: (-score(k), k["name"]))
+        picked = std + hits[:max(0, CATALOG_SKILLS - len(std))]
+    else:                                    # nothing to match against: the catalog as it is
+        picked = pool[:CATALOG_SKILLS]
     tiers = _router.load()["tiers"]
     have = {t.get("template") for t in _instances.load_templates()}
     return {"personas": [{"name": p["name"], "description": _summary(p), **({"tools": p["tools"]} if p.get("tools") else {})}
-                         for p in _personas.load_personas() if p.get("name")],
-            "skills": _skills.meta(),
+                         for p in _personas.load_personas()
+                         if p.get("name") and (sec_ok or not _SENSITIVE.search(p["name"] + " " + _summary(p)))],
+            "skills": picked,
+            "skills_note": (f"{len(picked)} of {len(_skills.meta())} skills shown — those matching the repo and goal; "
+                            "list_skills has the full catalog"),
             "tiers": [{"tier": t, "models": sorted(k for k, v in tiers.items() if v == t)} for t in _router.TIERS],
             "templates": [{"template": t, "note": n} for t, n in MEMBER_TEMPLATES.items() if t in have],
             "profile": prof, "profile_text": _repoprofile.text(prof)}
