@@ -11,7 +11,8 @@ route_log rows), message (one per channel post; outcome = the message kind),
 wake_blocked (outcome = the guard's reason), ticket_status (detail from/to),
 hitl_open, hitl_decided (duration_ms = the human wait), proposal (outcome
 created|revised|changes_requested|approved|rejected; a decision's wait in
-duration_ms), merge (an approved merge proposal), git (push|pr|issue).
+duration_ms), merge (an approved merge proposal), git (push|pr|issue), feedback (the operator's
+notes on a message sent as one post; detail count).
 
 Live rows come from the squad archive's writers (mgr/squadrec.py log_*: one
 ``ingest(stream, event)`` per archived event) and from mgr/squadgit.py (git).
@@ -221,7 +222,13 @@ def proposal(prop, squad_id=None):
                    outcome="approved", detail={"by": prop.get("decided_by")})
 
 
-_STREAMS = {"channel": _channel, "member": _member_turn, "hitl": _hitl, "ticket": _ticket, "proposal": proposal}
+def _feedback(ev):
+    record(ev["squad_id"], "feedback", f"f{ev['post_id']}", ev.get("ts"), project=ev.get("project"),
+           member=ev.get("by"), outcome="sent",
+           detail={"count": len(ev.get("notes") or []), "msg_id": ev.get("msg_id"), "to": ev.get("to")})
+
+
+_STREAMS = {"channel": _channel, "feedback": _feedback, "member": _member_turn, "hitl": _hitl, "ticket": _ticket, "proposal": proposal}
 
 
 def ingest(stream, ev):
@@ -258,6 +265,8 @@ def _stream_of(rel):
         return "channel"
     if parts[:2] == ["conversations", "hitl"]:
         return "hitl"
+    if parts[:2] == ["conversations", "feedback"]:
+        return "feedback"
     if parts[:2] == ["conversations", "members"] and len(parts) == 4:
         return "member"
     return None

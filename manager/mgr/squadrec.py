@@ -479,6 +479,16 @@ def log_hitl(project, event, item):
         _squadmetrics.ingest("hitl", ev)
 
 
+def log_feedback(project, ev):
+    """The operator's notes on a message, sent as one post (mgr/squadnotes.py)."""
+    rec = of_project(project)
+    if rec:
+        now = int(time.time())
+        ev = {"ts": now, "squad_id": rec["id"], "project": project, **ev}
+        _safe(_append, os.path.join(folder(rec), "conversations", "feedback", _day(now) + ".jsonl"), ev)
+        _squadmetrics.ingest("feedback", ev)
+
+
 # ---- export + migration --------------------------------------------------------
 def _export(rec):
     """Once per record: what squad.db and squadgate.json hold already."""

@@ -897,7 +897,11 @@ HTML_BOTTOM = """
   (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.
   <b>Squad channel</b>: running/queued wake turns show as &#8220;working&#8230; (mm:ss)&#8221; / &#8220;queued&#8221;; a finished turn&#8217;s answer is posted
   as kind <code>turn</code> to the thread&#8217;s user (wakes nobody, skipped when already posted or failed); a member with a fixed
-  <code>AGENT_TOOLS</code> list gets the squad tools it lacks on joining and at start (applies after Restart members).</p></div>
+  <code>AGENT_TOOLS</code> list gets the squad tools it lacks on joining and at start (applies after Restart members).
+  <b>Squad feedback</b> (<code>mgr/squadnotes.py</code>): the user selects text in a turn answer or a long member message and
+  comments it (right-click &#8594; Comment, or the floating button on touch); drafts sit in squad.db, highlighted by quote + prefix/suffix;
+  Send posts them as one numbered message to the lead (it turns them into tickets), archived under
+  <code>conversations/feedback</code>, metrics kind <code>feedback</code>.</p></div>
 
   <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
   <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs
@@ -1056,6 +1060,21 @@ HTML_BOTTOM = """
   __CODE_LINK__
 </footer>
 </main>
+</div>
+
+<!-- squad feedback (mgr/squadnotes.py): context menu, floating button (touch), comment popover -->
+<button id=sqa-fab class="btn btn-secondary btn-sm" hidden aria-label="Comment on the selected text" onmousedown="event.preventDefault()" onclick="sqPop()">&#128172; Comment</button>
+<div id=sqa-menu class=sqa-menu role=menu hidden><button class="btn btn-ghost btn-sm" role=menuitem onmousedown="event.preventDefault()" onclick="sqPop()">Comment</button></div>
+<div id=sqa-pop class=sqa-pop role=dialog aria-label="Comment on a squad message" hidden>
+  <div id=sqa-q class=sqa-q></div>
+  <div id=sqa-view></div>
+  <div id=sqa-edit class=sqa-edit>
+    <textarea id=sqa-text class=input rows=4 maxlength=4000 aria-label="Your comment" placeholder="What should change here?"></textarea>
+    <div class=sqa-acts><button class="btn btn-secondary btn-sm" onclick="sqNoteSave(false)">Save draft</button>
+      <button class="btn btn-primary btn-sm" onclick="sqNoteSave(true)">Send now</button>
+      <button class="btn btn-ghost btn-sm" onclick="sqPopClose()">Cancel</button></div>
+  </div>
+  <div id=sqa-msg class=text-muted role=status style="font-size:12px"></div>
 </div>
 
 <div id=picker class=dialog-backdrop style="display:none;z-index:60">

@@ -262,9 +262,9 @@ _USER_ROUTES = [
     ("POST", r"/api/tasks/[a-f0-9]{1,32}/(run|update|delete)"),
     ("POST", rf"/i/{_N}/(?!term(/|\Z)).*"),
     ("POST", rf"/apps/{_N}/_api(/.*)?"),
-    ("GET", rf"/api/projects/{_N}/squad/(messages|board)"),  # a squad's channel and proposals/tickets: read
-                                                            # and post — not its settings, decisions, ticket edits
-    ("POST", rf"/api/projects/{_N}/squad/post"),
+    ("GET", rf"/api/projects/{_N}/squad/(messages|board|notes)"),  # a squad's channel, proposals/tickets, notes:
+                                                            # read and post — not its settings, decisions, ticket edits
+    ("POST", rf"/api/projects/{_N}/squad/(post|notes|notes/send|notes/\d{{1,12}}/delete)"),  # notes: mgr/squadnotes.py
     ("GET", r"/api/squads"),                                # the Squads page's list — not the kickoff
     ("GET", rf"/api/squads/{_N}/metrics/(events|summary)"), # squad metrics (mgr/squadmetrics.py): read
     ("GET", r"/api/waiting"),                               # what waits for the operator: read, never decide
