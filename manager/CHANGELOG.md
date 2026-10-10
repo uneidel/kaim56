@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Squad metrics: history.db table `squad_events` (mgr/squadmetrics.py) — one row per turn start/end (tokens/cost/model from llm_usage, level/escalated from route_log, ok|failed|api_error), message, wake_blocked, ticket_status (from→to), hitl open/decided (wait), proposal version/changes/decision, merge, git push/pr/issue; written by the archive writers, backfilled from the squad archive at start (offsets + (kind, ref) dedupe), pruned hourly after SQUAD_METRICS_DAYS (365); `GET /api/squads/<name>/metrics/events[?since&kind&format=csv]` and `…/summary` (admin + role user).
 - UI: squad actions in the Squads tab sent an empty project name after a reload ('unknown operation' on Approve) — they use the proposal's / tab's project now.
 - UI: Skills tab keyword filter (every word must match name or description), next to the category filter.
 - Squads: "⏳ member is working… (mm:ss)" / "queued" in the chat and Squad panel (`working` in /squad/messages and /squad/board); a finished wake turn's answer lands in the channel as kind `turn` to the thread's user (once, capped 4000, wakes nobody, not for failed turns); members with a fixed AGENT_TOOLS list get the missing squad tools on join and at startup (restart note).

@@ -30,6 +30,7 @@ from mgr import notify as _notify
 from mgr import router as _router
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
+from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 from mgr import store as _store
@@ -658,6 +659,7 @@ def _task_worker():
                     _store.turns_prune(30)          # traces older than the weekly digest's reach
                 except Exception as e:
                     _util._wlog(f"turns-prune failed: {e!r}")
+                _squadmetrics.prune()               # squad_events past SQUAD_METRICS_DAYS (never raises)
                 try:
                     _auth.keep_sessions()           # idle OIDC sessions keep their refresh token alive
                 except Exception as e:

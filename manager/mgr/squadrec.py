@@ -50,6 +50,7 @@ from mgr import paths as _paths
 from mgr import projects as _projects
 from mgr import secrets as _secrets
 from mgr import settings as _settings
+from mgr import squadmetrics as _squadmetrics
 
 REC_FILE = os.path.join(_paths.BASE, "squadrec.json")
 ID_LEN = 16
@@ -395,8 +396,9 @@ def log_channel(project, msg):
     """One channel message (after its wakes: delivered / blocked are final)."""
     rec = of_project(project)
     if rec:
-        _safe(_append, os.path.join(folder(rec), "conversations", "channel", _day(msg["ts"]) + ".jsonl"),
-              _channel_event(rec, msg))
+        ev = _channel_event(rec, msg)
+        _safe(_append, os.path.join(folder(rec), "conversations", "channel", _day(msg["ts"]) + ".jsonl"), ev)
+        _squadmetrics.ingest("channel", ev)
 
 
 def turn_begin(task):
@@ -407,7 +409,15 @@ def turn_begin(task):
         tok = _llmproxy.used_today(task.get("instance", ""))
     except Exception:
         tok = None
-    return time.time(), tok
+    t0 = time.time()
+    try:
+        sq = task["squad"]
+        rec = of_project(sq.get("project", ""))
+        if rec:
+            _squadmetrics.turn_start(rec["id"], sq.get("project"), task, member_id(rec, task.get("instance", "")), t0)
+    except Exception as e:
+        print(f"[quiet] squad metrics turn_start: {e!r}", flush=True)
+    return t0, tok
 
 
 def turn_end(task, begun, ok, result):
@@ -436,6 +446,7 @@ def turn_end(task, begun, ok, result):
           "incoming": task.get("message", ""), "result": str(result if result is not None else ""),
           "status": "done" if ok else "error", "duration_s": round(now - t0, 1), "tokens": tokens}
     _safe(_append, os.path.join(folder(rec), "conversations", "members", f"{mid}__{inst}", _day(now) + ".jsonl"), ev)
+    _squadmetrics.ingest("member", ev)
 
 
 def log_proposal(prop):
@@ -443,6 +454,7 @@ def log_proposal(prop):
     if rec and re.match(r"^[A-Za-z0-9_-]{1,64}$", str(prop.get("id"))):
         _safe(_write_json, os.path.join(folder(rec), "proposals", f"{prop['id']}.json"),
               {**prop, "squad_id": rec["id"]})
+        _squadmetrics.ingest("proposal", {**prop, "squad_id": rec["id"]})
 
 
 def log_ticket(project, event, ticket, by, change=None):
@@ -453,6 +465,7 @@ def log_ticket(project, event, ticket, by, change=None):
         if change:
             ev["change"] = change
         _safe(_append, os.path.join(folder(rec), "tickets.jsonl"), ev)
+        _squadmetrics.ingest("ticket", ev)
 
 
 def log_hitl(project, event, item):
@@ -460,9 +473,10 @@ def log_hitl(project, event, item):
     rec = of_project(project)
     if rec:
         now = int(time.time())
-        _safe(_append, os.path.join(folder(rec), "conversations", "hitl", _day(now) + ".jsonl"),
-              {"ts": now, "squad_id": rec["id"], "event": event, "member_id": member_id(rec, item.get("instance", "")),
-               "item": item})
+        ev = {"ts": now, "squad_id": rec["id"], "event": event, "member_id": member_id(rec, item.get("instance", "")),
+              "item": item}
+        _safe(_append, os.path.join(folder(rec), "conversations", "hitl", _day(now) + ".jsonl"), ev)
+        _squadmetrics.ingest("hitl", ev)
 
 
 # ---- export + migration --------------------------------------------------------

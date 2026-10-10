@@ -5208,6 +5208,238 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    # ---- squad metrics (mgr/squadmetrics.py): squad_events in history.db ---------------
+    def _sm_env(self):
+        """_hq_env (plan approved: proposal + tickets T1/T2) on a fresh history.db."""
+        m = self.m
+        st = m._store
+        old = st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], st._routes_migrated[0]
+        st.HISTORY_DB = os.path.join(tempfile.mkdtemp(prefix="e2e-sm-"), "history.db")
+        st._migrated[0], st._turns_migrated[0], st._routes_migrated[0] = False, None, None
+        woke, notes, undo = self._hq_env()
+
+        def undo2():
+            undo()
+            st.HISTORY_DB, st._migrated[0], st._turns_migrated[0], st._routes_migrated[0] = old
+        return woke, notes, undo2
+
+    def _sm_rows(self, kind=None):
+        m = self.m
+        sid = m._squads.squad_id(m._projects.get("sq"))
+        return m._squadmetrics.events(sid, 0, kind or "", 5000)
+
+    def test_squadmetrics_hooks_record_one_row_per_event(self):
+        """Proposal, message, wake_blocked, ticket_status (from/to), hitl open/decided
+        (wait), git push: each source writes its row once; duplicates are ignored."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        sm, A = m._squadmetrics, "172.30.3.2"
+        sg = m._squadgit
+        old = sg.resolve, sg.settings, sg.push_branch
+        try:
+            props = self._sm_rows("proposal")
+            self.assertEqual([r["outcome"] for r in props], ["created", "approved"])
+            self.assertEqual((props[1]["member"], json.loads(props[1]["detail"])["kind"]), ("a", "squad"))
+            self.assertIsNotNone(props[1]["duration_ms"])
+            n = len(self._sm_rows("message"))
+            d = self._sq("/api/squad/post", A, {"to": "b", "text": "please check"})[1]
+            msg = [r for r in self._sm_rows("message") if r["ref"] == f"m{d['id']}"]
+            self.assertEqual((len(self._sm_rows("message")), msg[0]["member"], msg[0]["outcome"]), (n + 1, "a", "post"))
+            self.assertTrue(msg[0]["member_id"].startswith(m._squads.squad_id(m._projects.get("sq"))))
+            self._sq("/api/projects/sq/squad", "127.0.0.1", {"paused": True})
+            d = self._sq("/api/squad/post", A, {"to": "b", "text": "again"})[1]
+            bl = self._sm_rows("wake_blocked")
+            self.assertEqual((len(bl), bl[0]["ref"], bl[0]["outcome"]), (1, f"m{d['id']}", "squad paused"))
+            proj = m._projects.get("sq")
+            t1 = next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            m._squadgate.update_ticket(proj, "admin", t1["id"], {"status": "doing"}, lambda t: "")
+            m._squadgate.update_ticket(proj, "admin", t1["id"], {"comment": "no status change"}, lambda t: "")
+            ts = [(r["ticket"], json.loads(r["detail"])["from"], r["outcome"]) for r in self._sm_rows("ticket_status")]
+            self.assertEqual(ts, [("T1", "", "open"), ("T2", "", "open"), ("T1", "open", "doing")])
+            it = m._hitlq.approval("b", "git_push_branch", "x", proj)
+            m._hitlq.decide(it["id"], "approve", "admin")
+            ho, hd = self._sm_rows("hitl_open"), self._sm_rows("hitl_decided")
+            self.assertEqual((ho[0]["ref"], ho[0]["outcome"], ho[0]["member"]), (it["id"], "approval", "b"))
+            self.assertEqual((hd[0]["outcome"], hd[0]["duration_ms"] >= 0), ("approved", True))
+            sg.resolve = lambda inst, project="": (proj, "writer")
+            sg.settings = lambda p: {"url": "https://h/o/r", "provider": "github", "base": "main"}
+            sg.push_branch = lambda *a: {"branch": "squad/b/x", "commit": "abc", "repo": "o/r"}
+            sg.call("b", "push", {"name": "x"})
+            sg.call("b", "push", {"name": "x"})                          # same commit: one row
+            g = self._sm_rows("git")
+            self.assertEqual([(r["outcome"], r["ref"], r["member"]) for r in g], [("push", "push:squad/b/x@abc", "b")])
+            # a repeat of the same archived event adds nothing
+            before = len(self._sm_rows())
+            m._squadrec.log_proposal(m._squadgate.proposals("sq")[0])
+            self.assertEqual(len(self._sm_rows()), before)
+        finally:
+            sg.resolve, sg.settings, sg.push_branch = old
+            undo()
+
+    def test_squadmetrics_turn_end_tokens_level_and_outcome(self):
+        """turn_start/turn_end of a wake turn: tokens + cost + model are the member's
+        llm_usage rows inside the turn (not other instances', not earlier ones); level
+        and escalated from the route log; a provider error text is api_error."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        st, sm = m._store, m._squadmetrics
+        try:
+            with st._hist_conn() as c:                                 # before the turn: not counted
+                c.execute("INSERT INTO llm_usage(ts,instance,model,prompt_tokens,completion_tokens,cost) "
+                          "VALUES(?,?,?,?,?,?)", (int(time.time()) - 500, "b", "old", 999, 999, 9.0))
+            task = {"id": "tk1", "instance": "b", "message": "Ticket T1 (id 1) is yours: x",
+                    "squad": {"project": "sq", "depth": 1, "msg": 7}}
+            begun = m._squadrec.turn_begin(task)
+            self.assertEqual(len(self._sm_rows("turn_start")), 1)
+            begun = (begun[0] - 30, begun[1])                          # a 30-s turn
+            st.usage_add("b", "m-small", 100, 10, 0.01)
+            st.usage_add("b", "m-big", 1000, 200, 0.10)
+            st.usage_add("e", "m-big", 5000, 5000, 5.0)                # another member
+            st.route_add("b", "x", "own", "m-big", "", 1, "why", level=3, escalated=True)
+            m._squadrec.turn_end(task, begun, True, "done it")
+            r = self._sm_rows("turn_end")[0]
+            self.assertEqual((r["tokens_in"], r["tokens_out"], round(r["cost"], 2), r["model"], r["level"], r["outcome"],
+                              r["ticket"], r["ref"]), (1100, 210, 0.11, "m-big", 3, "ok", "T1", "task:tk1"))
+            self.assertTrue(json.loads(r["detail"])["escalated"])
+            self.assertGreaterEqual(r["duration_ms"], 29000)
+            self.assertEqual(len(self._sm_rows("turn_start")), 1)      # the end's own start row is a duplicate
+            t2 = {**task, "id": "tk2"}
+            m._squadrec.turn_end(t2, m._squadrec.turn_begin(t2), False, "API Error: 500 overloaded")
+            t3 = {**task, "id": "tk3"}
+            m._squadrec.turn_end(t3, m._squadrec.turn_begin(t3), False, "worker-exception (run): boom")
+            self.assertEqual([x["outcome"] for x in self._sm_rows("turn_end")], ["ok", "api_error", "failed"])
+        finally:
+            undo()
+
+    def test_squadmetrics_failures_never_break_the_caller(self):
+        """A broken history.db: record/ingest/git/prune return quietly, the squad posts on."""
+        m = self.m
+        import sqlite3
+        woke, notes, undo = self._sm_env()
+        sm, st = m._squadmetrics, m._store
+        old = st._hist_conn
+        try:
+            st._hist_conn = lambda: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error"))
+            st_, d = self._sq("/api/squad/post", "172.30.3.2", {"to": "b", "text": "still works"})
+            self.assertEqual(st_, 200)
+            self.assertFalse(sm.record("x", "message", "r1"))
+            sm.ingest("channel", {"nonsense": True})
+            sm.ingest("nope", {})
+            self.assertFalse(sm.git("sq", "b", "push", "r"))
+            self.assertEqual(sm.prune(), 0)
+        finally:
+            st._hist_conn = old
+            undo()
+
+    def test_squadmetrics_backfill_imports_the_archive_once(self):
+        """Backfill rebuilds the rows from the archive (channel, member turns, hitl,
+        tickets, proposals); a re-run adds nothing (offsets + dedupe), a new
+        archive line adds exactly its row, a half-written line waits."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        sm, st = m._squadmetrics, m._store
+        try:
+            proj = m._projects.get("sq")
+            self._sq("/api/squad/post", "172.30.3.2", {"to": "b", "text": "hello"})
+            t1 = next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            m._squadgate.update_ticket(proj, "admin", t1["id"], {"status": "done"}, lambda t: "")
+            it = m._hitlq.approval("b", "git_push_branch", "x", proj)
+            m._hitlq.decide(it["id"], "deny", "admin")
+            task = {"id": "tk9", "instance": "b", "message": "go", "squad": {"project": "sq", "depth": 1, "msg": 1}}
+            m._squadrec.turn_end(task, m._squadrec.turn_begin(task), True, "ok")
+            live = sorted((r["kind"], r["ref"], r["outcome"]) for r in self._sm_rows())
+            self.assertEqual(sm.backfill()["sq"] > 0, True)            # the first run reads the files ...
+            self.assertEqual(sorted((r["kind"], r["ref"], r["outcome"]) for r in self._sm_rows()), live)   # ... no dups
+            with st._hist_conn() as c:
+                c.execute("DELETE FROM squad_events"); c.execute("DELETE FROM squad_metrics_import")
+            sm.backfill()
+            self.assertEqual(sorted((r["kind"], r["ref"], r["outcome"]) for r in self._sm_rows()), live)
+            ts = [json.loads(r["detail"])["from"] for r in self._sm_rows("ticket_status") if r["ticket"] == "T1"]
+            self.assertEqual(ts, ["", "open"])                          # from/to rebuilt in order
+            self.assertEqual(sm.backfill()["sq"], 0)                    # re-run: nothing read, nothing added
+            self.assertEqual(len(self._sm_rows()), len(live))
+            rec = m._squadrec.of_project("sq")
+            ch = os.path.join(m._squadrec.folder(rec), "conversations", "channel")
+            path = os.path.join(ch, sorted(os.listdir(ch))[-1])
+            ev = {"ts": int(time.time()), "msg_id": 99999, "from": "a", "to": ["b"], "kind": "post", "project": "sq"}
+            with open(path, "a") as fh:
+                fh.write(json.dumps(ev) + "\n" + json.dumps({**ev, "msg_id": 99998})[:20])
+            self.assertEqual(sm.backfill()["sq"], 1)
+            self.assertEqual(len(self._sm_rows()), len(live) + 1)
+            with open(path, "a") as fh:
+                fh.write(json.dumps({**ev, "msg_id": 99998})[20:] + "\n")
+            self.assertEqual(sm.backfill()["sq"], 1)                    # the completed line, once
+            self.assertEqual(sm.backfill()["sq"], 0)
+        finally:
+            undo()
+
+    def test_squadmetrics_retention_and_summary(self):
+        """Rows past SQUAD_METRICS_DAYS are pruned and never imported; the summary adds
+        tokens/cost/turns, counts done tickets, takes the median cycle time and the human wait."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        sm, st = m._squadmetrics, m._store
+        try:
+            now, sid = int(time.time()), "zzzzzzzzzzzzzzzz"
+            self.assertTrue(sm.record(sid, "message", "old", now - 10 * 86400))
+            self.assertEqual(sm.prune(5), 1)
+            m._settings.SITE["SQUAD_METRICS_DAYS"] = 1
+            self.assertFalse(sm.record(sid, "message", "old2", now - 2 * 86400))   # too old: not imported
+            m._settings.SITE["SQUAD_METRICS_DAYS"] = 365
+            rec = sm.record
+            rec(sid, "turn_end", "t1", now, tokens_in=100, tokens_out=10, cost=0.5, outcome="ok")
+            rec(sid, "turn_end", "t2", now, tokens_in=50, tokens_out=5, cost=0.25, outcome="ok")
+            rec(sid, "turn_end", "t3", now, outcome="failed")
+            rec(sid, "turn_end", "t4", now, outcome="api_error")
+            for tid, cyc in (("p#1", 100), ("p#2", 300)):
+                rec(sid, "ticket_status", f"{tid}:{now - 1000}:open", now - 1000, outcome="open", detail={"from": "", "to": "open"})
+                rec(sid, "ticket_status", f"{tid}:{now - 1000 + cyc}:done", now - 1000 + cyc, outcome="done",
+                    detail={"from": "open", "to": "done"})
+            rec(sid, "ticket_status", f"p#3:{now}:open", now, outcome="open", detail={"from": "", "to": "open"})
+            rec(sid, "hitl_decided", "h1", now, duration_ms=5000, outcome="approved")
+            rec(sid, "proposal", "p1:approved", now, duration_ms=2000, outcome="approved")
+            rec(sid, "proposal", "p1:v1", now, duration_ms=999, outcome="created")      # not a wait
+            s = sm.summary(sid)
+            self.assertEqual((s["tokens_in"], s["tokens_out"], s["cost"], s["turns"], s["turns_ok"], s["turns_failed"],
+                              s["turns_api_error"], s["tickets_done"], s["median_cycle_s"], s["human_wait_ms"]),
+                             (150, 15, 0.75, 4, 2, 1, 1, 2, 200, 7000))
+            self.assertEqual(sm.summary(sid, now + 1)["turns"], 0)
+        finally:
+            m._settings.SITE.pop("SQUAD_METRICS_DAYS", None)
+            undo()
+
+    def test_squadmetrics_routes_roles_and_csv(self):
+        """GET /api/squads/<name|id>/metrics/(events|summary): admin and role user read,
+        a guest never; unknown squad 404; ?kind filters; ?format=csv is a download."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        B, L = "172.30.4.2", "127.0.0.1"
+        try:
+            sid = m._squads.squad_id(m._projects.get("sq"))
+            m._squadmetrics.record(sid, "message", "=evil", outcome="=1+1")
+            st, d = self._sq("/api/squads/sq/metrics/summary", L)
+            self.assertEqual((st, d["squad"], d["squad_id"]), (200, "sq", sid))
+            self.assertIn("proposal", d["counts"])
+            st, d = self._sq(f"/api/squads/{sid}/metrics/events?kind=proposal", L)
+            self.assertEqual((st, {e["kind"] for e in d["events"]}), (200, {"proposal"}))
+            self.assertEqual(self._sq("/api/squads/nope/metrics/events", L)[0], 404)
+            self.assertEqual(self._sq("/api/squads/sq/metrics/other", L)[0], 404)
+            h = self._handler("/api/squads/sq/metrics/events?format=csv", L); h._do_GET()
+            head, body = h.wfile.getvalue().split(b"\r\n\r\n", 1)
+            self.assertIn(b"text/csv", head); self.assertIn(b"attachment", head)
+            lines = body.decode().splitlines()
+            self.assertTrue(lines[0].startswith("id,ts,squad_id,project,kind"))
+            self.assertIn("'=evil", body.decode()); self.assertIn("'=1+1", body.decode())   # no spreadsheet formula
+            self.assertEqual(self._hq_user("/api/squads/sq/metrics/summary"), 200)
+            self.assertEqual(self._hq_user("/api/squads/sq/metrics/events"), 200)
+            self.assertTrue(m._auth.user_allowed("GET", "/api/squads/sq/metrics/events"))
+            self.assertFalse(m._auth.user_allowed("POST", "/api/squads/sq/metrics/events"))
+            self.assertEqual(self._sq("/api/squads/sq/metrics/summary", B)[0], 403)
+            self.assertTrue(m._routes.ROUTER.resolve("GET", "/api/squads/sq/metrics/summary")[1])
+            self.assertEqual(m._routes.ROUTER.resolve("GET", "/api/squads/kickoff")[0].__name__, "_rt_kick_get")
+        finally:
+            undo()
+
     def test_hitl_manager_executed_git_tools_are_gated_by_the_manager(self):
         """git_push_branch / pr_create / issue_create run in the manager, so the
         manager demands the approval itself — a guest that skips its hook and
