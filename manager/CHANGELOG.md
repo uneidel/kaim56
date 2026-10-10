@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Squads: no approvals by default (members run in VMs — the user is asked only via ask_human, the plan and the merge to main; old-default squads switched once); when all tickets are done the lead writes the user a final summary (chat + notification), once per ticket set.
 - UI: Squads composer — typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes.
 - UI: Approve/Reject/Request changes lock their buttons while the manager works and show the result or any error inside the card (a browser-side error used to stop silently).
 - Apps on their own origin (site.json `APPS_HOST`, needs OIDC; empty = as before): there only `/apps/<name>/`, the apps' API paths (the Cloudflare-token list) and an own OIDC login with a host-only `apps` session (admin and role user); no manager session, Basic or Bearer there, same-origin POSTs, CSP frame-ancestors 'self', no Referer; the manager redirects cookie sessions' `/apps/` there and refuses that Origin — the APK (Basic/Bearer, iroh) keeps `/apps/` on the manager's host. INDEX_HOST and APPS_HOST share one side-host path (mgr/auth.SIDE_*, httpd._auth_side).

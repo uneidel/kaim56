@@ -5139,14 +5139,42 @@ class ManagerFunctions(unittest.TestCase):
         m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
         pid = self._sq("/api/squad/propose", "172.30.3.2", self._SG_PLAN)[1]["id"]
         self.assertEqual(m._squadgate.decide("sq", pid, True, "admin")[0]["status"], "approved")
-        if squad:
-            self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", squad)[0], 200)
+        squad.setdefault("approval_tools", m._squads.OLD_APPROVAL_DEFAULT)   # these tests exercise the gate
+        self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", squad)[0], 200)
         del woke[:], notes[:]
 
         def undo2():
             m._hitlq.QUEUE_FILE = old
             undo()
         return woke, notes, undo2
+
+    def test_squad_all_tickets_done_asks_the_lead_for_a_summary_once(self):
+        """When the last ticket is done the lead is woken to write the user a
+        final summary and the user gets a notification — once per ticket set;
+        old-default approval lists are switched to 'none' once."""
+        m = self.m
+        woke, notes, undo = self._hq_env(approval_tools=[])
+        g, p = m._squadgate, lambda: m._projects.get("sq")
+        try:
+            ts = g.tickets("sq")
+            for t in ts[:-1]:
+                g.update_ticket(p(), "user:admin", t["id"], {"status": "done"}, lambda tk: "")
+            self.assertFalse(any("final summary" in w[1] for w in woke))
+            out, _ = g.update_ticket(p(), "user:admin", ts[-1]["id"], {"status": "done"}, lambda tk: "")
+            self.assertEqual(out["summary"], "lead asked for the summary")
+            lead = [w for w in woke if "final summary" in w[1]]
+            self.assertEqual(lead[0][0], "a")
+            self.assertTrue(any("tickets done" in str(n) for n in notes))
+            g.update_ticket(p(), "user:admin", ts[-1]["id"], {"status": "review"}, lambda tk: "")
+            out, _ = g.update_ticket(p(), "user:admin", ts[-1]["id"], {"status": "done"}, lambda tk: "")
+            self.assertEqual(out["summary"], "already requested")
+            # migration of the old default approval list
+            m._projects.set_squad("sq", {**m._squads.settings(p()), "approval_tools": list(m._squads.OLD_APPROVAL_DEFAULT)})
+            self.assertEqual(m._squads.migrate_approval_default(), 1)
+            self.assertEqual(m._squads.settings(p())["approval_tools"], [])
+            self.assertEqual(m._squads.migrate_approval_default(), 0)
+        finally:
+            undo()
 
     def _hq_user(self, path, body=None):
         """(status) of a request by an OIDC principal with role user."""
@@ -5584,7 +5612,7 @@ class ManagerFunctions(unittest.TestCase):
         push — not ordinary commands."""
         m = self.m
         sq, rx = m._squads, re.compile(m._hitlq.BASH_RE)
-        self.assertEqual(sq.settings({})["approval_tools"], ["git_push_branch", "pr_create", "issue_create", "bash"])
+        self.assertEqual(sq.settings({})["approval_tools"], [])                 # members run in VMs: nothing gated by default
         self.assertEqual(sq.settings({})["autonomy"], "trusted")
         self.assertEqual(sq.normalize_settings({"approval_tools": "bash, pr_create,bash"})[0]["approval_tools"], ["bash", "pr_create"])
         self.assertEqual(sq.normalize_settings({"approval_tools": []})[0]["approval_tools"], [])

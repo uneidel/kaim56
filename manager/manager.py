@@ -192,6 +192,9 @@ if __name__ == "__main__":
     try:
         _squadrec.migrate()          # squad IDs, archive folders, history once; a running member's clone stays put
         _squadmetrics.backfill()     # squad_events from the archive; per-file offsets, (kind, ref) dedupe: re-runs add nothing
+        n = _squads.migrate_approval_default()
+        if n:
+            print(f"[migrate] squads: {n} squad(s) switched to 'no approvals by default'", flush=True)
         _squadgate.repair_tools()    # squad members with a fixed tool list get the squad tools they lack
     except Exception as e:
         print(f"[migrate] squads: {e!r}", flush=True)

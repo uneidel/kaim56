@@ -970,7 +970,36 @@ def update_ticket(proj, who, tid, body, may, depth=1):
     # A finished feature: refresh the code index (mgr/indexer.py; queued, never blocks).
     if t["status"] == "done" and old_status != "done" and _indexer.instance():
         out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
+    if t["status"] == "done" and old_status != "done":
+        out["summary"] = _finished(proj, mine)
     return out, ""
+
+
+def _finished(proj, mine):
+    """All of the squad's tickets done -> the lead writes the user a final
+    summary (its answer lands in the channel, mgr/squads.turn_answer) and the
+    user gets a notification. Once per set of tickets: new tickets re-arm it."""
+    if not mine or any(x["status"] != "done" for x in mine):
+        return ""
+    stamp = ",".join(sorted(str(x["id"]) for x in mine))
+    s = _squads.settings(proj)
+    if s.get("summary_for") == stamp:
+        return "already requested"
+    _projects.set_squad(proj["name"], {**s, "summary_for": stamp})
+    ld = lead(proj)
+    try:
+        _notify.notify_add(ld or proj["name"], f"Squad {proj['name']}: all {len(mine)} tickets done",
+                           "the lead is writing the final summary — it lands in the squad chat", link="squads")
+    except Exception as e:
+        print(f"[squadgate] finish notify: {e!r}", flush=True)
+    if not ld:
+        return "no lead"
+    m, why = _squads.post(proj, _squads._last_user(proj["name"]) or "user:operator", [ld],
+                          f"@{ld} All {len(mine)} tickets of {proj['name']} are done. Write the user the final summary now "
+                          "(answer directly, no tools needed beyond reading): what was built and why, where it is "
+                          "(branches, PRs, files), how to try it, what was tested, open points and suggested next steps. "
+                          "Keep it short and concrete.")
+    return "lead asked for the summary" if m else f"summary request failed: {why}"
 
 
 def purge(project):

@@ -45,7 +45,7 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "daily_token_budget": 2_000_000, "max_depth": 3,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
-            "approval_tools": ["git_push_branch", "pr_create", "issue_create", "bash"], "autonomy": "trusted"}
+            "approval_tools": [], "autonomy": "trusted"}
 AUTONOMY = ("trusted", "supervised")
 TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
@@ -103,6 +103,23 @@ def _get(mid):
 
 
 # ---- settings ---------------------------------------------------------------
+# Members run in Firecracker VMs: by default nothing needs an approval — the
+# user is asked only when a member is unsure (ask_human), plus the plan and the
+# merge to main (Ulrich, 2026-10-10). Squads saved with the old default list
+# are switched once at startup; a list the operator chose stays.
+OLD_APPROVAL_DEFAULT = ["git_push_branch", "pr_create", "issue_create", "bash"]
+
+
+def migrate_approval_default():
+    n = 0
+    for p in _projects.load():
+        st = p.get("squad") or {}
+        if st.get("approval_tools") == OLD_APPROVAL_DEFAULT:
+            _projects.set_squad(p["name"], {**settings(p), "approval_tools": []})
+            n += 1
+    return n
+
+
 def settings(proj):
     return {**DEFAULTS, **((proj or {}).get("squad") or {})}
 
