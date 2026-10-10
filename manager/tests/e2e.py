@@ -4534,6 +4534,137 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_working_and_queued_in_the_endpoints(self):
+        """A running squad wake turn shows as 'working' since its start, a
+        pending one as 'queued' — in /squad/messages and /squad/board; other
+        projects' and non-squad tasks do not."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        tasks = m._store.load_tasks()
+        now = int(time.time())
+        tasks += [{"id": "t1", "instance": "b", "status": "running", "started": now - 75, "created": now - 90,
+                   "squad": {"project": "sq", "depth": 1, "msg": 3}},
+                  {"id": "t2", "instance": "d", "status": "pending", "created": now - 5, "squad": {"project": "sq", "msg": 4}},
+                  {"id": "t3", "instance": "a", "status": "running", "started": now},                     # no squad wake
+                  {"id": "t4", "instance": "a", "status": "pending", "squad": {"project": "other", "msg": 1}},
+                  {"id": "t5", "instance": "a", "status": "done", "squad": {"project": "sq", "msg": 2}}]
+        try:
+            for path in ("/api/projects/sq/squad/messages", "/api/projects/sq/squad/board"):
+                w = self._sq(path, "127.0.0.1")[1]["working"]
+                self.assertEqual([(x["member"], x["state"], x["since"], x["msg"]) for x in w],
+                                 [("b", "working", now - 75, 3), ("d", "queued", now - 5, 4)], path)
+                self.assertTrue(75 <= w[0]["elapsed"] <= 80, w)
+            t = [{"id": "x", "instance": "b", "status": "pending", "schedule": "", "next_run": 0}]
+            claimed = m._tasks.worker_claim(t, now, lambda t: False, [], [])[1]
+            self.assertEqual((claimed["status"], claimed["started"]), ("running", now))         # the worker stamps the start
+        finally:
+            undo()
+
+    def test_squad_turn_answer_into_the_channel(self):
+        """A finished wake turn's answer is posted once, from the member to the
+        user who started the thread (kind 'turn'), wakes nobody, is archived,
+        capped; skipped when the member already posted it during the turn, and
+        for a failed turn."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        A = "172.30.3.2"
+        try:
+            P = lambda: m._projects.get("sq")
+            q1 = m._squads.post(P(), "user:ann", ["a"], "build the parser")[0]
+            m._squads.post(P(), "user:ulrich", ["a"], "and the docs")
+            r = m._squads.post(P(), "b", [], "I can help", reply_to=q1["id"])[0]           # b answers ann's thread
+            now = int(time.time())
+            turn = lambda msg, **k: {"id": "t", "instance": "a", "started": now, "squad": {"project": "sq", "depth": 2, "msg": msg}, **k}
+            n = len(woke)
+            got = m._squads.turn_answer(turn(r["id"]), True, "Parser done, @b please review.")
+            self.assertEqual((got["from"], got["to"], got["kind"], got["delivered"], got["depth"]),
+                             ("a", ["user:ann"], "turn", [], 2))                            # the thread's user, not the last
+            self.assertEqual(len(woke), n)                                                   # @b in the text wakes nobody
+            self.assertIsNone(m._squads.turn_answer(turn(r["id"]), True, "Parser done, @b please review. "))   # once
+            # the member posted it already during the turn: no duplicate
+            st, d = self._sq("/api/squad/post", A, {"to": "user", "text": "Docs are written: see README."})
+            self.assertEqual(st, 200, d)
+            self.assertIsNone(m._squads.turn_answer(turn(q1["id"]), True, "Docs are written - see README"))
+            self.assertIsNone(m._squads.turn_answer(turn(q1["id"]), False, "something else entirely"))   # failed turn
+            self.assertIsNone(m._squads.turn_answer(turn(q1["id"]), True, "   "))
+            long_ = m._squads.turn_answer(turn(q1["id"]), True, "x" * 9000)
+            self.assertEqual(len(long_["text"]), m._squads.TURN_MAX + len("\n…[full text in the archive]"))
+            self.assertTrue(long_["text"].endswith("…[full text in the archive]"))
+            self.assertEqual([x["kind"] for x in m._squads.read("sq")].count("turn"), 2)
+            fold = m._squadrec.folder(m._squadrec.of_project("sq"))
+            ch = self._sr_lines(os.path.join(fold, "conversations", "channel", time.strftime("%Y-%m-%d") + ".jsonl"))
+            self.assertEqual({e["msg_id"] for e in ch if e.get("kind") == "turn"}, {got["id"], long_["id"]})
+            # the worker posts it after the turn (and not for a provider error)
+            calls, old = [], (m._tasks._run_task_now, m._squads.turn_answer)
+            m._squads.turn_answer = lambda *a: calls.append(a)
+            try:
+                for res in ("done it", "API Error: 500"):
+                    m._tasks._run_task_now = lambda *a, _r=res, **k: (True, _r)
+                    m._tasks._execute({"id": "t9", "instance": "d", "message": "x", "squad": {"project": "sq", "depth": 1, "msg": q1["id"]}})
+            finally:
+                m._tasks._run_task_now, m._squads.turn_answer = old
+            self.assertEqual([(c[1], c[2]) for c in calls], [(True, "done it"), (False, "API Error: 500")])
+        finally:
+            undo()
+
+    def test_squad_tools_added_on_join_and_repaired_at_startup(self):
+        """A member with a fixed AGENT_TOOLS list gets the squad tools it lacks
+        (the lead also LEAD_TOOLS) on approval, member approval, the operator's
+        project save, the kickoff and at startup (idempotent); the channel and
+        the steps say to restart; members without a list stay untouched."""
+        m = self.m
+        g = m._squadgate
+        woke, created, notes, merges, undo = self._gate_env()
+        insts, L, A = self._sq_insts, "127.0.0.1", "172.30.3.2"
+        saved = []
+
+        def save(inst):
+            saved.append(inst["name"])
+            insts[:] = [inst if i["name"] == inst["name"] else i for i in insts]
+        old = m._instances.save_instance
+        m._instances.save_instance = save
+        tools = lambda n: next(i for i in insts if i["name"] == n)["config"].get("AGENT_TOOLS", "")
+        setcfg = lambda n, v: next(i for i in insts if i["name"] == n)["config"].__setitem__("AGENT_TOOLS", v)
+        try:
+            setcfg("a", "bash,squad_propose,squad_request_member"); setcfg("b", "bash,read_file,squad_post")   # d: no list = all tools
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": pid, "approve": True})
+            self.assertEqual(st, 200, p)
+            self.assertEqual(tools("b"), ",".join(["bash", "read_file", *m._squadgate.MEMBER_TOOLS]))
+            self.assertEqual(tools("a"), ",".join(dict.fromkeys(["bash", "squad_propose", "squad_request_member", *g.MEMBER_TOOLS, *g.LEAD_TOOLS])))
+            self.assertEqual(tools("d"), "")
+            step = next(s for s in p["steps"] if s["step"] == "squad tools")
+            self.assertIn("Restart members", step["detail"]); self.assertIn("b (+squad_ask", step["detail"])
+            note = [x for x in m._squads.read("sq") if x["kind"] == "note"]
+            self.assertEqual((len(note), note[0]["from"], note[0]["delivered"]), (1, "manager", []))
+            self.assertNotIn("d (+", step["detail"])
+            # a member proposal for an existing instance with a list
+            insts.append({"name": "h", "index": 20, "template": "openrouter", "rootfs": "x", "mounts": [], "config": {"AGENT_TOOLS": "bash"}})
+            st, d = self._sq("/api/squad/request-member", A, {"member": {"name": "h", "existing": True, "role": "reader"}, "reason": "docs"})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})[0], 200)
+            self.assertEqual(tools("h"), ",".join(["bash", *g.MEMBER_TOOLS]))
+            # the operator adds c in Projects
+            setcfg("c", "bash")
+            proj = m._projects.get("sq")
+            body = {**proj, "members": {**{n: x["role"] for n, x in proj["members"].items()}, "c": "reader"}}
+            st, r = self._sq("/api/projects", L, body)
+            self.assertEqual((st, r["squad_tools"]), (200, {"c": list(g.MEMBER_TOOLS)}))
+            # the kickoff's step (its architect already has the tools: nothing to do)
+            job = {"name": "sq", "arch": "a", "done": ["index"], "log": []}
+            setcfg("a", "bash,squad_post")
+            m._squadkick.step_squad(job)
+            self.assertIn("Restart members", job["log"][-1]["text"]); self.assertIn("squad_catalog", tools("a"))
+            # startup repair: only what is missing, once
+            setcfg("b", "bash"); del saved[:]
+            g.repair_tools()
+            self.assertEqual((saved, tools("b")), (["b"], ",".join(["bash", *g.MEMBER_TOOLS])))
+            g.repair_tools()
+            self.assertEqual((saved, tools("d")), (["b"], ""))
+        finally:
+            m._instances.save_instance = old
+            undo()
+
     def test_squad_ask_answer_roundtrip(self):
         """ask -> the one member is woken; its reply_to post is the answer
         (wakes nobody); only the asker may poll it."""

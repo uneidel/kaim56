@@ -254,6 +254,8 @@ def _rt_projects(h):
 def _rt_projects_save(h):
     # Create or replace one project (members included); applies live to running members.
     r = _projects.upsert(h._body() or {})
+    if "error" not in r:                     # a new member of a squad: the squad tools it lacks
+        r["squad_tools"] = _squadgate.squad_tools(_projects.get(r["project"]["name"]))
     return h._json(r, 400 if "error" in r else 200)
 
 
@@ -300,7 +302,8 @@ def _squad_get(h, name, sub):
     if sub == "messages":
         since = _routes._qs(h).get("since", ["0"])[0]
         return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
-                        "messages": _squads.read(name, None, int(since) if since.isdigit() else 0)})
+                        "messages": _squads.read(name, None, int(since) if since.isdigit() else 0),
+                        "working": _squads.working(name)})
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "board":                       # proposals + tickets (also role user)
@@ -309,7 +312,8 @@ def _squad_get(h, name, sub):
                         "tier_models": {t: sorted(k for k, v in tm.items() if v == t) for t in _router.TIERS},
                         "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
-                        "statuses": list(_squadgate.STATUSES), "members": _squads.members(p)})
+                        "statuses": list(_squadgate.STATUSES), "members": _squads.members(p),
+                        "working": _squads.working(name)})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
@@ -354,7 +358,7 @@ def _squad_post(h, name, sub):
     if s is None:
         return h._json({"error": why}, 400)
     _squads.save_settings(name, s)
-    return h._json({"ok": True, "settings": s})
+    return h._json({"ok": True, "settings": s, "squad_tools": _squadgate.squad_tools(_projects.get(name))})
 
 
 @_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)

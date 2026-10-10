@@ -726,6 +726,42 @@ def _create(proj, m, steps):
     return ok
 
 
+def squad_tools(proj, note=True):
+    """A member of a squad-enabled project with a fixed tool list (AGENT_TOOLS)
+    gets the squad tools it lacks (MEMBER_TOOLS, the lead also LEAD_TOOLS);
+    one without a list has every tool and is left alone. Idempotent. `note`:
+    say in the channel that they need a restart -> {member: [added tools]}."""
+    if not proj or not _squads.settings(proj)["enabled"]:
+        return {}
+    added = {}
+    for inst in _instances.load_instances():
+        role = ((proj.get("members") or {}).get(inst["name"]) or {}).get("role")
+        tools = [t.strip() for t in ((inst.get("config") or {}).get("AGENT_TOOLS") or "").split(",") if t.strip()]
+        if not role or not tools or inst.get("template") == "indexer":
+            continue
+        add = [t for t in MEMBER_TOOLS + (LEAD_TOOLS if role == "lead" else ()) if t not in tools]
+        if add:
+            inst["config"]["AGENT_TOOLS"] = ",".join(tools + add)
+            _instances.save_instance(inst)
+            added[inst["name"]] = add
+    if added and note:
+        _squads.post(proj, "manager", ["all"], tools_note(added), kind="note")
+    return added
+
+
+def repair_tools():
+    """At startup: every squad's members get the squad tools they lack (once; logged)."""
+    for p in _projects.load():
+        added = squad_tools(p, note=False)
+        if added:
+            print(f"[migrate] squad {p['name']}: {tools_note(added)}", flush=True)
+
+
+def tools_note(added):
+    return ("Squad tools added to " + "; ".join(f"{n} (+{', '.join(t)})" for n, t in sorted(added.items()))
+            + " — they apply after a restart: Restart members.")
+
+
 def _persona_for(m, steps):
     """A member's proposed persona, created on approval — never over an
     existing one (then that one is used, noted)."""
@@ -778,6 +814,9 @@ def _run(prop, who):
                 _ticket_add(name, t, who)
             steps.append({"step": "tickets", "ok": True, "detail": f"{len(new)} created, {len(prop['tickets']) - len(new)} existed"})
         proj = _projects.get(name)
+        added = squad_tools(proj)                 # existing members with a fixed tool list
+        if added:
+            steps.append({"step": "squad tools", "ok": True, "detail": tools_note(added)})
         if proj and _squads.settings(proj)["enabled"]:
             try:                                  # the new members' IDs (mgr/squadrec.py)
                 _squadrec.ensure(proj, {m["name"]: m["persona"] for m in made})

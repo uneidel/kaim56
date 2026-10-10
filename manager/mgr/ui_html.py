@@ -343,6 +343,7 @@ HTML_TOP = """</head><body>
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
       <div id=sk-board hidden></div>
       <div class=sk-thread id=sk-thread aria-live=polite></div>
+      <div id=sk-working aria-live=polite></div>
       <div id=sk-cards></div>
       <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
@@ -394,6 +395,7 @@ HTML_TOP = """</head><body>
     <div id=sq-board></div>
     <h4 style="margin:16px 0 0">Channel</h4>
     <div id=sq-thread style="max-height:440px;overflow:auto;display:grid;gap:8px;margin:12px 0"></div>
+    <div id=sq-working aria-live=polite></div>
     <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="message the lead, or @member / @all …" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
       <button class="btn btn-secondary" onclick=sqSend()>Send</button></div>
     <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
@@ -889,7 +891,10 @@ HTML_BOTTOM = """
   <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made.
   <b>Squad records</b> (<code>mgr/squadrec.py</code>): a squad ID and per-membership member IDs, assigned once, a list of projects;
   the archive folder holds <code>squad.json</code>, the channel and every wake turn as day-JSONL, proposals and ticket events
-  (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.</p></div>
+  (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.
+  <b>Squad channel</b>: running/queued wake turns show as &#8220;working&#8230; (mm:ss)&#8221; / &#8220;queued&#8221;; a finished turn&#8217;s answer is posted
+  as kind <code>turn</code> to the thread&#8217;s user (wakes nobody, skipped when already posted or failed); a member with a fixed
+  <code>AGENT_TOOLS</code> list gets the squad tools it lacks on joining and at start (applies after Restart members).</p></div>
 
   <div class="card blueprint"><span class=card-title>Code index (repowise)</span>
   <p class=card-body>One microVM of template <code>indexer</code> (<code>agents/indexer</code>, 4 vCPU / 4 GiB, no internet, persistent disk) runs

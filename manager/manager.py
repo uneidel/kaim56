@@ -119,7 +119,7 @@ from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import mail as _mail
 from mgr import skills as _skills            # noqa: F401
-from mgr import squadgate as _squadgate      # noqa: F401
+from mgr import squadgate as _squadgate
 from mgr import squadgit as _squadgit        # noqa: F401
 from mgr import squadkick as _squadkick      # noqa: F401
 from mgr import squadrec as _squadrec
@@ -188,6 +188,7 @@ if __name__ == "__main__":
     _personas.seed_missing()         # new built-in personas join an existing personas.json
     try:
         _squadrec.migrate()          # squad IDs, archive folders, history once; a running member's clone stays put
+        _squadgate.repair_tools()    # squad members with a fixed tool list get the squad tools they lack
     except Exception as e:
         print(f"[migrate] squads: {e!r}", flush=True)
     try:

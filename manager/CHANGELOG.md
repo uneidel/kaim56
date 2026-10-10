@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Squads: "⏳ member is working… (mm:ss)" / "queued" in the chat and Squad panel (`working` in /squad/messages and /squad/board); a finished wake turn's answer lands in the channel as kind `turn` to the thread's user (once, capped 4000, wakes nobody, not for failed turns); members with a fixed AGENT_TOOLS list get the missing squad tools on join and at startup (restart note).
 - Skills: categories (coding/design/devops/data/research/writing/meta/personal/security; guessed, editable, migrated once with backup); security skills reach a guest only with SECURITY_SKILLS=1 or the squad's 'Security skills' — hidden in lists/standard set/catalog/Jev, refused on load and in SKILLS.
 - Squads: squad_catalog lists ≤20 skills matching the repo/goal (standard ones kept), security material only for security goals — the full list tripped Claude's cyber safeguards; a turn answered with a provider API error counts as failed.
 - Claude guest image installs curl — guest-init needs it for the host-folder mounts (/project) and the skills block; Claude members had neither.

@@ -795,6 +795,20 @@ function sqDelivery(m){
     (sent.length?`<div class=text-muted style="font-size:12px">sent to ${escT(sent.join(', '))} · waiting</div>`:'')+
     Object.keys(bad).map(x=>`<div style="font-size:12px;color:var(--color-warn)">not received by ${escT(x)}: ${escT(bad[x])}</div>`).join('');
 }
+/* A squad's wake turns now (mgr/squads.py working): running = working… (elapsed), or queued. */
+function sqWorking(list){
+  const mmss=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
+  return (list||[]).map(w=>`<div class="text-muted sq-work">`+(w.state==='working'
+    ?`⏳ ${escT(w.member)} is working… (${mmss(+w.elapsed||0)})`
+    :`⏸ ${escT(w.member)} queued${w.msg?' (msg #'+(+w.msg)+')':''}`)+'</div>').join('');
+}
+/* a message's text; a member's long turn answer (kind "turn") folds */
+function sqText(m){
+  const t=String(m.text||''), pre='white-space:pre-wrap;word-break:break-word;margin:4px 0';
+  return m.kind==='turn'&&t.length>600
+    ?`<details class=sq-turn><summary>${escT(t.slice(0,280))}…</summary><div style="${pre}">${escT(t)}</div></details>`
+    :`<div style="${pre}">${escT(t)}</div>`;
+}
 function fleetInit(){
   icRestore();
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
@@ -1036,13 +1050,14 @@ async function sqLoad(){
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
   const msgs=d.messages||[], th=document.getElementById('sq-thread');
-  th.innerHTML=msgs.length?msgs.map(m=>`<div style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
+  th.innerHTML=msgs.length?msgs.map(m=>`<div class="${m.kind==='turn'?'sq-tbub':''}" style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
     `<div class=text-muted style="font-size:12px">#${m.id} · ${new Date(m.ts*1000).toLocaleString()} · <b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))}`+
     `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
-    `<div style="white-space:pre-wrap;word-break:break-word;margin:4px 0">${escT(m.text)}</div>`+
+    sqText(m)+
     sqDelivery(m)+
     `</div>`).join(''):'<span class=text-muted>No messages yet. A message goes to the lead, or to @name / @all.</span>';
   th.scrollTop=th.scrollHeight;
+  document.getElementById('sq-working').innerHTML=sqWorking(d.working);
   sqBoard();sqIndex();sqGit();
 }
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
@@ -1429,13 +1444,14 @@ async function skLoad(){
   if(last!==SK_LAST){
     SK_LAST=last; skSeen(name,last);
     const th=document.getElementById('sk-thread');
-    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
+    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.kind==='turn'?' sq-tbub':''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
       `<div class=text-muted style="font-size:12px"><b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))} · ${new Date(m.ts*1000).toLocaleString()}${m.kind!=='post'?' · '+escT(m.kind):''}</div>`+
-      `<div style="white-space:pre-wrap;margin-top:2px">${escT(m.text)}</div>`+
+      sqText(m)+
       sqDelivery(m)+'</div>').join('')
       :'<span class=text-muted>No messages yet.</span>';
     th.scrollTop=th.scrollHeight;
   }
+  document.getElementById('sk-working').innerHTML=sqWorking(d.working);
   if(b.error)return;
   SQB=b;
   await loadWaiting(); if(SK!==name)return;
@@ -1479,7 +1495,12 @@ async function skSend(){
   el.value='';
   if(SK)skLoad(); else {skJob(d.id);loadSquads()}
 }
-setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad()},5000);
+setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();else if(!document.hidden&&location.hash==='#projects'&&SQ)sqWork()},5000);
+/* Projects → Squad: only the working line refreshes (the settings form stays as edited) */
+async function sqWork(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/messages?since=999999999')).json()}catch(e){return}
+  if(!d.error)document.getElementById('sq-working').innerHTML=sqWorking(d.working);
+}
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 /* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */
 let WAIT=[];
