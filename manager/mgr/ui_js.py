@@ -12,6 +12,7 @@ const PERSONAS=__PERSONAS__;
 const SKILLS=__SKILLS__;
 const SK_CATS=__SKCATLIST__;
 const INDEX_HOST=__INDEX_HOST__;   /* the code dashboard's own origin (site INDEX_HOST); '' = no Dashboard link */
+const APPS_HOST=__APPS_HOST__;     /* the apps' own origin (site APPS_HOST); '' = apps under this host */
 const CORNERS='';   // registration corners retired (Ulrich, 2026-09-12)
 const I_EDIT='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>';
 const I_RUN='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>';
@@ -261,7 +262,7 @@ async function loadAppsPanel(){
     const last=!run&&j.step==='failed'?`<div style="font-size:11.5px;color:var(--color-danger,#c0392b)">${escT(j.op)} failed: ${escT(j.error)}</div>`
       :!run&&j.step==='done'?`<div class=text-muted style="font-size:11.5px">${escT(j.op)} done</div>`:'';
     const link=cl.where==='cloud'&&cl.url?`<a href="${esc(cl.url)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`
-      :`<a href="/apps/${encodeURIComponent(a.name)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`;
+      :`<a href="${APPS_HOST?'https://'+APPS_HOST:''}/apps/${encodeURIComponent(a.name)}/" target=_blank rel=noopener>${escT(a.icon||'')} ${escT(a.title||a.name)}</a>`;
     const cfLink=cl.url?` · <a href="${esc(cl.url)}/" target=_blank rel=noopener title="open on Cloudflare (new tab)">${escT(cl.url.replace(/^https:\/\//,''))} ↗</a>`:'';
     const noRen=cl.where==='cloud'?'runs on Cloudflare — restore it first':a.server?'has a server side on celld, which knows it by name':'';
     const edit=run?'':`<div style="display:flex;gap:6px;margin-top:6px">`+

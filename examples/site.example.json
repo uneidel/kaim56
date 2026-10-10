@@ -4,6 +4,8 @@
   "SIGNAL_HOST": "signal-api.example.com",
   "KATFS_HOST": "katfs.example.com",
   "INDEX_HOST": "index.example.com",
+  "_APPS_HOST": "The browser apps' own origin (needs OIDC; Rauthy redirect URI https://<APPS_HOST>/auth/callback). Empty = apps under PUBLIC_HOST as before.",
+  "APPS_HOST": "apps.example.com",
   "GUEST_DNS": "1.1.1.1",
   "_HOSTIF": "Guests' NAT uplink. Empty/omitted = the default-route interface (auto). Set a NIC name only to override; one that does not exist is ignored (logged).",
   "HOSTIF": "",

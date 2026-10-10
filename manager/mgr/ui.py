@@ -156,6 +156,7 @@ def render():
                 .replace("__HOSTIF__", _host.HOSTIF).replace("__POOL__", _netfw.POOL)
                 .replace("__PUBLIC_HOST__", _settings.PUBLIC_HOST)
                 .replace("__INDEX_HOST__", _util.js_json(_settings.INDEX_HOST))
+                .replace("__APPS_HOST__", _util.js_json(_settings.APPS_HOST))
                 .replace("__SIGNAL_HOST__", _settings.SIGNAL_HOST)
                 .replace("__CODE_LINK__",
                          f'<a href="{html.escape(_settings.CODE_URL, quote=True)}" target="_blank" '

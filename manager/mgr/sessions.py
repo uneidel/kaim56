@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Login sessions (security boundary) after an OIDC login: web (cookie) and
-device (Bearer), dash (INDEX_HOST cookie). The token is 32 random bytes handed out once; only its
+device (Bearer), dash (INDEX_HOST cookie), apps (APPS_HOST cookie). The token is 32 random bytes handed out once; only its
 sha256 is stored. Expiry slides with use. The IdP refresh token is kept to
 re-check the user every CHECK_EVERY seconds (mgr/auth.py).
 
@@ -20,7 +20,8 @@ from mgr import paths as _paths
 
 DB = os.path.join(_paths.BASE, "sessions.db")
 TTL = {"web": 30 * 86400, "device": 90 * 86400,   # sliding; the IdP re-check is what revokes
-       "dash": 12 * 3600}                          # code dashboard (INDEX_HOST): short
+       "dash": 12 * 3600,                          # code dashboard (INDEX_HOST): short
+       "apps": 12 * 3600}                          # browser apps (APPS_HOST): short, the IdP re-logs in quietly
 CHECK_EVERY = 900
 _COLS = "id, sub, name, email, role, kind, device_name, refresh, created, expires, last_check, last_use"
 

@@ -17,6 +17,7 @@ import time
 import urllib.request
 
 from mgr import audit as _audit
+from mgr import cloud as _cloud
 from mgr import oidc as _oidc
 from mgr import sessions as _sessions
 from mgr import settings as _settings
@@ -39,16 +40,44 @@ def trusted_hosts():
         except (OSError, subprocess.SubprocessError):
             pass
         _trusted_cache.update(ts=now, hosts={h.lower() for h in hosts})
-    return _trusted_cache["hosts"] - {_settings.INDEX_HOST}    # the dashboard's origin never is
+    return _trusted_cache["hosts"] - {_settings.INDEX_HOST, _settings.APPS_HOST}   # side origins never are
+
+
+# Side origins: hosts that serve one part of the manager on an origin of its
+# own, so their JavaScript never runs with the manager's session. Each has
+# its own login (mgr/routes_auth.py), session kind and host-only cookie, and
+# answers on its own paths only (mgr/httpd._auth_side).
+#   index (INDEX_HOST): the repowise code dashboard (mgr/indexer.py), admins only
+#   apps  (APPS_HOST):  the browser apps /apps/<name>/ and the API they use
+#                       (mgr/cloud.APP_TOKEN_PATHS); admins and role "user"
+SIDE_KIND = {"index": "dash", "apps": "apps"}           # side -> its session kind
+SIDE_COOKIE = {"index": "__Host-kaim56_dash", "apps": "__Host-kaim56_apps"}   # host-only (the prefix forbids Domain=)
+
+
+def side_host_name(side):
+    return {"index": _settings.INDEX_HOST, "apps": _settings.APPS_HOST}.get(side, "")
+
+
+def side_host(headers):
+    """Which side origin this request is for ("index", "apps"), or "" (the manager)."""
+    host = ((headers.get("Host") if headers is not None else "") or "").split(":")[0].strip().lower()
+    for side in SIDE_KIND:
+        if host and host == side_host_name(side):
+            return side
+    return ""
 
 
 def is_index_host(headers):
     """Is this request for the code dashboard's own origin (settings.INDEX_HOST)?"""
-    host = ((headers.get("Host") if headers is not None else "") or "").split(":")[0].strip().lower()
-    return bool(_settings.INDEX_HOST) and host == _settings.INDEX_HOST
+    return side_host(headers) == "index"
 
 
-# On INDEX_HOST nothing but the dashboard and its login (mgr/httpd.py).
+def is_apps_host(headers):
+    """Is this request for the apps' own origin (settings.APPS_HOST)?"""
+    return side_host(headers) == "apps"
+
+
+# On a side host nothing but its own paths and its login (mgr/httpd.py).
 INDEX_AUTH_PATHS = ("/auth/login", "/auth/callback", "/auth/logout")
 
 
@@ -57,21 +86,34 @@ def index_path_allowed(path):
     return p in INDEX_AUTH_PATHS or p.startswith("/indexer/open/") or p == "/indexer/ui" or p.startswith("/indexer/ui/")
 
 
-def origin_allowed(origin, index=False):
+def apps_path_allowed(method, path):
+    """APPS_HOST: the login, the apps (files and _api) and the manager API the
+    apps call — the list an app's Cloudflare token gets (mgr/cloud.py), never
+    settings writes, secrets, terminals or the admin page."""
+    p = path.split("?", 1)[0]
+    return (p in INDEX_AUTH_PATHS or p.startswith("/apps/")
+            or any(p == x or p.startswith(x) for x in _cloud.APP_TOKEN_PATHS.get(method, ())))
+
+
+def side_path_allowed(side, method, path):
+    return apps_path_allowed(method, path) if side == "apps" else index_path_allowed(path)
+
+
+def origin_allowed(origin, side_host=""):
     """CSRF guard for state-changing requests. Browsers send Origin on every
     POST; the app, the desktop client and curl do not (empty = fine). A page
     on another site — or a DNS-rebound name — carries a foreign Origin and is
     refused, so it cannot export a folder into a VM or create an instance.
-    On INDEX_HOST (index=True) only its own Origin passes, none missing."""
+    On a side host (side_host = its name) only its own Origin passes, none missing."""
     o = (origin or "").strip()
     if not o:
-        return not index
+        return not side_host
     try:
         host = (urllib.parse.urlsplit(o).hostname or "").lower()
     except ValueError:
         return False
-    if index:
-        return host == _settings.INDEX_HOST
+    if side_host:
+        return host == side_host
     return bool(host) and host in trusted_hosts()
 
 USER = os.environ.get("MANAGER_USER", "admin")
@@ -131,7 +173,7 @@ def auth_succeeded(key):
 
 # ---- OIDC sessions and roles (mgr/oidc.py, mgr/sessions.py) ----------------
 SID_COOKIE = "kaim56_sid"
-DASH_COOKIE = "__Host-kaim56_dash"      # INDEX_HOST's own, host-only (the prefix forbids Domain=)
+DASH_COOKIE = SIDE_COOKIE["index"]
 BASIC = _oidc.Principal("basic", "basic", "", "admin")   # MANAGER_PASS login, during the migration
 # Reachable without a login while OIDC is on; they rate-limit themselves.
 PUBLIC_PATHS = ("/auth/login", "/auth/callback", "/auth/logout", "/api/auth/device", "/api/auth/device/poll")
@@ -145,18 +187,19 @@ def cookie(header, name):
     return m.value if m else ""
 
 
-def session_principal(token, now=None, dash=False):
+def session_principal(token, now=None, kind=""):
     """The Principal behind a session token, or None. Every CHECK_EVERY
     seconds the IdP is asked again (refresh, rotated token, fresh role); a
     refused refresh or a lost role ends the session. An IdP that is merely
     unreachable does not: the session goes on and is checked again later.
     Without a refresh token (client lacks the refresh flow) there is nothing
     to re-check — the session runs to its TTL; admins can still revoke it.
-    A "dash" session (INDEX_HOST login) is valid there only (dash=True), and
-    only it: no token crosses between the dashboard and the manager."""
+    A side host's session ("dash" on INDEX_HOST, "apps" on APPS_HOST) is valid
+    there only (kind=that kind), and only it: no token crosses between a side
+    origin and the manager (kind="": web and device sessions)."""
     now = int(now or time.time())
     s = _sessions.get(token, now)
-    if s is None or (s["kind"] == "dash") != bool(dash):
+    if s is None or (s["kind"] if s["kind"] in SIDE_KIND.values() else "") != kind:
         return None
     cached = _oidc.Principal(s["sub"], s["name"], s["email"], s["role"])
     if (not s["refresh"] or now - s["last_check"] <= _sessions.CHECK_EVERY

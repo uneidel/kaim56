@@ -8797,6 +8797,138 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(code, 403); self.assertNotIn("__Host-kaim56_dash=", head)
         self.assertEqual([s["kind"] for s in m._sessions.list_all()], ["web"])
 
+    def _apps_login(self, st, code="c-4", nxt="/apps/board/"):
+        """The apps login on APPS_HOST: own redirect_uri, back to the app it was for."""
+        A = "apps.example.com"
+        c, head, _ = self._idx_req(nxt, host=A)
+        q_next = urllib.parse.quote(nxt, safe="")
+        self.assertEqual(c, 302); self.assertIn(f"Location: /auth/login?next={q_next}\r\n", head + "\r\n")
+        c, head, _ = self._idx_req(f"/auth/login?next={q_next}", host=A)
+        self.assertEqual(c, 302)
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(re.search(r"Location: (\S+)", head).group(1)).query))
+        self.assertEqual(q["redirect_uri"], "https://apps.example.com/auth/callback")
+        self.assertIn(f"kaim56_next={nxt};", head)
+        st["codes"][code] = {"challenge": q["code_challenge"], "nonce": q["nonce"], "redirect": q["redirect_uri"]}
+        return self._idx_req(f"/auth/callback?state={q['state']}&code={code}", host=A,
+                             cookie=f"kaim56_login={q['state']}; kaim56_next={nxt}")
+
+    def test_apps_host_isolation(self):
+        """APPS_HOST (the browser apps' own origin): an OIDC login there makes
+        an "apps" session (admin and role user, own redirect_uri and host-only
+        cookie) valid on that host only; manager sessions, Bearer and Basic are
+        not accepted there, nor apps sessions on the manager; there only the
+        apps, the apps' API paths and the login answer; POSTs there are
+        same-origin only, the manager refuses that Origin; the manager sends
+        browser sessions' /apps/ there, while the APK (Basic/Bearer) and cloud
+        app tokens keep working on the manager's host; unset = as before."""
+        m, cl = self.m, self.m._cloud
+        st = self._oidc_env()
+        tmp = tempfile.mkdtemp(prefix="e2e-appshost-")
+        os.makedirs(os.path.join(tmp, "board"))
+        for f, body in (("app.json", '{"title": "Board"}'), ("index.html", "<h1>board</h1>")):
+            with open(os.path.join(tmp, "board", f), "w") as fh:
+                fh.write(body)
+        old = (m._settings.APPS_HOST, m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, cl.CLOUD_FILE, m._auth.PW)
+        m._settings.SITE["APPS_DIR"] = tmp
+        m._settings.load_settings = lambda: {}                  # no celld: the manager serves its copy, _api is 503
+        cl.CLOUD_FILE = os.path.join(tmp, "cloud.json")
+        def undo():
+            (m._settings.APPS_HOST, m._settings.SITE["APPS_DIR"], m._settings.load_settings, cl.CLOUD_FILE, m._auth.PW) = old
+            m._auth._trusted_cache.update(ts=0.0)
+        self.addCleanup(undo)
+        A, M = "apps.example.com", "agents.example.com"
+        _, (_, head, _) = self._oidc_web_login(st)
+        web = re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        W = f"kaim56_sid={web}"
+        # off: the apps stay on the manager's host, the Apps tab links there
+        m._settings.APPS_HOST = ""
+        code, _, body = self._idx_req("/apps/board/", cookie=W, host=M)
+        self.assertEqual((code, body), (200, b"<h1>board</h1>"))
+        self.assertIn("const APPS_HOST=\"\";", m._ui.render())
+        m._settings.APPS_HOST = A
+        self.assertIn("const APPS_HOST=\"apps.example.com\";", m._ui.render())
+        # the login there: an "apps" session in its own host-only cookie, back to the app
+        code, head, body = self._apps_login(st)
+        self.assertEqual(code, 200, body)
+        ck = re.search(r"Set-Cookie: __Host-kaim56_apps=([^;]+);([^\r\n]*)", head)
+        for flag in ("HttpOnly", "Secure", "Path=/", f"Max-Age={m._sessions.TTL['apps']}"):
+            self.assertIn(flag, ck.group(2))
+        self.assertNotIn("Domain", ck.group(2)); self.assertNotIn("kaim56_sid=", head)
+        self.assertIn(b'url=/apps/board/"', body)
+        apps = ck.group(1)
+        self.assertEqual(sorted(s["kind"] for s in m._sessions.list_all()), ["apps", "web"])
+        AP = f"__Host-kaim56_apps={apps}"
+        # on APPS_HOST: the app, its _api, the apps' API paths
+        self.assertEqual(self._idx_req("/apps/board/", cookie=AP, host=A)[2], b"<h1>board</h1>")
+        self.assertEqual(self._idx_req("/apps/board/_api/x", cookie=AP, host=A)[0], 503)       # past auth: no celld
+        self.assertEqual(self._idx_req("/api/instances", cookie=AP, host=A)[0], 200)
+        # nobody else gets in: manager session, Bearer, Basic, nothing
+        m._auth.PW = "s3cret"
+        basic = "Basic " + base64.b64encode(b"admin:s3cret").decode()
+        for kw in ({"cookie": W}, {"cookie": f"__Host-kaim56_apps={web}"}, {"auth": f"Bearer {web}"},
+                   {"auth": f"Bearer {apps}"}, {"auth": basic}, {}):
+            code, head, _ = self._idx_req("/apps/board/", host=A, **kw)
+            self.assertEqual((code, "Location: /auth/login" in head), (302, True), kw)
+            self.assertEqual(self._idx_req("/api/instances", host=A, **kw)[0], 401, kw)   # API: no login redirect
+        self.assertEqual(self._idx_req("/apps/board/_api/x", "POST", auth=basic, origin="https://apps.example.com", host=A)[0], 401)
+        # nothing else answers there, with or without a session
+        for meth, p in (("GET", "/"), ("GET", "/api/auth/me"), ("GET", "/i/a1/"), ("GET", "/katfs/"),
+                        ("GET", "/indexer/ui/"), ("GET", "/api/security"), ("POST", "/api/settings"),
+                        ("POST", "/api/secret-store"), ("POST", "/api/apps/board/delete"), ("POST", "/api/auth/device")):
+            self.assertEqual(self._idx_req(p, meth, cookie=AP, origin="https://apps.example.com", host=A)[0], 404, p)
+        # the apps session is no good on the manager's host
+        self.assertEqual(self._oidc_req("/api/auth/me", cookie=f"kaim56_sid={apps}")[0], 401)
+        self.assertEqual(self._oidc_req("/api/auth/me", bearer=apps)[0], 401)
+        # CSRF: APPS_HOST takes its own Origin only; the manager refuses it
+        for o in ("https://agents.example.com", None, "null"):
+            self.assertEqual(self._idx_req("/apps/board/_api/x", "POST", cookie=AP, origin=o, host=A)[0], 403, o)
+        self.assertEqual(self._idx_req("/apps/board/_api/x", "POST", cookie=AP, origin="https://apps.example.com", host=A)[0], 503)
+        m._auth._trusted_cache.update(ts=0.0)
+        self.assertFalse(m._auth.origin_allowed("https://apps.example.com"))
+        self.assertTrue(m._auth.origin_allowed("https://agents.example.com"))
+        code, _, body = self._idx_req("/api/tasks", "POST", cookie=W, origin="https://apps.example.com", host=M)
+        self.assertEqual((code, b"cross-site" in body), (403, True))
+        # the manager's host: browser sessions go to APPS_HOST, their app POSTs are refused
+        code, head, _ = self._idx_req("/apps/board/x.js?v=2", cookie=W, host=M)
+        self.assertEqual(code, 302); self.assertIn("Location: https://apps.example.com/apps/board/x.js?v=2\r\n", head + "\r\n")
+        code, _, body = self._idx_req("/apps/board/_api/x", "POST", cookie=W, origin="https://agents.example.com", host=M)
+        self.assertEqual((code, b"apps run on" in body), (403, True))
+        # ... the APK (Basic, Bearer device session; also over iroh) keeps the path here
+        self.assertEqual(self._idx_req("/apps/board/", auth=basic, host=M)[:3:2], (200, b"<h1>board</h1>"))
+        h = self._handler("/apps/board/", "127.0.0.1", auth=basic); h.headers["Host"] = M; h.iroh_node = "ab" * 32
+        h.do_GET(); self.assertEqual(self._status(h), 200)
+        self.assertEqual(self._idx_req("/apps/board/_api/x", "POST", auth=basic, host=M)[0], 503)
+        dev = m._sessions.create(m._oidc.Principal("u1", "u", "", "admin"), "device", "")
+        self.assertEqual(self._idx_req("/apps/board/", auth=f"Bearer {dev}", host=M)[0], 200)
+        # ... and a cloud app's token still reaches the apps' API on the manager
+        cl._save({"board": {"where": "cloud", "url": "https://kaim56-board.x", "token_sha": cl._sha("cf-tok-1")}})
+        self.assertEqual(self._idx_req("/api/instances", auth="Bearer cf-tok-1", host=M)[0], 200)
+        cl._save({})
+        m._auth.PW = ""
+        # headers there: framed by itself only, no Referer out; the manager keeps SAMEORIGIN only
+        _, head, _ = self._idx_req("/apps/board/", cookie=AP, host=A)
+        for hd in ("X-Frame-Options: SAMEORIGIN", "Content-Security-Policy: frame-ancestors 'self'; object-src 'none'",
+                   "Referrer-Policy: no-referrer"):
+            self.assertIn(hd, head)
+        _, head, _ = self._idx_req("/api/auth/me", cookie=W, host=M)
+        self.assertNotIn("Referrer-Policy", head); self.assertNotIn("Content-Security-Policy", head)
+        # logout there ends the apps session only
+        code, head, _ = self._idx_req("/auth/logout", cookie=AP, host=A)
+        self.assertIn("__Host-kaim56_apps=;", head)
+        self.assertEqual(sorted(s["kind"] for s in m._sessions.list_all()), ["device", "web"])
+        # role user: an apps session too, with the user's route table
+        st["roles"] = ["kaim56_user"]
+        code, head, _ = self._apps_login(st, "c-5")
+        self.assertEqual(code, 200)
+        U = "__Host-kaim56_apps=" + re.search(r"__Host-kaim56_apps=([^;]+)", head).group(1)
+        self.assertEqual(self._idx_req("/apps/board/", cookie=U, host=A)[0], 200)
+        self.assertEqual(self._idx_req("/api/instances", cookie=U, host=A)[0], 200)
+        self.assertEqual(self._idx_req("/api/settings", cookie=U, host=A)[0], 403)          # an admin route
+        # APPS_HOST off again: the manager's host serves browser sessions as before
+        m._settings.APPS_HOST = ""
+        self.assertEqual(self._idx_req("/apps/board/", cookie=W, host=M)[0], 200)
+        self.assertEqual(self._idx_req("/apps/board/", cookie=AP, host=A)[0], 302)          # no side host: manager login
+
     def test_oidc_off_keeps_basic_auth(self):
         """Without OIDC_* nothing changes: no principal, Basic challenge, the
         /auth routes are 404."""
