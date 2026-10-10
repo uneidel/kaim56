@@ -5,6 +5,21 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.48
+
+- New **Waiting for you** screen (drawer, at the top): everything an agent
+  cannot go on without you — approvals, questions and reviews — grouped by
+  project and squad. Approve or deny (with an optional comment), answer a
+  question by tapping one of its options or typing, approve a review or
+  request changes (a comment is required then).
+- A badge in the drawer and a red dot on the menu button show how many items
+  are waiting; the list refreshes on its own every 30 seconds.
+- Tapping a "Waiting for you" notification opens the screen directly. If
+  someone already decided an item elsewhere (web or another phone), the app
+  says so and refreshes the list.
+- Under the hood: chats and voice moved into their own modules — the app
+  should behave exactly as before.
+
 ## 5.47
 
 - Attaching a document (PDF, DOCX, text) works again — the upload never reached

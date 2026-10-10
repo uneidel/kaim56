@@ -78,6 +78,7 @@ import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.PendingActions
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Shield
@@ -274,7 +275,7 @@ internal fun showAgentNotification(ctx: Context, id: String, title: String, body
     val tap = android.app.PendingIntent.getActivity(
         ctx, id.hashCode(),
         Intent(ctx, MainActivity::class.java)
-            .putExtra("notifLink", link)
+            .putExtra("notifLink", WaitingClient.linkFor(title, link))
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
     val n = NotificationCompat.Builder(ctx, "kaim56_agent")
@@ -359,6 +360,10 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
     }
     // The prototype has three full screens: Chat, Tasks, Settings.
     var screen by remember { mutableStateOf<String?>(null) }
+    // "Waiting for you": the open count for the badges; waitingRefresh moves
+    // when a waiting notification arrives (reloads badge and open screen).
+    var waitingCount by remember { mutableStateOf(0) }
+    var waitingRefresh by remember { mutableStateOf(0) }
     var showAgents by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
@@ -472,6 +477,17 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             if (res == null) { delay(5000); continue }
             nrev = res.rev
             NotifSync.handle(context, prefs, res.items)
+            if (res.items?.any { !it.read && it.title.startsWith(WaitingClient.TITLE_PREFIX) } == true) waitingRefresh++
+        }
+    }
+
+    // Badge count: at start, on a waiting notification, and every 30 s. While
+    // the screen is open it reports the count itself.
+    LaunchedEffect(waitingRefresh, prefs.serverUrl) {
+        while (prefs.serverUrl.isNotBlank()) {
+            if (screen != "waiting")
+                withContext(Dispatchers.IO) { WaitingClient(prefs).open() }?.let { waitingCount = WaitingClient.count(it) }
+            delay(30000)
         }
     }
 
@@ -668,6 +684,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             link == "missions" -> screen = "missions"
             link == "tasks" -> screen = "tasks"
             link == "skills" -> screen = "skills"
+            link == WaitingClient.LINK -> { screen = "waiting"; waitingRefresh++ }
             link.startsWith("chat:") -> { screen = null; session.openTaskChat(link.removePrefix("chat:")) }
         }
     }
@@ -714,6 +731,8 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 onApps = { screen = "apps"; scope.launch { drawerState.close() } },
                 onMissions = { screen = "missions"; scope.launch { drawerState.close() } },
                 onSkills = { screen = "skills"; scope.launch { drawerState.close() } },
+                waitingCount = waitingCount,
+                onWaiting = { screen = "waiting"; scope.launch { drawerState.close() } },
                 onNotifications = { screen = "notifications"; scope.launch { drawerState.close() } },
                 onSettings = { screen = "settings"; scope.launch { drawerState.close() } },
             )
@@ -729,6 +748,9 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 ) {
                     RoundIconButton({ scope.launch { drawerState.open() } }) {
                         Icon(Icons.Filled.Menu, "Chats", Modifier.size(20.dp), tint = Kat.textDim)
+                        // Something waits for a decision: a dot on the menu button.
+                        if (waitingCount > 0) Box(Modifier.align(Alignment.TopEnd).padding(7.dp).size(8.dp)
+                            .clip(RoundedCornerShape(4.dp)).background(Kat.red))
                     }
                     Column(Modifier.weight(1f).padding(start = 4.dp)) {
                         Text(
@@ -1126,6 +1148,13 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
                 enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
             ) {
                 AppsScreen(prefs, onClose = { screen = null }, onStatus = { status = it })
+            }
+
+            AnimatedVisibility(
+                screen == "waiting",
+                enter = slideInHorizontally { it }, exit = slideOutHorizontally { it },
+            ) {
+                WaitingScreen(prefs, waitingRefresh, onClose = { screen = null }, onCount = { waitingCount = it })
             }
 
             AnimatedVisibility(
@@ -1527,6 +1556,8 @@ fun KatDrawer(
     onApps: () -> Unit,
     onMissions: () -> Unit,
     onSkills: () -> Unit,
+    waitingCount: Int,
+    onWaiting: () -> Unit,
     onNotifications: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -1613,6 +1644,7 @@ fun KatDrawer(
         }
         Hairline()
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            DrawerAction("Waiting for you", Icons.Outlined.PendingActions, onWaiting, badge = waitingCount)
             DrawerAction("Tasks", Icons.Outlined.Checklist, onTasks)
             DrawerAction("Missions", Icons.Outlined.Flag, onMissions)
             DrawerAction("Apps", Icons.Outlined.Apps, onApps)
@@ -1628,6 +1660,7 @@ private fun DrawerAction(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
+    badge: Int = 0,
 ) {
     Row(
         Modifier
@@ -1639,13 +1672,15 @@ private fun DrawerAction(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(18.dp), tint = Kat.textDim)
-        Text(label, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium, color = Kat.textDim)
+        Text(label, fontSize = 14.5.sp, fontFamily = Plex, fontWeight = FontWeight.Medium, color = Kat.textDim,
+            modifier = Modifier.weight(1f))
+        if (badge > 0) MiniTag(badge.toString(), Kat.accent, Kat.onAccent)
     }
 }
 
 /** Header of the two full screens: back arrow + title + hairline. */
 @Composable
-private fun ScreenHeader(title: String, onClose: () -> Unit) {
+internal fun ScreenHeader(title: String, onClose: () -> Unit) {
     Column {
         Row(
             Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
@@ -1877,7 +1912,7 @@ private fun NotificationsScreen(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .background(Kat.surface)
                         .border(1.dp, if (unread) Kat.accentText else Kat.hairlineStrong, RoundedCornerShape(14.dp))
-                        .tap { if (n.link.isNotBlank()) { onOpen(n.link); onClose() } }
+                        .tap { WaitingClient.linkFor(n.title, n.link).takeIf { it.isNotBlank() }?.let { onOpen(it); onClose() } }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
