@@ -197,6 +197,9 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-skills>
   <p class=lede>Loaded into context on demand via <code>load_skill("name")</code> · <code>list_skills</code> shows them · central, no rebuild</p>
   <div id=skprops></div>
+  <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><label for=skcat class=text-muted style="font-size:12px">Category</label>
+    <select class=input id=skcat style="width:auto" onchange=renderSkills(true)><option value="">all</option>__SKCATS__</select>
+    <span class=text-muted style="font-size:12px">security skills reach an agent only with SECURITY_SKILLS=1 or its squad&#8217;s &#8220;Security skills&#8221;</span></div>
   <div class=grid3 id=skills></div>
   <div class="panel blueprint" style="margin-top:32px">
     
@@ -370,6 +373,7 @@ HTML_TOP = """</head><body>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-approved> Plan approved (before: only the lead may be woken; approving a squad proposal sets it)</label></div>
+      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-security_skills> Security skills (members may see and load skills of category security &#8212; off: hidden, refused)</label></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-cost_routing> Cost routing (wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude)</label></div>
       <div class=field><label>Autonomy</label><select class=input id=sq-autonomy>
         <option value=trusted>trusted — only merges, PRs, new members and the approval tools need you</option>

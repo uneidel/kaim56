@@ -10,6 +10,7 @@ const SETTINGS=__SETTINGS__;
 const SETTINGS_SCHEMA=__SETTINGS_SCHEMA__;
 const PERSONAS=__PERSONAS__;
 const SKILLS=__SKILLS__;
+const SK_CATS=__SKCATLIST__;
 const INDEX_HOST=__INDEX_HOST__;   /* the code dashboard's own origin (site INDEX_HOST); '' = no Dashboard link */
 const CORNERS='';   // registration corners retired (Ulrich, 2026-09-12)
 const I_EDIT='<svg width=13 height=13 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>';
@@ -1030,7 +1031,7 @@ async function sqLoad(){
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
   document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');
-  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing;
+  document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing; document.getElementById('sq-security_skills').checked=!!st.security_skills;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
@@ -1098,7 +1099,7 @@ async function sqGitFetch(){
   document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
-  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked};
+  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
@@ -1175,7 +1176,7 @@ function sqPick(el){   /* a Jev hint (persona or tier) the user applies */
 }
 function sqSkl(){   /* one datalist for every "+ add" field: the catalog without the standard skills */
   if(document.getElementById('sq-skl'))return;
-  document.body.insertAdjacentHTML('beforeend','<datalist id=sq-skl>'+SKILLS.filter(s=>!s.default).map(s=>`<option value="${esc(s.name)}">${escT(s.description)}</option>`).join('')+'</datalist>');
+  document.body.insertAdjacentHTML('beforeend','<datalist id=sq-skl>'+SKILLS.filter(s=>!s.default&&s.category!=='security').map(s=>`<option value="${esc(s.name)}">${escT(s.description)}</option>`).join('')+'</datalist>');
 }
 function sqNewPersona(n,shown){
   if(!n)return '';
@@ -1656,13 +1657,16 @@ function skStat(n){const st=SKSTATS[n]; if(!st)return '';
     ` · ~${st.load_tokens} tokens per load</span></div>`;}
 function renderSkills(statsOnly){
   if(!statsOnly){loadProposals();loadSkillStats();}
-  document.getElementById('skills').innerHTML=SKILLS.map(s=>
+  const cat=(document.getElementById('skcat')||{}).value||'';
+  document.getElementById('skills').innerHTML=SKILLS.filter(s=>!cat||s.category===cat).map(s=>
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:8px">`+
     `<span class=card-title style="font-size:15px;font-family:var(--font-mono);font-weight:500">${escT(s.name)}</span>`+
     `<button class="tag ${s.default?'tag-accent':'tag-neutral'}" style="border:0;cursor:pointer;font-size:11px" `+
     `title="${s.default?'Standard: every agent is told about it each turn and loads it when it applies — click for on demand':'On demand: agents find it via list_skills — click to make it standard'}" `+
     `onclick="skDefault('${esc(s.name)}',${!s.default})">${s.default?'standard':'on demand'}</button>`+
+    `<select class=input style="width:auto;font-size:11px;padding:1px 4px;min-height:0" aria-label="Category of ${esc(s.name)}" onchange="skCategory('${esc(s.name)}',this.value)">`+
+    SK_CATS.map(c=>`<option${c===s.category?' selected':''}>${c}</option>`).join('')+`</select>`+
     `<span style="margin-left:auto;display:flex;gap:2px">`+
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px" title=Edit onclick="editSkill('${esc(s.name)}')">${I_EDIT}</button>`+
     `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px;color:var(--color-neutral-600)" title=Delete onclick="delSkill('${esc(s.name)}')">${I_DEL}</button>`+
@@ -1683,6 +1687,11 @@ function saveSkill(){
   if(!name)return alert('Name?');
   fetch('/api/skills',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description,content})})
     .then(()=>location.reload());
+}
+async function skCategory(n,cat){
+  const d=await (await fetch('/api/skills/'+encodeURIComponent(n)+'/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({category:cat})})).json();
+  if(/unknown|must be/.test(d.msg||''))return alert(d.msg);
+  const s=SKILLS.find(x=>x.name===n); if(s)s.category=cat; renderSkills(true);
 }
 async function skDefault(n,on){
   const d=await (await fetch('/api/skills/'+encodeURIComponent(n)+'/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on})})).json();

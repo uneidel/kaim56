@@ -363,8 +363,10 @@ def _set_config_key(name, key, val):
         return f"error: key '{key}' not allowed"
     if key == "MCP_SERVERS" and mcp_servers_error(val):
         return "error: " + mcp_servers_error(val)
-    if key == "SKILLS" and _skills.names_error(val):
-        return "error: " + _skills.names_error(val)
+    if key == "SKILLS" and _skills.names_error(val, _skills.security_allowed(inst)):
+        return "error: " + _skills.names_error(val, _skills.security_allowed(inst))
+    if key == "SECURITY_SKILLS" and val not in ("", None, "0", "1"):
+        return "error: SECURITY_SKILLS must be 1 (security skills allowed), 0 or empty"
     if key == "BUDGET_TOKENS" and val not in ("", None) and not re.fullmatch(r"\d{1,12}", str(val)):
         return "error: BUDGET_TOKENS must be a whole number of tokens (0 = no limit)"
     if key == "MODEL_ROUTER" and val not in ("", None) and not re.fullmatch(r"[a-z0-9_-]{1,32}", str(val)):

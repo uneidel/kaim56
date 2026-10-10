@@ -355,14 +355,18 @@ def t_edit_task(id, message="", schedule=""):
         return f"Error: {e!r}"
 
 
-def t_list_skills(query=""):
+def t_list_skills(query="", category=""):
     """List available expert skills. Without a query: names only (the catalog
     has ~70 entries; the full descriptions cost ~2.5k tokens per call). With a
     query: name + description of the matching ones."""
     try:
-        arr = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(), "/api/skills?meta=1"))
+        arr = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(), "/api/skills?meta=1"
+                                             + (f"&category={urllib.parse.quote(category)}" if category else "")))
     except Exception as e:
         return f"Error: {e!r}"
+    if category == "security" and not arr:
+        return ("Security skills are not enabled for this instance "
+                "(operator: SECURITY_SKILLS=1, or the squad's 'Security skills').")
     if not arr:
         return "No skills available."
     q = (query or "").strip().lower()

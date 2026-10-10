@@ -39,7 +39,8 @@ from mgr import squadrec as _squadrec
 from mgr import store as _store
 
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
-DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing": False, "max_wakes_per_hour": 20,
+DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing": False, "security_skills": False,
+            "max_wakes_per_hour": 20,
             "daily_token_budget": 2_000_000, "max_depth": 3,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
@@ -108,7 +109,7 @@ def settings(proj):
 def normalize_settings(body, old=None):
     """(settings, '') or (None, why). Missing keys keep their old value."""
     s = settings({"squad": old or {}})
-    for k in ("enabled", "approved", "paused", "cost_routing"):
+    for k in ("enabled", "approved", "paused", "cost_routing", "security_skills"):
         if k in body:
             s[k] = bool(body[k])
     for k, (lo, hi) in LIMITS.items():

@@ -130,14 +130,14 @@ def _desc(text):
     return re.sub(r"\s+", " ", str(text or "")).strip()[:_decision.DESC_MAX]
 
 
-def llm_suggest(purpose, context, be):
+def llm_suggest(purpose, context, be, allow_security=False):
     """The suggestion from an LLM decision backend (mgr/decision.py): ONE
     request with the full persona and skill catalogs (no word pre-filter, no
     16-hypothesis limit), the tiers, the purpose and the context. Every name
     is checked against the catalogs there; raises on failure."""
     pers = {p["name"]: _desc(p.get("description") or p.get("prompt", "")) for p in _personas.load_personas() if p.get("name")}
     sks = {s["name"]: _desc(s.get("description")) for s in _skills.unique(_skills.load_skills())
-           if s.get("name") and not s.get("default")}
+           if s.get("name") and not s.get("default") and (allow_security or _skills.category(s) != "security")}
     have = set(_router.load()["tiers"].values())
     tiers = {t: TIER_TEXT.get(t, t) for t in _router.TIERS if t in have or not have}
     qs = {"persona": {"type": "choice", "instructions": "Which persona should this team member get?", "criteria": pers},
@@ -157,7 +157,7 @@ def llm_suggest(purpose, context, be):
             "note": f"{be}: {len(pers)} personas, {len(sks)} skills, {len(tiers)} tiers in one request"}
 
 
-def suggest(purpose, context=""):
+def suggest(purpose, context="", allow_security=False):
     """{persona, skills, tier, model, model_key, classes, ms, note, backend}
     for a purpose. `context` (the squad goal, the repo profile's keywords —
     mgr/repoprofile.py) goes into the premise after the purpose, within the
@@ -171,23 +171,24 @@ def suggest(purpose, context=""):
     be, fell = _decision.backend(), ""
     if be != "jev":
         try:
-            return llm_suggest(purpose, context[:4000], be)
+            return llm_suggest(purpose, context[:4000], be, allow_security)
         except Exception as e:
             fell = f"{be} failed ({_decision.safe_err(e)}) — Jev used. "
             _decision._log_fallback(be, e)
-    out = _jev_suggest(purpose, context)
+    out = _jev_suggest(purpose, context, allow_security)
     out["note"] = fell + out["note"]
     return out
 
 
-def _jev_suggest(purpose, context):
+def _jev_suggest(purpose, context, allow_security=False):
     premise = (purpose + " Context: " + context)[:PURPOSE_MAX] if context else purpose
     words = purpose + " " + context
     if not _router.jev_url():
         return empty("Jev is not configured (JEV_URL in Settings)")
     pers = _prefilter([p for p in _personas.load_personas() if p.get("name")],
                       lambda p: p["name"] + " " + (p.get("description") or p.get("prompt", "")[:400]), words, MAX_PERSONAS)
-    sks = _prefilter([s for s in _skills.unique(_skills.load_skills()) if s.get("name") and not s.get("default")],
+    sks = _prefilter([s for s in _skills.unique(_skills.load_skills()) if s.get("name") and not s.get("default")
+                      and (allow_security or _skills.category(s) != "security")],
                      lambda s: s["name"] + " " + s.get("description", ""), words, MAX_SKILLS)
     policy = _router.load()["policies"].get("default") or _router.DEFAULT_POLICY
     qs = [(q, c, h) for q, classes in policy["questions"].items() for c, h in classes.items()]
