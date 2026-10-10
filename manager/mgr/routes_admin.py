@@ -304,7 +304,7 @@ def _squad_get(h, name, sub):
         since = _routes._qs(h).get("since", ["0"])[0]
         return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
                         "messages": _squads.read(name, None, int(since) if since.isdigit() else 0),
-                        "working": _squads.working(name)})
+                        "working": _squads.working(name), "queued": _squads.queue_info(name)})
     if sub == "notes":                       # ?msg=<id>: my notes + everybody's sent ones (also role user)
         mid = _routes._qs(h).get("msg", [""])[0]
         return h._json({"notes": _squadnotes.notes(name, "user:" + _who(h), int(mid) if mid.isdigit() else None)})

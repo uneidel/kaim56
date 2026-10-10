@@ -4598,6 +4598,43 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             sk.SKILLS_FILE, m._guests.instance_by_ip, m._projects.memberships = old
 
+    def test_squad_rate_limited_wakes_are_queued_and_delivered_later(self):
+        """A wake held back by the hourly limit is stored as queued (not lost),
+        shows in queue_info, and the idle worker delivers it in order once the
+        limit allows; another reason ends the wait. Old default 20 -> 60."""
+        woke, tasks, undo = self._squad_env()
+        m = self.m
+        sq = m._squads
+        p = lambda: m._projects.get("sq")
+        try:
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 1})
+            a, _ = sq.post(p(), "user:ulrich", ["b"], "one")
+            b, _ = sq.post(p(), "user:ulrich", ["b"], "two")
+            c, _ = sq.post(p(), "user:ulrich", ["d"], "three")
+            self.assertEqual((a["queued"], b["queued"], c["queued"]), (False, True, True))
+            self.assertTrue(b["blocked"].startswith("rate:"))
+            self.assertEqual(sq.queue_info("sq")["count"], 2)
+            self.assertEqual(sq.deliver_queued(), 0)                              # still full
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10})
+            n0 = len(woke)
+            self.assertEqual(sq.deliver_queued(), 2)
+            self.assertEqual([w[0] for w in woke[n0:]], ["b", "d"])               # in order
+            got = {x["id"]: x for x in sq.read("sq")}
+            self.assertEqual((got[b["id"]]["queued"], got[b["id"]]["blocked"], got[b["id"]]["delivered"]), (False, "", ["b"]))
+            self.assertEqual(sq.queue_info("sq")["count"], 0)
+            # another reason ends the wait
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 0})
+            d, _ = sq.post(p(), "user:ulrich", ["b"], "four")
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10, "enabled": False})
+            self.assertEqual(sq.deliver_queued(), 0)
+            self.assertEqual({x["id"]: x for x in sq.read("sq")}[d["id"]]["blocked"], "squad disabled")
+            # migration of the old default
+            m._projects.set_squad("sq", {**sq.settings(p()), "enabled": True, "max_wakes_per_hour": 20})
+            self.assertEqual(sq.migrate_wakes_default(), 1)
+            self.assertEqual(sq.settings(p())["max_wakes_per_hour"], 60)
+        finally:
+            undo()
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason
@@ -4817,7 +4854,7 @@ class ManagerFunctions(unittest.TestCase):
         L = "127.0.0.1"
         try:
             st, s = self._sq("/api/projects/sq/squad", L)
-            self.assertEqual((st, s["settings"]["enabled"], s["settings"]["max_wakes_per_hour"]), (200, True, 20))
+            self.assertEqual((st, s["settings"]["enabled"], s["settings"]["max_wakes_per_hour"]), (200, True, 60))
             self.assertEqual(self._sq("/api/projects/sq/squad", L, {"max_depth": "x"})[0], 400)
             st, s = self._sq("/api/projects/sq/squad", L, {"paused": True, "max_depth": 5})
             self.assertEqual((st, s["settings"]["paused"], s["settings"]["max_depth"], s["settings"]["enabled"]), (200, True, 5, True))

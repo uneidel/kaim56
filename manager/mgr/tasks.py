@@ -669,6 +669,10 @@ def _task_worker():
             except Exception as e:
                 _util._wlog(f"image-sweep failed: {e!r}")
             try:
+                _squads.deliver_queued()   # rate/budget-held squad wakes, once there is room
+            except Exception as e:
+                _util._wlog(f"squad-queue failed: {e!r}")
+            try:
                 _indexer.idle_sweep()      # the code indexer stops after 30 min unused
             except Exception as e:
                 _util._wlog(f"indexer-idle failed: {e!r}")

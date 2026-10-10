@@ -790,6 +790,7 @@ function icRestore(){const s=icOpenSet();
 /* How a squad message reached its recipients: queued (sent), the wake turn ran
    (received), or it failed (VM down, no web bridge, timeout) — with the reason. */
 function sqDelivery(m){
+  if(m.queued)return `<div class=text-muted style="font-size:12px">⏸ waiting (${escT(m.blocked||'limit')}) — delivered automatically</div>`;
   if(m.blocked)return `<div style="font-size:12px;color:var(--color-warn)">not delivered: ${escT(m.blocked)}</div>`;
   const got=m.received||[], bad=m.failed||{}, sent=(m.delivered||[]).filter(x=>!got.includes(x)&&!(x in bad));
   return (got.length?`<div class=text-muted style="font-size:12px">received by ${escT(got.join(', '))}</div>`:'')+
@@ -802,6 +803,13 @@ function sqWorking(list){
   return (list||[]).map(w=>`<div class="text-muted sq-work">`+(w.state==='working'
     ?`⏳ ${escT(w.member)} is working… (${mmss(+w.elapsed||0)})`
     :`⏸ ${escT(w.member)} queued${w.msg?' (msg #'+(+w.msg)+')':''}`)+'</div>').join('');
+}
+/* Wakes held back by the squad's hourly limit / budget / pause: they go out by themselves. */
+function sqQueued(q){
+  if(!q||!q.count)return '';
+  const mins=q.next_at?Math.max(1,Math.round((q.next_at*1000-Date.now())/60000)):0;
+  return `<div class="text-muted sq-work">⏸ wake limit reached — ${+q.count} message${q.count===1?'':'s'} waiting`+
+    (mins?`, next delivery in ~${mins} min`:'')+' (raise "Max wakes per hour" in the squad settings to go faster)</div>';
 }
 /* a message's text; a member's long turn answer (kind "turn") folds. Turn answers and long member
    messages are annotatable (class sq-ann): select text, comment, send the notes to the lead (mgr/squadnotes.py) */
@@ -1208,7 +1216,7 @@ async function sqLoad(){
     sqDelivery(m)+
     `</div>`).join(''):'<span class=text-muted>No messages yet. A message goes to the lead, or to @name / @all.</span>';
   th.scrollTop=th.scrollHeight; sqNotesLoad()}
-  document.getElementById('sq-working').innerHTML=sqWorking(d.working);
+  document.getElementById('sq-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
   sqBoard();sqIndex();sqGit();
 }
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
@@ -1646,7 +1654,7 @@ async function skLoad(){
       :'<span class=text-muted>No messages yet.</span>';
     th.scrollTop=th.scrollHeight; sqNotesLoad();
   }
-  document.getElementById('sk-working').innerHTML=sqWorking(d.working);
+  document.getElementById('sk-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
   if(b.error)return;
   SQB=b;
   await loadWaiting(); if(SK!==name)return;
@@ -1694,7 +1702,7 @@ setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();els
 /* Projects → Squad: only the working line refreshes (the settings form stays as edited) */
 async function sqWork(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/messages?since=999999999')).json()}catch(e){return}
-  if(!d.error)document.getElementById('sq-working').innerHTML=sqWorking(d.working);
+  if(!d.error)document.getElementById('sq-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 /* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */

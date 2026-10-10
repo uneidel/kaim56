@@ -41,7 +41,7 @@ from mgr import store as _store
 
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
 DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing": False, "security_skills": False,
-            "max_wakes_per_hour": 20,
+            "max_wakes_per_hour": 60,
             "daily_token_budget": 2_000_000, "max_depth": 3,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
@@ -54,7 +54,7 @@ KEEP = 500                      # messages kept per project
 ASK_TTL = 3600                  # an unanswered ask expires after this
 _MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,63})", re.I)
 _lock = threading.Lock()        # guard check + insert: the hourly wake count stays honest
-_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome")
+_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome", "queued")
 
 
 def _conn():
@@ -69,10 +69,11 @@ def _conn():
     c.execute("""CREATE TABLE IF NOT EXISTS squad_note(            -- the operator's feedback (mgr/squadnotes.py)
         id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, msg_id INTEGER, quote TEXT, prefix TEXT, suffix TEXT,
         comment TEXT, by TEXT, created INTEGER, status TEXT, sent_msg_id INTEGER)""")
-    try:                    # per member: "ok" or the reason the wake turn failed
-        c.execute("ALTER TABLE squad_msg ADD COLUMN outcome TEXT")
-    except sqlite3.OperationalError:
-        pass                # already there
+    for col in ("outcome", "queued"):   # outcome: per member "ok" or why the turn failed;
+        try:                            # queued: a rate/budget-blocked wake waiting to be delivered
+            c.execute(f"ALTER TABLE squad_msg ADD COLUMN {col} TEXT")
+        except sqlite3.OperationalError:
+            pass                        # already there
     return c
 
 
@@ -90,13 +91,14 @@ def _out(row):
     r = dict(zip(_COLS, row))
     woke = json.loads(r.pop("woke") or "{}")
     outcome = json.loads(r.pop("outcome") or "{}")
+    queued = bool(r.pop("queued"))
     return {"id": r["id"], "ts": r["ts"], "project": r["project"], "from": r["sender"],
             "to": json.loads(r.pop("rcpt") or "[]"), "text": r["text"], "reply_to": r["reply_to"],
             "kind": r["kind"], "depth": r["depth"], "delivered": sorted(woke), "blocked": r["blocked"] or "",
             # "delivered" = a wake turn was queued; "received" = that turn ran;
             # "failed" = it did not reach the member (VM down, no web bridge, timeout)
             "received": sorted(m for m, v in outcome.items() if v == "ok"),
-            "failed": {m: v for m, v in outcome.items() if v != "ok"}}
+            "failed": {m: v for m, v in outcome.items() if v != "ok"}, "queued": queued}
 
 
 def _get(mid):
@@ -332,22 +334,93 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
             c.execute("DELETE FROM squad_msg WHERE project=? AND id NOT IN "
                       "(SELECT id FROM squad_msg WHERE project=? ORDER BY id DESC LIMIT ?)",
                       (proj["name"], proj["name"], KEEP))
-        woke = {}
-        rec = record(proj)
+        if targets and blocked.startswith(_WAIT_REASONS):     # not lost: delivered once there is room again
+            with _db() as c:
+                c.execute("UPDATE squad_msg SET queued=? WHERE id=?",
+                          (json.dumps({"targets": targets, "level": level or 0}), mid))
         if targets and not blocked:
-            for m in targets:
-                hint = (hints or {}).get(m)
-                msg = _frame(proj["name"], sender, mid, text + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
-                             _squadrec.member_id(rec, m))
-                try:
-                    woke[m] = wake(m, msg, proj["name"], int(depth), mid, **({"level": level} if level else {}))
-                except Exception as e:           # one failed wake must not hide the others
-                    blocked = f"wake {m} failed: {e!r}"[:300]
+            woke, blocked = _deliver(proj, mid, sender, text, kind, targets, depth, level, hints)
             with _db() as c:
                 c.execute("UPDATE squad_msg SET woke=?, blocked=? WHERE id=?", (json.dumps(woke), blocked, mid))
     out = _get(mid)
     _squadrec.log_channel(proj["name"], out)
     return out, ""
+
+
+def _deliver(proj, mid, sender, text, kind, targets, depth, level=0, hints=None):
+    """Wake each target with the framed message -> (woke, error)."""
+    woke, err, rec = {}, "", record(proj)
+    for m in targets:
+        hint = (hints or {}).get(m)
+        msg = _frame(proj["name"], sender, mid, text + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
+                     _squadrec.member_id(rec, m))
+        try:
+            woke[m] = wake(m, msg, proj["name"], int(depth), mid, **({"level": level} if level else {}))
+        except Exception as e:           # one failed wake must not hide the others
+            err = f"wake {m} failed: {e!r}"[:300]
+    return woke, err
+
+
+# Reasons a wake waits for instead of being dropped: the hourly rate, the daily
+# budget, a paused squad. They pass with time (or the operator's Resume / a
+# higher limit), and the message is delivered then (deliver_queued).
+_WAIT_REASONS = ("rate:", "budget:", "squad paused")
+
+
+def deliver_queued(now=None):
+    """Idle worker: deliver queued wakes in order while each squad's guard lets
+    them through; a squad whose next one still waits keeps the rest waiting
+    (order). Another reason (disabled, depth …) ends the wait with that reason."""
+    now = int(now or time.time())
+    with _db() as c:
+        rows = c.execute(f"SELECT {','.join(_COLS)} FROM squad_msg WHERE queued IS NOT NULL AND queued<>'' "
+                         "ORDER BY id").fetchall()
+    done, stuck = 0, set()
+    for row in rows:
+        r = dict(zip(_COLS, row))
+        if r["project"] in stuck:
+            continue
+        proj, q = _projects.get(r["project"]), json.loads(r["queued"] or "{}")
+        targets = q.get("targets") or []
+        with _lock:
+            why = _guard(proj, targets, r["depth"], now) if proj and targets else "project gone"
+            if why.startswith(_WAIT_REASONS):
+                with _db() as c:
+                    c.execute("UPDATE squad_msg SET blocked=? WHERE id=?", (why, r["id"]))
+                stuck.add(r["project"])
+                continue
+            woke, err = ({}, why) if why else _deliver(proj, r["id"], r["sender"], r["text"], r["kind"], targets,
+                                                       r["depth"], q.get("level") or 0)
+            with _db() as c:
+                c.execute("UPDATE squad_msg SET woke=?, blocked=?, queued=NULL WHERE id=?", (json.dumps(woke), err, r["id"]))
+        done += 0 if why else 1
+    return done
+
+
+def queue_info(project, now=None):
+    """{count, next_at}: queued wakes of a project and when the hourly window
+    frees the next slot (0 when not rate-limited)."""
+    now = int(now or time.time())
+    with _db() as c:
+        n = c.execute("SELECT COUNT(*) FROM squad_msg WHERE project=? AND queued IS NOT NULL AND queued<>''",
+                      (project,)).fetchone()[0]
+        old = c.execute("SELECT MIN(ts) FROM squad_msg WHERE project=? AND ts>? AND woke<>'{}'",
+                        (project, now - 3600)).fetchone()[0]
+    return {"count": n, "next_at": (old + 3600) if (n and old) else 0}
+
+
+OLD_WAKES_DEFAULT = 20
+
+
+def migrate_wakes_default():
+    """Squads saved with the old default of 20 wakes an hour get the new one (60)."""
+    n = 0
+    for p in _projects.load():
+        st = p.get("squad") or {}
+        if st.get("max_wakes_per_hour") == OLD_WAKES_DEFAULT:
+            _projects.set_squad(p["name"], {**settings(p), "max_wakes_per_hour": DEFAULTS["max_wakes_per_hour"]})
+            n += 1
+    return n
 
 
 def wake_result(msg_id, member, ok, result):
