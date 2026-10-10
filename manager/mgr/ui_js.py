@@ -1287,7 +1287,8 @@ function sqCard(p){
     body+`<div class=sq-foot><input class=input data-k=note placeholder="Note to the lead (required for Request changes)" aria-label="note to the lead">`+
     `<button class="btn btn-secondary" onclick="sqDecide('${id}',false)">Reject</button>`+
     (p.kind!=='merge'?`<button class="btn btn-secondary" onclick="sqDecide('${id}',false,true)" title="the note and your edits go to the lead; it sends a new version">Request changes</button>`:'')+
-    `<button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div></div>`;
+    `<button class="btn btn-primary" onclick="sqDecide('${id}',true)">Approve</button></div>`+
+    `<div class=sq-result role=status aria-live=polite style="font-size:12.5px;margin-top:6px"></div></div>`;
 }
 function sqDone(p){
   const bad=(p.steps||[]).some(s=>!s.ok);
@@ -1298,10 +1299,11 @@ function sqDone(p){
     (bad?`<button class="btn btn-ghost btn-sm" onclick="sqDecide('${esc(p.id)}',true)">Retry the failed steps</button>`:'')+'</div>';
 }
 function sqCollect(p,c){
-  const v=(r,k)=>r.querySelector('[data-k='+k+']').value, out={};
+  const v=(r,k)=>{const e=r.querySelector('[data-k='+k+']');return e?e.value:''}, out={};
   const list=x=>x.split(',').map(s=>s.trim()).filter(Boolean);
   out.members=[...c.querySelectorAll('[data-m]')].map(r=>{
     const b=p.members.find(m=>m.name===r.dataset.m);
+    if(!b)return null;
     if(b.existing)return {...b};
     const [tier,model]=(v(r,'model')||'|').split('|'), t=r.querySelector('[data-k=template]:checked');
     const o={...b,role:v(r,'role'),persona:v(r,'persona'),skills:[...r.querySelectorAll('.sq-chip')].map(x=>x.dataset.s),
@@ -1312,11 +1314,11 @@ function sqCollect(p,c){
       o.persona=o.new_persona.name;
     }
     return o;
-  });
+  }).filter(Boolean);
   if(p.kind==='squad'){
     out.goal=v(c,'goal');
     out.tickets=[...c.querySelectorAll('[data-t]')].map(r=>({key:r.dataset.t,title:v(r,'title'),description:v(r,'desc'),assignee:v(r,'assignee'),depends_on:list(v(r,'deps'))}));
-    out.budget_tokens_per_day=+c.querySelector('[data-k=budget]').value;
+    out.budget_tokens_per_day=+(v(c,'budget')||0)||p.budget_tokens_per_day;
   }
   return out;
 }
@@ -1343,16 +1345,34 @@ async function sqBoard(){
     :'<span class=text-muted style="font-size:12.5px">No tickets yet.</span>';
 }
 async function sqDecide(id,ok,changes){
-  const c=document.getElementById('sqp-'+id), p=(SQB.proposals||[]).find(x=>x.id===id), sk=location.hash==='#squads';
-  const note=c?c.querySelector('[data-k=note]'):null;
-  if(changes&&note&&!note.value.trim()){document.getElementById(sk?'sk-msg':'sqmsg').textContent='Request changes: write in the note what should change.';note.focus();return}
-  if(!ok&&!changes&&!confirm('Reject this proposal? The note goes to the lead.'))return;
-  const body={id,approve:ok,changes:!!changes,note:note?note.value:''};
-  if((ok||changes)&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent((p&&p.project)||sqName())+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
-  /* the Squads page shows the same card */
-  document.getElementById(sk?'sk-msg':'sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Projects → Squad':' ✓'));
-  if(!d.error){if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}}
+  /* Approve / Reject / Request changes. The buttons are locked while the manager works (an approval
+     creates the members' VMs — that can take a minute) and the outcome or any error is shown IN the
+     card: before, an error inside the browser stopped it silently ("nothing happens"). */
+  const c=document.getElementById('sqp-'+id), sk=location.hash==='#squads';
+  const out=c&&c.querySelector('.sq-result'), btns=c?[...c.querySelectorAll('button')]:[];
+  const say=(t,bad)=>{if(out){out.textContent=t;out.style.color=bad?'var(--color-warn)':''}
+    const g=document.getElementById(sk?'sk-msg':'sqmsg'); if(g)g.textContent=t;};
+  try{
+    const p=(SQB.proposals||[]).find(x=>x.id===id);
+    const note=c?c.querySelector('[data-k=note]'):null;
+    if(changes&&note&&!note.value.trim()){say('Request changes: write in the note what should change.',true);note.focus();return}
+    if(!ok&&!changes&&!confirm('Reject this proposal? The note goes to the lead.'))return;
+    const body={id,approve:ok,changes:!!changes,note:note?note.value:''};
+    if((ok||changes)&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
+    const proj=(p&&p.project)||sqName();
+    if(!proj){say('⚠️ no project selected — reload the page and pick the squad again.',true);return}
+    btns.forEach(b=>b.disabled=true);
+    say(ok?'Approving… (creating the members can take a minute)':changes?'Sending to the lead…':'Rejecting…');
+    let d={};
+    try{const r=await fetch('/api/projects/'+encodeURIComponent(proj)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      try{d=await r.json()}catch(e){d={error:'HTTP '+r.status}}
+      if(!r.ok&&!d.error)d.error='HTTP '+r.status;}
+    catch(e){d={error:'manager not reachable'}}
+    if(d.error){btns.forEach(b=>b.disabled=false);say('⚠️ '+d.error,true);return}
+    const bad=(d.steps||[]).filter(s=>!s.ok);
+    say(d.status+(bad.length?' — failed: '+bad.map(s=>s.step+': '+s.detail).join('; '):' ✓'),bad.length>0);
+    if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}
+  }catch(e){btns.forEach(b=>b.disabled=false);say('⚠️ '+(e&&e.message||e)+' — nothing was sent',true)}
 }
 async function sqTicket(id,change){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
