@@ -1499,6 +1499,72 @@ class AgentLogic(unittest.TestCase):
             (a._config.OR_MODEL, a._config.OR_URL, a._config.LLM_NAME, a._config.LLM_KEY_SECRET,
              a._config.LLM_BACKEND, a._config.OR_KEY) = old
 
+    def test_llm_async_job_mode_and_max_tokens(self):
+        """LLM_ASYNC=1 (proxy mode): or_chat submits a manager job and polls it
+        with short requests instead of holding one open; an upstream error in
+        the result is the same error message as in sync mode; the stream call
+        emits the job's text at once; LLM_MAX_TOKENS rides in every body;
+        without the key proxy the job mode stays off."""
+        import http.server
+        a = self.a
+        log, polls = [], {}
+
+        class M(http.server.BaseHTTPRequestHandler):
+            def _out(self, code, obj):
+                out = json.dumps(obj).encode()
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                log.append(("POST", self.path, body))
+                jid = "bad" if body["messages"][-1]["content"] == "fail" else f"j{len(log)}"
+                polls[jid] = 0
+                self._out(202, {"job": jid})
+
+            def do_GET(self):
+                log.append(("GET", self.path, None))
+                jid = self.path.rsplit("/", 1)[-1]
+                polls[jid] += 1
+                if polls[jid] < 3:
+                    return self._out(200, {"status": "running"})
+                if jid == "bad":
+                    return self._out(400, {"error": {"message": "context too long"}})
+                self._out(200, {"choices": [{"message": {"role": "assistant", "content": "done!",
+                                                         "reasoning": "thought"}}],
+                                "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), M)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (a._config.LLM_ASYNC, a._config.LLM_MAX_TOKENS, a._config.LLM_BACKEND, a._llm.LLM_POLL_SEC,
+               a._mgrclient._manager_base)
+        os.environ["KEY_PROXY"] = "1"
+        try:
+            a._config.LLM_ASYNC, a._config.LLM_MAX_TOKENS, a._config.LLM_BACKEND = True, 777, "openrouter"
+            a._llm.LLM_POLL_SEC = 0.01
+            a._mgrclient._manager_base = lambda: f"http://127.0.0.1:{srv.server_address[1]}"
+            msg = a._llm.or_chat([{"role": "user", "content": "hi"}], [])
+            self.assertEqual(msg["content"], "done!")
+            self.assertEqual(log[0][:2], ("POST", "/api/llm/openrouter/jobs"))
+            self.assertEqual(log[0][2]["max_tokens"], 777)
+            self.assertEqual([x[1] for x in log[1:]], ["/api/llm/jobs/j1"] * 3)       # short polls until done
+            msg = a._llm.or_chat([{"role": "user", "content": "fail"}], [])
+            self.assertIn("HTTP 400", msg["content"]); self.assertIn("context too long", msg["content"])
+            toks = []
+            msg = a._llm.or_chat_stream([{"role": "user", "content": "hi"}], [], toks.append)
+            self.assertEqual(msg["content"], "done!")
+            self.assertEqual("".join(toks), a._config.THINK_START + "thought" + a._config.THINK_END + "done!")
+            self.assertNotIn("stream", log[-4][2])
+            os.environ.pop("KEY_PROXY")                     # no manager in the path: no job mode
+            self.assertFalse(a._llm._async_on())
+        finally:
+            os.environ.pop("KEY_PROXY", None)
+            srv.shutdown(); srv.server_close()
+            (a._config.LLM_ASYNC, a._config.LLM_MAX_TOKENS, a._config.LLM_BACKEND, a._llm.LLM_POLL_SEC,
+             a._mgrclient._manager_base) = old
+
     def test_key_proxy_off_keeps_direct_url(self):
         """Without KEY_PROXY everything stays as before: direct backend URL."""
         a = self.a
@@ -7804,6 +7870,164 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             (m._guests.instance_by_ip, m._settings.load_settings, m._router.route, lp.urllib.request.urlopen,
              m._store.usage_add, lp._guard_check) = old
+
+    # ---- key proxy: max_tokens cap + job mode (2026-10-10) ----------------------
+    def _llm_fake_env(self, settings):
+        """A fake upstream (stdlib http.server) behind the openrouter backend;
+        two guests by IP; usage bookings recorded. model "slow" waits for
+        gate, "err" answers 500. -> (insts, seen bodies, booked, gate, undo)."""
+        import http.server
+        m, lp = self.m, self.m._llmproxy
+        seen, booked, gate = [], [], threading.Event()
+
+        class U(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append(body)
+                if body.get("model") == "slow":
+                    gate.wait(10)
+                if body.get("model") == "err":
+                    out, code = b'{"error":{"message":"upstream broke"}}', 500
+                else:
+                    out, code = json.dumps({"model": body.get("model"), "choices": [{"message": {
+                        "role": "assistant", "content": "hi"}}],
+                        "usage": {"prompt_tokens": 7, "completion_tokens": 3}}).encode(), 200
+                self.send_response(code); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), U)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        insts = {"172.30.5.2": {"name": "alpha", "config": {}}, "172.30.6.2": {"name": "beta", "config": {}}}
+        old = (dict(lp.LLM_PROXY_UPSTREAMS), m._guests.instance_by_ip, m._settings.load_settings,
+               m._store.usage_add, lp.JOB_TTL, lp.JOB_MAX_RUNNING, lp.used_today, m._notify.notify_add)
+        lp.LLM_PROXY_UPSTREAMS["openrouter"] = (f"http://127.0.0.1:{srv.server_address[1]}/v1/chat/completions",
+                                                "OPENROUTER_API_KEY")
+        m._guests.instance_by_ip = lambda ip: insts.get(ip)
+        m._settings.load_settings = lambda: {"OPENROUTER_API_KEY": "k", **settings}
+        m._store.usage_add = lambda name, model, pin, pout, cost=None, **k: booked.append((name, pin, pout, k.get("ok", True)))
+        lp.used_today = lambda name: 0
+        m._notify.notify_add = lambda *a, **k: None
+        lp._guard_calls.clear()
+
+        def undo():
+            gate.set(); srv.shutdown(); srv.server_close()
+            lp.LLM_PROXY_UPSTREAMS.clear(); lp.LLM_PROXY_UPSTREAMS.update(old[0])
+            (m._guests.instance_by_ip, m._settings.load_settings, m._store.usage_add, lp.JOB_TTL,
+             lp.JOB_MAX_RUNNING, lp.used_today, m._notify.notify_add) = old[1:]
+            lp._jobs.clear(); lp._guard_calls.clear()
+        return insts, seen, booked, gate, undo
+
+    def _llm_req(self, path, ip, body=None):
+        """POST (body given) or GET through the real handler -> (status, json)."""
+        if body is None:
+            h = self._handler(path, ip)
+            h._do_GET()
+        else:
+            h = self._post_handler(path, ip, json.dumps(body).encode())
+            h._do_POST()
+        raw = h.wfile.getvalue()
+        return self._status(h), json.loads(raw.split(b"\r\n\r\n", 1)[1] or b"null")
+
+    def test_proxy_caps_max_tokens_per_instance_and_default(self):
+        """LLM_MAX_TOKENS: the proxy clamps or adds max_tokens (instance key
+        over the settings default; neither = untouched); the key is validated
+        and runtime; the settings default reaches the guest env."""
+        m = self.m
+        insts, seen, booked, gate, undo = self._llm_fake_env({"LLM_MAX_TOKENS": "5000"})
+        url = "/api/llm/openrouter/chat/completions"
+        try:
+            insts["172.30.5.2"]["config"]["LLM_MAX_TOKENS"] = "100"
+            for extra, want in (({}, {"max_tokens": 100}), ({"max_tokens": 50}, {"max_tokens": 50}),
+                                ({"max_tokens": 9999}, {"max_tokens": 100}), ({"max_tokens": -1}, {"max_tokens": 100}),
+                                ({"max_completion_tokens": 999}, {"max_completion_tokens": 100})):
+                st, d = self._llm_req(url, "172.30.5.2", {"model": "x", "messages": [], **extra})
+                self.assertEqual(st, 200)
+                self.assertEqual({k: seen[-1].get(k) for k in want}, want, extra)
+            self.assertNotIn("max_tokens", seen[-1])                           # max_completion_tokens only
+            self._llm_req(url, "172.30.6.2", {"model": "x", "messages": []})   # beta: the settings default
+            self.assertEqual(seen[-1]["max_tokens"], 5000)
+            m._settings.load_settings = lambda: {"OPENROUTER_API_KEY": "k"}
+            self._llm_req(url, "172.30.6.2", {"model": "x", "messages": [], "max_tokens": 123456})
+            self.assertEqual(seen[-1]["max_tokens"], 123456)                   # no cap anywhere: untouched
+            self.assertEqual(booked[-1], ("beta", 7, 3, True))                 # sync path still books
+            # validation: positive whole number up to the bound, runtime key
+            saved, old_save, old_load = [], m._instances.save_instance, m._instances.load_instances
+            m._instances.save_instance = lambda i: saved.append(dict(i["config"]))
+            m._instances.load_instances = lambda: [{"name": "alpha", "config": {}}]
+            try:
+                for bad in ("0", "-5", "abc", "1.5", "131073"):
+                    self.assertIn("error", m._instances._set_config_key("alpha", "LLM_MAX_TOKENS", bad), bad)
+                self.assertEqual(m._instances._set_config_key("alpha", "LLM_MAX_TOKENS", "4096"),
+                                 "LLM_MAX_TOKENS = 4096 (applies at once)")
+            finally:
+                m._instances.save_instance, m._instances.load_instances = old_save, old_load
+            self.assertIn("LLM_MAX_TOKENS", m._settings.validate_decision({"LLM_MAX_TOKENS": "x"}))
+            self.assertEqual(m._settings.validate_decision({"LLM_MAX_TOKENS": "16384"}), "")
+            self.assertIn("LLM_MAX_TOKENS", [s["key"] for s in m._settings.SETTINGS_SCHEMA])
+            m._settings.load_settings = lambda: {"LLM_MAX_TOKENS": "2048"}
+            self.assertEqual(m._vm.guest_env({"name": "beta", "config": {}})["LLM_MAX_TOKENS"], "2048")
+            self.assertEqual(m._vm.guest_env({"name": "alpha", "config": {"LLM_MAX_TOKENS": "64"}})["LLM_MAX_TOKENS"], "64")
+        finally:
+            undo()
+
+    def test_proxy_jobs_submit_poll_error_ttl_owner_budget(self):
+        """POST /api/llm/<backend>/jobs answers at once with an id; the manager
+        holds the upstream call (never streamed, capped, booked like sync);
+        GET /api/llm/jobs/<id> -> running, then the upstream answer or error;
+        only the owner sees it; results expire; running jobs and the budget
+        are bounded per instance."""
+        lp = self.m._llmproxy
+        insts, seen, booked, gate, undo = self._llm_fake_env({"LLM_MAX_TOKENS": "300"})
+        jobs = "/api/llm/openrouter/jobs"
+
+        def wait_done(jid, ip="172.30.5.2"):
+            for _ in range(200):
+                st, d = self._llm_req(f"/api/llm/jobs/{jid}", ip)
+                if d != {"status": "running"}:
+                    return st, d
+                time.sleep(0.02)
+            self.fail("job never finished")
+        try:
+            st, d = self._llm_req(jobs, "172.30.5.2", {"model": "slow", "messages": [], "stream": True,
+                                                       "stream_options": {"include_usage": True}})
+            self.assertEqual(st, 202)
+            jid = d["job"]
+            self.assertEqual(self._llm_req(f"/api/llm/jobs/{jid}", "172.30.5.2"), (200, {"status": "running"}))
+            self.assertEqual(self._llm_req(f"/api/llm/jobs/{jid}", "172.30.6.2")[0], 404)   # beta: not its job
+            self.assertEqual(self._llm_req("/api/llm/jobs/nope", "172.30.5.2")[0], 404)
+            gate.set()
+            st, d = wait_done(jid)
+            self.assertEqual((st, d["choices"][0]["message"]["content"]), (200, "hi"))
+            self.assertNotIn("stream", seen[-1]); self.assertNotIn("stream_options", seen[-1])
+            self.assertEqual(seen[-1]["max_tokens"], 300)                      # the cap holds for jobs too
+            self.assertEqual(booked[-1], ("alpha", 7, 3, True))                # booked by the manager
+            self.assertEqual(self._llm_req(f"/api/llm/jobs/{jid}", "172.30.6.2")[0], 404)   # done: still alpha's only
+            # upstream error: status + body through, a failed span booked
+            st, d = self._llm_req(jobs, "172.30.5.2", {"model": "err", "messages": []})
+            st, d = wait_done(d["job"])
+            self.assertEqual((st, d["error"]["message"]), (500, "upstream broke"))
+            self.assertEqual(booked[-1][0::3], ("alpha", False))
+            # TTL: a finished result is swept
+            lp.JOB_TTL = -1
+            self.assertEqual(self._llm_req(f"/api/llm/jobs/{jid}", "172.30.5.2")[0], 404)
+            lp.JOB_TTL = 600
+            # bounded: running jobs per instance
+            gate.clear(); lp.JOB_MAX_RUNNING = 1
+            self.assertEqual(self._llm_req(jobs, "172.30.6.2", {"model": "slow", "messages": []})[0], 202)
+            st, d = self._llm_req(jobs, "172.30.6.2", {"model": "slow", "messages": []})
+            self.assertEqual(st, 429); self.assertIn("running", d["error"])
+            self.assertEqual(self._llm_req(jobs, "172.30.5.2", {"model": "x", "messages": []})[0], 202)  # alpha unaffected
+            gate.set()
+            # budget guard applies to job submits exactly as to sync calls
+            insts["172.30.5.2"]["config"]["BUDGET_TOKENS"] = "10"
+            lp.used_today = lambda name: 11
+            st, d = self._llm_req(jobs, "172.30.5.2", {"model": "x", "messages": []})
+            self.assertEqual(st, 429); self.assertIn("budget", d["error"]["message"])
+            self.assertEqual(self._llm_req("/api/llm/openrouter/jobz", "172.30.6.2", {})[0], 404)
+        finally:
+            undo()
 
     # ---- cost router: judge, ladder, escalation, savings ------------------------------
     def _cost_env(self, running=("cheapo", "big", "local")):

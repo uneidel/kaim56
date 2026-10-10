@@ -33,6 +33,36 @@ LLM_RETRIES = int(os.environ.get("LLM_RETRIES", "3"))
 # timeout is 620 s); cloud backends keep the short values.
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "600" if _config.LLAMA_ENDPOINT else "120"))
 LLM_STREAM_TIMEOUT = int(os.environ.get("LLM_STREAM_TIMEOUT", str(max(LLM_TIMEOUT, 180))))
+LLM_POLL_SEC = float(os.environ.get("LLM_POLL_SEC", "2"))     # job mode: one short poll per interval
+
+
+def _async_on():
+    """Job mode needs the manager in the path: LLM_ASYNC and the key proxy."""
+    return _config.LLM_ASYNC and _mgrclient._llm_proxy_active()
+
+
+def _post_chat(body, timeout):
+    """One non-streaming chat completion -> the parsed answer. Sync: one
+    request held open until the model is done. Job mode: submit it to the
+    manager (/api/llm/<backend>/jobs), then short polls of /api/llm/jobs/<id>
+    until it is done or `timeout` has passed. Upstream errors arrive as the
+    same HTTPError either way, so the callers' retry logic is unchanged."""
+    url = _mgrclient._llm_url()
+    if not _async_on():
+        req = urllib.request.Request(url, data=body, method="POST", headers=_mgrclient._llm_headers())
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+    jobs = url.rsplit("/chat/completions", 1)[0] + "/jobs"
+    req = urllib.request.Request(jobs, data=body, method="POST", headers=_mgrclient._llm_headers())
+    jid = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())["job"]
+    poll = url.split("/api/llm/", 1)[0] + "/api/llm/jobs/" + jid
+    deadline = time.monotonic() + timeout
+    while True:
+        time.sleep(LLM_POLL_SEC)
+        d = json.loads(urllib.request.urlopen(poll, timeout=30).read().decode())
+        if d.get("status") != "running":
+            return d
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"LLM job {jid} timed out")
 
 
 def _conn_dropped(e):
@@ -130,16 +160,15 @@ def or_chat(messages, tools, model=None):
         _b["tool_choice"] = "auto"
     if _config._reasoning:
         _b["reasoning"] = {"effort": _config._reasoning}
+    if _config.LLM_MAX_TOKENS:
+        _b["max_tokens"] = _config.LLM_MAX_TOKENS
     body = json.dumps(_b).encode()
     last = ""
     _observe._turn_step[0] += 1
     t0 = time.monotonic()
     for attempt in range(LLM_RETRIES + 1):
-        req = urllib.request.Request(_mgrclient._llm_url(), data=body, method="POST",
-                                     headers=_mgrclient._llm_headers())
         try:
-            r = urllib.request.urlopen(req, timeout=LLM_TIMEOUT)
-            d = json.loads(r.read().decode())
+            d = _post_chat(body, LLM_TIMEOUT)
             _mgrclient.report_usage(d.get("usage"), ms=int((time.monotonic() - t0) * 1000))
             return d["choices"][0]["message"]
         except urllib.error.HTTPError as e:
@@ -194,7 +223,18 @@ def _strip_history_images(messages):
 
 def or_chat_stream(messages, tools, on_token):
     """Like or_chat, but streaming: calls on_token(text) per delta. Reassembles
-    the (assistant) message including any tool_calls from the stream."""
+    the (assistant) message including any tool_calls from the stream. In job
+    mode (LLM_ASYNC) there is no stream: one or_chat, its text emitted at once."""
+    if _async_on():
+        msg = or_chat(messages, tools)
+        rzn = msg.get("reasoning") or msg.get("reasoning_content")
+        if rzn:
+            on_token(_config.THINK_START); on_token(rzn); on_token(_config.THINK_END)
+        if msg.get("content"):
+            on_token(msg["content"])
+        elif rzn:
+            msg["content"] = rzn          # as the stream does: thinking rather than an empty reply
+        return msg
     def _build_llm_body(use_tools):
         b = {"model": _config.OR_MODEL, "messages": _wire_messages(messages), "stream": True, "usage": {"include": True}}
         if _config.LLAMA_ENDPOINT:
@@ -204,6 +244,8 @@ def or_chat_stream(messages, tools, on_token):
             b["tool_choice"] = "auto"
         if _config._reasoning:
             b["reasoning"] = {"effort": _config._reasoning}
+        if _config.LLM_MAX_TOKENS:
+            b["max_tokens"] = _config.LLM_MAX_TOKENS
         return json.dumps(b).encode()
 
     tools_on = bool(tools)

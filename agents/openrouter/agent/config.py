@@ -69,6 +69,16 @@ elif ORCA_MODEL or ORCA_URL:
 # _llm_url(): _manager_base() is not yet defined here, and /model can switch the
 # backend at runtime. llama.cpp stays direct (locally reachable, key optional —
 # there is nothing to hide there).
+# max_tokens per LLM call (the manager's key proxy enforces it too; on the
+# direct llama path this is the only cap — a runaway generation once ran
+# until the 10-min timeout). 0/empty = none.
+try:
+    LLM_MAX_TOKENS = max(0, int(os.environ.get("LLM_MAX_TOKENS", "0") or 0))
+except ValueError:
+    LLM_MAX_TOKENS = 0
+# LLM_ASYNC=1 (proxy mode only): the manager holds the long upstream request
+# as a job, the agent polls it — no HTTP connection held open for minutes.
+LLM_ASYNC = os.environ.get("LLM_ASYNC", "") not in ("", "0", "false", "False")
 WORKDIR = os.environ.get("CLAUDE_WORKDIR", "/home/node/workspace")
 BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "120"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "12"))
