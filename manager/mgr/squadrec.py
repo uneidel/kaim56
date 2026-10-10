@@ -19,6 +19,7 @@ The archive, under SQUADS_DIR (site setting; default ~<manager owner>/squads)::
     projects/<project>/repo/                      the kickoff's clone
     conversations/channel/YYYY-MM-DD.jsonl        every channel message
     conversations/members/<memberId>__<instance>/YYYY-MM-DD.jsonl   every wake turn
+    conversations/hitl/YYYY-MM-DD.jsonl           every human-in-the-loop item + decision (mgr/hitlq.py)
     proposals/<proposalId>.json                   proposal, edits, decision, steps
     tickets.jsonl                                 every ticket create / update
 
@@ -452,6 +453,16 @@ def log_ticket(project, event, ticket, by, change=None):
         if change:
             ev["change"] = change
         _safe(_append, os.path.join(folder(rec), "tickets.jsonl"), ev)
+
+
+def log_hitl(project, event, item):
+    """A human-in-the-loop item (mgr/hitlq.py): created, decided."""
+    rec = of_project(project)
+    if rec:
+        now = int(time.time())
+        _safe(_append, os.path.join(folder(rec), "conversations", "hitl", _day(now) + ".jsonl"),
+              {"ts": now, "squad_id": rec["id"], "event": event, "member_id": member_id(rec, item.get("instance", "")),
+               "item": item})
 
 
 # ---- export + migration --------------------------------------------------------

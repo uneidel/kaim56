@@ -195,7 +195,8 @@ Per-client details live next to the code: `app/README.md`, `voice-client/README.
 ### Security
 
 - Keys stay on the host: the LLM proxy injects the API key on egress; other secrets are released per template or instance and substituted into MCP configs on the host.
-- Per-instance policy: tool allowlist, MCP servers, secrets, internet on/off, daily token budget, LLM rate limit, HITL approval over Signal for risky tools.
+- Per-instance policy: tool allowlist, MCP servers, secrets, internet on/off, daily token budget, LLM rate limit, HITL approval for risky tools (web "Waiting for you", app notification, optionally Signal).
+- Squads with a human in the loop: approvals for git push / PRs / issues / risky commands, `ask_human` questions that block the ticket, and a supervised mode where every finished ticket is a review — the decision wakes the member.
 - Guest boundary: instances identified by source IP with anti-spoofing, NFS workspaces exported per instance to its own address and squashed to a dedicated system user, root-only state files, login lockout, CSRF origin check, body caps.
 - Security gateway per chat: strips invisible Unicode and image metadata in both directions before anything reaches the guest.
 

@@ -33,6 +33,7 @@ from mgr import chats as _chats
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat
 from mgr import guestproxy as _guestproxy
+from mgr import hitlq as _hitlq
 from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
@@ -364,6 +365,31 @@ def _rt_projects_op(h):
         return h._json({"error": "unknown operation"}, 404)
     r, st = _PROJECT_POST[op](name, member)
     return h._json(r, st)
+
+
+# ---- human in the loop: what waits for the operator (mgr/hitlq.py) ----------
+@_routes.ROUTER.get("/api/waiting", admin=True)
+def _rt_waiting(h):
+    # ?status=open (default) | approved | denied | answered | changes_requested | expired | all
+    st = _routes._qs(h).get("status", ["open"])[0]
+    lst = sorted(_hitlq.items(st), key=lambda x: x["created"], reverse=True)
+    return h._json({"items": lst, "count": len(lst)})
+
+
+@_routes.ROUTER.post("/api/waiting/", prefix=True, admin=True)
+def _rt_waiting_decide(h):
+    # {action: approve|deny|answer|request_changes, text, choice} — admin only (role user reads)
+    iid = _routes._tail(h, "/api/waiting/")[0].strip()
+    b = h._body() or {}
+    if not isinstance(b, dict) or str(b.get("action")) not in _hitlq.DONE:
+        return h._json({"error": "action must be approve, deny, answer or request_changes"}, 400)
+    pr = getattr(h, "principal", None)
+    who = pr.name if pr is not None and pr.sub != "basic" else "admin"
+    it, why, code = _hitlq.decide(iid, b["action"], who, b.get("text"), b.get("choice"))
+    if it is None:
+        return h._json({"error": why}, code)
+    _audit.audit_append("admin", "hitl_decide", f"{it['kind']} {iid} {it['instance']}", True, result=it["status"])
+    return h._json({"ok": True, "item": it})
 
 
 @_routes.ROUTER.get("/api/router", admin=True)

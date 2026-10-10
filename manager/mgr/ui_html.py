@@ -30,6 +30,7 @@ HTML_TOP = """</head><body>
       <a href="#missions"><span>Missions</span></a>
       <a href="#projects"><span>Projects</span></a>
       <a href="#squads"><span>Squads</span></a>
+      <a href="#waiting"><span>Waiting for you</span> <span class=navcnt id=waitcnt></span></a>
     </div>
     <div class=navgrp><div class=navlbl>Apps</div>
       <a href="#apps"><span>Apps</span></a>
@@ -349,6 +350,12 @@ HTML_TOP = """</head><body>
   </div>
 </section>
 
+<section class="screen" id=s-waiting>
+  <p class=lede>Approvals, questions and reviews from the squads · a gated tool call, an <code>ask_human</code> question, a ticket a supervised squad set done · your decision wakes the member</p>
+  <div id=wait-list class=wait-list><span class=text-muted style="font-size:13px">…</span></div>
+  <span id=wait-msg class=msg></span>
+</section>
+
 <section class="screen" id=s-projects>
   <p class=lede>Name a folder once, let instances join it with a role · lead and reader see it read-only, writers read-write · mounted at <code>/project/&#8249;name&#8250;</code>, joins and leaves apply live</p>
   <table class=table>
@@ -364,6 +371,11 @@ HTML_TOP = """</head><body>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-approved> Plan approved (before: only the lead may be woken; approving a squad proposal sets it)</label></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-cost_routing> Cost routing (wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude)</label></div>
+      <div class=field><label>Autonomy</label><select class=input id=sq-autonomy>
+        <option value=trusted>trusted — only merges, PRs, new members and the approval tools need you</option>
+        <option value=supervised>supervised — also every ticket a member sets done is a review for you</option></select></div>
+      <div class=field><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false>
+        <span class=text-muted style="font-size:12px">comma-separated; <code>bash</code> = network, install, delete and push commands only. Shown in <a href="#waiting">Waiting for you</a>.</span></div>
       <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
       <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
@@ -708,8 +720,8 @@ HTML_BOTTOM = """
   whole; the model sees a preview + reference and pages the rest via <code>offload_read</code>.
   <b>Goal loop:</b> <code>/goal &lt;criterion&gt;</code> makes a judge check each answer and refine it up to
   3 times. <b>Guardrails:</b> a hard bash denylist (rm&#8209;rf&#160;/, fork&#8209;bomb, mkfs) is always on; the <b>oracle</b> tool gives a second opinion before destructive actions (challenges assumptions, never acts — playbook-enforced for the orchestrator); risky
-  tools can require Signal approval (<code>HITL=1</code> &#8594; manager asks &#8220;ok&#160;&lt;id&gt;&#8221;, routes
-  <code>/api/hitl</code>). <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab; each is SHA-256 content-pinned so a later out-of-band edit shows as \u201cmodified\u201d until re-approved, and every file name in the tab opens the file in the host&#8217;s VS Code, so approval is never blind) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
+  tools can require approval (<code>HITL=1</code> &#8594; a queue item in <b>Waiting for you</b> + app notification, optionally Signal &#8220;ok&#160;&lt;id&gt;&#8221;; the agent polls
+  <code>/api/hitl</code>). <b>Squads</b> (<code>mgr/hitlq.py</code>, persistent <code>hitlq.json</code>): a member&#8217;s <code>approval_tools</code> (default git_push_branch, pr_create, issue_create and risky bash: network/install/delete/push) answer &#8220;waiting for approval &lt;id&gt;&#8221; without a timeout &#8212; the decision wakes the member and lets the same call through once (Claude members: a PreToolUse hook, <code>kaim56_mcp.py --hook</code>); <code>ask_human</code> blocks the ticket until the answer wakes it; autonomy <i>supervised</i> turns a member&#8217;s &#8220;done&#8221; into a review. Decisions: <code>GET/POST /api/waiting</code> (admin; role user reads), every item and decision archived in the squad folder. <b>Guardrails:</b> per-instance daily token budget + LLM rate-limit enforced at the key proxy, a task-frequency cap (>6/h -> paused), optional per-instance egress allowlist (<code>EGRESS_ALLOW</code>), and a secret leak-filter on outgoing notify/Signal. <b>Retry:</b> model calls back off on 429/5xx. <b>Local-model robustness:</b> llama.cpp/Qwen3 reasoning (<code>reasoning_content</code>) is streamed as a collapsible think block instead of being dropped; a tool-call-JSON 500 retries the turn without tools; and a heartbeat keeps the stream alive during long tool execution so a proxy idle-timeout can&#8217;t cut it mid-sentence. <b>Runtime control:</b> <code>/model</code> switches model/backend mid-session; <code>/steps &#8249;n&#8250;|unlimited</code> sets the per-turn tool-round cap; <b>steering</b> injects a user message between tool steps of a running turn (<code>POST /api/steer</code>); <b>prompt templates</b> (Personas tab) expand as <code>/name</code> in any channel; <b>tool plugins</b> (a single .py OR a multi-file folder in <code>plugins/</code>, added by drag-and-drop in the Plugins tab; each is SHA-256 content-pinned so a later out-of-band edit shows as \u201cmodified\u201d until re-approved, and every file name in the tab opens the file in the host&#8217;s VS Code, so approval is never blind) ride the config disk into the VM and register at agent start. <b>Tree-chat:</b> <code>/branch</code>/<code>/back</code> fork the context for a side question and fold it back into a one-line note.</p></div>
 
   <div class="card blueprint"><span class=card-title>Tests (E2E)</span>
   <p class=card-body>Stdlib <code>unittest</code>, no dependency: <code>tests/e2e.py</code> /

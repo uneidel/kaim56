@@ -40,7 +40,12 @@ from mgr import store as _store
 
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
 DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing": False, "max_wakes_per_hour": 20,
-            "daily_token_budget": 2_000_000, "max_depth": 3}
+            "daily_token_budget": 2_000_000, "max_depth": 3,
+            # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
+            # commands only); supervised: a member's "done" is a review for the operator
+            "approval_tools": ["git_push_branch", "pr_create", "issue_create", "bash"], "autonomy": "trusted"}
+AUTONOMY = ("trusted", "supervised")
+TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
 KEEP = 500                      # messages kept per project
@@ -115,6 +120,18 @@ def normalize_settings(body, old=None):
             if not lo <= v <= hi:
                 return None, f"{k} must be between {lo} and {hi}"
             s[k] = v
+    if "autonomy" in body:
+        if body["autonomy"] not in AUTONOMY:
+            return None, "autonomy must be trusted or supervised"
+        s["autonomy"] = body["autonomy"]
+    if "approval_tools" in body:
+        raw = body["approval_tools"]
+        tools = [str(t).strip() for t in (raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else [])]
+        tools = list(dict.fromkeys(t for t in tools if t))
+        bad = [t for t in tools if not TOOL_RE.match(t)]
+        if bad or len(tools) > 50 or not isinstance(raw, (str, list)):
+            return None, "approval_tools: up to 50 tool names (a-z 0-9 _)"
+        s["approval_tools"] = tools
     return s, ""
 
 
@@ -259,7 +276,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
         if kind == "post" and orig["kind"] == "ask" and orig["to"] == [sender]:
             kind = "answer"
         to = to or [orig["from"]]
-    if kind != "ask":                            # a question names its one addressee in `to`
+    if kind not in ("ask", "hitl"):              # a question names its one addressee in `to`
         to += [m for m in _MENTION.findall(text) if m in names or m == "all"]
     # The operator is no member: "user", "admin", "operator" or no addressee at
     # all means the person who last wrote in this channel (live 2026-10-09: an
@@ -279,7 +296,8 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     if kind == "ask" and (len(set(to)) != 1 or to[0] not in names or to[0] == sender):
         return None, "ask exactly one other member"
     rcpt = ["all"] if "all" in to else sorted(set(to))
-    targets = [] if kind == "answer" else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
+    # "hitl": a waiting item's card for the operator (mgr/hitlq.py) — it wakes nobody
+    targets = [] if kind in ("answer", "hitl") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
         blocked = _guard(proj, targets, depth, now) if targets else ""

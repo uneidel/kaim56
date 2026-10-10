@@ -405,6 +405,10 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
     color:color-mix(in srgb,var(--color-text) 55%,transparent)}
 }
 /* — squad proposal card (ui_js sqCard): one block per member, label | field | who chose it — */
+.wait-list{display:grid;gap:4px;max-width:880px}
+.hq-opts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.hq-det{white-space:pre-wrap;word-break:break-word;margin:8px 0;font-size:13px}
+.navcnt.hot{color:var(--color-accent-700);font-weight:600}
 .sq-card{padding:14px;border:1px solid var(--app-line);border-radius:var(--radius-lg);margin:8px 0;background:var(--app-card)}
 .sq-head{display:flex;justify-content:space-between;gap:4px 8px;flex-wrap:wrap;align-items:baseline}
 .sq-mem{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:10px 12px;border:1px solid var(--app-line);border-radius:var(--radius-md);background:var(--app-bg)}

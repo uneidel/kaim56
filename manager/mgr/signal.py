@@ -17,9 +17,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import uuid
 from typing import Callable
 
+from mgr import hitlq as _hitlq
 from mgr.gateway import redact_secrets
 
 SIGNAL_LOG = None
@@ -109,52 +109,33 @@ def signal_send(text, to=None):
         return False, f"signal API unreachable: {e!r}"
 
 
-# ---- HITL: approval of risky tool calls via Signal -------------------------
-# An agent (opt-in via HITL=1) asks here before a risky tool; we ask the user
-# via Signal ("ok <id>" / "no <id>") and the agent polls the status. If the
-# Signal send fails (no recipient configured) we return NO id -> the agent then
-# does not block. In-memory, short-lived.
-_hitl_lock = threading.Lock()
-_hitl = {}
-HITL_TTL = 600
+# ---- HITL: approval of risky tool calls (facade over mgr/hitlq.py) --------
+# An agent (opt-in via HITL=1, not in a squad) asks here before a risky tool
+# and polls the status. The item lands in the persistent queue (web "Waiting
+# for you" + app notification); Signal is an optional extra channel: the user
+# may also reply "ok <id>" / "no <id>" there. Unanswered: expired after
+# hitlq.HITL_TTL (the agent's own wait is shorter and denies).
+HITL_TTL = _hitlq.HITL_TTL
 
 
 def hitl_create(instance, tool, target):
-    hid = uuid.uuid4().hex[:8]
-    now = time.time()
-    with _hitl_lock:
-        for k in [k for k, v in _hitl.items() if now - v["ts"] > HITL_TTL]:
-            _hitl.pop(k, None)
-        _hitl[hid] = {"tool": tool, "target": target, "instance": instance,
-                      "status": "pending", "ts": now}
+    it = _hitlq.approval(instance, tool, target)
+    hid = it["id"]
     msg = (f"🔒 Approval needed: agent '{instance}' wants to {tool}"
            + (f" ({target})" if target else "")
            + f".\nReply 'ok {hid}' to allow or 'no {hid}' to deny.")
-    ok, _m = signal_send(msg)
-    if not ok:
-        with _hitl_lock:
-            _hitl.pop(hid, None)
-        return None
+    signal_send(msg)                 # optional: fails quietly without a number/recipient
     return hid
 
 
 def hitl_status(hid, instance=None):
     """Status of an approval. With `instance` (a guest asking) only its OWN
-    requests answer — a foreign id is 'unknown', ids are short and guessable."""
-    with _hitl_lock:
-        v = _hitl.get(hid)
-        if not v or (instance and v.get("instance") != instance):
-            return "unknown"
-        return v["status"]
+    requests answer — a foreign id is 'unknown'."""
+    return _hitlq.legacy_status(hid, instance)
 
 
-def hitl_resolve(hid, approve):
-    with _hitl_lock:
-        v = _hitl.get(hid)
-        if not v or v["status"] != "pending":
-            return False
-        v["status"] = "approved" if approve else "denied"
-        return True
+def hitl_resolve(hid, approve, who="signal"):
+    return _hitlq.decide(hid, "approve" if approve else "deny", who)[0] is not None
 
 
 # ---- Signal receiving (long-poll) ------------------------------------------
@@ -205,7 +186,7 @@ def _handle_signal_envelope(env, allowed):
         _slog(f"ignored: sender {src or uuid_} not in {sorted(allowed)}")
         return
     # HITL approval? An allowed sender replies "ok <id>" / "no <id>" (German "ja"/"nein" also accepted).
-    mo = re.match(r"^(ok|ja|yes|approve|nein|no|deny|ablehnen)\s+([0-9a-f]{8})$",
+    mo = re.match(r"^(ok|ja|yes|approve|nein|no|deny|ablehnen)\s+([0-9a-f]{8,12})$",
                   text.lower().strip())
     if mo:
         approve = mo.group(1) in ("ok", "ja", "yes", "approve")

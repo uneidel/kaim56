@@ -23,7 +23,7 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/
                     "/api/skill-proposals", "/api/sessions-search",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mail", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
-                    "/api/playbook-add", "/api/playbook-remove", "/api/hitl",
+                    "/api/playbook-add", "/api/playbook-remove", "/api/hitl", "/api/hitl/ask",
                     "/api/notify", "/api/mission-start", "/api/mission-update",
                     "/api/mission-finish", "/api/ha-alias", "/api/ha-control",
                     "/api/katfs/write", "/api/katfs/delete",   # own share only (katfs_share_for)

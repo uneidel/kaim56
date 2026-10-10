@@ -1617,6 +1617,46 @@ class AgentSquad(unittest.TestCase):
                   "issue_create", "issue_list", "issue_comment"):
             self.assertIn(t, a._tools.BUILTIN)
 
+    def test_squad_approval_hook_and_ask_human(self):
+        """In a squad (policy from the manager, cached): a listed tool or a risky bash
+        command returns "waiting for approval <id>" without waiting; approved passes;
+        other commands pass without asking; the denylist stays first; outside a squad
+        the old opt-in HITL (off) asks nothing. ask_human posts the question."""
+        a = _load("agent_hitl_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-hq-"),
+                                                 "OPENROUTER_API_KEY": "dummy"})
+        tl, c = a._tools, a._mgrclient
+        pol, sent, reply, gets = {}, [], {"id": "abc123abc123", "status": "open"}, []
+        c._manager_base = lambda: "http://mgr"
+        c._mgr_get = lambda base, path, timeout=30: (gets.append(path), json.dumps(pol))[1]
+        c._mgr = lambda base, path, payload=None, timeout=60: (sent.append((path, payload)), json.dumps(reply))[1]
+        hook = tl._hook_before_tool
+        self.assertEqual(hook("bash", {"command": "curl http://x"}), (True, ""))     # no squad, HITL off
+        self.assertEqual((sent, gets), ([], ["/api/hitl/policy"]))
+        pol.update(squad="sq", tools=["git_push_branch", "pr_create", "issue_create", "bash"],
+                   bash_re=r"\b(curl|wget)\b|\bgit\s+push\b")
+        tl._policy["ts"] = 0
+        ok, why = hook("bash", {"command": "curl http://x"})
+        self.assertFalse(ok)
+        self.assertEqual(why, "waiting for approval abc123abc123 — end your turn; you will be woken with the decision")
+        self.assertEqual(sent[-1], ("/api/hitl", {"tool": "bash", "target": "curl http://x", "async": True}))
+        self.assertEqual(hook("bash", {"command": "ls -la"}), (True, "")); self.assertEqual(len(sent), 1)
+        self.assertFalse(hook("git_push_branch", {"name": "x"})[0])
+        self.assertEqual(sent[-1][1]["target"], '{"name": "x"}')
+        self.assertEqual(hook("read_file", {"path": "a"}), (True, ""))
+        self.assertEqual(hook("bash", {"command": "rm -rf / ; curl x"})[1], "blocked by security rule (rm -rf /)")
+        self.assertTrue(tl.exec_tool("issue_create", {"title": "x"}).startswith(
+            "Tool 'issue_create' not executed: waiting for approval abc123abc123"))
+        reply.update(status="approved")
+        self.assertEqual(hook("pr_create", {"title": "t"}), (True, ""))
+        self.assertEqual(len(gets), 2)                                               # cached for POLICY_TTL
+        sent.clear(); reply.clear(); reply.update(id="q1q1q1q1q1q1", ticket="T1", status="open")
+        self.assertEqual(a._tools_manager.t_ask_human("Which DB?", ["pg", "sqlite"]),
+                         "asked q1q1q1q1q1q1 — end your turn; the answer wakes you (ticket T1 is blocked until then)")
+        self.assertEqual(sent[-1], ("/api/hitl/ask", {"question": "Which DB?", "options": ["pg", "sqlite"], "ticket": ""}))
+        self.assertIn("ask_human", tl.BUILTIN); self.assertIn("END YOUR TURN", tl.BUILTIN["ask_human"][1])
+        reply.clear(); reply.update(id=1, key="T1", status="review", title="t", assignee="e", depends_on=[], note="waits for review")
+        self.assertEqual(a._tools_manager.t_ticket_update("1", "done"), "#1 T1 [review] t -> e\nwaits for review")
+
 _CATALOG = {"project": "sq", "personas": [{"name": "coder", "description": "You code.", "tools": ["bash"]}],
             "skills": [{"name": "std", "description": "s", "default": True}],
             "tiers": [{"tier": "strong", "models": ["openrouter/acme/big"]}, {"tier": "local", "models": []}],
@@ -1642,6 +1682,9 @@ class ManagerFunctions(unittest.TestCase):
         # nor any squad record / archive the real squads dir (mgr/squadrec.py)
         cls.m._squadrec.REC_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-norec-"), "squadrec.json")
         cls.m._settings.SITE["SQUADS_DIR"] = tempfile.mkdtemp(prefix="e2e-nosquads-")
+        # nor the live human-in-the-loop queue, nor its notifications (mgr/hitlq.py)
+        cls.m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
+        cls.m._notify.NOTIF_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-notif-"), "notifications.json")
 
     def test_open_manager_warns_at_start(self):
         """Without MANAGER_PASS every request is an admin: the start says so in
@@ -1906,17 +1949,34 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             sigmod.signal_send = old_send
 
-    def test_hitl_no_signal_no_block(self):
-        """If the Signal send fails (no recipient), hitl_create returns None
-        -> the agent then does not block."""
+    def test_hitl_without_signal_still_waits_in_the_queue(self):
+        """Signal is an optional extra channel: without it (send fails) the
+        approval still lands in the queue (web "Waiting for you", app), the
+        agent polls; a Signal reply "ok <id>" (12 hex) still decides; an
+        unanswered one expires after HITL_TTL (-> denied)."""
         m = self.m
         import mgr.signal as sigmod
-        old_send = sigmod.signal_send
+        old = (sigmod.signal_send, m._notify.notify_add, m._hitlq.QUEUE_FILE)
+        notes = []
         try:
+            m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
+            m._notify.notify_add = lambda *a, **k: notes.append((a, k)) or ("n", "ok")
             sigmod.signal_send = lambda text, to=None: (False, "no recipient")
-            self.assertIsNone(m._signal_mod.hitl_create("x", "bash", "y"))
+            hid = m._signal_mod.hitl_create("x", "bash", "y")
+            self.assertRegex(hid, r"^[0-9a-f]{12}$")
+            self.assertEqual(m._signal_mod.hitl_status(hid), "pending")
+            self.assertEqual(notes[0][0][1], "Waiting for you: x wants to run bash")
+            self.assertEqual(notes[0][1], {"link": "squads"})
+            it = m._hitlq.get(hid)
+            self.assertEqual((it["kind"], it["project"], it["wake_on_decision"], it["target"]), ("approval", "", False, "y"))
+            sigmod._handle_signal_envelope({"envelope": {"sourceNumber": "+49", "dataMessage": {"message": f"ok {hid}"}}}, {"+49"})
+            self.assertEqual((m._signal_mod.hitl_status(hid), m._hitlq.get(hid)["decided_by"]), ("approved", "signal"))
+            hid2 = m._signal_mod.hitl_create("x", "bash", "z")
+            q = m._hitlq._load(); q[-1]["created"] -= m._hitlq.HITL_TTL + 1; m._hitlq._save(q)
+            self.assertEqual(m._signal_mod.hitl_status(hid2), "denied")
+            self.assertEqual(m._hitlq.get(hid2)["status"], "expired")
         finally:
-            sigmod.signal_send = old_send
+            sigmod.signal_send, m._notify.notify_add, m._hitlq.QUEUE_FILE = old
 
     def test_katfs_zip_recursive(self):
         m = self.m
@@ -4709,6 +4769,215 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/sq/squad/decide")[1])   # admin route
         finally:
             undo()
+
+    # ---- human in the loop: approvals, questions, reviews (mgr/hitlq.py) -------------
+    def _hq_env(self, **squad):
+        """_gate_env with the plan approved (members a lead, b/e writers, d/f readers;
+        tickets T1 -> e, T2 -> f after T1) and a fresh queue."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        old = m._hitlq.QUEUE_FILE
+        m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
+        pid = self._sq("/api/squad/propose", "172.30.3.2", self._SG_PLAN)[1]["id"]
+        self.assertEqual(m._squadgate.decide("sq", pid, True, "admin")[0]["status"], "approved")
+        if squad:
+            self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", squad)[0], 200)
+        del woke[:], notes[:]
+
+        def undo2():
+            m._hitlq.QUEUE_FILE = old
+            undo()
+        return woke, notes, undo2
+
+    def _hq_user(self, path, body=None):
+        """(status) of a request by an OIDC principal with role user."""
+        m = self.m
+        h = self._post_handler(path, "127.0.0.1", json.dumps(body).encode()) if body is not None else self._handler(path, "127.0.0.1")
+        h.principal = m._oidc.Principal("u1", "User", "", "user")
+        self.assertTrue(h._dispatch("POST" if body is not None else "GET"))
+        return self._status(h)
+
+    def test_hitl_squad_approval_wakes_member_and_lets_the_call_through_once(self):
+        """A squad member's gated call: policy names the squad and the default tools;
+        the request returns open (same id on a retry), a card in the channel that
+        wakes nobody, a notification; approving wakes the member with the comment,
+        the same call then passes once; deny wakes with DENIED; all archived."""
+        m = self.m
+        woke, notes, undo = self._hq_env()
+        B, C, L = "172.30.4.2", "172.30.5.2", "127.0.0.1"
+        try:
+            st, pol = self._sq("/api/hitl/policy", B)
+            self.assertEqual((st, pol["squad"], pol["tools"]), (200, "sq", ["git_push_branch", "pr_create", "issue_create", "bash"]))
+            self.assertEqual(pol["bash_re"], m._hitlq.BASH_RE)
+            self.assertEqual(self._sq("/api/hitl/policy", C)[1], {"squad": "", "tools": [], "bash_re": ""})
+            req = {"tool": "git_push_branch", "target": '{"name": "x"}', "async": True}
+            st, d = self._sq("/api/hitl", B, req)
+            self.assertEqual((st, d["status"]), (200, "open")); hid = d["id"]
+            self.assertEqual(self._sq("/api/hitl", B, req)[1], {"id": hid, "status": "open"})      # a retry: the same item
+            card = [x for x in m._squads.read("sq") if x["kind"] == "hitl"]
+            self.assertEqual(len(card), 1)
+            self.assertEqual((card[0]["from"], card[0]["delivered"]), ("b", []))
+            self.assertIn(f"b needs your approval ({hid}): b wants to run git_push_branch", card[0]["text"])
+            self.assertEqual(woke, [])
+            self.assertEqual([n[1] for n in notes], ["Waiting for you: b wants to run git_push_branch"])
+            st, w = self._sq("/api/waiting?status=open", L)
+            self.assertEqual((st, w["count"], w["items"][0]["id"]), (200, 1, hid))
+            it = w["items"][0]
+            for k in ("id", "kind", "status", "created", "project", "squad_id", "instance", "ticket", "title", "detail",
+                      "options", "tool", "target"):
+                self.assertIn(k, it)
+            self.assertEqual((it["kind"], it["project"], it["instance"], it["tool"], it["squad_id"]),
+                             ("approval", "sq", "b", "git_push_branch", m._squads.squad_id(m._projects.get("sq"))))
+            st, d = self._sq(f"/api/waiting/{hid}", L, {"action": "approve", "text": "go ahead"})
+            self.assertEqual((st, d["ok"], d["item"]["status"], d["item"]["comment"], d["item"]["decided_by"]),
+                             (200, True, "approved", "go ahead", "admin"))
+            self.assertEqual(woke[-1][0], "b")
+            self.assertIn(f"Approval {hid} for git_push_branch", woke[-1][1]); self.assertIn("APPROVED by admin", woke[-1][1])
+            self.assertIn("Comment: go ahead", woke[-1][1])
+            self.assertEqual(self._sq("/api/hitl", B, req)[1], {"id": hid, "status": "approved"})  # the retry passes ...
+            st, d = self._sq("/api/hitl", B, req)
+            self.assertEqual(d["status"], "open"); self.assertNotEqual(d["id"], hid)                # ... once
+            self._sq(f"/api/waiting/{d['id']}", L, {"action": "deny"})
+            self.assertIn("DENIED by admin", woke[-1][1]); self.assertIn("Do not retry", woke[-1][1])
+            self.assertEqual(self._sq(f"/api/waiting/{d['id']}", L, {"action": "approve"})[0], 409)   # decided already
+            rec = m._squadrec.of_project("sq")
+            day = os.listdir(os.path.join(m._squadrec.folder(rec), "conversations", "hitl"))[0]
+            with open(os.path.join(m._squadrec.folder(rec), "conversations", "hitl", day)) as fh:
+                ev = [json.loads(x) for x in fh]
+            self.assertEqual([(e["event"], e["item"]["status"]) for e in ev],
+                             [("create", "open"), ("decide", "approved"), ("create", "open"), ("decide", "denied")])
+            self.assertTrue(ev[0]["member_id"].startswith(rec["id"] + "-"))
+        finally:
+            undo()
+
+    def test_hitl_waiting_api_contract_errors_and_roles(self):
+        """/api/waiting: list by status; decide with the kind's actions only;
+        400 (bad action / missing text), 404, 409; role user reads, never
+        decides; guests get neither; a non-squad guest's async request is not needed."""
+        m = self.m
+        woke, notes, undo = self._hq_env()
+        B, C, L = "172.30.4.2", "172.30.5.2", "127.0.0.1"
+        try:
+            self.assertEqual(self._sq("/api/hitl", C, {"tool": "bash", "target": "curl x", "async": True})[1],
+                             {"id": None, "status": "not_needed"})
+            hid = self._sq("/api/hitl", B, {"tool": "bash", "target": "curl x", "async": True})[1]["id"]
+            q, _ = m._hitlq.ask("b", "Which DB?", ["postgres", "sqlite"])
+            self.assertEqual(self._sq("/api/waiting", L)[1]["count"], 2)                  # default: open
+            for body, code, err in (({"action": "nope"}, 400, "action must be"), ({}, 400, "action must be"),
+                                    ({"action": "answer", "text": "x"}, 400, "takes action approve or deny")):
+                st, d = self._sq(f"/api/waiting/{hid}", L, body)
+                self.assertEqual(st, code); self.assertIn(err, d["error"])
+            self.assertEqual(self._sq("/api/waiting/000000000000", L, {"action": "approve"})[0], 404)
+            st, d = self._sq(f"/api/waiting/{q['id']}", L, {"action": "answer"})
+            self.assertEqual(st, 400); self.assertIn("text or choice required", d["error"])
+            st, d = self._sq(f"/api/waiting/{q['id']}", L, {"action": "answer", "choice": "mysql"})
+            self.assertEqual(st, 400); self.assertIn("choice must be one of", d["error"])
+            # role user: list yes, decide no; guests: neither
+            self.assertEqual(self._hq_user("/api/waiting?status=open"), 200)
+            self.assertEqual(self._hq_user(f"/api/waiting/{hid}", {"action": "approve"}), 403)
+            self.assertTrue(m._auth.user_allowed("GET", "/api/waiting"))
+            self.assertFalse(m._auth.user_allowed("POST", f"/api/waiting/{hid}"))
+            self.assertEqual(self._sq("/api/waiting", B)[0], 403)
+            self.assertEqual(self._sq(f"/api/waiting/{hid}", B, {"action": "approve"})[0], 403)
+            self.assertTrue(m._routes.ROUTER.resolve("GET", "/api/waiting")[1])
+            self.assertTrue(m._routes.ROUTER.resolve("POST", f"/api/waiting/{hid}")[1])
+            st, d = self._sq(f"/api/waiting/{q['id']}", L, {"action": "answer", "choice": "sqlite", "text": "small"})
+            self.assertEqual((st, d["item"]["answer"], d["item"]["comment"], d["item"]["status"]), (200, "sqlite", "small", "answered"))
+            self.assertEqual(self._sq(f"/api/waiting/{q['id']}", L, {"action": "answer", "text": "x"})[0], 409)
+            st, w = self._sq("/api/waiting?status=answered", L)
+            self.assertEqual([x["id"] for x in w["items"]], [q["id"]])
+            self.assertEqual(self._sq("/api/waiting?status=all", L)[1]["count"], 2)
+        finally:
+            undo()
+
+    def test_hitl_question_blocks_the_ticket_and_the_answer_wakes(self):
+        """ask_human: the member's doing ticket (or the named one) goes blocked; the
+        answer sets it back to doing and wakes the member with it; outside a squad refused."""
+        m = self.m
+        woke, notes, undo = self._hq_env()
+        E, C, L = "172.30.11.2", "172.30.5.2", "127.0.0.1"
+        try:
+            self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "doing"})
+            del woke[:]
+            st, d = self._sq("/api/hitl/ask", C, {"question": "?"})
+            self.assertEqual(st, 400); self.assertIn("in a squad only", d["error"])
+            self.assertEqual(self._sq("/api/hitl/ask", E, {"question": " "})[0], 400)
+            self.assertEqual(self._sq("/api/hitl/ask", E, {"question": "x", "ticket": "T9"})[0], 400)
+            st, d = self._sq("/api/hitl/ask", E, {"question": "Postgres or SQLite?", "options": ["postgres", "sqlite"]})
+            self.assertEqual((st, d["ticket"], d["status"]), (200, "T1", "open"), d)
+            t1 = lambda: next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            self.assertEqual(t1()["status"], "blocked")
+            self.assertIn("asked the operator", t1()["comments"][-1]["text"])
+            card = [x for x in m._squads.read("sq") if x["kind"] == "hitl"][-1]
+            self.assertIn("e asks you", card["text"]); self.assertIn("Options: postgres | sqlite", card["text"])
+            self.assertEqual(woke, [])
+            self.assertIn("Waiting for you: Postgres or SQLite?", [n[1] for n in notes])
+            st, r = self._sq(f"/api/waiting/{d['id']}", L, {"action": "answer", "choice": "sqlite"})
+            self.assertEqual((st, r["item"]["status"]), (200, "answered"))
+            self.assertEqual(t1()["status"], "doing")
+            self.assertEqual(woke[-1][0], "e")
+            self.assertIn(f"Answer to your question {d['id']} (Postgres or SQLite?): sqlite", woke[-1][1])
+            self.assertIn("Ticket T1 is back to doing", woke[-1][1])
+            with open(os.path.join(m._squadrec.folder(m._squadrec.of_project("sq")), "tickets.jsonl")) as fh:
+                self.assertEqual([json.loads(x)["ticket"]["status"] for x in fh][-2:], ["blocked", "doing"])
+        finally:
+            undo()
+
+    def test_hitl_supervised_review_done_approve_and_request_changes(self):
+        """autonomy=supervised: a member's done becomes review + a review item
+        (one per ticket); Approve -> done and the dependents wake; Request changes
+        (comment required) -> doing and the assignee is woken with it; trusted: done stays done."""
+        m = self.m
+        woke, notes, undo = self._hq_env(autonomy="supervised")
+        E, L = "172.30.11.2", "127.0.0.1"
+        try:
+            self.assertEqual(m._squads.settings(m._projects.get("sq"))["autonomy"], "supervised")
+            st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "done", "comment": "tests green"})
+            self.assertEqual((st, d["status"], d["woke"]), (200, "review", {}), d)
+            self.assertIn("waits for the operator's review", d["note"])
+            rid = d["review"]
+            it = m._hitlq.get(rid)
+            self.assertEqual((it["kind"], it["ticket"], it["title"], it["detail"]), ("review", "T1", "Review T1: write tests", "tests green"))
+            self.assertEqual(self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "done"})[1]["review"], rid)   # one per ticket
+            st, r = self._sq(f"/api/waiting/{rid}", L, {"action": "request_changes"})
+            self.assertEqual(st, 400); self.assertIn("text required", r["error"])
+            del woke[:]
+            st, r = self._sq(f"/api/waiting/{rid}", L, {"action": "request_changes", "text": "cover the error path"})
+            self.assertEqual((st, r["item"]["status"]), (200, "changes_requested"))
+            t1 = lambda: next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            self.assertEqual(t1()["status"], "doing")
+            self.assertEqual(woke[-1][0], "e"); self.assertIn("changes requested by admin: cover the error path", woke[-1][1])
+            rid2 = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "done"})[1]["review"]
+            self.assertNotEqual(rid2, rid)
+            del woke[:]
+            st, r = self._sq(f"/api/waiting/{rid2}", L, {"action": "approve", "text": "nice"})
+            self.assertEqual((st, r["item"]["status"], r["item"]["effect"]), (200, "approved", "done"))
+            self.assertEqual(t1()["status"], "done")
+            self.assertEqual([w[0] for w in woke], ["f"])                                       # T2 (after T1) wakes
+            self.assertEqual(self._sq("/api/projects/sq/squad", L, {"autonomy": "bogus"})[0], 400)
+            self._sq("/api/projects/sq/squad", L, {"autonomy": "trusted"})
+            self._sq("/api/projects/sq/squad/ticket", L, {"id": 2, "status": "doing"})
+            st, d = self._sq("/api/squad/ticket-update", "172.30.12.2", {"id": 2, "status": "done"})
+            self.assertEqual((d["status"], "review" in d), ("done", False))
+        finally:
+            undo()
+
+    def test_hitl_squad_settings_default_tools_and_bash_patterns(self):
+        """approval_tools default + validation; BASH_RE gates network, install, delete,
+        push — not ordinary commands."""
+        m = self.m
+        sq, rx = m._squads, re.compile(m._hitlq.BASH_RE)
+        self.assertEqual(sq.settings({})["approval_tools"], ["git_push_branch", "pr_create", "issue_create", "bash"])
+        self.assertEqual(sq.settings({})["autonomy"], "trusted")
+        self.assertEqual(sq.normalize_settings({"approval_tools": "bash, pr_create,bash"})[0]["approval_tools"], ["bash", "pr_create"])
+        self.assertEqual(sq.normalize_settings({"approval_tools": []})[0]["approval_tools"], [])
+        self.assertIsNone(sq.normalize_settings({"approval_tools": "rm -rf"})[0])
+        self.assertIsNone(sq.normalize_settings({"approval_tools": 5})[0])
+        for cmd in ("curl https://x", "wget x", "pip install foo", "pip3 install foo", "npm install", "npm i left-pad",
+                    "sudo apt-get install x", "apt install y", "rm -r build", "rm -rf build", "rm -fr x", "git push origin main"):
+            self.assertTrue(rx.search(cmd), cmd)
+        for cmd in ("ls -la", "git status", "rm file.txt", "python3 -m pytest", "grep -r curly .", "npm test", "git commit -m push"):
+            self.assertFalse(rx.search(cmd), cmd)
 
     def test_squadgate_merge_proposal_runs_the_merge_path(self):
         m = self.m
@@ -9856,6 +10125,67 @@ class ClaudeGuest(unittest.TestCase):
         run("")
         with open(md) as fh:
             self.assertEqual(fh.read(), "# mine\n")
+        shutil.rmtree(d, ignore_errors=True)
+
+    def test_claude_hitl_hook_and_ask_human(self):
+        """kaim56_mcp.py --hook (Claude Code PreToolUse): in a squad, risky Bash and
+        listed kaim56 tools are denied with "waiting for approval <id>"; approved,
+        other tools, no squad or no manager: allowed. ask_human is an MCP tool. The
+        guest-init block merges the hook into settings.json once, keeping the rest."""
+        import subprocess as sp
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py")
+        if not os.path.exists(src):
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_hitl", src)
+        pol, sent, reply = {"squad": "sq", "tools": ["git_push_branch", "pr_create", "bash"], "bash_re": r"\bcurl\b"}, [], {"id": "abcabcabcabc", "status": "open"}
+        km._get = lambda path: json.dumps(pol if path == "/api/hitl/policy" else {})
+        km._post = lambda path, payload, timeout=30: (sent.append((path, payload)), json.dumps(reply))[1]
+        ev = lambda name, inp: {"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": inp}
+        out = io.StringIO()
+        self.assertEqual(km.hook(io.StringIO(json.dumps(ev("Bash", {"command": "curl x"}))), out), 0)
+        d = json.loads(out.getvalue())["hookSpecificOutput"]
+        self.assertEqual((d["hookEventName"], d["permissionDecision"]), ("PreToolUse", "deny"))
+        self.assertEqual(d["permissionDecisionReason"], "waiting for approval abcabcabcabc — end your turn; you will be woken with the decision")
+        self.assertEqual(sent[-1], ("/api/hitl", {"tool": "bash", "target": "curl x", "async": True}))
+        self.assertTrue(km.hook_decision(ev("mcp__kaim56__pr_create", {"title": "t"})))
+        self.assertEqual(sent[-1][1]["tool"], "pr_create")
+        n = len(sent)
+        for e in (ev("Bash", {"command": "ls"}), ev("Read", {"file_path": "x"}), ev("mcp__kaim56__squad_post", {"text": "x"}),
+                  ev("mcp__other__pr_create", {})):
+            self.assertEqual(km.hook_decision(e), "")
+        self.assertEqual(len(sent), n)
+        reply["status"] = "approved"
+        self.assertEqual(km.hook_decision(ev("Bash", {"command": "curl x"})), "")
+        pol["squad"] = ""
+        self.assertEqual(km.hook_decision(ev("Bash", {"command": "curl x"})), "")
+        def down(path):
+            raise OSError("no manager")
+        km._get = down
+        out = io.StringIO()
+        self.assertEqual((km.hook(io.StringIO(json.dumps(ev("Bash", {"command": "curl x"}))), out), out.getvalue()), (0, ""))
+        self.assertEqual((km.hook(io.StringIO("not json"), out), out.getvalue()), (0, ""))
+        km._post = lambda path, payload, timeout=30: (sent.append((path, payload)), json.dumps({"id": "q", "ticket": "", "status": "open"}))[1]
+        self.assertEqual(km.TOOLS["ask_human"][0](question="Which DB?"), "asked q — end your turn; the answer wakes you")
+        self.assertEqual(sent[-1], ("/api/hitl/ask", {"question": "Which DB?", "options": [], "ticket": ""}))
+        # guest-init: the settings.json block
+        gi = os.path.join(os.path.dirname(src), "guest-init.sh")
+        with open(gi) as fh:
+            text = fh.read()
+        block = text[text.index("# >>> kaim56-hitl-hook"):text.index("# <<< kaim56-hitl-hook")]
+        self.assertIn("hitl_hook /home/node/.claude/settings.json", text)
+        d = tempfile.mkdtemp(prefix="e2e-hook-")
+        st = os.path.join(d, "settings.json")
+        _wtext(st, json.dumps({"model": "opus", "hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "mine"}]}]}}))
+        run = lambda: sp.run(["sh", "-c", block + '\nhitl_hook "$1"', "sh", st], check=True,
+                             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        run(); run()
+        got = _readj(st)
+        self.assertEqual(got["model"], "opus")
+        pre = got["hooks"]["PreToolUse"]
+        self.assertEqual([h["matcher"] for h in pre], ["Write", "Bash|mcp__kaim56__.*"])
+        self.assertEqual(pre[1]["hooks"][0]["command"], "python3 /app/kaim56_mcp.py --hook")
+        os.remove(st); run()
+        self.assertEqual(len(_readj(st)["hooks"]["PreToolUse"]), 1)
         shutil.rmtree(d, ignore_errors=True)
 
     def test_claude_mcp_git_tools(self):
