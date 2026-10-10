@@ -752,7 +752,7 @@ def _ticket_done(d, err):
     if err:
         return err
     woke = d.get("woke") or ({d["key"]: d["wake"]} if d.get("wake") else {})
-    return _ticket_line(d) + "".join(f"\n{k}: {v}" for k, v in woke.items())
+    return _ticket_line(d) + "".join(f"\n{k}: {v}" for k, v in woke.items()) + (f"\n{d['note']}" if d.get("note") else "")
 
 
 def t_ticket_update(id, status="", comment="", project=""):
@@ -827,3 +827,12 @@ def t_issue_list(state="open", project=""):
 def t_issue_comment(number, body, project=""):
     d, err = _git_call("issue-comment", {"number": number, "body": body, "project": project}, 60)
     return err or f"Commented on #{d.get('number')}: {d.get('url')}"
+
+
+def t_ask_human(question, options=None, ticket=""):
+    """Ask the operator (squad members): the ticket waits, the answer wakes you."""
+    d, err = _squad_call("/api/hitl/ask", {"question": question, "options": options or [], "ticket": ticket})
+    if err:
+        return err
+    return (f"asked {d['id']} — end your turn; the answer wakes you"
+            + (f" (ticket {d['ticket']} is blocked until then)" if d.get("ticket") else ""))

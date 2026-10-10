@@ -125,6 +125,33 @@ PY
   fi
 fi
 
+# Human in the loop: a PreToolUse hook in Claude Code's user settings asks the
+# manager before risky Bash commands and the kaim56 git/PR/issue tools of a
+# squad member (kaim56_mcp.py --hook; mgr/hitlq.py). Merged into an existing
+# settings.json at every boot, never piled up. (tests/e2e.py runs this block.)
+# >>> kaim56-hitl-hook
+hitl_hook() {  # <settings.json>
+  python3 - "$1" <<'PY'
+import json, sys
+p, cmd = sys.argv[1], "python3 /app/kaim56_mcp.py --hook"
+try:
+    d = json.load(open(p))
+except (OSError, ValueError):
+    d = {}
+d = d if isinstance(d, dict) else {}
+hooks = d.get("hooks") if isinstance(d.get("hooks"), dict) else {}
+pre = [h for h in hooks.get("PreToolUse") or [] if cmd not in json.dumps(h)]
+pre.append({"matcher": "Bash|mcp__kaim56__.*", "hooks": [{"type": "command", "command": cmd, "timeout": 30}]})
+hooks["PreToolUse"] = pre
+d["hooks"] = hooks
+with open(p, "w") as fh:
+    json.dump(d, fh, indent=1)
+PY
+}
+# <<< kaim56-hitl-hook
+mkdir -p /home/node/.claude
+hitl_hook /home/node/.claude/settings.json && chown -R node:node /home/node/.claude
+
 # Agent runs as node (uid 1000) — claude-code does not allow actions as root
 export HOME=/home/node
 export CLAUDE_WORKDIR="$WORKDIR"
@@ -142,9 +169,10 @@ if ! grep -q "## kAIm56 platform" "$PLATFORM_MD" 2>/dev/null; then
 
 You run inside a Firecracker microVM on the kAIm56 agent platform. You have
 MCP tools from the "kaim56" server: memory_store, memory_recall, web_search,
-list_skills, load_skill, notify, and squad_post/ask/read/members, squad_catalog, squad_propose, ticket_* (your project's
+list_skills, load_skill, notify, ask_human (a question to the operator; end your turn after it), and squad_post/ask/read/members, squad_catalog, squad_propose, ticket_* (your project's
 team channel, plans the user approves, tickets), git_push_branch/pr_*/issue_* (the project's git remote,
-run by the host — you hold no token) — USE THOSE. Your session context does not
+run by the host — you hold no token) — USE THOSE. In a squad, risky calls (git push, PRs, issues, network/install/delete
+commands) may answer "waiting for approval <id>": end your turn then — the decision wakes you. Your session context does not
 survive /reset; when the user asks you to remember something, memory_store it.
 The same APIs are reachable with curl as a fallback (base: http://${GW_IP}:8700):
 

@@ -10,6 +10,7 @@ one place.
 """
 import json
 import os
+import re
 import time
 
 from . import config as _config
@@ -391,6 +392,14 @@ BUILTIN = {
                    {"state": {"type": "string", "enum": ["open", "closed", "all"]}, "project": {"type": "string", "description": "optional when one of your projects has a git remote"}}, []),
     "issue_comment": (_tools_manager.t_issue_comment, "Squad git: comment on an issue.",
                       {"number": {"type": "integer"}, "body": {"type": "string"}, "project": {"type": "string", "description": "optional when one of your projects has a git remote"}}, ["number", "body"]),
+    "ask_human": (_tools_manager.t_ask_human,
+                  "Squad: ask the operator (a human) a question you cannot decide yourself — a product choice, "
+                  "missing access, an unclear requirement. Your ticket is set blocked; END YOUR TURN after asking: "
+                  "the answer wakes you as a new turn and sets the ticket back to doing.",
+                  {"question": {"type": "string"},
+                   "options": {"type": "array", "items": {"type": "string"}, "description": "optional: choices to pick from"},
+                   "ticket": {"type": "string", "description": "optional: ticket key or id (default: your ticket in doing)"}},
+                  ["question"]),
     "list_secrets": (_tools_manager.t_list_secrets, "Show the secret names released for this agent (no values).",
                      {}, []),
     "get_secret": (_tools_manager.t_get_secret, "Fetch a released secret (e.g. API key/token) only when needed. Never output values in replies/logs.",
@@ -505,19 +514,67 @@ BUILTIN["offload_read"] = (
 
 
 
-# --- 4b) tool hook: hard denylist + optional HITL approval ------------------
+# --- 4b) tool hook: hard denylist + approvals --------------------------------
+# Squad members (the manager's /api/hitl/policy names the squad): the squad's
+# approval tools ("bash" = commands matching its pattern) plus HITL_TOOLS when
+# HITL is on are asked for WITHOUT waiting — the call returns "waiting for
+# approval <id>", the decision wakes the agent, and the same call then goes
+# through once. Everyone else: the old opt-in HITL, polled for HITL_TIMEOUT.
 HITL = os.environ.get("HITL", "") not in ("", "0", "false", "False")
 HITL_TOOLS = set(t for t in os.environ.get(
     "HITL_TOOLS", "bash,remote_delete,remote_write,delete_task,edit_task").split(",") if t)
 HITL_TIMEOUT = int(os.environ.get("HITL_TIMEOUT", "120"))
 # Always active, independent of HITL: obviously destructive bash patterns.
 _DENY_PATTERNS = ("rm -rf /", ":(){:|:&};:", "mkfs", "dd if=", "> /dev/sd", "chmod -R 000")
+POLICY_TTL = 60
+_policy = {"ts": 0.0, "v": {}}
+
+
+def _hitl_policy():
+    """The manager's approval policy for this instance (cached POLICY_TTL; {} when unreachable)."""
+    if time.time() - _policy["ts"] < POLICY_TTL:
+        return _policy["v"]
+    try:
+        v = json.loads(_mgrclient._mgr_get(_mgrclient._manager_base(), "/api/hitl/policy", timeout=6))
+    except Exception:
+        v = {}
+    _policy.update(ts=time.time(), v=v if isinstance(v, dict) else {})
+    return _policy["v"]
+
+
+def _squad_gated(pol, name, args):
+    if HITL and name in HITL_TOOLS:
+        return True
+    if name not in (pol.get("tools") or []):
+        return False
+    if name != "bash":
+        return True
+    try:
+        return bool(re.search(pol.get("bash_re") or r"(?!)", str(args.get("command", ""))))
+    except re.error:
+        return True
+
+
+def _hitl_target(name, args):
+    return _observe._audit_target(name, args) or json.dumps(args or {}, sort_keys=True, ensure_ascii=False)[:200]
+
+
+def _squad_approval(name, args):
+    """(allow, reason) without waiting: approved once -> through; else the id to wait for."""
+    try:
+        d = json.loads(_mgrclient._mgr(_mgrclient._manager_base(), "/api/hitl",
+                                       {"tool": name, "target": _hitl_target(name, args), "async": True}, timeout=8))
+    except Exception:
+        return True, ""
+    if not d.get("id") or d.get("status") == "approved":
+        return True, ""
+    return False, f"waiting for approval {d['id']} — end your turn; you will be woken with the decision"
 
 
 def _request_approval(name, args):
-    """Request an approval from the manager (which asks the user via Signal) and
-    poll for it. If the manager cannot (old version/no Signal) -> do not
-    block (True). Timeout/rejection -> False."""
+    """Request an approval from the manager (web, app, Signal) and poll for
+    it. If the manager cannot (old version) -> do not block (True).
+    Timeout/rejection -> False."""
     try:
         d = json.loads(_mgrclient._mgr(_mgrclient._manager_base(), "/api/hitl",
                             {"tool": name, "target": _observe._audit_target(name, args)}, timeout=8))
@@ -541,12 +598,15 @@ def _request_approval(name, args):
 
 
 def _hook_before_tool(name, args):
-    """(allow, reason). Denylist first, then optional HITL approval."""
+    """(allow, reason). Denylist first, then the squad's approvals, else optional HITL."""
     if name == "bash":
         cmd = str(args.get("command", ""))
         for pat in _DENY_PATTERNS:
             if pat in cmd:
                 return False, f"blocked by security rule ({pat})"
+    pol = _hitl_policy()
+    if pol.get("squad"):
+        return _squad_approval(name, args) if _squad_gated(pol, name, args) else (True, "")
     if HITL and name in HITL_TOOLS:
         if not _request_approval(name, args):
             return False, "not approved by the user (or timed out)"

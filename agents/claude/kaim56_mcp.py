@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, ask_human, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -14,6 +14,7 @@ It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
 Stdlib only, newline-delimited JSON-RPC as the MCP stdio transport demands.
 """
 import json
+import re
 import socket
 import sys
 import time
@@ -180,7 +181,13 @@ def t_ticket_list(project=""):
 def _ticket(path, payload):
     d = json.loads(_post(path, payload))
     woke = d.get("woke") or ({d["key"]: d["wake"]} if d.get("wake") else {})
-    return _tline(d) + "".join(f"\n{k}: {v}" for k, v in woke.items())
+    return _tline(d) + "".join(f"\n{k}: {v}" for k, v in woke.items()) + (f"\n{d['note']}" if d.get("note") else "")
+
+
+def t_ask_human(question, options=None, ticket=""):
+    d = json.loads(_post("/api/hitl/ask", {"question": question, "options": options or [], "ticket": ticket}))
+    return (f"asked {d['id']} — end your turn; the answer wakes you"
+            + (f" (ticket {d['ticket']} is blocked until then)" if d.get("ticket") else ""))
 
 
 def t_ticket_update(id, status="", comment="", project=""):
@@ -400,6 +407,15 @@ TOOLS = {
     "issue_comment": (_squad(t_issue_comment), "Squad git: comment on an issue.",
         {"type": "object", "properties": {"number": {"type": "integer"}, "body": {"type": "string"}, "project": _GPROJ},
          "required": ["number", "body"]}),
+    "ask_human": (_squad(t_ask_human),
+        "Squad: ask the operator (a human) a question you cannot decide yourself — a product choice, missing access, "
+        "an unclear requirement. Your ticket is set blocked; END YOUR TURN after asking: the answer wakes you as a "
+        "new turn and sets the ticket back to doing.",
+        {"type": "object", "properties": {"question": {"type": "string"},
+                                          "options": {"type": "array", "items": {"type": "string"},
+                                                      "description": "optional: choices to pick from"},
+                                          "ticket": {"type": "string", "description": "optional: ticket key or id (default: your ticket in doing)"}},
+         "required": ["question"]}),
     "notify": (t_notify,
         "Push a notification to the user's devices (app + web bell).",
         {"type": "object",
@@ -451,6 +467,48 @@ def hub_tools():
 def call_hub(name, args):
     server, tool, _d, _s = hub_tools()[name]
     return _hub(server, "tools/call", {"name": tool, "arguments": args})
+
+
+# --- PreToolUse hook (Claude Code settings, written by guest-init.sh) ----------
+# `python3 kaim56_mcp.py --hook`: Claude Code hands the tool call on stdin. In
+# a squad (the manager's /api/hitl/policy), a Bash command matching the squad's
+# pattern or a listed kaim56 tool (git_push_branch, pr_create, …) is asked for:
+# denied with "waiting for approval <id>" until the operator decides — the
+# decision wakes the member, and the same call then goes through once.
+# Manager unreachable / not in a squad: allowed (as the openrouter agent).
+def hook_decision(event):
+    """'' = allow, else the reason to block."""
+    name = str(event.get("tool_name") or "")
+    args = event.get("tool_input") or {}
+    tool = "bash" if name == "Bash" else name[len("mcp__kaim56__"):] if name.startswith("mcp__kaim56__") else ""
+    if not tool:
+        return ""
+    try:
+        pol = json.loads(_get("/api/hitl/policy"))
+        if not pol.get("squad") or tool not in (pol.get("tools") or []):
+            return ""
+        if tool == "bash" and not re.search(pol.get("bash_re") or r"(?!)", str(args.get("command", ""))):
+            return ""
+        target = str(args.get("command", ""))[:200] if tool == "bash" else \
+            json.dumps(args, sort_keys=True, ensure_ascii=False)[:200]
+        d = json.loads(_post("/api/hitl", {"tool": tool, "target": target, "async": True}))
+    except Exception:
+        return ""
+    if not d.get("id") or d.get("status") == "approved":
+        return ""
+    return f"waiting for approval {d['id']} — end your turn; you will be woken with the decision"
+
+
+def hook(stdin, stdout):
+    try:
+        event = json.load(stdin)
+    except ValueError:
+        return 0
+    why = hook_decision(event if isinstance(event, dict) else {})
+    if why:
+        stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                        "permissionDecisionReason": why}}))
+    return 0
 
 
 def reply(mid, result=None, error=None):
@@ -507,4 +565,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--hook" in sys.argv:
+        sys.exit(hook(sys.stdin, sys.stdout))
     main()

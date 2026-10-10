@@ -17,6 +17,7 @@ from mgr import chats as _chats
 from mgr import gateway as _gateway
 from mgr import guests as _guests
 from mgr import haalias as _haalias
+from mgr import hitlq as _hitlq
 from mgr import hindsight as _hindsight
 from mgr import instances as _instances
 from mgr import mail as _mail
@@ -306,6 +307,13 @@ def _rt_history(h):
                                            instance=scope)})
 
 
+@_routes.ROUTER.get("/api/hitl/policy")
+def _rt_hitl_policy(h):
+    # The guest's tool hook: is it in a squad, which tools need approval (mgr/hitlq.py).
+    guest = h._guest()
+    return h._json(_hitlq.policy(guest["name"] if guest else ""))
+
+
 @_routes.ROUTER.get("/api/hitl/", prefix=True)
 def _rt_hitl_status(h):
     hid = _routes._tail(h, "/api/hitl/")[0].strip()
@@ -569,11 +577,41 @@ def _rt_notify(h):
 
 @_routes.ROUTER.post("/api/hitl")
 def _rt_hitl_create(h):
+    # async (a squad member's hook): no polling — {id, status open|approved};
+    # the decision wakes the member, an approved call goes through once.
+    # Without: the old polled approval (mgr/signal.py facade).
     body = h._body()
     inst = h._guest()
+    if body.get("async") and inst is not None:
+        proj = _hitlq.squad_of(inst["name"])
+        if proj is None:
+            return h._json({"id": None, "status": "not_needed"})
+        if not _util.rate_ok(("hitl", inst["name"]), 30, 300):
+            return h._json({"error": "rate limit: 30 approval requests per 5 minutes"}, 429)
+        it = _hitlq.approval(inst["name"], body.get("tool", ""), body.get("target", ""), proj)
+        _audit.audit_append(inst["name"], "hitl_request", f"{it['tool']} {it['id']}", True, result=it["status"])
+        return h._json({"id": it["id"], "status": it["status"]})
     hid = _signal_mod.hitl_create(inst["name"] if inst else "admin", str(body.get("tool", ""))[:40],
                       str(body.get("target", ""))[:200])
     return h._json({"id": hid})
+
+
+@_routes.ROUTER.post("/api/hitl/ask")
+def _rt_hitl_ask(h):
+    # ask_human: a squad member asks the operator; its ticket waits (blocked).
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    if not _policy.tool_allowed(inst, "ask_human"):
+        return h._json({"error": "ask_human not allowed for this instance"}, 403)
+    if not _util.rate_ok(("hitl-ask", inst["name"]), 10, 300):
+        return h._json({"error": "rate limit: 10 questions per 5 minutes"}, 429)
+    b = h._body() or {}
+    it, why = _hitlq.ask(inst["name"], b.get("question"), b.get("options"), b.get("ticket"))
+    _audit.audit_append(inst["name"], "ask_human", str(b.get("question") or "")[:60], it is not None, err=why)
+    if it is None:
+        return h._json({"error": why}, 400)
+    return h._json({"id": it["id"], "ticket": it["ticket"], "status": it["status"]})
 
 
 @_routes.ROUTER.post("/api/mail")
@@ -873,7 +911,16 @@ def _rt_squad_ticket(h):
             return "" if is_lead or tk.get("assignee") == name else "only the assignee or the lead may update this ticket"
         body = {"assignee": b.get("assignee", "")} if op == "assign" else \
             {"status": b.get("status"), "comment": b.get("comment")}
+        # supervised squad (mgr/hitlq.py): a member's "done" is a review for the operator
+        review = op == "update" and body["status"] == "done" and _squads.settings(p)["autonomy"] == "supervised"
+        if review:
+            body["status"] = "review"
         t, why = _squadgate.update_ticket(p, name, b.get("id"), body, may, depth)
+        if t is not None and review:
+            it = _hitlq.review(p, name, t, b.get("comment"))
+            t["review"] = it["id"]
+            t["note"] = (f"Supervised squad: the ticket waits for the operator's review ({it['id']}) — end your turn; "
+                         "approval sets it done, requested changes wake you with the comment.")
     _audit.audit_append(name, "ticket_" + op, f"{p['name']} {b.get('id') or b.get('title') or ''}", t is not None,
                         err=why, result=(t or {}).get("status", ""))
     if t is None:

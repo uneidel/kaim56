@@ -75,6 +75,7 @@ AGENT_TOOLS_CATALOG = [
     {"name": "ticket_create", "desc": "Squad lead: create a ticket (after approval)"},
     {"name": "ticket_assign", "desc": "Squad lead: assign a ticket (wakes the assignee)"},
     {"name": "ticket_update", "desc": "Squad: status/comment on a ticket (assignee or lead)"},
+    {"name": "ask_human", "desc": "Squad: ask the operator a question (the ticket waits, the answer wakes the member)"},
     {"name": "git_push_branch", "desc": "Squad git: push your worktree branch to squad/<you>/<name> on the remote (writer/lead)"},
     {"name": "git_fetch", "desc": "Squad git: fetch the remote into the project repo (refs/remotes/kaim56/*)"},
     {"name": "pr_create", "desc": "Squad git: push + open a PR to the base branch (writer/lead; daily limit)"},

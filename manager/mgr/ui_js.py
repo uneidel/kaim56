@@ -1029,6 +1029,7 @@ async function sqLoad(){
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
+  document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');
   document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
@@ -1099,6 +1100,7 @@ async function sqGitFetch(){
 async function sqSave(){
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
+  body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
   if(!d.error){sqLoad();loadProjects()}
@@ -1434,8 +1436,10 @@ async function skLoad(){
   }
   if(b.error)return;
   SQB=b;
-  const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join();
-  if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')}   /* never under the user's edits */
+  await loadWaiting(); if(SK!==name)return;
+  const hq=WAIT.filter(x=>x.project===name);                      /* approvals, questions, reviews (mgr/hitlq.py) */
+  const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
+  if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')+hq.map(hqCard).join('')}   /* never under the user's edits */
   if(!document.getElementById('sk-board').hidden)skBoardRender();
 }
 function skBoard(){const el=document.getElementById('sk-board');el.hidden=!el.hidden;if(!el.hidden)skBoardRender()}
@@ -1468,6 +1472,48 @@ async function skSend(){
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad()},5000);
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
+/* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */
+let WAIT=[];
+const HQ_KIND={approval:'Approval',question:'Question',review:'Review'};
+async function loadWaiting(){
+  let d={}; try{d=await (await fetch('/api/waiting?status=open')).json()}catch(e){return WAIT}
+  if(d.error)return WAIT;
+  WAIT=d.items||[];
+  const c=document.getElementById('waitcnt'); if(c){c.textContent=WAIT.length||'';c.classList.toggle('hot',WAIT.length>0)}
+  if(location.hash==='#waiting')hqRender();
+  return WAIT;
+}
+function hqCard(it){
+  const id=esc(it.id), b=(cls,act,label)=>`<button class="btn ${cls}" onclick="hqAct('${id}','${act}',this)">${label}</button>`;
+  const inp=ph=>`<input class=input data-k=text placeholder="${esc(ph)}" aria-label="${esc(ph)}">`;
+  const foot=it.kind==='question'?inp('Your answer')+b('btn-primary','answer','Answer')
+    :it.kind==='review'?inp('Comment (required for Request changes)')+b('btn-secondary','request_changes','Request changes')+b('btn-primary','approve','Approve')
+    :inp('Comment (optional)')+b('btn-secondary','deny','Deny')+b('btn-primary','approve','Approve');
+  return `<div class=sq-card data-hq="${id}"><div class=sq-head><b>${HQ_KIND[it.kind]||escT(it.kind)} · ${escT(it.title)}</b>`+
+    `<span class=text-muted style="font-size:12px">${escT(it.instance)}${it.project?' · '+escT(it.project):''}${it.ticket?' · ticket '+escT(it.ticket):''} · ${id} · ${new Date(it.created*1000).toLocaleString()}</span></div>`+
+    (it.tool?`<div class=text-muted style="font-size:12px;margin-top:6px">tool <code>${escT(it.tool)}</code></div>`:'')+
+    (it.detail&&it.detail!==it.title?`<div class="hq-det${it.tool?' mono':''}">${escT(it.detail)}</div>`:'')+
+    ((it.options||[]).length?'<div class=hq-opts>'+it.options.map(o=>`<button class="btn btn-secondary btn-sm" data-choice="${esc(o)}" onclick="hqAct('${id}','answer',this)">${escT(o)}</button>`).join('')+'</div>':'')+
+    `<div class=sq-foot>${foot}</div></div>`;
+}
+function hqRender(){
+  document.getElementById('wait-list').innerHTML=WAIT.length?WAIT.map(hqCard).join(''):'<span class=text-muted style="font-size:13px">Nothing waits for you.</span>';
+}
+async function hqAct(id,action,btn){
+  const c=btn.closest('[data-hq]'), t=c.querySelector('[data-k=text]'), text=t?t.value.trim():'', choice=btn.dataset.choice||'';
+  const sk=location.hash==='#squads', say=x=>{document.getElementById(sk?'sk-msg':'wait-msg').textContent=x};
+  if(action==='request_changes'&&!text){say('Request changes: write what should change.');t.focus();return}
+  if(action==='answer'&&!text&&!choice){say('Answer: pick an option or write an answer.');t.focus();return}
+  btn.disabled=true;
+  let d={}; try{d=await (await fetch('/api/waiting/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,text,choice})})).json()}catch(e){d={error:'manager not reachable'}}
+  btn.disabled=false;
+  say(d.error||(HQ_KIND[d.item.kind]+' '+d.item.id+': '+d.item.status.replace('_',' ')+' ✓'));
+  await loadWaiting();
+  if(sk){SK_PEND='';skLoad()}else hqRender();
+}
+window.addEventListener('hashchange',()=>{if(location.hash==='#waiting')loadWaiting()});
+setInterval(()=>{if(!document.hidden)loadWaiting()},15000);
+loadWaiting();
 async function delProject(name){
   if(!confirm('Delete project '+name+'? The folder stays; the members lose /project/'+name+'.'))return;
   await fetch('/api/projects/'+encodeURIComponent(name)+'/delete',{method:'POST'});

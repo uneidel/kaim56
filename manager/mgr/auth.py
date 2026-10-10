@@ -209,6 +209,7 @@ _USER_ROUTES = [
                                                             # and post — not its settings, decisions, ticket edits
     ("POST", rf"/api/projects/{_N}/squad/post"),
     ("GET", r"/api/squads"),                                # the Squads page's list — not the kickoff
+    ("GET", r"/api/waiting"),                               # what waits for the operator: read, never decide
 ]
 _USER_RX = [(m, re.compile(p + r"\Z")) for m, p in _USER_ROUTES]
 

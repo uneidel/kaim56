@@ -27,6 +27,7 @@ else lives in mgr/, one concern per module:
     squads        a project's members talk in one channel; addressed members are woken (guarded)
     squadgate     the lead proposes (squad plan, member, merge), the user approves; tickets
     squadgit      a squad's git remote: push, fetch, PRs + issues host-side (token never in a VM)
+    hitlq         human in the loop: approvals, questions, reviews that wait for the operator
     router        model router: per-turn model choice via Jev (opt-in per instance)
     jevsetup      Jev suggests persona, skills and model tier for a new instance (only a suggestion)
     cloud         apps to Cloudflare and back, the app tokens
@@ -78,6 +79,7 @@ from mgr import guestproxy as _guestproxy    # noqa: F401
 from mgr import guests as _guests            # noqa: F401
 from mgr import haalias as _haalias
 from mgr import hindsight as _hindsight
+from mgr import hitlq as _hitlq              # noqa: F401
 from mgr import host as _host
 from mgr import httpd as _httpd
 from mgr import indexer as _indexer            # noqa: F401  (registers the 'repowise' MCP hook)

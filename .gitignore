@@ -22,6 +22,8 @@ manager/inbox_wm.json
 # Aufgaben-History inkl. SQLite-WAL-Sidecars (-wal/-shm)
 manager/history.db*
 manager/squad.db*
+# human-in-the-loop queue (approvals, questions, reviews)
+manager/hitlq.json
 # OIDC login sessions (token hashes, IdP refresh tokens)
 manager/sessions.db*
 manager/notifications.json
