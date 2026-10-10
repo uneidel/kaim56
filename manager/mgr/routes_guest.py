@@ -163,6 +163,12 @@ def _rt_llm_proxy(h):
     return h._llm_proxy(h.path.split("?", 1)[0])
 
 
+@_routes.ROUTER.get("/api/llm/jobs/", prefix=True)
+def _rt_llm_job(h):
+    # Poll of a key-proxy job (mgr/llmproxy.py): only the caller's own.
+    return h._llm_job_get(h.path.split("?", 1)[0])
+
+
 # ---- secrets, credentials, MCP config (guests, by source IP) ----------------
 @_routes.ROUTER.get("/api/secrets")
 def _rt_secrets(h):

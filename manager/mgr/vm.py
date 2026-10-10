@@ -249,8 +249,13 @@ def guest_env(inst):
     # manager instead of directly to the router — so the VM never sees an LLM key
     # (not even via the secret broker). The switch lives in the shared settings
     # so that ALL instances are switched over consistently.
-    if _settings.load_settings().get("LLM_KEY_PROXY") == "1":
+    st = _settings.load_settings()
+    if st.get("LLM_KEY_PROXY") == "1":
         cfg["KEY_PROXY"] = "1"
+    # The max_tokens cap: the agent sends it (the only cap on a direct llama
+    # path); the key proxy enforces it anyway.
+    if not cfg.get("LLM_MAX_TOKENS") and str(st.get("LLM_MAX_TOKENS") or "").strip():
+        cfg["LLM_MAX_TOKENS"] = str(st["LLM_MAX_TOKENS"]).strip()
     return cfg
 
 

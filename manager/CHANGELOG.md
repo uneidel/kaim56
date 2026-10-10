@@ -7,6 +7,8 @@ commit messages.
 
 ## 2026-10-10
 - Squads: "⏳ member is working… (mm:ss)" / "queued" in the chat and Squad panel (`working` in /squad/messages and /squad/board); a finished wake turn's answer lands in the channel as kind `turn` to the thread's user (once, capped 4000, wakes nobody, not for failed turns); members with a fixed AGENT_TOOLS list get the missing squad tools on join and at startup (restart note).
+- LLM_MAX_TOKENS (instance key, runtime; Settings default): the key proxy clamps/adds max_tokens on every proxied call and the agent sends it (the only cap on the direct llama path) — a runaway generation on the local 27B ran into the 10-min timeout.
+- Key proxy job mode: `POST /api/llm/<backend>/jobs` + `GET /api/llm/jobs/<id>` (own jobs only, bounded, results expire after 10 min, booked and budgeted like sync); agent `LLM_ASYNC=1` submits and polls every 2 s instead of holding the connection open.
 - Skills: categories (coding/design/devops/data/research/writing/meta/personal/security; guessed, editable, migrated once with backup); security skills reach a guest only with SECURITY_SKILLS=1 or the squad's 'Security skills' — hidden in lists/standard set/catalog/Jev, refused on load and in SKILLS.
 - Squads: squad_catalog lists ≤20 skills matching the repo/goal (standard ones kept), security material only for security goals — the full list tripped Claude's cyber safeguards; a turn answered with a provider API error counts as failed.
 - Claude guest image installs curl — guest-init needs it for the host-folder mounts (/project) and the skills block; Claude members had neither.

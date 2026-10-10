@@ -55,6 +55,7 @@ SETTINGS_SCHEMA = [
         {"value": "", "label": "— off: the router asks Jev —"},
         {"value": "1", "label": "on — router classifies via the decision backend"}]},
     {"key": "HINDSIGHT_URL", "label": "Hindsight memory server — optional second memory (facts from every turn, recall + reflect); blank = off, e.g. http://127.0.0.1:8888"},
+    {"key": "LLM_MAX_TOKENS", "label": "LLM max tokens per call — default cap for every instance (instance key LLM_MAX_TOKENS overrides; enforced in the key proxy, sent by the agent; blank = no cap), e.g. 16384"},
     {"key": "LLM_KEY_PROXY", "label": "LLM key injection proxy (1 = keys stay on the host, VMs proxy through the manager)", "options": [
         {"value": "", "label": "— off (agent fetches key via broker) —"},
         {"value": "1", "label": "on — keys never leave the host"}]},
@@ -143,6 +144,21 @@ DECISION_BACKENDS = ("jev", "decision1-openrouter", "decision1-azure", "local-ll
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@+-]{0,160}$")
 
 
+# The max_tokens cap per LLM call (setting = default, instance key overrides;
+# enforced in mgr/llmproxy.py). Upper bound: no sane reply needs more.
+LLM_MAX_TOKENS_MAX = 131072
+
+
+def max_tokens_error(val):
+    """'' or why val is no valid LLM_MAX_TOKENS (empty = unset)."""
+    if val in ("", None):
+        return ""
+    s = str(val).strip()
+    if not s.isdigit() or not 1 <= int(s) <= LLM_MAX_TOKENS_MAX:
+        return f"LLM_MAX_TOKENS must be a whole number 1…{LLM_MAX_TOKENS_MAX} (empty = no cap)"
+    return ""
+
+
 def validate_decision(d):
     """'' or the first error of the decision settings in a settings save."""
     if "DECISION_BACKEND" in d and (d["DECISION_BACKEND"] or "jev") not in DECISION_BACKENDS:
@@ -152,6 +168,8 @@ def validate_decision(d):
     for k in ("DECISION_MODEL", "DECISION_LOCAL_MODEL"):
         if not _MODEL_RE.match(str(d.get(k) or "")):
             return k + ": a model id ([A-Za-z0-9._:/@+-], at most 160)"
+    if max_tokens_error(d.get("LLM_MAX_TOKENS")):
+        return max_tokens_error(d.get("LLM_MAX_TOKENS"))
     u = str(d.get("AZURE_DECISION_ENDPOINT") or "").strip()
     if u:
         p = urllib.parse.urlsplit(u)

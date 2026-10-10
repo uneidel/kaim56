@@ -10,6 +10,7 @@ one place.
 """
 import json
 import os
+import secrets
 import threading
 import time
 import urllib.request
@@ -140,122 +141,251 @@ def _routed_upstream(target, st):
     return (url, key) if key else (None, None)
 
 
+# ---- max_tokens cap ----------------------------------------------------------
+# A runaway generation (seen on the local 27B: it ran until the 10-min timeout)
+# ends at LLM_MAX_TOKENS. Enforced here, server-side, on every call through the
+# proxy (all backends, incl. a routed llama turn): a VM cannot lift it. The
+# instance key wins over the settings default; neither = no cap.
+
+
+def max_tokens_of(inst, st):
+    """The effective cap for this caller: instance config, else settings; 0 = none."""
+    for v in (((inst or {}).get("config") or {}).get("LLM_MAX_TOKENS"), st.get("LLM_MAX_TOKENS")):
+        if v not in ("", None) and not _settings.max_tokens_error(v):
+            return int(str(v).strip())
+    return 0
+
+
+def _clamp_max_tokens(body, cap):
+    """Clamp max_tokens / max_completion_tokens to cap, add max_tokens when
+    neither is there. True when the body changed."""
+    if cap <= 0 or not isinstance(body, dict):
+        return False
+    changed, present = False, False
+    for k in ("max_tokens", "max_completion_tokens"):
+        if k in body:
+            present = True
+            v = body[k]
+            if isinstance(v, bool) or not isinstance(v, int) or not 0 < v <= cap:
+                body[k], changed = cap, True
+    if not present:
+        body["max_tokens"], changed = cap, True
+    return changed
+
+
+def _err(status, obj):
+    return status, "application/json", json.dumps(obj).encode()
+
+
+def _resolve(backend, payload, ginst, span):
+    """What the sync and the job path share before the upstream call: host
+    key, model router, max_tokens cap. -> (error, None) with error =
+    (status, ctype, body), or (None, call) with call = {url, headers,
+    payload, backend, stream}."""
+    url, keyname = LLM_PROXY_UPSTREAMS[backend]
+    st = _settings.load_settings()
+    # Self-hosted OrcaRouter-Lite: the shared base URL applies to the proxy
+    # too — otherwise the detour would suddenly run against the cloud while
+    # direct mode talks to the own server.
+    if backend == "orcarouter" and (st.get("ORCAROUTER_URL") or "").strip():
+        u = st["ORCAROUTER_URL"].strip().rstrip("/")
+        if not u.endswith("/chat/completions"):
+            u += "/chat/completions" if u.endswith("/v1") else "/v1/chat/completions"
+        url = u
+    key = (st.get(keyname) or "").strip()
+    if not key:
+        return _err(503, {"error": f"{keyname} not configured on host"}), None
+    try:
+        body = json.loads(payload or b"{}")
+        want_stream = bool(body.get("stream"))
+    except (ValueError, AttributeError):
+        body, want_stream = None, False
+    # Model router (opt-in per instance, mgr/router.py): the turn may run on
+    # another model the running instances use — never blocks, never a new provider.
+    if isinstance(body, dict) and ginst is not None and ((ginst.get("config") or {}).get("MODEL_ROUTER")
+                                                         or _router.planned(ginst["name"], span["turn"])):
+        target = _router.route(ginst, body, span["turn"])
+        re_url, re_key = _routed_upstream(target, st) if target else (None, None)
+        if re_url:
+            body["model"] = target["model"]
+            payload, url, key, backend = json.dumps(body).encode(), re_url, re_key, target["backend"]
+    if _clamp_max_tokens(body, max_tokens_of(ginst, st)):
+        payload = json.dumps(body).encode()
+    headers = {"Content-Type": "application/json",
+               "HTTP-Referer": f"https://{_settings.PUBLIC_HOST}", "X-Title": "kat56-agent"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return None, {"url": url, "headers": headers, "payload": payload, "backend": backend, "stream": want_stream}
+
+
+def _open(call, ginst, span, t0, timeout=600):
+    """Open the upstream request. -> (response, None) or (None, error) with
+    upstream errors passed through 1:1 (the agent has its own retry logic for
+    429/5xx and shows 4xx bodies) and booked as a failed span."""
+    req = urllib.request.Request(call["url"], data=call["payload"], method="POST", headers=call["headers"])
+    try:
+        return urllib.request.urlopen(req, timeout=timeout), None
+    except urllib.error.HTTPError as e:
+        data = e.read()
+        if ginst is not None:            # a failed LLM span, with the reason
+            _store.usage_add(ginst["name"], call["backend"], 0, 0, 0, ok=False,
+                             err=f"HTTP {e.code}: {data[:300].decode('utf-8', 'replace')}",
+                             ms=int((time.monotonic() - t0) * 1000), **span)
+            _router.outcome(ginst["name"], span["turn"], "error")    # cost router: next turn one level up
+        return None, (e.code, e.headers.get("Content-Type", "application/json"), data)
+    except Exception as e:
+        return None, _err(502, {"error": f"llm upstream unreachable: {e!r}"})
+
+
+def _call(call, ginst, span, timeout=600):
+    """One non-streaming upstream call, books kept. -> (status, ctype, body).
+    The sync path and the job thread both run exactly this."""
+    t0 = time.monotonic()
+    r, err = _open(call, ginst, span, t0, timeout)
+    if err:
+        return err
+    with r:
+        out = (r.status, r.headers.get("Content-Type", "application/json"), r.read())
+    _proxy_usage(ginst, call["backend"], out[2], ms=int((time.monotonic() - t0) * 1000), **span)
+    return out
+
+
+# ---- job mode: the manager holds the long connection, not the VM -------------
+# POST /api/llm/<backend>/jobs -> {"job": id} at once; a thread runs _call;
+# GET /api/llm/jobs/<id> -> {"status": "running"} or the upstream answer
+# (status + body as the sync path would have sent them). Bounded: a few
+# running jobs per caller, a capped store, finished results expire.
+JOB_TIMEOUT = 900          # the upstream call of a job (sync: 600)
+JOB_TTL = 600              # a finished result waits this long for its poll
+JOB_MAX_RUNNING = 4        # per caller
+JOB_MAX = 256              # whole store
+_jobs_lock = threading.Lock()
+_jobs = {}                 # id -> {"owner", "done": ts|None, "res": (status, ctype, body)}
+
+
+def _jobs_sweep(now):
+    for jid in [j for j, v in _jobs.items() if v["done"] and now - v["done"] > JOB_TTL]:
+        del _jobs[jid]
+
+
+def job_submit(owner, call, ginst, span):
+    """Start the call in a thread. -> (id, None) or (None, reason)."""
+    with _jobs_lock:
+        _jobs_sweep(time.time())
+        if sum(1 for v in _jobs.values() if v["owner"] == owner and not v["done"]) >= JOB_MAX_RUNNING:
+            return None, f"{JOB_MAX_RUNNING} LLM jobs already running"
+        if len(_jobs) >= JOB_MAX:
+            return None, "LLM job store full"
+        jid = secrets.token_urlsafe(16)
+        _jobs[jid] = {"owner": owner, "done": None, "res": None}
+
+    def run():
+        try:
+            res = _call(call, ginst, span, timeout=JOB_TIMEOUT)
+        except Exception as e:           # never leave a job "running" forever
+            res = _err(502, {"error": f"llm job failed: {e!r}"})
+        with _jobs_lock:
+            if jid in _jobs:
+                _jobs[jid].update(done=time.time(), res=res)
+    threading.Thread(target=run, daemon=True, name=f"llmjob-{jid[:6]}").start()
+    return jid, None
+
+
+def job_get(owner, jid):
+    """The caller's job or None (a foreign id looks exactly like an unknown one)."""
+    with _jobs_lock:
+        _jobs_sweep(time.time())
+        j = _jobs.get(jid)
+        return dict(j) if j and j["owner"] == owner else None
+
+
 class LLMProxyMixin:
     """The handler side of the key proxy: POST /api/llm/<backend>/chat/completions
-    from a VM, upstream with the host-held key, usage booked per instance.
+    from a VM, upstream with the host-held key, usage booked per instance;
+    POST /api/llm/<backend>/jobs + GET /api/llm/jobs/<id> for the job mode.
     Mixed into mgr.httpd.H."""
 
-    def _llm_proxy(self, _pp):
-        """POST /api/llm/<backend>/chat/completions — credential injection
-        gateway. The body goes unchanged to the router; the manager injects the
-        Authorization header from the settings so the key never reaches the VM.
-        Streams (SSE) are passed through line by line, upstream errors
-        transparently (status + body). Deliberately NO logs of key or body —
-        those are exactly what should not leave the host or linger anywhere."""
-        parts = _pp.strip("/").split("/")      # api/llm/<backend>/chat/completions
-        backend = parts[2] if len(parts) > 2 else ""
-        if backend not in LLM_PROXY_UPSTREAMS or parts[3:] != ["chat", "completions"]:
-            out = b'{"error":"unknown llm proxy path"}'
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers(); self.wfile.write(out); return
-        ok_g, why = _guard_check(_guests.instance_by_ip(self.client_address[0]))
-        if not ok_g:
-            out = json.dumps({"error": {"message": f"guardrail: {why}", "code": 429}}).encode()
-            self.send_response(429)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers(); self.wfile.write(out); return
-        url, keyname = LLM_PROXY_UPSTREAMS[backend]
-        st = _settings.load_settings()
-        # Self-hosted OrcaRouter-Lite: the shared base URL applies to the proxy
-        # too — otherwise the detour would suddenly run against the cloud while
-        # direct mode talks to the own server.
-        if backend == "orcarouter" and (st.get("ORCAROUTER_URL") or "").strip():
-            u = st["ORCAROUTER_URL"].strip().rstrip("/")
-            if not u.endswith("/chat/completions"):
-                u += "/chat/completions" if u.endswith("/v1") else "/v1/chat/completions"
-            url = u
-        key = (st.get(keyname) or "").strip()
-        if not key:
-            out = json.dumps({"error": f"{keyname} not configured on host"}).encode()
-            self.send_response(503)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers(); self.wfile.write(out); return
-        payload = self._raw(_routes.BODY_MAX_LLM)
+    def _llm_reply(self, status, ctype, data):
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers(); self.wfile.write(data)
+
+    def _llm_caller(self):
+        """(instance or None, job owner): a VM by its IP; a host service on the
+        docker bridge is booked under one name, not a VM."""
         ginst = _guests.instance_by_ip(self.client_address[0])
         if ginst is None and self.client_address[0].startswith("172.17."):
             ginst = {"name": "hindsight" if _hindsight.enabled() else "services"}   # booked, not a VM
+        return ginst, (ginst["name"] if ginst else "ip:" + self.client_address[0])
+
+    def _llm_proxy(self, _pp):
+        """POST /api/llm/<backend>/chat/completions — credential injection
+        gateway. The body goes to the router (max_tokens capped); the manager
+        injects the Authorization header from the settings so the key never
+        reaches the VM. Streams (SSE) are passed through line by line, upstream
+        errors transparently (status + body). /jobs instead: the same call,
+        non-streaming, in a manager thread. Deliberately NO logs of key or
+        body — those are exactly what should not leave the host or linger."""
+        parts = _pp.strip("/").split("/")      # api/llm/<backend>/chat/completions
+        backend = parts[2] if len(parts) > 2 else ""
+        job = parts[3:] == ["jobs"]
+        if backend not in LLM_PROXY_UPSTREAMS or not (job or parts[3:] == ["chat", "completions"]):
+            return self._llm_reply(*_err(404, {"error": "unknown llm proxy path"}))
+        ok_g, why = _guard_check(_guests.instance_by_ip(self.client_address[0]))
+        if not ok_g:
+            return self._llm_reply(*_err(429, {"error": {"message": f"guardrail: {why}", "code": 429}}))
+        payload = self._raw(_routes.BODY_MAX_LLM)
+        ginst, owner = self._llm_caller()
         span = {"turn": self.headers.get("X-Kaim-Turn", "")[:16],
                 "step": self.headers.get("X-Kaim-Step", "") or None}
+        if job:                                # a job never streams
+            try:
+                body = json.loads(payload or b"{}")
+                body.pop("stream", None); body.pop("stream_options", None)
+            except (ValueError, AttributeError):
+                return self._llm_reply(*_err(400, {"error": "job body must be a JSON object"}))
+            payload = json.dumps(body).encode()
+        err, call = _resolve(backend, payload, ginst, span)
+        if err:
+            return self._llm_reply(*err)
+        if job:
+            jid, why = job_submit(owner, call, ginst, span)
+            return self._llm_reply(*(_err(429, {"error": why}) if why else _err(202, {"job": jid})))
+        if not call["stream"]:
+            return self._llm_reply(*_call(call, ginst, span))
         _t0 = time.monotonic()
-        try:
-            body = json.loads(payload or b"{}")
-            want_stream = bool(body.get("stream"))
-        except (ValueError, AttributeError):
-            body, want_stream = None, False
-        # Model router (opt-in per instance, mgr/router.py): the turn may run on
-        # another model the running instances use — never blocks, never a new provider.
-        if isinstance(body, dict) and ginst is not None and ((ginst.get("config") or {}).get("MODEL_ROUTER")
-                                                             or _router.planned(ginst["name"], span["turn"])):
-            target = _router.route(ginst, body, span["turn"])
-            re_url, re_key = _routed_upstream(target, st) if target else (None, None)
-            if re_url:
-                body["model"] = target["model"]
-                payload, url, key, backend = json.dumps(body).encode(), re_url, re_key, target["backend"]
-        headers = {"Content-Type": "application/json",
-                   "HTTP-Referer": f"https://{_settings.PUBLIC_HOST}", "X-Title": "kat56-agent"}
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
-        req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
-        try:
-            r = urllib.request.urlopen(req, timeout=600)
-        except urllib.error.HTTPError as e:
-            # Pass upstream errors through 1:1: the agent has its own retry
-            # logic for 429/5xx and shows 4xx bodies as an error message.
-            data = e.read()
-            if ginst is not None:            # a failed LLM span, with the reason
-                _store.usage_add(ginst["name"], backend, 0, 0, 0, ok=False,
-                          err=f"HTTP {e.code}: {data[:300].decode('utf-8', 'replace')}",
-                          ms=int((time.monotonic() - _t0) * 1000), **span)
-                _router.outcome(ginst["name"], span["turn"], "error")    # cost router: next turn one level up
-            self.send_response(e.code)
-            self.send_header("Content-Type", e.headers.get("Content-Type", "application/json"))
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers(); self.wfile.write(data); return
-        except Exception as e:
-            data = json.dumps({"error": f"llm upstream unreachable: {e!r}"}).encode()
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers(); self.wfile.write(data); return
+        r, err = _open(call, ginst, span, _t0)
+        if err:
+            return self._llm_reply(*err)
         with r:
             self.send_response(r.status)
             self.send_header("Content-Type", r.headers.get("Content-Type", "application/json"))
-            if want_stream:
-                # Write SSE on line by line and flush — full buffering would kill
-                # the token streaming in the agent. readline() blocks only until
-                # the next event line, never until the end of the stream. Without
-                # Content-Length the response ends with the connection close
-                # (HTTP/1.0), urllib in the guest reads until EOF.
-                self.send_header("X-Accel-Buffering", "no")
-                self.end_headers()
-                try:
-                    while True:
-                        chunk = r.readline()
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                        if b'"usage"' in chunk:
-                            _proxy_usage(ginst, backend, chunk, ms=int((time.monotonic() - _t0) * 1000), **span)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass               # client gone -> upstream closes via with
-            else:
-                data = r.read()
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                _proxy_usage(ginst, backend, data, ms=int((time.monotonic() - _t0) * 1000), **span)
+            # Write SSE on line by line and flush — full buffering would kill
+            # the token streaming in the agent. readline() blocks only until
+            # the next event line, never until the end of the stream. Without
+            # Content-Length the response ends with the connection close
+            # (HTTP/1.0), urllib in the guest reads until EOF.
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            try:
+                while True:
+                    chunk = r.readline()
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    if b'"usage"' in chunk:
+                        _proxy_usage(ginst, call["backend"], chunk, ms=int((time.monotonic() - _t0) * 1000), **span)
+            except (BrokenPipeError, ConnectionResetError):
+                pass               # client gone -> upstream closes via with
+
+    def _llm_job_get(self, _pp):
+        """GET /api/llm/jobs/<id> — {"status": "running"}, or the finished
+        upstream answer with its status; only the caller's own jobs."""
+        j = job_get(self._llm_caller()[1], _pp.rstrip("/").rsplit("/", 1)[-1])
+        if j is None:
+            return self._llm_reply(*_err(404, {"error": "unknown job"}))
+        if not j["done"]:
+            return self._llm_reply(*_err(200, {"status": "running"}))
+        return self._llm_reply(*j["res"])
