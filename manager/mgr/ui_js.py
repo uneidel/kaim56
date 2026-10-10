@@ -1033,12 +1033,15 @@ async function pjDiscard(){
 }
 /* squad: the project's members talk in one channel (mgr/squads.py) */
 let SQ='';
+/* the project the squad views act on: the Projects panel's, else the Squads tab's (SQ was empty
+   there after a reload, and an empty name made '/api/projects//squad/decide' -> 'unknown operation') */
+function sqName(){return SQ||(typeof SK!=='undefined'?SK:'')}
 async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
   await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
 function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none';document.getElementById('sq-gate').innerHTML=''}
 async function sqLoad(){
   if(!SQ)return;
-  const base='/api/projects/'+encodeURIComponent(SQ)+'/squad';
+  const base='/api/projects/'+encodeURIComponent(sqName())+'/squad';
   let s={},d={};
   try{s=await (await fetch(base)).json();d=await (await fetch(base+'/messages')).json()}catch(e){document.getElementById('sqmsg').textContent='manager not reachable';return}
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
@@ -1063,7 +1066,7 @@ async function sqLoad(){
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
 async function sqIndex(){
   const el=document.getElementById('sq-index');
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/index')).json()}catch(e){return}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/index')).json()}catch(e){return}
   if(d.error||!el)return;
   if(!d.instance){el.innerHTML='<span class=text-muted style="font-size:12.5px">No indexer: create an instance from template <code>indexer</code>.</span>';return}
   const l=d.last||{}, sm='<span class=text-muted style="font-size:12.5px">';
@@ -1071,17 +1074,17 @@ async function sqIndex(){
     (d.pending?sm+'reindex queued … </span>':'')+
     (l.ts?sm+`last index ${new Date(l.ts*1000).toLocaleString()} · ${l.ok?'ok':'failed'}${l.detail?' · '+escT(String(l.detail).slice(0,120)):''}${l.why?' · '+escT(l.why):''} · ${+l.seconds||0} s</span> `:sm+'not indexed yet </span>')+
     `<button class="btn btn-ghost btn-sm" onclick=sqReindex()>Reindex</button>`+
-    (l.ok&&INDEX_HOST?` <a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(SQ)}" target=_blank rel="noopener noreferrer" title="repowise dashboard on its own origin (starts the indexer)">Dashboard</a>`:'');
+    (l.ok&&INDEX_HOST?` <a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(sqName())}" target=_blank rel="noopener noreferrer" title="repowise dashboard on its own origin (starts the indexer)">Dashboard</a>`:'');
 }
 async function sqReindex(){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||d.msg||'';
   sqIndex();
 }
 /* squad git remote (mgr/squadgit.py): settings, Fetch now, what the squad opened */
 async function sqGit(){
   const el=document.getElementById('sq-git'); if(!el)return;
-  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ))).json()}catch(e){return}
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(sqName()))).json()}catch(e){return}
   if(d.error){el.textContent=d.error;return}
   const r=d.remote||d.defaults||{}, on=!!d.remote, S=v=>String(v==null?'':v);
   const opt=(v,cur)=>`<option value="${esc(S(v))}"${v===cur?' selected':''}>${escT(S(v))}</option>`;
@@ -1104,26 +1107,26 @@ async function sqGitSave(remove){
   if(remove&&!confirm('Remove the git remote of '+SQ+'? The token secret stays in the store.'))return;
   const v=id=>document.getElementById(id).value;
   const body=remove?{remove:true}:{provider:v('sg-provider'),url:v('sg-url').trim(),token_secret:v('sg-token'),base:v('sg-base').trim(),label:v('sg-label').trim(),daily_limit:+v('sg-limit')};
-  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(sqName()),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   if(d.error){document.getElementById('sg-msg').textContent=d.error;return}
   await sqGit(); document.getElementById('sg-msg').textContent=remove?'removed ✓':'saved ✓';
 }
 async function sqGitFetch(){
   document.getElementById('sg-msg').textContent='fetching …';
-  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SQ)+'/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(sqName())+'/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
   if(!d.error){sqLoad();loadProjects()}
 }
 async function sqSend(){
   const el=document.getElementById('sq-text'), text=el.value.trim(); if(!text)return;
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'';
   if(!d.error){el.value='';sqLoad()}
 }
@@ -1234,7 +1237,7 @@ function sqMem(p,m){
 }
 async function sqSuggest(id,name,btn){
   btn.disabled=true; btn.textContent='asking Jev…';
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,member:name})})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,member:name})})).json()}catch(e){d={error:'manager not reachable'}}
   const p=(SQB.proposals||[]).find(x=>x.id===id), m=(d.members||[]).find(x=>x.name===name);
   if(d.error||!p||!m){btn.disabled=false;btn.textContent='Suggest again';document.getElementById('sqmsg').textContent=d.error||'';return}
   p.members=p.members.map(x=>x.name===name?m:x);
@@ -1319,7 +1322,7 @@ function sqCollect(p,c){
 }
 const sqOpenP=p=>p.status==='pending'||p.status==='changes_requested';
 async function sqBoard(){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/board')).json()}catch(e){return}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/board')).json()}catch(e){return}
   if(d.error)return;
   SQB=d;
   const ps=d.proposals||[], pend=ps.filter(sqOpenP), done=ps.filter(p=>!sqOpenP(p)).slice(0,10);
@@ -1346,13 +1349,13 @@ async function sqDecide(id,ok,changes){
   if(!ok&&!changes&&!confirm('Reject this proposal? The note goes to the lead.'))return;
   const body={id,approve:ok,changes:!!changes,note:note?note.value:''};
   if((ok||changes)&&c&&p&&p.kind!=='merge')Object.assign(body,sqCollect(p,c));
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent((p&&p.project)||sqName())+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   /* the Squads page shows the same card */
   document.getElementById(sk?'sk-msg':'sqmsg').textContent=d.error||(d.status+((d.steps||[]).some(s=>!s.ok)?' — some steps failed, see Projects → Squad':' ✓'));
   if(!d.error){if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}}
 }
 async function sqTicket(id,change){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'';
   sqLoad();
 }
@@ -1498,7 +1501,7 @@ async function skSend(){
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();else if(!document.hidden&&location.hash==='#projects'&&SQ)sqWork()},5000);
 /* Projects → Squad: only the working line refreshes (the settings form stays as edited) */
 async function sqWork(){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SQ)+'/squad/messages?since=999999999')).json()}catch(e){return}
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/messages?since=999999999')).json()}catch(e){return}
   if(!d.error)document.getElementById('sq-working').innerHTML=sqWorking(d.working);
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
