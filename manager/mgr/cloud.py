@@ -52,6 +52,7 @@ READY_WAIT = 240                                        # a new workers.dev name
 COMPAT_DATE = "2026-09-01"
 BINDING = "APP_DO"
 MIGRATION_TAG = "v1"
+LLM_URL = "https://openrouter.ai/api/v1/chat/completions"   # Cloudflare cannot reach the manager's key proxy
 WORKER_URL = "https://{script}.{sub}.workers.dev"        # https only: the default secret travels as Basic
 # What an app's token may call on the manager — the API the apps use, nothing
 # that administers the platform itself (settings, secrets, update, terminals).
@@ -151,8 +152,25 @@ def _strip_module(src):
     return "\n".join(out)
 
 
+def llm_bindings(app):
+    """An app whose object calls env.LLM_URL (agents) gets OpenRouter and the
+    key CF_LLM_KEY as a Worker secret — never in the code; [] for the others."""
+    if "env.LLM_URL" not in do_class(app)[1]:
+        return []
+    key = (_settings.load_settings().get("CF_LLM_KEY") or "").strip()
+    if not key:
+        raise ValueError(f"{app} calls an LLM — fill in Settings: CF_LLM_KEY (a separate OpenRouter key)")
+    return [{"type": "plain_text", "name": "LLM_URL", "text": LLM_URL},
+            {"type": "secret_text", "name": "LLM_KEY", "text": key}]
+
+
 def worker_source(app, token, manager_url):
     cls, mod = do_class(app)
+    # an object per something (agents: one per agent) routes itself: <app>Route(ns, url, request, path)
+    routed = bool(cls) and re.search(rf"^export async function {re.escape(app)}Route\(", mod, re.M) is not None
+    state = (f'return {app}Route(env.{BINDING}, url, request, url.pathname.slice(5) || "/");' if routed else
+             f'const stub = env.{BINDING}.get(env.{BINDING}.idFromName(KAIM_APP));\n'
+             f'      return stub.fetch(new Request(new URL(url.pathname.slice(5) || "/", url), request));')
     with open(os.path.join(celld_dir(), "do", "storage.js"), encoding="utf-8") as fh:
         storage = fh.read()
     body = (_strip_module(storage) + "\n\n" + _strip_module(mod)) if cls else \
@@ -189,8 +207,7 @@ export default {{
     }}
     const url = new URL(request.url);
     if (url.pathname === "/_api" || url.pathname.startsWith("/_api/")) {{   // the app's own state
-      const stub = env.{BINDING}.get(env.{BINDING}.idFromName(KAIM_APP));
-      return stub.fetch(new Request(new URL(url.pathname.slice(5) || "/", url), request));
+      {state}
     }}
     if (url.pathname.startsWith("/api/")) {{                                 // the platform, with this app's token
       const headers = new Headers({{ Authorization: "Bearer " + KAIM_TOKEN }});
@@ -212,6 +229,7 @@ export default {{
 def deploy(app, token, account, cf_token, secret):
     """Put the app on Cloudflare (assets, the worker, workers.dev) -> its URL."""
     cls, _ = do_class(app)
+    llm = llm_bindings(app)                                   # refused before anything is uploaded
     assets = _cfapi.scan_assets(os.path.join(_apps.apps_dir(), app))
     _step(app, f"uploading {len(assets)} files")
     jwt = _cfapi.upload_assets(account, script_name(app), cf_token, assets)
@@ -219,7 +237,7 @@ def deploy(app, token, account, cf_token, secret):
     _cfapi.upload_script(account, script_name(app), cf_token, module_name="worker.mjs",
                          module_src=worker_source(app, token, f"https://{_settings.PUBLIC_HOST}"),
                          cls=cls or "AppIdle", binding=BINDING, secret=secret, compat_date=COMPAT_DATE,
-                         assets_jwt=jwt, tag=MIGRATION_TAG)
+                         assets_jwt=jwt, tag=MIGRATION_TAG, extra_bindings=llm)
     _cfapi.enable_workers_dev(account, script_name(app), cf_token)
     sub = _cfapi.workers_dev_subdomain(account, cf_token)
     if not sub:

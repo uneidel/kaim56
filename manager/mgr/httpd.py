@@ -20,6 +20,7 @@ from mgr import cloud as _cloud
 from mgr import guestproxy as _guestproxy
 from mgr import guests as _guests
 from mgr import guestgrants as _grants
+from mgr import irohgw as _irohgw
 from mgr import llmproxy as _llmproxy
 from mgr import oidc as _oidc
 from mgr import routes as _routes
@@ -31,6 +32,27 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
     # Reading a request (headers, body) may not hang a thread for ever; the
     # tunnel and the long-polls lift this per socket / wait server-side.
     timeout = 120
+    iroh_node = ""          # the iroh device behind this connection (parse_request)
+
+    def parse_request(self):
+        # iroh-gw opens one connection per app request and puts "PROXY IROH
+        # <node-id>" before the HTTP: the device is then the lockout key, not
+        # the gateway's 127.0.0.1. Untrusted, malformed, not first on the
+        # connection or no longer allow-listed: the connection is dropped.
+        first, self._seen = not getattr(self, "_seen", False), True
+        if self.raw_requestline.startswith(b"PROXY "):
+            node = _auth.iroh_node(self.client_address[0], self.raw_requestline) if first else None
+            if node is None or node not in {a["id"].lower() for a in _irohgw.load_allow()}:
+                print(f"[auth] {self.client_address[0]}: refused iroh header {self.raw_requestline[:90]!r}", flush=True)
+                self.close_connection = True
+                return False
+            self.iroh_node = node
+            self.raw_requestline = self.rfile.readline(65537)
+            if len(self.raw_requestline) > 65536:
+                self.close_connection = True
+                return False
+        return super().parse_request()
+
     # Protection layer: an unhandled exception in a route must NOT tear the
     # connection down hard (the agent would otherwise see "RemoteDisconnected").
     # If no header has been sent yet, we respond cleanly with HTTP 500; otherwise
@@ -108,7 +130,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         # use the key proxy without a login — only that path, only from there.
         if self.path.startswith("/api/llm/") and self.client_address[0].startswith("172.17."):
             return True
-        key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""), self.iroh_node)
         if _auth.auth_locked(key):
             self._send(b'{"error":"too many failed logins, try again later"}', "application/json", 429)
             return False
@@ -158,7 +180,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if not _auth.index_path_allowed(self.path) or not _oidc.enabled():
             self._json({"error": "not found"}, 404)
             return False
-        key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""))
+        key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""), self.iroh_node)
         if _auth.auth_locked(key):
             self._send(b'{"error":"too many failed logins, try again later"}', "application/json", 429)
             return False

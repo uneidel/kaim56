@@ -10,7 +10,10 @@
 // relay: each accepted stream is spliced onto a fresh TCP connection to the
 // local manager (127.0.0.1:8700). No HTTP parsing here, so token streaming and
 // long-poll "just work"; the app speaks the very same HTTP (incl. basic auth)
-// it used to, only through the tunnel. The manager is unchanged.
+// it used to, only through the tunnel. One line goes before the HTTP on each
+// manager connection: "PROXY IROH <node-id>\r\n" (proxy_header), so the manager
+// keys its failed-login lockout per device instead of per 127.0.0.1
+// (manager/mgr/httpd.py parse_request; needs that manager version).
 //
 // Auth: every iroh connection carries the caller's cryptographically
 // authenticated NodeId. Only NodeIds listed in the allowlist file are relayed;
@@ -96,14 +99,20 @@ fn load_allowlist() -> Vec<String> {
     out
 }
 
+/// The per-connection line that tells the manager which device this is.
+fn proxy_header(node_id: &str) -> Vec<u8> {
+    format!("PROXY IROH {node_id}\r\n").into_bytes()
+}
+
 /// Splice one iroh bi stream onto a fresh TCP connection to the manager.
 /// Copies bytes both ways until either side closes — a transparent tunnel.
 async fn relay_stream(
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
     manager: String,
+    node_id: String,
 ) {
-    let tcp = match TcpStream::connect(&manager).await {
+    let mut tcp = match TcpStream::connect(&manager).await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[relay] connect {manager} failed: {e}");
@@ -111,6 +120,11 @@ async fn relay_stream(
             return;
         }
     };
+    if let Err(e) = tcp.write_all(&proxy_header(&node_id)).await {
+        eprintln!("[relay] header to {manager} failed: {e}");
+        let _ = send.finish();
+        return;
+    }
     let (mut tr, mut tw) = tcp.into_split();
     // phone -> manager
     let up = tokio::spawn(async move {
@@ -138,7 +152,7 @@ async fn handle_conn(conn: iroh::endpoint::Connection, manager: String) {
         match conn.accept_bi().await {
             Ok((send, recv)) => {
                 let m = manager.clone();
-                tokio::spawn(relay_stream(send, recv, m));
+                tokio::spawn(relay_stream(send, recv, m, id_str.clone()));
             }
             Err(_) => break, // connection closed
         }
@@ -185,4 +199,13 @@ async fn main() -> Result<()> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn proxy_header_is_one_line_before_the_http() {
+        let id = "ab".repeat(32);
+        assert_eq!(super::proxy_header(&id), format!("PROXY IROH {id}\r\n").into_bytes());
+    }
 }

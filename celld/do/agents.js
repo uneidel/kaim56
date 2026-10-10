@@ -2,8 +2,13 @@
 // A turn is accepted at once (POST turn -> id), runs in the background
 // (alarm, with waitUntil as the kick) and is fetched by polling (GET turn/<id>)
 // — no connection has to stay open. Tools: web search (DuckDuckGo HTML, no
-// key), fetch a page, the agent's own memory. The LLM goes through the
-// manager's key proxy on celld (env.LLM_URL), no key in here.
+// key), fetch a page, the agent's own memory. The LLM: env.LLM_URL — on celld
+// the manager's key proxy (no key at all), on Cloudflare OpenRouter itself with
+// the secret env.LLM_KEY (mgr/cloud.py binds both; Cloudflare cannot reach
+// the manager on the LAN, so there the manager's budget and usage log do not
+// see these calls — a separate, capped OpenRouter key is the guard).
+// agentsRoute (below) maps /<agent>/... to that agent's object — celld's
+// worker.js and the Cloudflare worker (mgr/cloud.py: <app>Route) both use it.
 // One module per app class; worker.js (celld) imports it, the manager
 // assembles it with do/storage.js for Cloudflare — so: no other imports,
 // helpers prefixed per module.
@@ -175,7 +180,8 @@ export class AgentState extends DurableObject {
                   ...history, { role: "user", content: t.message }];
     try {
       for (let step = 0; step < AG_MAX_STEPS; step++) {
-        const r = await fetch(this.env.LLM_URL, { method: "POST", headers: { "Content-Type": "application/json", "X-Kaim-Turn": t.id.slice(0, 16) },
+        const auth = this.env.LLM_KEY ? { Authorization: "Bearer " + this.env.LLM_KEY } : {};
+        const r = await fetch(this.env.LLM_URL, { method: "POST", headers: { "Content-Type": "application/json", "X-Kaim-Turn": t.id.slice(0, 16), ...auth },
           body: JSON.stringify({ model: cfg.model, messages: msgs, tools: AG_TOOLS }) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || !d.choices) throw new Error(`LLM HTTP ${r.status}: ${JSON.stringify(d.error || d).slice(0, 300)}`);
@@ -230,4 +236,66 @@ export class AgentState extends DurableObject {
       return `error: ${e.message || e}`;
     }
   }
+}
+
+// ---- routing: /<agent>/... to its own object --------------------------------
+// One Durable Object per agent ("agent:<name>"), the list in the object
+// "agents"; create/delete keep both in step. export/import move all of them as
+// one entry list, each key prefixed with its object ("agents|a:x", "agent:x|cfg").
+const AG_RESERVED = new Set(["create", "summary", "export", "import"]);
+const AG_SEP = "|";
+
+export async function agentsRoute(ns, url, request, path) {
+  const list = ns.get(ns.idFromName("agents"));
+  const call = (stub, p, init = {}, name = "") =>
+    stub.fetch(new Request(new URL(p, url), { ...init, headers: { "Content-Type": "application/json", "x-agent-name": name } }));
+  const agent = name => ns.get(ns.idFromName("agent:" + name));
+  const names = async () => (await (await call(list, "/")).json()).map(a => a.name);
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 0 || parts[0] === "summary") return call(list, "/" + parts.join("/"), { method: request.method });
+  if (parts[0] === "export" && request.method === "GET") {
+    const entries = [];
+    for (const [obj, stub, n] of [["agents", list, ""], ...(await names()).map(n => ["agent:" + n, agent(n), n])]) {
+      for (const [k, v] of (await (await call(stub, "/export", {}, n)).json()).entries) entries.push([obj + AG_SEP + k, v]);
+    }
+    return agJson({ entries });
+  }
+  if (parts[0] === "import" && request.method === "POST") {
+    const b = await request.json().catch(() => ({}));
+    if (!Array.isArray(b.entries)) return agJson({ error: "entries must be [[key, value], …]" }, 400);
+    const groups = new Map([["agents", []]]);
+    for (const e of b.entries) {
+      const i = Array.isArray(e) && typeof e[0] === "string" ? e[0].indexOf(AG_SEP) : -1;
+      const obj = i > 0 ? e[0].slice(0, i) : "";
+      if (obj !== "agents" && !(obj.startsWith("agent:") && AG_NAME.test(obj.slice(6))))
+        return agJson({ error: `bad key ${JSON.stringify(e && e[0])}` }, 400);
+      if (!groups.has(obj)) groups.set(obj, []);
+      groups.get(obj).push([e[0].slice(i + 1), e[1]]);
+    }
+    if (b.replace) for (const n of await names()) if (!groups.has("agent:" + n)) await call(agent(n), "/delete", { method: "POST" }, n);
+    let total = 0;
+    for (const [obj, entries] of groups) {
+      const n = obj === "agents" ? "" : obj.slice(6);
+      const r = await (await call(obj === "agents" ? list : agent(n), "/import",
+        { method: "POST", body: JSON.stringify({ entries, replace: !!b.replace }) }, n)).json();
+      if (r.error) return agJson({ error: `${obj}: ${r.error}` }, 400);
+      total += r.total;
+    }
+    return agJson({ ok: true, imported: b.entries.length, total });
+  }
+  if (parts[0] === "create" && request.method === "POST") {
+    const b = await request.json().catch(() => ({}));
+    if (!AG_NAME.test(b.name || "") || AG_RESERVED.has(b.name)) return agJson({ error: "name: a-z, 0-9, - and _, at most 32" }, 400);
+    const r = await call(agent(b.name), "/setup", { method: "POST", body: JSON.stringify(b) }, b.name);
+    const d = await r.json();
+    if (r.ok) await call(list, "/add", { method: "POST", body: JSON.stringify({ name: b.name, model: d.agent.model }) });
+    return agJson(d, r.status);
+  }
+  const name = parts[0];
+  if (!AG_NAME.test(name) || AG_RESERVED.has(name)) return agJson({ error: "bad agent name" }, 400);
+  const init = { method: request.method };
+  if (request.method === "POST") init.body = await request.text();
+  const r = await call(agent(name), "/" + parts.slice(1).join("/"), init, name);
+  if (parts[1] === "delete" && r.ok) await call(list, "/remove", { method: "POST", body: JSON.stringify({ name }) });
+  return r;
 }

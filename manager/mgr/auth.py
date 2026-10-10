@@ -84,12 +84,26 @@ _auth_fails, _auth_lock = {}, threading.Lock()
 _PROXY_PEERS = ("127.0.0.1", "::1", "172.17.")
 
 
-def auth_client_key(peer, xff=""):
-    """Who is knocking: the socket peer — or, when that is a proxy on this
-    host (Traefik on loopback/docker), the first X-Forwarded-For hop."""
+def auth_client_key(peer, xff="", node=""):
+    """Who is knocking: the iroh node-id the gateway vouched for (iroh_node), the
+    socket peer — or, when that is a proxy on this host (Traefik on
+    loopback/docker), the first X-Forwarded-For hop."""
+    if node:
+        return "iroh:" + node
     if xff and (peer in _PROXY_PEERS or peer.startswith(_PROXY_PEERS[2])):
         return xff.split(",")[0].strip() or peer
     return peer
+
+
+_IROH_LINE = re.compile(rb"PROXY IROH ([0-9a-f]{64})\r?\n\Z")
+
+
+def iroh_node(peer, line):
+    """The node-id in iroh-gw's per-connection header ("PROXY IROH <id>"), or
+    None. iroh-gw relays raw TCP from loopback, one connection per iroh stream,
+    so the line is believed from loopback only (iroh-gw/src/main.rs)."""
+    m = _IROH_LINE.match(line) if peer in ("127.0.0.1", "::1") else None
+    return m.group(1).decode() if m else None
 
 
 def auth_locked(key, now=None):

@@ -35,7 +35,7 @@ def _redirect_uri(h):
 
 
 def _key(h):
-    return _auth.auth_client_key(h.client_address[0], h.headers.get("X-Forwarded-For", ""))
+    return _auth.auth_client_key(h.client_address[0], h.headers.get("X-Forwarded-For", ""), h.iroh_node)
 
 
 def _redirect(h, url, cookies=()):
