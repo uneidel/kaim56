@@ -27,6 +27,7 @@ else lives in mgr/, one concern per module:
     squads        a project's members talk in one channel; addressed members are woken (guarded)
     squadgate     the lead proposes (squad plan, member, merge), the user approves; tickets
     squadgit      a squad's git remote: push, fetch, PRs + issues host-side (token never in a VM)
+    squadmetrics  one row per squad event in history.db (squad_events): turns, tokens, tickets, waits; backfilled from the archive
     hitlq         human in the loop: approvals, questions, reviews that wait for the operator
     router        model router: per-turn model choice via Jev (opt-in per instance)
     jevsetup      Jev suggests persona, skills and model tier for a new instance (only a suggestion)
@@ -122,6 +123,7 @@ from mgr import skills as _skills            # noqa: F401
 from mgr import squadgate as _squadgate
 from mgr import squadgit as _squadgit        # noqa: F401
 from mgr import squadkick as _squadkick      # noqa: F401
+from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
@@ -189,6 +191,7 @@ if __name__ == "__main__":
     _personas.seed_missing()         # new built-in personas join an existing personas.json
     try:
         _squadrec.migrate()          # squad IDs, archive folders, history once; a running member's clone stays put
+        _squadmetrics.backfill()     # squad_events from the archive; per-file offsets, (kind, ref) dedupe: re-runs add nothing
         _squadgate.repair_tools()    # squad members with a fixed tool list get the squad tools they lack
     except Exception as e:
         print(f"[migrate] squads: {e!r}", flush=True)

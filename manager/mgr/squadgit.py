@@ -43,6 +43,7 @@ from mgr import paths as _paths
 from mgr import projects as _projects
 from mgr import projwt as _projwt
 from mgr import secrets as _secrets
+from mgr import squadmetrics as _squadmetrics
 
 STATE_FILE = os.path.join(_paths.BASE, "squadgit.json")
 PROVIDERS = ("github", "gitea")
@@ -411,6 +412,7 @@ def call(inst_name, action, b):
     pname, repo = proj["name"], repo_name(cfg)
     if action == "push":
         r = push_branch(proj, cfg, _writer_of(proj, inst_name, role, b), str(b.get("name") or "").strip())
+        _squadmetrics.git(pname, inst_name, "push", f"{r['branch']}@{r['commit']}", detail={"repo": repo})
         return r, pname, repo, ""
     if action == "fetch":
         return fetch(proj, cfg), pname, repo, ""
@@ -430,6 +432,8 @@ def call(inst_name, action, b):
             out = _item(d)
             _record({"ts": int(time.time()), "project": pname, "kind": "pr" if action == "pr-create" else "issue",
                      "number": out["number"], "title": out["title"], "url": out["url"], "by": inst_name})
+            _squadmetrics.git(pname, inst_name, "pr" if action == "pr-create" else "issue", out["number"],
+                              detail={"title": str(out["title"] or "")[:120], "url": out["url"]})
         note = _label(cfg, token, out["number"]) if out.get("number") else ""
         return {**out, **({"note": note} if note else {})}, pname, repo, out.get("number") or ""
     if action in ("prs", "issues"):
