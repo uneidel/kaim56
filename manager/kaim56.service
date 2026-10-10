@@ -10,7 +10,7 @@ Environment=PORT=8700
 # Only set HOSTIF if the default route does NOT run over the desired uplink —
 # otherwise the manager determines it itself. A NIC hard-coded here and later
 # renamed silently breaks the guests' NAT.
-# Environment=HOSTIF=eth0
+# Override: HOSTIF=<nic> in /etc/kaim56.env or "HOSTIF" in site.json.
 # Web auth (empty = no auth -> run only behind Traefik/SSO!):
 Environment=MANAGER_USER=admin
 Environment=MANAGER_PASS=

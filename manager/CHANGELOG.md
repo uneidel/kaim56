@@ -6,6 +6,9 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Network: no HOSTIF in the unit any more (install.sh drops an old `Environment=HOSTIF=` line) — the manager takes the default-route interface; HOSTIF in /etc/kaim56.env or site.json only as an override.
+- Host firewall (opt-in, site.json `HOST_FIREWALL=1`, default off = no iptables call): own chains KAIM56-IN/-FWD/-PRE that only RETURN or DROP — docker bridges -> host only :8700, :8700 over the LAN only from `HOST_FW_MANAGER_FROM` (default: uplink subnet), rpcbind/NFS never from outside the taps, unsolicited forwarded LAN traffic and new LAN->VM-pool connections dropped, SSH untouched; `python3 -m mgr.netfw --dry-run|--apply|--rollback`.
+- Tests: ~20 s -> ~8 s and no live endpoints — test servers poll every 20 ms instead of 0.5 s on shutdown, voice/embedding ports point at a closed port, the agent's manager URL no longer the LAN gateway; `E2E_OFFLINE=1` skips the HTTP/LIVE tiers.
 - Skills: categories (coding/design/devops/data/research/writing/meta/personal/security; guessed, editable, migrated once with backup); security skills reach a guest only with SECURITY_SKILLS=1 or the squad's 'Security skills' — hidden in lists/standard set/catalog/Jev, refused on load and in SKILLS.
 - Squads: squad_catalog lists ≤20 skills matching the repo/goal (standard ones kept), security material only for security goals — the full list tripped Claude's cyber safeguards; a turn answered with a provider API error counts as failed.
 - Claude guest image installs curl — guest-init needs it for the host-folder mounts (/project) and the skills block; Claude members had neither.

@@ -38,6 +38,18 @@ import atexit
 tempfile.tempdir = tempfile.mkdtemp(prefix="kaim56-e2e-run-")
 atexit.register(shutil.rmtree, tempfile.tempdir, True)
 
+# A test server stopped with shutdown() waits out serve_forever's poll interval
+# (0.5 s): ~25 tests paid it once or twice each. 20 ms polls cost nothing here.
+import socketserver
+socketserver.BaseServer.serve_forever.__defaults__ = (0.02,)
+
+# The loopback services of a live install (voice :8770, embeddings :8772) are
+# real endpoints: the manager code under test would call them (timeouts 2-30 s)
+# and get live answers. Port 1 is closed: refused at once, the code's
+# "service down" fallback runs — the same as on a box without them.
+os.environ.setdefault("VOICE_PORT", "1")
+os.environ.setdefault("EMBED_PORT", "1")
+
 # --- paths to the modules under test ----------------------------------------
 FC_DIR = os.environ.get("FC_DIR", "/home/ulrich/firecracker")
 AGENT_PATH = os.environ.get("AGENT_PATH", "/home/ulrich/openrouter-agent/agent/__init__.py")   # the agent package
@@ -85,6 +97,8 @@ def _readj(path):
 
 
 def _manager_up():
+    if os.environ.get("E2E_OFFLINE"):      # offline tier only, even with a manager on :8700
+        return False
     try:
         st, _ = _http("/api/agents", timeout=4)
         return st == 200
@@ -93,6 +107,8 @@ def _manager_up():
 
 
 def _orchestrator_running():
+    if os.environ.get("E2E_OFFLINE"):
+        return False
     try:
         st, txt = _http("/api/agents", timeout=4)
         if st != 200:
@@ -115,6 +131,11 @@ class AgentLogic(unittest.TestCase):
         cls.a = _load("agent_e2e", AGENT_PATH,
                       {"CLAUDE_WORKDIR": cls.tmp, "OPENROUTER_API_KEY": "dummy"})
         cls.a._mgrclient.report_usage = lambda *a, **k: None   # no network to the manager
+        # The guest derives the manager from its default gateway (.1:8700): on a
+        # dev host that is the LAN router — a real endpoint that, when it drops
+        # instead of refusing, stalls each call up to its 60 s timeout. A closed
+        # loopback port refuses at once.
+        cls.a._mgrclient._manager_base = lambda: "http://127.0.0.1:1"
 
     def test_llama_tool_json_500_falls_back_to_no_tools(self):
         """llama.cpp 500 due to broken tool-call JSON -> retry the round without
@@ -9214,6 +9235,100 @@ class ManagerFunctions(unittest.TestCase):
                     self.assertEqual(c[4:], spec)
         finally:
             m._util.sh = old_sh
+
+    @staticmethod
+    def _fake_iptables(state):
+        """A tiny iptables over {(table, chain): [spec, …]}: -N -F -X -A -I -C -D."""
+        import types
+        def sh(*a, check=True):
+            ok = types.SimpleNamespace(returncode=0, stdout="")
+            bad = types.SimpleNamespace(returncode=1, stdout="")
+            if a[0] != "iptables":
+                return bad
+            a = list(a[1:])
+            table = "filter"
+            if a[:1] == ["-t"]:
+                table, a = a[1], a[2:]
+            op, chain, rest = a[0], a[1], tuple(a[2:])
+            key = (table, chain)
+            if op == "-N":
+                if key in state: return bad
+                state[key] = []; return ok
+            if key not in state:
+                return bad
+            rules = state[key]
+            if op == "-F": rules.clear(); return ok
+            if op == "-X": del state[key]; return ok
+            if op == "-A": rules.append(rest); return ok
+            if op == "-I": rules.insert(int(rest[0]) - 1, rest[1:]); return ok
+            if op == "-C": return ok if rest in rules else bad
+            if op == "-D":
+                if rest in rules: rules.remove(rest); return ok
+                return bad
+            return bad
+        return sh
+
+    def test_host_firewall_opt_in_rules_idempotent_and_rollback(self):
+        """HOST_FIREWALL (site.json, default off): off = not one iptables call.
+        On: own chains that only RETURN or DROP (enabling can never open a
+        path), SSH before any DROP, :8700 from the LAN only from
+        HOST_FW_MANAGER_FROM, docker bridges -> host only :8700, NFS/rpcbind
+        never from outside the taps, the taps left to the guest rules. A second
+        run changes nothing; the rollback restores the exact earlier state."""
+        import copy
+        m, nf = self.m, self.m._netfw
+        old_sh, site = m._util.sh, dict(m._settings.SITE)
+        env = {k: os.environ.pop(k) for k in ("HOST_FIREWALL", "HOST_FW_MANAGER_FROM") if k in os.environ}
+        calls = []
+        try:
+            m._util.sh = lambda *a, check=True: calls.append(a)
+            m._settings.SITE.pop("HOST_FIREWALL", None)
+            self.assertFalse(nf.ensure_host_firewall())
+            self.assertEqual(calls, [])                          # off: untouched
+            m._settings.SITE.update(HOST_FIREWALL="1", HOST_FW_MANAGER_FROM="192.168.56.198")
+            rules = nf.host_firewall_rules()
+            self.assertTrue(all(s[-1] in ("RETURN", "DROP") for _t, _c, s in rules))
+            inp = [s for _t, c, s in rules if c == nf.FW_IN]
+            self.assertEqual(inp[0], ("-i", "fc+", "-j", "RETURN"))          # taps: the guest rules
+            first_drop = next(i for i, s in enumerate(inp) if s[-1] == "DROP")
+            self.assertLess(inp.index(("-p", "tcp", "--dport", "22", "-j", "RETURN")), first_drop)
+            port = str(m._host.LISTEN[1])
+            allow = inp.index(("-i", m._host.HOSTIF, "-s", "192.168.56.198", "-p", "tcp", "--dport", port, "-j", "RETURN"))
+            self.assertLess(allow, inp.index(("-p", "tcp", "--dport", port, "-j", "DROP")))
+            self.assertLess(inp.index(("-i", "docker0", "-p", "tcp", "--dport", port, "-j", "RETURN")),
+                            inp.index(("-i", "docker0", "-j", "DROP")))
+            for d in ("111", "2049"):
+                self.assertIn(("-p", "tcp", "--dport", d, "-j", "DROP"), inp)
+            self.assertIn(("mangle", nf.FW_PRE, ("-i", m._host.HOSTIF, "-d", nf.POOL, "-m", "conntrack",
+                                                  "--ctstate", "NEW", "-j", "DROP")), rules)
+            # default source for :8700 over the LAN: the HOSTIF subnet
+            m._settings.SITE.pop("HOST_FW_MANAGER_FROM")
+            old_lan, nf._lan_net = nf._lan_net, lambda: "10.9.8.0/24"
+            try:
+                self.assertIn(("-i", m._host.HOSTIF, "-s", "10.9.8.0/24", "-p", "tcp", "--dport", port, "-j", "RETURN"),
+                              [s for _t, _c, s in nf.host_firewall_rules()])
+            finally:
+                nf._lan_net = old_lan
+            # idempotent on a modelled ruleset, rollback restores it exactly
+            state = {("filter", "INPUT"): [("-i", "fc+", "-j", "DROP")],
+                     ("filter", "FORWARD"): [("-j", "DOCKER-USER")], ("mangle", "PREROUTING"): []}
+            before = copy.deepcopy(state)
+            m._util.sh = self._fake_iptables(state)
+            self.assertTrue(nf.ensure_host_firewall())
+            once = copy.deepcopy(state)
+            self.assertEqual(state[("filter", "INPUT")][0], ("-j", nf.FW_IN))
+            self.assertEqual(state[("filter", "FORWARD")][-1], ("-j", nf.FW_FWD))
+            self.assertEqual(state[("mangle", "PREROUTING")][0], ("-j", nf.FW_PRE))
+            # subnet unreadable (the fake has no `ip`): :8700 is left open, never dropped for everyone
+            self.assertNotIn(("-p", "tcp", "--dport", port, "-j", "DROP"), state[("filter", nf.FW_IN)])
+            nf.ensure_host_firewall()
+            self.assertEqual(state, once)
+            nf.remove_host_firewall()
+            self.assertEqual(state, before)
+        finally:
+            m._util.sh = old_sh
+            m._settings.SITE.clear(); m._settings.SITE.update(site)
+            os.environ.update(env)
 
 
     # ---- squad git remote: push, fetch, PRs + issues host-side; the token never in a VM --------

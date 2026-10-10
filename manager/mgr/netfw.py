@@ -2,7 +2,7 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""Networking and firewall (security boundary): the tap per instance, anti-spoof rules, what a guest may reach on the host, and the per-instance egress rules (internet on/off, MCP and llama endpoints).
+"""Networking and firewall (security boundary): the tap per instance, anti-spoof rules, what a guest may reach on the host, the per-instance egress rules (internet on/off, MCP and llama endpoints), and the opt-in host firewall (HOST_FIREWALL).
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -41,6 +41,7 @@ def ensure_net_base():
         _util.sh("iptables", "-A", "FORWARD", "-s", POOL, "-d", POOL, "-j", "DROP", check=False)
     ensure_guest_input_rules()
     ensure_browser_rules()
+    ensure_host_firewall()
 
 
 # The headless browser (mcp-browser/run.sh) runs in its own container on its own
@@ -296,3 +297,121 @@ def teardown_tap(inst):
     _util.sh("iptables", "-X", chain, check=False)
     clear_antispoof(inst)
     _util.sh("ip", "link", "del", n["tap"], check=False)
+
+
+# ---- host firewall (opt-in: site.json HOST_FIREWALL=1) ---------------------
+# INPUT and FORWARD policy are ACCEPT on the host; the rules above only guard
+# the taps. This adds three own chains that can only DROP, never open
+# (anything allowed just RETURNs to the existing rules), so turning it on cannot
+# widen access and SSH (22, any source) stays reachable:
+#   KAIM56-IN   (top of INPUT)     docker bridges -> host only :8700; manager
+#               :8700 only from lo/taps/docker/HOST_FW_MANAGER_FROM; rpcbind
+#               and NFS (111/2049) never from outside the taps
+#   KAIM56-FWD  (end of FORWARD)   forwarded traffic from the LAN that no rule
+#               accepted (e.g. a LAN box routing into docker's 172.17/16)
+#   KAIM56-PRE  (mangle PREROUTING) new connections from the LAN to the VM pool
+#               (the per-tap "-o fcN ! -s POOL" ACCEPT has no state match)
+# The taps (fc+) RETURN at once: ensure_guest_input_rules owns them.
+# Rollback: remove_host_firewall() — unhooks and deletes only these chains.
+FW_IN, FW_FWD, FW_PRE = "KAIM56-IN", "KAIM56-FWD", "KAIM56-PRE"
+DOCKER_IFS = ("docker0", "br-+")
+
+
+def host_firewall_on():
+    return str(os.environ.get("HOST_FIREWALL") or _settings.SITE.get("HOST_FIREWALL") or "").strip() in ("1", "true", "on", "yes")
+
+
+def _lan_net():
+    """The HOSTIF's own IPv4 subnet ("192.168.56.0/24"), "" if unknown."""
+    import ipaddress
+    try:
+        out = _util.sh("ip", "-o", "-4", "addr", "show", "dev", _host.HOSTIF, check=False).stdout or ""
+        m = re.search(r"inet (\S+)", out)
+        return str(ipaddress.ip_interface(m.group(1)).network) if m else ""
+    except Exception:
+        return ""
+
+
+def _manager_from():
+    """Who may reach :8700 over the LAN: HOST_FW_MANAGER_FROM (comma list of
+    IPs/nets, e.g. the reverse proxy), default the HOSTIF subnet."""
+    v = os.environ.get("HOST_FW_MANAGER_FROM") or _settings.SITE.get("HOST_FW_MANAGER_FROM") or ""
+    nets = [x.strip() for x in str(v).split(",") if x.strip()]
+    return nets or [n for n in (_lan_net(),) if n]
+
+
+def host_firewall_rules():
+    """[(table, chain, spec), …] — the content of the three chains, in order."""
+    port = str(_host.LISTEN[1])
+    tcp = ("-p", "tcp", "--dport")
+    inp = [("-i", "fc+", "-j", "RETURN"),
+           ("-i", "lo", "-j", "RETURN"),
+           ("-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "RETURN"),
+           (*tcp, "22", "-j", "RETURN")]
+    for i in DOCKER_IFS:
+        inp += [("-i", i, *tcp, port, "-j", "RETURN"), ("-i", i, "-j", "DROP")]
+    inp.append(("-i", BROWSER_BRIDGE, "-j", "DROP"))
+    srcs = _manager_from()
+    if srcs:        # no known source (subnet unreadable): leave :8700 open rather than lock the UI out
+        inp += [("-i", _host.HOSTIF, "-s", src, *tcp, port, "-j", "RETURN") for src in srcs]
+        inp.append((*tcp, port, "-j", "DROP"))
+    inp += [("-p", p, "--dport", d, "-j", "DROP") for d in ("111", "2049") for p in ("tcp", "udp")]
+    fwd = [("-i", _host.HOSTIF, "-j", "DROP")]
+    pre = [("-i", _host.HOSTIF, "-d", POOL, "-m", "conntrack", "--ctstate", "NEW", "-j", "DROP")]
+    return ([("filter", FW_IN, s) for s in inp] + [("filter", FW_FWD, s) for s in fwd]
+            + [("mangle", FW_PRE, s) for s in pre])
+
+
+# (table, parent chain, own chain, where): "top" = -I 1, "end" = -A
+_FW_HOOKS = (("filter", "INPUT", FW_IN, "top"), ("filter", "FORWARD", FW_FWD, "end"),
+             ("mangle", "PREROUTING", FW_PRE, "top"))
+
+
+def _fw_hook(table, parent, chain, where):
+    pos = ("-I", parent, "1") if where == "top" else ("-A", parent)
+    return ("iptables", "-t", table, *pos, "-j", chain)
+
+
+def host_firewall_cmds():
+    """The exact iptables commands ensure_host_firewall runs; the last three
+    (the jumps) only when missing."""
+    cmds = []
+    for table, _parent, chain, _w in _FW_HOOKS:
+        cmds += [("iptables", "-t", table, "-N", chain), ("iptables", "-t", table, "-F", chain)]
+    cmds += [("iptables", "-t", t, "-A", c, *s) for t, c, s in host_firewall_rules()]
+    return cmds + [_fw_hook(*h) for h in _FW_HOOKS]
+
+
+def ensure_host_firewall():
+    """Idempotent: the own chains are refilled (flush + append), a jump is added
+    only when missing. Off (the default) = not a single iptables call."""
+    if not host_firewall_on():
+        return False
+    for c in host_firewall_cmds()[:-len(_FW_HOOKS)]:
+        _util.sh(*c, check=False)
+    for table, parent, chain, where in _FW_HOOKS:
+        if _util.sh("iptables", "-t", table, "-C", parent, "-j", chain, check=False).returncode != 0:
+            _util.sh(*_fw_hook(table, parent, chain, where), check=False)
+    return True
+
+
+def remove_host_firewall():
+    """Rollback: unhook and delete the own chains; nothing else is touched."""
+    for table, parent, chain, _w in _FW_HOOKS:
+        while _util.sh("iptables", "-t", table, "-C", parent, "-j", chain, check=False).returncode == 0:
+            _util.sh("iptables", "-t", table, "-D", parent, "-j", chain, check=False)
+        _util.sh("iptables", "-t", table, "-F", chain, check=False)
+        _util.sh("iptables", "-t", table, "-X", chain, check=False)
+
+
+if __name__ == "__main__":      # python3 -m mgr.netfw --dry-run | --apply | --rollback
+    import sys
+    arg = (sys.argv[1:] or ["--dry-run"])[0]
+    if arg == "--apply":
+        print("applied" if ensure_host_firewall() else "HOST_FIREWALL is off — nothing done")
+    elif arg == "--rollback":
+        remove_host_firewall()
+        print("removed", FW_IN, FW_FWD, FW_PRE)
+    else:
+        print(f"# HOST_FIREWALL={'on' if host_firewall_on() else 'off'} HOSTIF={_host.HOSTIF}")
+        print("\n".join(" ".join(c) for c in host_firewall_cmds()))

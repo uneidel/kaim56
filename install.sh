@@ -208,7 +208,10 @@ fi
 
 # ── [6] systemd service ──────────────────────────────────────────────────────
 say "[6/7] systemd service (needs sudo)"
-HOSTIF="$(ip route 2>/dev/null | awk '/default/{print $5; exit}')"
+# No HOSTIF in the unit: the manager takes the default-route interface itself
+# (a NIC name written here went stale when the kernel renamed it). An old
+# Environment=HOSTIF= line is dropped below; to override, put HOSTIF=<nic>
+# into /etc/kaim56.env or site.json.
 # An existing unit may carry settings this installer does not know (a fixed
 # MANAGER_USER/MANAGER_PASS behind a reverse proxy, LLM_KEY_PROXY, …): every
 # Environment= line except the ones written below is carried over.
@@ -248,7 +251,6 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$FC_DIR
 Environment=PORT=8700
-Environment=HOSTIF=$HOSTIF
 Environment=GUEST_DNS=$GUEST_DNS
 Environment=AGENT_ROOT=$BASE/agent
 $KEEP_ENV
