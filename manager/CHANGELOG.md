@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-10
+- UI: Squads tab — the squad list is a slim bar of pills on top; the chat takes the full width.
+
 ## 2026-10-09
 - Squads: "Request changes" on a proposal (required note + the card's edits as a summary -> `changes_requested`, wakes the lead); the lead's next `squad_propose` / same-member `squad_request_member` replaces it as v2… (history of 10, diff "Changes" toggle, comment history on the card, archived in proposals/<id>.json); the card edits goal, ticket descriptions/deps, adds and removes tickets; an operator chat message without @ goes to the lead and carries the revise hint.
 - Cost router: policy `cheapest` (and squad setting "Cost routing") — `decision.judge()` levels a turn 1–5 (Jev classes mapped / one LLM JSON question, fallback 3), the ladder (`router.json` `levels`, default from tier; catalog price blended 3:1, local 0; vision/tools/ctx) picks the cheapest model with level >= it, a failed task/squad turn re-runs once one level up (chat: the next turn), tickets store a judged level (board-editable), `route_log` gets level/price/escalated/result/excerpt, Resources shows saved vs. always-strong (24h/7d/30d).

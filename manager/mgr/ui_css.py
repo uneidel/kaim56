@@ -362,11 +362,13 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .ic-acts{display:flex;gap:6px;padding:var(--space-3) var(--space-6) var(--space-4);margin-top:auto;flex-wrap:wrap;align-items:center}
 .ic-acts>.btn{height:34px;padding:0 12px}
 .ic-icons{margin-left:auto;display:flex;gap:2px}
-.sk{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
-.sk-list{display:grid;gap:2px;padding:8px}
-.sk-item{display:block;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:8px 10px;color:inherit;cursor:pointer;font:inherit}
-.sk-item:hover,.sk-item[aria-current]{background:var(--app-chip)}
-.sk-item small{display:block;font-size:11.5px;color:var(--color-neutral-600)}
+/* Squads: a slim bar of squads on top, the chat takes the full width. */
+.sk{display:flex;flex-direction:column;gap:10px}
+.sk-list{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:thin;padding:6px}
+.sk-item{flex:none;display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap;background:none;border:1px solid var(--app-line);border-radius:999px;padding:5px 12px;color:inherit;cursor:pointer;font:inherit;font-size:13px}
+.sk-item:hover,.sk-item[aria-current]{background:var(--app-chip);border-color:var(--color-accent)}
+.sk-item[data-new]{border-style:dashed}
+.sk-item small{font-size:11px;color:var(--color-neutral-600)}
 .sk-chat{display:flex;flex-direction:column;min-width:0}
 .sk-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
 .sk-thread{overflow:auto;max-height:60vh;min-height:240px;display:grid;gap:8px;align-content:start;margin:12px 0}
@@ -375,7 +377,6 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-bub.bad{border-left:3px solid var(--color-warn)}
 .sk-comp{display:flex;gap:6px}
 @media(max-width:860px){
-  .sk{grid-template-columns:minmax(0,1fr)}
   .grid2,.grid3{grid-template-columns:1fr}
   .shell{display:block}
   main{padding:var(--space-4) 16px var(--space-8)}

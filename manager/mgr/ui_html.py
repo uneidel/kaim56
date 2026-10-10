@@ -334,7 +334,7 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-squads>
   <p class=lede>One chat per squad · start one with a repo URL and a goal · its architect proposes members, tickets and a budget — nothing runs before you approve</p>
   <div class=sk>
-    <nav class="panel blueprint sk-list" id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
+    <nav class=sk-list id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
       <div id=sk-board hidden></div>

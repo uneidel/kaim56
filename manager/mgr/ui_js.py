@@ -1350,7 +1350,7 @@ async function loadSquads(){
   let jobs=[]; try{jobs=((await (await fetch('/api/squads/kickoff')).json()).jobs||[]).filter(j=>j.status!=='done')}catch(e){}
   const item=(attr,cur,title,sub)=>`<button class=sk-item ${attr}${cur?' aria-current=true':''}>${title}<small>${sub}</small></button>`;
   document.getElementById('sk-list').innerHTML=
-    item('data-new=1',!SK&&!SK_JOB,'<b>+ New squad</b>','repo URL + goal')+
+    item('data-new=1',!SK&&!SK_JOB,'<b>+ New squad</b>','')+
     jobs.map(j=>item(`data-job="${esc(j.id)}"`,SK_JOB===j.id,escT(j.name),'kickoff · '+escT(j.status))).join('')+
     SK_LIST.map(s=>item(`data-n="${esc(s.name)}"`,SK===s.name,escT(s.name)+(s.last_id>(SK_SEEN[s.name]||0)&&SK!==s.name?' <span class="tag tag-accent">new</span>':''),
       escT(s.status)+(s.pending?' · '+(+s.pending)+' to approve':''))).join('');
