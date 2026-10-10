@@ -941,7 +941,11 @@ HTML_BOTTOM = """
   its Durable Object class from <code>celld/do/</code>, a router with a login &#8212; admin + <code>CF_APP_SECRET</code>), copies the state across
   (export/import, counts compared) and marks the app &#8220;cloud&#8221;: <code>/apps/&#8249;name&#8250;/</code> redirects there and the local <code>_api</code> refuses writes.
   Its <code>/api</code> calls reach the manager with a per-app Bearer token &#8212; valid only while in the cloud and only for the apps&#8217; API paths, never
-  settings, secrets or terminals. Restore copies the state back and revokes the token; the worker stays deployed.</p></div>
+  settings, secrets or terminals. Restore copies the state back and revokes the token; the worker stays deployed.
+  <b>Own origin</b> (site <code>APPS_HOST</code>, e.g. apps.kat56.de; unset = apps under the manager&#8217;s host): there only <code>/apps/</code>, the same apps&#8217;
+  API paths and the OIDC login answer, with a separate <code>apps</code> session (admin and role user, valid on no other host; no manager session,
+  Basic or Bearer there), same-origin POSTs only, no Referer; the manager redirects browser sessions there and refuses POSTs with that Origin.
+  The app (Basic/Bearer, also over iroh) keeps <code>/apps/</code> on the manager&#8217;s host &#8212; it runs apps on its own virtual origin anyway.</p></div>
 
   <div class="card blueprint"><span class=card-title>Model router (Jev)</span>
   <p class=card-body>Opt-in per instance (<code>MODEL_ROUTER=&#8249;policy&#8250;</code>, a runtime key; off by default). On the first LLM call of a turn the key proxy

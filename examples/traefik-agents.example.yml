@@ -31,3 +31,12 @@ http:
       service: srv-agents
       entryPoints:
         - websecure
+
+    # The browser apps on their own origin (site.json APPS_HOST), the same way:
+    # the manager serves only /apps/<name>/, the API paths apps call and the
+    # OIDC login on this name; the manager's host redirects browsers here.
+    rtr-apps:
+      rule: "Host(`apps.example.com`)"
+      service: srv-agents
+      entryPoints:
+        - websecure

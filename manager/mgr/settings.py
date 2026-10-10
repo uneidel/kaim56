@@ -102,6 +102,11 @@ PUBLIC_HOST = SITE.get("PUBLIC_HOST") or "example.com"
 # with the manager's session. On this Host only the dashboard and its login
 # answer (mgr/httpd.py); empty = no dashboard.
 INDEX_HOST = str(SITE.get("INDEX_HOST") or "").strip().lower()
+# The browser apps' own origin (/apps/<name>/, mgr/apps.py), for the same
+# reason: there only the apps, the API they use and their login answer, with
+# an "apps" session; the manager's host sends browsers there. Empty = apps
+# stay on the manager's host as before.
+APPS_HOST = str(SITE.get("APPS_HOST") or "").strip().lower()
 
 
 SIGNAL_HOST = SITE.get("SIGNAL_HOST") or "signal-api.example.com"

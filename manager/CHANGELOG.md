@@ -8,6 +8,7 @@ commit messages.
 ## 2026-10-10
 - UI: Squads composer — typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes.
 - UI: Approve/Reject/Request changes lock their buttons while the manager works and show the result or any error inside the card (a browser-side error used to stop silently).
+- Apps on their own origin (site.json `APPS_HOST`, needs OIDC; empty = as before): there only `/apps/<name>/`, the apps' API paths (the Cloudflare-token list) and an own OIDC login with a host-only `apps` session (admin and role user); no manager session, Basic or Bearer there, same-origin POSTs, CSP frame-ancestors 'self', no Referer; the manager redirects cookie sessions' `/apps/` there and refuses that Origin — the APK (Basic/Bearer, iroh) keeps `/apps/` on the manager's host. INDEX_HOST and APPS_HOST share one side-host path (mgr/auth.SIDE_*, httpd._auth_side).
 - UI: squad actions in the Squads tab sent an empty project name after a reload ('unknown operation' on Approve) — they use the proposal's / tab's project now.
 - UI: Skills tab keyword filter (every word must match name or description), next to the category filter.
 - Squads: "⏳ member is working… (mm:ss)" / "queued" in the chat and Squad panel (`working` in /squad/messages and /squad/board); a finished wake turn's answer lands in the channel as kind `turn` to the thread's user (once, capped 4000, wakes nobody, not for failed turns); members with a fixed AGENT_TOOLS list get the missing squad tools on join and at startup (restart note).

@@ -64,9 +64,17 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
     def end_headers(self):
         self._sent = True
         self.send_header("X-Content-Type-Options", "nosniff")
-        if _auth.is_index_host(getattr(self, "headers", None)):    # the code dashboard: never framed, no Referer out
+        side = _auth.side_host(getattr(self, "headers", None))
+        if side == "index":                  # the code dashboard: never framed, no Referer out
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("Referrer-Policy", "no-referrer")
+        elif side == "apps":                 # the apps: may frame themselves, nobody else; no Referer out
+            # script/style/connect sources stay open: apps load from esm.sh and
+            # jsdelivr and use inline modules — the isolation is the origin.
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
+            self.send_header("Content-Security-Policy",
+                             "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
             self.send_header("Referrer-Policy", "no-referrer")
         else:
             self.send_header("X-Frame-Options", "SAMEORIGIN")
@@ -118,8 +126,9 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         # session, or BASIC for the MANAGER_PASS login. None for guests, app
         # tokens, host services and the open (no password, no OIDC) manager.
         self.principal = None
-        if _auth.is_index_host(self.headers):
-            return self._auth_index()
+        side = _auth.side_host(self.headers)
+        if side:
+            return self._auth_side(side)
         oidc = _oidc.enabled()
         # Guests (VMs) carry no credentials: they are identified by source IP
         # and gated by the guest allow/deny lists. Without this exemption a set
@@ -173,11 +182,12 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self.end_headers()
         return False
 
-    def _auth_index(self):
-        """INDEX_HOST, the code dashboard's own origin: its paths only
-        (mgr/auth.index_path_allowed, else 404) and its own "dash" session
-        cookie only — no guest by IP, no Basic, no Bearer, no manager session."""
-        if not _auth.index_path_allowed(self.path) or not _oidc.enabled():
+    def _auth_side(self, side):
+        """A side origin (INDEX_HOST: the code dashboard, APPS_HOST: the apps):
+        its paths only (mgr/auth.side_path_allowed, else 404) and its own
+        session cookie only — no guest by IP, no Basic, no Bearer, no manager
+        session. Needs OIDC: without it there is no login there (404)."""
+        if not _auth.side_path_allowed(side, self.command, self.path) or not _oidc.enabled():
             self._json({"error": "not found"}, 404)
             return False
         key = _auth.auth_client_key(self.client_address[0], self.headers.get("X-Forwarded-For", ""), self.iroh_node)
@@ -186,14 +196,14 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return False
         if self.path.split("?", 1)[0] in _auth.INDEX_AUTH_PATHS:
             return True                      # the login itself (rate-limited in mgr/routes_auth.py)
-        tok = _auth.cookie(self.headers.get("Cookie", ""), _auth.DASH_COOKIE)
-        self.principal = _auth.session_principal(tok, dash=True) if tok else None
+        tok = _auth.cookie(self.headers.get("Cookie", ""), _auth.SIDE_COOKIE[side])
+        self.principal = _auth.session_principal(tok, kind=_auth.SIDE_KIND[side]) if tok else None
         if self.principal is not None:
             _auth.auth_succeeded(key)
             return True
-        if self.command == "GET":            # back here after the login (routes_auth: next)
+        if self.command == "GET" and not self.path.startswith("/api/"):   # back here after the login (routes_auth: next)
             self.send_response(302)
-            self.send_header("Location", "/auth/login?next=" + urllib.parse.quote(self.path, safe=""))
+            self.send_header("Location", "/auth/login?next=" + urllib.parse.quote(self.path.split("?", 1)[0], safe=""))
             self.end_headers()
             return False
         self.send_response(401)
@@ -210,7 +220,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return
         # No route: the admin UI for everything else (index, deep links).
         # Guests get nothing here; unknown API paths a clean 404.
-        if _guests.instance_by_ip(self.client_address[0]) is not None or _auth.is_index_host(self.headers):
+        if _guests.instance_by_ip(self.client_address[0]) is not None or _auth.side_host(self.headers):
             return self._forbid()
         if self.path.split("?", 1)[0].startswith("/api/"):
             return self._json({"error": "not found"}, 404)
@@ -229,8 +239,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return
         p = self.path.split("?", 1)[0]
         guest = _guests.instance_by_ip(self.client_address[0])
-        idx = _auth.is_index_host(self.headers)       # there: same-origin only (mgr/auth.origin_allowed)
-        if (guest is None or idx) and not _auth.origin_allowed(self.headers.get("Origin", ""), idx):
+        side = _auth.side_host_name(_auth.side_host(self.headers))   # there: same-origin only (mgr/auth.origin_allowed)
+        if (guest is None or side) and not _auth.origin_allowed(self.headers.get("Origin", ""), side):
             return self._json({"error": "cross-site request refused"}, 403)
         if guest is not None and not (
                 p in _guests.GUEST_POST_PATHS or p.startswith(_guests.GUEST_POST_PREFIXES)

@@ -510,10 +510,22 @@ def _rt_cf_worker(h):
         return h._json({"ok": False, "error": str(e)[:400]}, 400)
 
 
+def _apps_elsewhere(h):
+    """APPS_HOST set and this is a browser on the manager's host — logged in by
+    the session cookie (a principal, no Authorization header): its apps run on
+    APPS_HOST, never with the manager's session. The APK (Basic or Bearer, also
+    over iroh, on its own virtual origin), Basic-auth browsers without OIDC and
+    guests keep /apps/ here as before."""
+    return (bool(_settings.APPS_HOST) and not _auth.side_host(h.headers)
+            and getattr(h, "principal", None) is not None and not h.headers.get("Authorization"))
+
+
 @_routes.ROUTER.get("/apps/", prefix=True, admin=True)
 def _rt_app_file(h):
     # /apps/<name>/<file> — the operator's own front-ends (mgr/apps.py).
     # /apps/<name> without the slash redirects, so the app's relative URLs resolve.
+    if _apps_elsewhere(h):
+        h.send_response(302); h.send_header("Location", f"https://{_settings.APPS_HOST}{h.path}"); h.end_headers(); return
     path = h.path.split("?", 1)[0]
     name, slash, rel = path[len("/apps/"):].partition("/")
     if name and not slash:
@@ -539,6 +551,8 @@ def _rt_app_api(h):
     # POST /apps/<name>/_api/... — an app's own server side (Worker + Durable
     # Object on celld). Only _api paths; admin login and the CSRF origin check
     # of every POST apply before this runs.
+    if _apps_elsewhere(h):
+        return h._json({"error": f"apps run on https://{_settings.APPS_HOST}"}, 403)
     path = h.path.split("?", 1)[0]
     name, _, rel = path[len("/apps/"):].partition("/")
     if not _apps.is_api(rel):
