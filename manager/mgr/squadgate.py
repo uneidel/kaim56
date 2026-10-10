@@ -791,14 +791,22 @@ def tickets(project):
     return [t for t in _load()["tickets"] if t.get("project") == project]
 
 
+def _ticket_level(t):
+    """A new ticket's level 1-5 for cost routing (decision.judge; never blocks: level 3 + note)."""
+    j = _decision.judge(f"{t['title']}\n{t.get('description', '')}".strip())
+    return j["level"], j.get("note", "")
+
+
 def _ticket_add(project, t, who):
+    level, note = _ticket_level(t)
     with _lock:
         d = _load()
         mine = [x for x in d["tickets"] if x.get("project") == project]
         tid = max([x["id"] for x in mine] or [0]) + 1
         new = {"id": tid, "project": project, "key": t.get("key") or f"T{tid}", "title": t["title"],
                "description": t.get("description", ""), "assignee": t.get("assignee", ""), "status": "open",
-               "depends_on": t.get("depends_on") or [], "comments": [], "updated": int(time.time()), "by": who}
+               "depends_on": t.get("depends_on") or [], "comments": [], "updated": int(time.time()), "by": who,
+               "level": level, "level_by": "judge" + (f" ({note})" if note else "")}
         d["tickets"].append(new)
         _save(d)
     _squadrec.log_ticket(project, "create", new, who)
@@ -814,7 +822,7 @@ def _wake(proj, t, sender, depth):
     text = (f"Ticket {t['key']} (id {t['id']}) is yours: {t['title']}"
             + (f"\n{t['description']}" if t["description"] else "")
             + f"\nUpdate it with ticket_update id={t['id']} (status doing/review/done/blocked, comment).")
-    m, why = _squads.post(proj, sender, [t["assignee"]], text, depth=depth)
+    m, why = _squads.post(proj, sender, [t["assignee"]], text, depth=depth, level=t.get("level") or 0)
     return (m or {}).get("blocked") or why
 
 
@@ -850,6 +858,9 @@ def update_ticket(proj, who, tid, body, may, depth=1):
         if assignee and assignee not in (proj.get("members") or {}):
             return None, f"{assignee!r} is no member"
     comment = _txt(body.get("comment"), 2000)
+    level = body.get("level")
+    if level is not None and level not in (1, 2, 3, 4, 5):
+        return None, "level must be 1-5"
     with _lock:
         d = _load()
         mine = [x for x in d["tickets"] if x.get("project") == proj["name"]]
@@ -865,12 +876,14 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             t["status"] = status
         if assignee is not None:
             t["assignee"] = assignee
+        if level is not None:
+            t["level"], t["level_by"] = level, who
         if comment:
             t["comments"] = (t["comments"] + [{"ts": int(time.time()), "by": who, "text": comment}])[-MAX_COMMENTS:]
         t["updated"] = int(time.time())
         _save(d)
     _squadrec.log_ticket(proj["name"], "update", t, who,
-                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment))
+                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment), ("level", level))
                           if v or (k == "assignee" and v is not None)})
     now = [x for x in mine if _ready(x, mine)]
     wake = [x for x in now if x["key"] not in before

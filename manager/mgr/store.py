@@ -72,6 +72,7 @@ def _hist_conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER, instance TEXT, turn TEXT, own TEXT, chosen TEXT, classes TEXT, ms INTEGER, why TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_route_inst ON route_log(instance, ts)")
+    _migrate_routes(c)
     # Semantic long-term memory: per memory a text + embedding vector
     # (as JSON). Search loads an instance's vectors and computes cosine in
     # memory — at a personal scale (hundreds) that is enough without
@@ -101,6 +102,26 @@ def _migrate_spans(c):
             except sqlite3.OperationalError:
                 pass
     _migrated[0] = True
+
+
+_routes_migrated = [None]
+
+
+def _migrate_routes(c):
+    """route_log grew the cost router's columns (mgr/router.py mode cheapest):
+    the turn's level, the chosen model's blended price, escalated, the result
+    and an excerpt of the request."""
+    if _routes_migrated[0] == HISTORY_DB:
+        return
+    have = {r[1] for r in c.execute("PRAGMA table_info(route_log)")}
+    for col, typ in (("level", "INTEGER"), ("price", "REAL"), ("escalated", "INTEGER DEFAULT 0"),
+                     ("result", "TEXT"), ("excerpt", "TEXT")):
+        if col not in have:
+            try:
+                c.execute(f"ALTER TABLE route_log ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
+    _routes_migrated[0] = HISTORY_DB
 
 
 _turns_migrated = [None]          # the DB path it was done for (tests switch DBs)
@@ -729,18 +750,46 @@ def ctx_latest(instance):
 
 
 # ---- model router decisions ------------------------------------------------
-_ROUTE_COLS = ("ts", "instance", "turn", "own", "chosen", "classes", "ms", "why")
+_ROUTE_COLS = ("ts", "instance", "turn", "own", "chosen", "classes", "ms", "why",
+               "level", "price", "escalated", "result", "excerpt")
 
 
-def route_add(instance, turn, own, chosen, classes, ms, why):
+def route_add(instance, turn, own, chosen, classes, ms, why, level=None, price=None, escalated=False, excerpt=""):
     try:
         with _hist_lock, _hist_conn() as c:
-            c.execute("INSERT INTO route_log(ts,instance,turn,own,chosen,classes,ms,why) VALUES(?,?,?,?,?,?,?,?)",
+            c.execute("INSERT INTO route_log(ts,instance,turn,own,chosen,classes,ms,why,level,price,escalated,excerpt) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                       (int(time.time()), str(instance)[:80], str(turn or "")[:16], str(own)[:160], str(chosen)[:160],
-                       json.dumps(classes or {})[:1000], int(ms or 0), str(why or "")[:200]))
+                       json.dumps(classes or {})[:1000], int(ms or 0), str(why or "")[:200],
+                       None if level is None else int(level), None if price is None else float(price),
+                       1 if escalated else 0, str(excerpt or "")[:160]))
         return "ok"
     except Exception as e:
         return f"error: {e!r}"
+
+
+def route_result(instance, turn, result):
+    """How a routed turn ended (ok / failed / the agent's outcome)."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            c.execute("UPDATE route_log SET result=? WHERE instance=? AND turn=?",
+                      (str(result or "")[:80], str(instance)[:80], str(turn or "")[:16]))
+    except Exception:
+        pass
+
+
+def route_usage(since):
+    """(turns, [(model, in, out, cost)]) of the turns the router decided on since `since`."""
+    try:
+        with _hist_lock, _hist_conn() as c:
+            n = c.execute("SELECT COUNT(DISTINCT instance || '/' || turn) FROM route_log WHERE ts >= ?",
+                          (int(since),)).fetchone()[0]
+            rows = c.execute("SELECT u.model, SUM(u.prompt_tokens), SUM(u.completion_tokens), SUM(u.cost) "
+                             "FROM llm_usage u JOIN (SELECT DISTINCT instance, turn FROM route_log WHERE ts >= ?) r "
+                             "ON u.instance = r.instance AND u.turn = r.turn GROUP BY u.model", (int(since),)).fetchall()
+        return int(n or 0), [(m or "?", int(i or 0), int(o or 0), float(c_ or 0.0)) for m, i, o, c_ in rows]
+    except Exception:
+        return 0, []
 
 
 def routes_read(instance=None, limit=50, turn=None):
@@ -750,7 +799,7 @@ def routes_read(instance=None, limit=50, turn=None):
         where.append("instance=?"); args.append(instance)
     if turn:
         where.append("turn=?"); args.append(turn)
-    sql = "SELECT ts,instance,turn,own,chosen,classes,ms,why FROM route_log"
+    sql = f"SELECT {','.join(_ROUTE_COLS)} FROM route_log"
     sql += (" WHERE " + " AND ".join(where)) if where else ""
     try:
         with _hist_lock, _hist_conn() as c:

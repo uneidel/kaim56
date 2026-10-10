@@ -32,6 +32,7 @@ from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import router as _router
 from mgr import routes as _routes
 from mgr import rules as _rules
 from mgr import saddler as _saddler_mod
@@ -519,6 +520,7 @@ def _rt_trace(h):
             _store.turn_end(inst["name"], turn, ms=body.get("ms"), steps=body.get("steps"),
                      outcome=body.get("outcome") or "ok", kind=body.get("kind") or "chat",
                      answer=ans if isinstance(ans, str) else None)
+            _router.outcome(inst["name"], turn, str(body.get("outcome") or "ok")[:40])   # cost router: result, escalation
     h.send_response(204); h.end_headers()
 
 

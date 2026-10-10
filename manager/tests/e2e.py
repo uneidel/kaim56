@@ -4214,7 +4214,7 @@ class ManagerFunctions(unittest.TestCase):
         m._settings.SITE = {**m._settings.SITE, "SQUADS_DIR": os.path.join(tmp, "squads")}
         m._audit.AUDIT_DIR = os.path.join(tmp, "audit")
         woke, tasks = [], []
-        m._squads.wake = lambda member, msg, project, depth, mid: woke.append((member, msg, depth)) or f"t{len(woke)}"
+        m._squads.wake = lambda member, msg, project, depth, mid, **kw: woke.append((member, msg, depth)) or f"t{len(woke)}"
         m._guests.instance_by_ip = lambda ip: next((i for i in insts if ip == f"172.30.{i['index']}.2"), None)
         m._llmproxy.used_today = lambda name: 0
         m._store.load_tasks = lambda: tasks
@@ -7371,6 +7371,261 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             (m._guests.instance_by_ip, m._settings.load_settings, m._router.route, lp.urllib.request.urlopen,
              m._store.usage_add, lp._guard_check) = old
+
+    # ---- cost router: judge, ladder, escalation, savings ------------------------------
+    def _cost_env(self, running=("cheapo", "big", "local")):
+        """_router_env plus a catalog in the cache (no network) and the
+        judge/settings swappable; `big` runs with MODEL_ROUTER=cheapest."""
+        m = self.m
+        insts, restore = self._router_env(set(running))
+        next(i for i in insts if i["name"] == "big")["config"]["MODEL_ROUTER"] = "cheapest"
+        md, dc = m._models, m._decision
+        old = (dict(md._ormodels), dc.judge, m._tasks._run_named, m._tasks._run_task_now, m._squads.cost_routing_on)
+        md._ormodels.update(ts=time.time(), data=[
+            {"id": "google/gemini-2.5-flash", "pin": 0.3, "pout": 2.5, "tools": True, "vision": True, "ctx": 1_000_000},
+            {"id": "tencent/hy3", "pin": 3.0, "pout": 15.0, "tools": True, "vision": False, "ctx": 200_000},
+            {"id": "acme/cheap4", "pin": 0.1, "pout": 0.4, "tools": True, "vision": False, "ctx": 128_000}])
+        m._squads.cost_routing_on = lambda project: False
+        dc._judged.clear()
+
+        def undo():
+            md._ormodels.clear(); md._ormodels.update(old[0])
+            dc.judge, m._tasks._run_named, m._tasks._run_task_now, m._squads.cost_routing_on = old[1:]
+            dc._judged.clear(); m._router._plans.clear(); m._router._bump.clear()
+            restore()
+        return insts, undo
+
+    def test_cost_judge_maps_jev_classes_and_parses_llm_json(self):
+        m = self.m
+        dc, rt = m._decision, m._router
+        lv = dc.level_of
+        self.assertEqual(lv({"task": ("chat", 0.9), "difficulty": ("trivial", 0.9)}), 1)
+        self.assertEqual(lv({"task": ("chat", 0.9), "difficulty": ("moderate", 0.9)}), 2)
+        self.assertEqual(lv({"task": ("code", 0.9), "difficulty": ("moderate", 0.8)}), 3)
+        self.assertEqual(lv({"task": ("code", 0.9), "difficulty": ("moderate", 0.8), "scope": ("multi", 0.7)}), 4)
+        self.assertEqual(lv({"task": ("reasoning", 0.9), "difficulty": ("hard", 0.9)}), 5)
+        self.assertEqual(lv({"task": ("code", 0.3), "difficulty": ("hard", 0.2)}), 3)            # nothing sure
+        old = (m._settings.load_settings, rt.jev_classify, dc.urllib.request.urlopen)
+        try:
+            dc._judged.clear()
+            m._settings.load_settings = lambda: {"JEV_URL": "http://jev"}
+            rt.jev_classify = lambda pol, text: ({"task": ("code", 0.9), "difficulty": ("hard", 0.8),
+                                                  "scope": ("one", 0.6), "vision": ("yes", 0.9)}, 40)
+            j = dc.judge("refactor the parser")
+            self.assertEqual((j["level"], j["needs"]["vision"], j["needs"]["tools"], j["backend"]), (4, True, True, "jev"))
+            rt.jev_classify = lambda *a: self.fail("cached per text")
+            self.assertEqual(dc.judge("refactor the parser")["level"], 4)
+            # the LLM backend: one strict-JSON question, think tags and prose around it tolerated
+            dc._judged.clear()
+            m._settings.load_settings = lambda: {"DECISION_BACKEND": "local-llm", "DECISION_ROUTER": "1",
+                                                 "LLAMA_ENDPOINT": "http://10.0.0.9:8080"}
+            sent = []
+
+            class Resp:
+                def __init__(self, body): self.body = body
+                def read(self, n=-1): return self.body
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            content = '<think>hm</think>Sure: {"answers": {"level": {"2": 0.1, "5": 0.8, "9": 1}, "vision": {"no": 0.9}}}'
+            dc.urllib.request.urlopen = lambda req, timeout=None: (sent.append(json.loads(req.data)), Resp(json.dumps(
+                {"choices": [{"message": {"content": content}}]}).encode()))[1]
+            j = dc.judge("prove the lemma")
+            self.assertEqual((j["level"], j["backend"], j["needs"]["vision"]), (5, "local-llm", False))
+            self.assertEqual(sorted(json.loads(sent[0]["messages"][1]["content"])["questions"]), ["level", "vision"])
+            # the LLM failing -> Jev; both failing -> level 3 with a note, never an exception
+            dc._judged.clear()
+            dc.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
+            m._settings.load_settings = lambda: {"DECISION_BACKEND": "local-llm", "DECISION_ROUTER": "1",
+                                                 "LLAMA_ENDPOINT": "http://x", "JEV_URL": "http://jev"}
+            rt.jev_classify = lambda pol, text: ({"task": ("chat", 0.9), "difficulty": ("trivial", 0.9)}, 5)
+            j = dc.judge("hi there")
+            self.assertEqual((j["level"], j["backend"]), (1, "jev")); self.assertIn("local-llm failed", j["note"])
+            dc._judged.clear()
+            rt.jev_classify = lambda *a: (_ for _ in ()).throw(TimeoutError("slow"))
+            j = dc.judge("hi there")
+            self.assertEqual(j["level"], 3); self.assertIn("level 3", j["note"])
+            self.assertEqual(dc.judge("")["level"], 3)
+            self.assertTrue(dc.sufficient("q", "a"))                                         # a failing check never escalates
+        finally:
+            m._settings.load_settings, rt.jev_classify, dc.urllib.request.urlopen = old
+            dc._judged.clear()
+
+    def test_cost_ladder_picks_cheapest_sufficient_model(self):
+        m = self.m
+        rt, st = m._router, m._store
+        insts, undo = self._cost_env()
+        try:
+            rt.save_tiers({"openrouter/google/gemini-2.5-flash": "cheap", "orcarouter/tencent/hy3": "strong",
+                           "llama/local-model": "local"})
+            lad = {e["key"]: e for e in rt.ladder()}
+            self.assertEqual({k: (e["level"], e["price"]) for k, e in lad.items()},
+                             {"llama/local-model": (2, 0.0), "openrouter/google/gemini-2.5-flash": (2, 0.85),
+                              "orcarouter/tencent/hy3": (5, 6.0)})
+            L = list(lad.values())
+            self.assertEqual(rt.choose(L, 1)["key"], "llama/local-model")                       # free wins
+            self.assertEqual(rt.choose(L, 2, {"vision": True})["key"], "openrouter/google/gemini-2.5-flash")
+            self.assertEqual(rt.choose(L, 3)["key"], "orcarouter/tencent/hy3")
+            self.assertIsNone(rt.choose(L, 5, {"vision": True}))
+            self.assertEqual(rt.choose(L, 2, {"long_context": True})["key"], "openrouter/google/gemini-2.5-flash")  # llama ctx unknown
+            tie = [dict(lad["llama/local-model"], key="a/x", level=2), dict(lad["llama/local-model"], key="b/y", level=4),
+                   dict(lad["llama/local-model"], key="c/z", level=3, price=None)]
+            self.assertEqual(rt.choose(tie, 2)["key"], "b/y")                                    # tie -> higher level
+            self.assertEqual(rt.choose(tie[2:], 3)["key"], "c/z")                                # unknown price, last resort
+            # the operator's level beats the tier's; a catalog model only with "catalog": true
+            rt.save_levels({"openrouter/google/gemini-2.5-flash": 3, "openrouter/acme/cheap4": 4, "x": 9})
+            self.assertEqual(rt.load()["levels"], {"openrouter/google/gemini-2.5-flash": 3, "openrouter/acme/cheap4": 4})
+            self.assertEqual(rt.load()["tiers"]["llama/local-model"], "local")                  # tiers kept
+            self.assertEqual(rt.choose(rt.ladder(), 3)["key"], "openrouter/google/gemini-2.5-flash")
+            self.assertEqual(rt.choose(rt.ladder(catalog=True), 3)["key"], "openrouter/acme/cheap4")
+            # route(): MODEL_ROUTER=cheapest judges and runs the turn on the pick
+            big = next(i for i in insts if i["name"] == "big")
+            m._decision.judge = lambda text, context="": {"level": 1, "needs": {"vision": False}, "score": 0.9, "ms": 7}
+            payload = {"messages": [{"role": "user", "content": "hello"}], "tools": [{"type": "function"}]}
+            t = rt.route(big, payload, "c1")
+            self.assertEqual((t["backend"], t["model"]), ("llama", "local-model"))
+            r = st.routes_read("big", turn="c1")[0]
+            self.assertEqual((r["level"], r["price"], r["escalated"], r["excerpt"]), (1, 0.0, 0, "hello"))
+            self.assertIn("cheapest L2 llama/local-model", r["why"])
+            # nothing fits -> own model, recorded
+            m._decision.judge = lambda text, context="": {"level": 5, "needs": {"vision": True}, "score": 0.9, "ms": 7}
+            self.assertIsNone(rt.route(big, payload, "c2"))
+            self.assertIn("no ladder model fits", st.routes_read("big", turn="c2")[0]["why"])
+            # the rule-based mode is untouched: policy default asks classify(), never judge()
+            big["config"]["MODEL_ROUTER"] = "default"
+            m._decision.judge = lambda *a, **k: self.fail("judge in rules mode")
+            rt.classify = lambda pol, text: ({"difficulty": ("trivial", 0.9), "task": ("chat", 0.9)}, 3)
+            self.assertEqual(rt.route(big, payload, "c3")["key"], "openrouter/google/gemini-2.5-flash")
+            self.assertIn("rule 0", st.routes_read("big", turn="c3")[0]["why"])
+            self.assertIn("cheapest", rt.policy_names())
+        finally:
+            undo()
+
+    def test_cost_escalation_runs_once_and_records_both(self):
+        m = self.m
+        rt, st, tk = m._router, m._store, m._tasks
+        insts, undo = self._cost_env()
+        try:
+            rt.save_tiers({"llama/local-model": "local", "openrouter/google/gemini-2.5-flash": "code",
+                           "orcarouter/tencent/hy3": "strong"})
+            big = next(i for i in insts if i["name"] == "big")
+            replies, runs = [], []
+
+            def run_named(instance, message, timeout=600, turn=None):
+                # what the proxy does on the turn's first LLM call
+                tgt = rt.route(big, {"messages": [{"role": "user", "content": message}]}, turn)
+                runs.append((turn, (tgt or {}).get("key")))
+                return replies.pop(0)
+            tk._run_named = run_named
+            replies[:] = [(True, "...\n(max tool steps reached)"), (True, "done")]
+            ok, res, level = tk._run_routed({"id": "x", "instance": "big", "message": "fix it", "level": 2}, "fix it")
+            self.assertEqual((ok, res, level), (True, "done", 2))
+            self.assertEqual([k for _, k in runs], ["llama/local-model", "openrouter/google/gemini-2.5-flash"])  # L2 -> L3+: code (4)
+            rows = {r["turn"]: r for r in st.routes_read("big")}
+            first, second = rows[runs[0][0]], rows[runs[1][0]]
+            self.assertEqual((first["level"], first["result"], first["escalated"]), (2, "failed", 0))
+            self.assertEqual((second["level"], second["result"], second["escalated"]), (3, "ok", 1))
+            # failing twice: still exactly one escalation
+            runs.clear(); replies[:] = [(False, "error: boom"), (True, "⚠️ upstream 500"), (True, "never")]
+            ok, res, _ = tk._run_routed({"id": "y", "instance": "big", "message": "fix it", "level": 2}, "fix it")
+            self.assertEqual((len(runs), ok, res), (2, True, "⚠️ upstream 500"))
+            self.assertEqual(replies, [(True, "never")])
+            # not under cost routing: the old path, untouched
+            seen = []
+            tk._run_task_now = lambda *a, **k: (seen.append((a, k)), (True, "plain"))[1]
+            big["config"]["MODEL_ROUTER"] = "default"
+            self.assertEqual(tk._run_routed({"id": "z", "instance": "big", "message": "m"}, "m"), (True, "plain", None))
+            self.assertEqual(seen[0][0][:2], ("big", "m"))
+            # squad cost routing: on for an OpenAI-style member, never for claude
+            m._squads.cost_routing_on = lambda project: project == "sq"
+            self.assertIs(rt.cost_routing(big, True), rt.CHEAPEST)
+            self.assertIsNone(rt.cost_routing({"name": "c", "template": "claude", "config": {"ANTHROPIC_MODEL": "x"}}, True))
+            # a chat turn: a failure moves the NEXT turn one level up, once
+            big["config"]["MODEL_ROUTER"] = "cheapest"
+            m._decision.judge = lambda text, context="": {"level": 1, "needs": {}, "score": 0.9, "ms": 1}
+            p = {"messages": [{"role": "user", "content": "hi"}]}
+            self.assertEqual(rt.route(big, p, "h1")["key"], "llama/local-model")
+            rt.outcome("big", "h1", "max_steps")
+            self.assertEqual(st.routes_read("big", turn="h1")[0]["result"], "max_steps")
+            self.assertEqual(rt.route(big, p, "h2")["key"], "openrouter/google/gemini-2.5-flash")  # above L2
+            self.assertEqual(st.routes_read("big", turn="h2")[0]["escalated"], 1)
+            rt.outcome("big", "h2", "error")                                                   # escalated: no further bump
+            self.assertEqual(rt.route(big, p, "h3")["key"], "llama/local-model")
+        finally:
+            undo()
+
+    def test_cost_ticket_level_stored_editable_and_used(self):
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        old_judge = m._decision.judge
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            m._squadgate.decide("sq", pid, True, "admin")
+            kw = []
+            m._squads.wake = lambda member, msg, project, depth, mid, **k: kw.append(k) or "t1"
+            m._decision.judge = lambda text, context="": {"level": 4, "needs": {}, "score": 0.8, "note": ""}
+            st, t = self._sq("/api/squad/ticket-create", A, {"title": "split the API", "assignee": "d", "level": 1})
+            self.assertEqual((st, t["level"], t["level_by"]), (200, 4, "judge"))                   # the lead cannot set it
+            self.assertEqual(kw[-1], {"level": 4})                                               # the wake carries it
+            st, t2 = self._sq("/api/projects/sq/squad/ticket", L, {"id": t["id"], "level": 2})
+            self.assertEqual((st, t2["level"]), (200, 2))
+            self.assertEqual(self._sq("/api/projects/sq/squad/ticket", L, {"id": t["id"], "level": 7})[0], 400)
+            self.assertEqual(next(x for x in m._squadgate.tickets("sq") if x["id"] == t["id"])["level"], 2)
+            s, _ = m._squads.normalize_settings({"cost_routing": True}, {})
+            self.assertTrue(s["cost_routing"])
+            self.assertEqual(m._squads.wake.__name__, "<lambda>")
+        finally:
+            m._decision.judge = old_judge
+            undo()
+        # the task worker uses the wake's level for the planned turn
+        insts, undo = self._cost_env()
+        try:
+            m._router.save_tiers({"llama/local-model": "local", "orcarouter/tencent/hy3": "strong"})
+            big = next(i for i in insts if i["name"] == "big")
+            big["config"].pop("MODEL_ROUTER")
+            m._squads.cost_routing_on = lambda project: project == "sq"
+            got = []
+            m._tasks._run_named = lambda inst, msg, timeout=600, turn=None: (
+                got.append(m._router.route(big, {"messages": [{"role": "user", "content": msg}]}, turn)), (True, "ok"))[1]
+            m._decision.judge = lambda *a, **k: self.fail("the ticket's level is used, not judged again")
+            self.assertEqual(m._tasks._run_routed({"id": "w", "instance": "big", "message": "m",
+                                                   "squad": {"project": "sq", "level": 2}}, "m")[2], 2)
+            self.assertEqual(got[0]["key"], "llama/local-model")
+            self.assertTrue(m._router.planned("big", m._store.routes_read("big")[0]["turn"]))
+        finally:
+            undo()
+
+    def test_cost_savings_vs_always_strong(self):
+        m = self.m
+        rt, st = m._router, m._store
+        insts, undo = self._cost_env()
+        try:
+            self.assertIn("error", rt.savings())                                                # nothing priced yet
+            rt.save_tiers({"llama/local-model": "local", "openrouter/google/gemini-2.5-flash": "cheap",
+                           "orcarouter/tencent/hy3": "strong"})
+            st.route_add("big", "s1", "orcarouter/tencent/hy3", "llama/local-model", {}, 0, "x", level=1)
+            st.route_add("big", "s2", "orcarouter/tencent/hy3", "openrouter/google/gemini-2.5-flash", {}, 0, "x", level=2)
+            st.usage_add("big", "local-model", 1_000_000, 100_000, 0, turn="s1")
+            st.usage_add("big", "google/gemini-2.5-flash", 1_000_000, 0, 0.25, turn="s2")
+            st.usage_add("big", "tencent/hy3", 5_000_000, 0, 9.0, turn="unrouted")               # not a routed turn
+            s = rt.savings()
+            self.assertEqual(s["strong"], "orcarouter/tencent/hy3")
+            self.assertEqual(s["24h"], {"turns": 2, "in": 2_000_000, "out": 100_000, "actual": 0.25,
+                                        "strong": 7.5, "saved": 7.25})
+            self.assertEqual(s["30d"]["saved"], 7.25)
+            self.assertEqual(rt.savings(now=time.time() + 3 * 86400)["24h"]["turns"], 0)
+        finally:
+            undo()
+
+    def test_cost_router_ui_bits(self):
+        import importlib
+        js = importlib.import_module("mgr.ui_js").JS
+        html = open(os.path.join(os.path.dirname(self.m._ui.__file__), "ui_html.py")).read()
+        for s in ("function loadRouterSavings", "/api/router/savings", "/api/router/levels", "function setLvl",
+                  "sq-cost_routing", "{level:+this.value}", "lvlSel('openrouter/'+m.id"):
+            self.assertIn(s, js)
+        for s in ("id=rtsave", "Routing: saved vs. always-strong", "id=sq-cost_routing", "<th style=\"width:110px\">Level</th>"):
+            self.assertIn(s, html)
 
     def test_proxy_books_upstream_usage(self):
         m = self.m

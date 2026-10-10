@@ -10,6 +10,7 @@ one place.
 """
 import json
 import os
+import threading
 import time
 import urllib.request
 
@@ -76,15 +77,17 @@ def openrouter_models(force=False, tools_only=False, relevant_only=False):
                 if pr < 0 or co < 0:
                     continue  # hide auto-router / dynamic pricing
                 sp = m.get("supported_parameters") or []
+                vision = "image" in ((m.get("architecture") or {}).get("input_modalities") or [])
                 rows.append((pr + co, pr, co, m.get("id", ""), "tools" in sp,
-                             m.get("name", ""), m.get("context_length") or 0))
+                             m.get("name", ""), m.get("context_length") or 0, vision))
             rows.sort(key=lambda r: r[0])
             out = []
-            for tot, pr, co, mid, tools, name, ctx in rows:
+            for tot, pr, co, mid, tools, name, ctx, vision in rows:
                 if mid:
                     tag = "free" if tot == 0 else f"${pr*1e6:.2f}/${co*1e6:.2f} /1M"
-                    out.append({"id": mid, "label": f"{mid}  ({tag})", "tools": tools,
-                                "name": name, "ctx": ctx, "price": tag})
+                    out.append({"id": mid, "label": f"{mid}  ({tag})", "tools": tools, "vision": vision,
+                                "name": name, "ctx": ctx, "price": tag,
+                                "pin": round(pr * 1e6, 4), "pout": round(co * 1e6, 4)})   # $ per 1M tokens
             if out:
                 _ormodels["ts"], _ormodels["data"] = time.time(), out
         except Exception as e:
@@ -96,3 +99,20 @@ def openrouter_models(force=False, tools_only=False, relevant_only=False):
         cur = load_curated()
         data = [m for m in data if m["id"] in cur]
     return data
+
+
+_refreshing = threading.Lock()
+
+
+def lookup(mid):
+    """One model's catalog row from the cache, or None. Never waits on the
+    network (the router asks per turn): a stale or empty cache is refreshed
+    in the background and the answer comes from what is there now."""
+    if time.time() - _ormodels["ts"] >= 600 and _refreshing.acquire(blocking=False):
+        def _bg():
+            try:
+                openrouter_models(force=True)
+            finally:
+                _refreshing.release()
+        threading.Thread(target=_bg, daemon=True).start()
+    return next((m for m in _ormodels["data"] if m["id"] == mid), None)

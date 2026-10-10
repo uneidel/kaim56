@@ -28,9 +28,11 @@ Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import hashlib
 import json
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -207,3 +209,131 @@ def classify(policy, text):
     except Exception as e:
         _log_fallback(be, e)
     return _router.jev_classify(policy, text)
+
+
+# ---- the cost router's judge (mgr/router.py mode cheapest) ------------------
+LEVELS = {"1": "small talk, a greeting or thanks",
+          "2": "a simple question or a small edit",
+          "3": "a normal code change in one place",
+          "4": "a change across several files, or architecture and design",
+          "5": "hard reasoning: math, proofs, deep debugging, research"}
+JUDGE_TTL = 3600
+LONG_TEXT = 200_000                          # characters: a long-context request
+_judged = {}                                 # sha1(context, text) -> (ts, result)
+_judged_lock = threading.Lock()
+
+
+def _judge_policy():
+    """The router's task/difficulty questions plus scope and vision (built at
+    call time: router imports this module)."""
+    return {"questions": {**_router.DEFAULT_POLICY["questions"],
+                          "scope": {"one": "This request concerns one file or one small thing.",
+                                    "multi": "This request spans several files or the architecture of a system."},
+                          "vision": {"yes": "This request is about an image, photo or screenshot.",
+                                     "no": "This request is plain text."}},
+            "floor": _router.DEFAULT_POLICY["floor"]}
+
+
+def level_of(classes, floor=0.55):
+    """Jev's classes {question: (class, prob)} -> level 1-5. Only classes at or
+    above the floor count; nothing sure -> 3. Base by task (chat/text/extract
+    2, code 3, reasoning 4), trivial -1, hard +1, multi-file at least 4."""
+    sure = {q: c for q, (c, p) in classes.items() if p >= floor}
+    if "task" not in sure and "difficulty" not in sure:
+        return 3
+    lvl = {"chat": 2, "text": 2, "extract": 2, "code": 3, "reasoning": 4}.get(sure.get("task"), 3)
+    if sure.get("difficulty") == "trivial":
+        lvl -= 1
+    elif sure.get("difficulty") == "hard":
+        lvl += 1
+    if sure.get("scope") == "multi":
+        lvl = max(lvl, 4)
+    return max(1, min(5, lvl))
+
+
+def _judge_llm(text, context):
+    ans, ms = ask({"state": (f"Context: {context}\n\n" if context else "") + text[-_router.PREMISE_MAX * 4:],
+                   "questions": {
+                       "level": {"type": "choice", "criteria": LEVELS,
+                                 "instructions": "How capable a model does this request need? Pick the lowest level that will do."},
+                       "vision": {"type": "choice", "criteria": {"yes": "it needs to see an image", "no": "text only"},
+                                  "instructions": "Does answering need to look at an image?"}}})
+    if not ans.get("level"):
+        raise ValueError("no level scored")
+    lvl, sc = max(ans["level"].items(), key=lambda t: t[1])
+    vis = ans.get("vision") or {}
+    return {"level": int(lvl), "score": sc, "ms": ms, "vision": vis.get("yes", 0) > vis.get("no", 0)}
+
+
+def _judge_jev(text):
+    pol = _judge_policy()
+    classes, ms = _router.jev_classify(pol, text[-_router.PREMISE_MAX:])
+    vis = classes.get("vision", ("no", 0))
+    return {"level": level_of(classes, pol["floor"]), "score": round(classes.get("task", ("", 0))[1], 3), "ms": ms,
+            "vision": vis[0] == "yes" and vis[1] >= pol["floor"], "classes": {q: [c, round(p, 3)] for q, (c, p) in classes.items()}}
+
+
+def judge(text, context=""):
+    """How hard is this request? -> {level 1-5, needs: {vision, tools,
+    long_context}, score, ms, backend, note}. The LLM backend (one strict-JSON
+    question) when the router uses it (DECISION_ROUTER=1), else Jev; the LLM
+    failing falls back to Jev. Cached; never raises: no classifier or any
+    failure -> level 3 and a note."""
+    text = str(text or "").strip()
+    key = hashlib.sha1(f"{context}\0{text}".encode()).hexdigest()
+    now = time.time()
+    with _judged_lock:
+        hit = _judged.get(key)
+        if hit and now - hit[0] < JUDGE_TTL:
+            return hit[1]
+    out = {"level": 3, "needs": {"vision": False, "tools": True, "long_context": len(text) > LONG_TEXT},
+           "score": 0.0, "ms": 0, "backend": "none", "note": ""}
+    if not text:
+        out["note"] = "empty request — level 3"
+        return out
+    got, notes = None, []
+    if router_on():
+        try:
+            got, out["backend"] = _judge_llm(text, context), backend()
+        except Exception as e:
+            notes.append(f"{backend()} failed ({safe_err(e)})")
+    if got is None and _router.jev_url():
+        try:
+            got, out["backend"] = _judge_jev(text), "jev"
+        except Exception as e:
+            notes.append(f"jev failed ({safe_err(e)})")
+    if got is None:
+        out["note"] = ("; ".join(notes) or "no classifier configured") + " — level 3"
+    else:
+        out.update(level=max(1, min(5, int(got["level"]))), score=got["score"], ms=got["ms"])
+        out["needs"]["vision"] = bool(got["vision"])
+        if got.get("classes"):
+            out["classes"] = got["classes"]
+        out["note"] = "; ".join(notes)
+    with _judged_lock:
+        if len(_judged) > 512:
+            _judged.clear()
+        _judged[key] = (now, out)
+    return out
+
+
+def sufficient(request, answer):
+    """The optional cheap check of a final answer (policy "check": true):
+    False only when the classifier is fairly sure (>= 0.7) the answer does not
+    solve the request. Any failure -> True: never escalates on a guess."""
+    state = f"Request:\n{str(request)[:3000]}\n\nAnswer:\n{str(answer)[-3000:]}"
+    try:
+        if router_on():
+            ans, _ = ask({"state": state, "questions": {"ok": {
+                "type": "choice", "instructions": "Does the answer fully solve the request?",
+                "criteria": {"yes": "it solves the request", "no": "it is incomplete, wrong or gives up"}}}})
+            return (ans.get("ok") or {}).get("no", 0) < 0.7
+        if _router.jev_url():
+            cl, _ = _router.jev_classify({"questions": {"ok": {
+                "yes": "The answer solves the request.", "no": "The answer is incomplete, wrong or gives up."}}},
+                state[-_router.PREMISE_MAX:])
+            c, p = cl.get("ok", ("yes", 0))
+            return not (c == "no" and p >= 0.7)
+    except Exception:
+        pass
+    return True
