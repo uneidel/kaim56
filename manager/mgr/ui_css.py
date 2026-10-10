@@ -375,6 +375,9 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-bub{padding:8px 10px;border-radius:8px;background:var(--app-bg);max-width:88%;overflow-wrap:anywhere}
 .sk-bub.me{justify-self:end;background:var(--app-chip)}
 .sk-bub.bad{border-left:3px solid var(--color-warn)}
+.sq-tbub{opacity:.82}
+.sq-turn summary{cursor:pointer;white-space:pre-wrap;word-break:break-word;margin:4px 0}
+.sq-work{font-size:12.5px;margin:2px 0}
 .sk-comp{display:flex;gap:6px}
 @media(max-width:860px){
   .grid2,.grid3{grid-template-columns:1fr}

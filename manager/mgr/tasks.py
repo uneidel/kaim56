@@ -408,6 +408,7 @@ def worker_claim(tasks, now, hb_idle, skipped_hb, throttled):
         t["recent_runs"] = runs + [now]
         t["status"] = "running"
         t["updated"] = now
+        t["started"] = now                     # the squad channel's "working… (mm:ss)"
         return True, dict(t)
     # Skips und Drosselungen VERAENDERN Tasks (next_run!) — ohne dirty=True
     # verfiele das Weiterplanen beim naechsten Zyklus.
@@ -515,6 +516,11 @@ def _execute(t):
             _store.with_tasks(done_mut)
         except Exception as e:
             _util._wlog(f"{t['id']}: status update failed: {e!r}")
+        if t.get("squad"):                   # its final answer, unless already posted (mgr/squads.py)
+            try:
+                _squads.turn_answer(t, ok, res)
+            except Exception as e:
+                _util._wlog(f"{t['id']}: squad turn_answer: {e!r}")
         try:
             _chats.chat_log_append(t.get("instance", "task"), "task",
                             t.get("message", ""), res, kind="task")

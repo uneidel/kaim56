@@ -24,6 +24,7 @@ as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
 import contextlib
+import difflib
 import json
 import os
 import re
@@ -277,7 +278,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
         if kind == "post" and orig["kind"] == "ask" and orig["to"] == [sender]:
             kind = "answer"
         to = to or [orig["from"]]
-    if kind not in ("ask", "hitl"):              # a question names its one addressee in `to`
+    if kind not in ("ask", "hitl", "turn", "note"):   # a question names its one addressee in `to`
         to += [m for m in _MENTION.findall(text) if m in names or m == "all"]
     # The operator is no member: "user", "admin", "operator" or no addressee at
     # all means the person who last wrote in this channel (live 2026-10-09: an
@@ -297,8 +298,9 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     if kind == "ask" and (len(set(to)) != 1 or to[0] not in names or to[0] == sender):
         return None, "ask exactly one other member"
     rcpt = ["all"] if "all" in to else sorted(set(to))
-    # "hitl": a waiting item's card for the operator (mgr/hitlq.py) — it wakes nobody
-    targets = [] if kind in ("answer", "hitl") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
+    # "hitl": a waiting item's card for the operator (mgr/hitlq.py), "turn": a
+    # member's final answer (turn_answer), "note": the manager's — they wake nobody
+    targets = [] if kind in ("answer", "hitl", "turn", "note") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
         blocked = _guard(proj, targets, depth, now) if targets else ""
@@ -342,6 +344,69 @@ def wake_result(msg_id, member, ok, result):
         outcome = json.loads(row[0] or "{}")
         outcome[str(member)] = "ok" if ok else (str(result or "failed").strip()[:200] or "failed")
         c.execute("UPDATE squad_msg SET outcome=? WHERE id=?", (json.dumps(outcome), msg_id))
+
+
+TURN_MAX = 4000                 # a turn's answer in the channel; the full text is in the archive
+
+
+def _norm(text):
+    return " ".join(str(text or "").split()).casefold()
+
+
+def _same(a, b):
+    """Near-identical texts: the member already posted what its turn answered."""
+    a, b = _norm(a)[:TURN_MAX], _norm(b)[:TURN_MAX]
+    return a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+def _thread_user(project, msg_id):
+    """'user:<name>' who started the reply chain of a message, else the last person in the channel."""
+    seen = set()
+    while msg_id and msg_id not in seen:
+        seen.add(msg_id)
+        m = _get(msg_id) if str(msg_id).isdigit() else None
+        if not m or m["project"] != project:
+            break
+        if str(m["from"]).startswith("user:"):
+            return m["from"]
+        msg_id = m["reply_to"]
+    return _last_user(project) or "user:operator"
+
+
+def turn_answer(task, ok, result):
+    """A finished squad wake turn's final answer into the channel, from that
+    member to the user of the thread (kind "turn", wakes nobody) -> the message
+    or None: not for a failed turn, nor when the member already posted it."""
+    sq = task.get("squad") or {}
+    text, member = str(result or "").strip(), task.get("instance", "")
+    proj = _projects.get(sq.get("project") or "") if ok and text else None
+    if not proj or member not in (proj.get("members") or {}):
+        return None
+    since = int(task.get("started") or task.get("updated") or 0)
+    with _db() as c:
+        mine = c.execute("SELECT text FROM squad_msg WHERE project=? AND sender=? AND ts>=?",
+                         (proj["name"], member, since)).fetchall()
+    if any(_same(text, r[0]) for r in mine):
+        return None
+    if len(text) > TURN_MAX:
+        text = text[:TURN_MAX] + "\n…[full text in the archive]"
+    msg, _why = post(proj, member, [_thread_user(proj["name"], sq.get("msg"))], text, kind="turn",
+                     depth=int(sq.get("depth") or 1))
+    return msg
+
+
+def working(project):
+    """The project's squad wake turns now: running ("working", since the turn
+    started) or queued -> [{member, state, since, elapsed, msg}]."""
+    now, out = int(time.time()), []
+    for t in _store.load_tasks():
+        sq, st = t.get("squad") or {}, t.get("status")
+        if sq.get("project") != project or st not in ("running", "pending"):
+            continue
+        since = int((t.get("started") or t.get("updated") or 0) if st == "running" else t.get("created") or 0)
+        out.append({"member": t.get("instance", ""), "state": "working" if st == "running" else "queued",
+                    "since": since, "elapsed": max(0, now - since), "msg": sq.get("msg")})
+    return sorted(out, key=lambda x: (x["state"] != "working", x["since"]))
 
 
 def answer(ask_id, asker):

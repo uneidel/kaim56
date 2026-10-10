@@ -410,6 +410,9 @@ def step_squad(job):
         _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})
         job["done"].append("squad")
         _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — waiting for your approval of the plan.")
+        added = _squadgate.squad_tools(_projects.get(name))
+        if added:
+            _say(job, _squadgate.tools_note(added))
     if "index" not in job["done"]:
         job["done"].append("index")
         if _indexer.instance():
