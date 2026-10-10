@@ -413,6 +413,52 @@ def worker_claim(tasks, now, hb_idle, skipped_hb, throttled):
     return bool(throttled) or bool(skipped_hb), None
 
 
+# ---- "Restart members" (Squad header): a member busy with a turn is restarted
+# right after that turn, an idle one at once; a stopped one starts fresh anyway.
+_restart_after = set()
+_restart_lock = threading.Lock()
+
+
+def _busy(name):
+    return any(x.get("instance") == name and x.get("status") == "running" for x in _store.load_tasks())
+
+
+def _restart_now(name):
+    with _restart_lock:
+        _restart_after.discard(name)
+    inst = next((i for i in _instances.load_instances() if i["name"] == name), None)
+    if inst is None or not _instances.is_running(inst):
+        return
+    def run():
+        try:
+            _vm.stop(inst)
+            _vm.start(inst)
+            _util._wlog(f"{name}: restarted (squad 'Restart members')")
+        except Exception as e:
+            _util._wlog(f"{name}: restart failed: {e!r}")
+    threading.Thread(target=run, daemon=True, name=f"restart-{name}").start()
+
+
+def restart_members(proj):
+    """-> {member: "restarting" | "after its turn" | "stopped (starts fresh on its next wake)"}.
+    The code indexer is no squad worker and is left alone."""
+    out = {}
+    for name in sorted(proj.get("members") or {}):
+        inst = next((i for i in _instances.load_instances() if i["name"] == name), None)
+        if inst is None or inst.get("template") == "indexer":
+            continue
+        if not _instances.is_running(inst):
+            out[name] = "stopped (starts fresh on its next wake)"
+        elif _busy(name):
+            with _restart_lock:
+                _restart_after.add(name)
+            out[name] = "after its turn"
+        else:
+            _restart_now(name)
+            out[name] = "restarting"
+    return out
+
+
 def _execute(t):
     """Run one claimed task and book its outcome — in its own lane thread."""
     try:
@@ -469,6 +515,8 @@ def _execute(t):
             _squadrec.turn_end(t, begun, ok, res)
         except Exception as e:
             _util._wlog(f"{t['id']}: squad turn: {e!r}")
+        if t.get("instance") in _restart_after:            # "Restart members" waited for this turn
+            _restart_now(t["instance"])
         try:
             _mission_advance_fire(t["id"])
         except Exception as e:

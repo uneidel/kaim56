@@ -1421,6 +1421,7 @@ async function skLoad(){
   if(stEl.dataset.h!==stH){stEl.dataset.h=stH;stEl.innerHTML=stH}   /* an open members list stays open */
   document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skBoard()>Board</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skPause(${st.paused?'false':'true'})>${st.paused?'Resume':'Pause'}</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick=skRestart() title="Stop + start every member (one busy with a turn: right after it) — picks up new images, tools and config">Restart members</button>`+
     (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
     `<button class="btn btn-ghost btn-sm" onclick=skProject()>Project</button>`;
   const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
@@ -1450,6 +1451,13 @@ function skBoardRender(){
       ts.filter(t=>t.status===c).map(t=>`<div class=sk-bub style="max-width:none;margin-bottom:6px;font-size:12.5px"><b>${escT(t.key)}</b> ${escT(t.title)}`+
         `<div class=text-muted>${t.assignee?escT(t.assignee):'unassigned'}${t.depends_on.length?' · after '+escT(t.depends_on.join(', ')):''}</div></div>`).join('')+'</div>').join('')+'</div>'
     :'<p class=text-muted style="font-size:12.5px;margin:12px 0 0">No tickets yet — they come with the approved plan. Edit tickets in Projects → Squad.</p>';
+}
+async function skRestart(){
+  if(!SK||!confirm('Restart every member of '+SK+'? A member busy with a turn restarts right after it.'))return;
+  try{
+    const d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    skMsg(d.error?'⚠️ '+d.error:'Restart: '+Object.entries(d.members||{}).map(([n,v])=>n+' — '+v).join(' · ')||'no members');
+  }catch(e){skMsg('⚠️ '+e)}
 }
 async function skPause(on){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:on})})).json()}catch(e){d={error:'manager not reachable'}}

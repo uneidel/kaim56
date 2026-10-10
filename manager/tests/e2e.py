@@ -4370,6 +4370,34 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         self.assertEqual(m._squadgate.LEAD_MAX_STEPS, 40)
 
+    def test_squad_restart_members_idle_now_busy_after_turn(self):
+        """'Restart members': an idle running member restarts at once, a busy one
+        right after its turn, a stopped one is left to start fresh; admin only."""
+        woke, tasks, undo = self._squad_env()
+        m, L = self.m, "127.0.0.1"
+        calls = []
+        old = (m._instances.is_running, m._vm.stop, m._vm.start, m._tasks.threading.Thread)
+        m._instances.is_running = lambda i: i["name"] in ("a", "b")
+        m._vm.stop = lambda i: calls.append(("stop", i["name"]))
+        m._vm.start = lambda i: calls.append(("start", i["name"]))
+        class T:                                                       # run the restart inline
+            def __init__(self, target, daemon=True, name=""): self.t = target
+            def start(self): self.t()
+        m._tasks.threading.Thread = T
+        tasks.append({"id": "t1", "instance": "b", "status": "running"})
+        try:
+            st, d = self._sq("/api/projects/sq/squad/restart", L, {})
+            self.assertEqual((st, d["members"]), (200, {"a": "restarting", "b": "after its turn",
+                                                        "d": "stopped (starts fresh on its next wake)"}))
+            self.assertEqual(calls, [("stop", "a"), ("start", "a")])
+            self.assertEqual(self._sq("/api/projects/sq/squad/restart", "172.30.3.2", {})[0], 403)
+            m._tasks._restart_now("b")                                  # what the worker does after b's turn
+            self.assertEqual(calls[-2:], [("stop", "b"), ("start", "b")])
+            self.assertNotIn("b", m._tasks._restart_after)
+        finally:
+            m._instances.is_running, m._vm.stop, m._vm.start, m._tasks.threading.Thread = old
+            undo()
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason

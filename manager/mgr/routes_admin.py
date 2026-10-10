@@ -340,6 +340,8 @@ def _squad_post(h, name, sub):
     if sub == "suggest":                     # {id, member}: Jev suggests that member's setup again
         r, why = _squadgate.suggest_member(name, str(b.get("id") or ""), str(b.get("member") or ""))
         return h._json(r) if r else h._json({"error": why}, 400)
+    if sub == "restart":                     # restart the members (busy ones after their turn), admin only
+        return h._json({"ok": True, "members": _tasks.restart_members(p)})
     if sub == "reindex":                     # queue a code index run (admin only)
         return h._json({"msg": _indexer.reindex(name, "operator " + who)})
     if sub == "ticket":                      # {id, status?, assignee?, comment?, level?}: the operator, any time
