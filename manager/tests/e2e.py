@@ -4398,6 +4398,18 @@ class ManagerFunctions(unittest.TestCase):
             m._instances.is_running, m._vm.stop, m._vm.start, m._tasks.threading.Thread = old
             undo()
 
+    def test_claude_guest_image_has_what_its_init_calls(self):
+        """guest-init.sh fetches its mount list and the skills block with curl:
+        the image must install it (live 2026-10-10: Claude members had no
+        /project mount and no skills because curl was missing)."""
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude")
+        if not os.path.exists(os.path.join(root, "Dockerfile.rootfs")):
+            self.skipTest("agents/claude not next to the manager")
+        init = open(os.path.join(root, "guest-init.sh")).read()
+        docker = open(os.path.join(root, "Dockerfile.rootfs")).read()
+        if re.search(r"^[^#]*\bcurl\s+-", init, re.M):
+            self.assertRegex(docker, r"apt-get install[^\n]*\n?[^\n]*\bcurl\b")
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason

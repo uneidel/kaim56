@@ -3,7 +3,7 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git ripgrep python3 iproute2 iputils-ping nfs-common \
+        ca-certificates curl git ripgrep python3 iproute2 iputils-ping nfs-common \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code \
     && npm cache clean --force
