@@ -5469,6 +5469,74 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def _note_user(self, path, body=None, name="User"):
+        """(status, json) of a request by an OIDC principal with role user."""
+        m = self.m
+        h = self._post_handler(path, "127.0.0.1", json.dumps(body).encode()) if body is not None else self._handler(path, "127.0.0.1")
+        h.principal = m._oidc.Principal("u-" + name, name, "", "user")
+        self.assertTrue(h._dispatch("POST" if body is not None else "GET"))
+        return self._status(h), json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1] or b"{}")
+
+    def test_squad_notes_drafts_roles_and_send_to_the_lead(self):
+        """Feedback notes (mgr/squadnotes.py): admin and role user keep drafts on a
+        message (caps, own list, a user deletes only its own), a guest never; send
+        posts ONE numbered message to the lead that wakes it, marks the notes sent,
+        records a 'feedback' metrics row and archives; nothing left -> 400."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        B, L, base = "172.30.4.2", "127.0.0.1", "/api/projects/sq/squad/notes"
+        try:
+            p = m._projects.get("sq")
+            msg, _ = m._squads.post(p, "b", ["user:admin"], "The login form validates nothing. "
+                                    "The tests cover only the happy path.", kind="turn")
+            del woke[:]
+            st, n1 = self._sq(base, L, {"msg_id": msg["id"], "quote": "validates nothing", "prefix": "x" * 60,
+                                        "suffix": ". The tests", "comment": "add server-side validation"})
+            self.assertEqual((st, n1["status"], n1["by"], len(n1["prefix"])), (200, "draft", "user:admin", 40))
+            st, n2 = self._sq(base, L, {"msg_id": msg["id"], "quote": "only the happy path", "comment": "add error cases"})
+            self.assertEqual(st, 200)
+            for bad in ({"quote": "q" * 1001}, {"comment": "c" * 4001}, {"comment": " "}, {"msg_id": 99999}):
+                self.assertEqual(self._sq(base, L, {"msg_id": msg["id"], "quote": "login", "comment": "x", **bad})[0], 400, bad)
+            st, nu = self._note_user(base, {"msg_id": msg["id"], "quote": "login form", "comment": "mine"})
+            self.assertEqual((st, nu["by"]), (200, "user:User"))
+            ids = lambda d: [x["id"] for x in d["notes"]]
+            self.assertEqual(ids(self._sq(f"{base}?msg={msg['id']}", L)[1]), [n1["id"], n2["id"]])   # not the user's draft
+            self.assertEqual(ids(self._note_user(base)[1]), [nu["id"]])
+            self.assertEqual(self._sq(base, B, {"msg_id": msg["id"], "quote": "login", "comment": "x"})[0], 403)  # guest
+            self.assertEqual(self._sq(base, B)[0], 403)
+            self.assertEqual(self._note_user(f"{base}/{n1['id']}/delete", {})[0], 404)          # not the user's
+            self.assertEqual(self._note_user(f"{base}/{nu['id']}/delete", {}, name="Other")[0], 404)
+            self.assertEqual(self._sq(f"{base}/{nu['id']}/delete", L, {})[0], 200)               # admin: any draft
+            self.assertEqual(self._note_user(f"{base}/send", {"msg_id": msg["id"]})[0], 400)     # no drafts left
+            self.assertEqual(woke, [])
+            st, post = self._sq(f"{base}/send", L, {"msg_id": msg["id"]})
+            self.assertEqual((st, post["from"], post["to"], post["reply_to"], post["delivered"]),
+                             (200, "user:admin", ["a"], msg["id"], ["a"]))
+            self.assertEqual(post["text"].splitlines()[:3], [
+                f"Feedback on message #{msg['id']} (b):",
+                "1. «validates nothing» — add server-side validation", "2. «only the happy path» — add error cases"])
+            self.assertIn("ticket_create/ticket_assign", post["text"])
+            self.assertEqual([w[0] for w in woke], ["a"])
+            sent = self._sq(base, L)[1]["notes"]
+            self.assertEqual({(x["status"], x["sent_msg_id"]) for x in sent}, {("sent", post["id"])})
+            self.assertEqual(ids(self._note_user(base)[1]), [n1["id"], n2["id"]])               # sent ones: visible to all
+            self.assertEqual(self._sq(f"{base}/{n1['id']}/delete", L, {})[0], 400)               # a sent note stays
+            self.assertEqual(self._sq(f"{base}/send", L, {"ids": [n1["id"]]})[0], 400)
+            rows = self._sm_rows("feedback")
+            self.assertEqual((len(rows), rows[0]["member"], json.loads(rows[0]["detail"])["count"]), (1, "user:admin", 2))
+            rec = m._squadrec.of_project("sq")
+            fb = os.path.join(m._squadrec.folder(rec), "conversations", "feedback")
+            ev = json.loads(open(os.path.join(fb, os.listdir(fb)[0])).read().splitlines()[0])
+            self.assertEqual((ev["post_id"], len(ev["notes"])), (post["id"], 2))
+            for meth, path in (("GET", "/api/projects/sq/squad/notes"), ("POST", "/api/projects/sq/squad/notes"),
+                               ("POST", "/api/projects/sq/squad/notes/send"), ("POST", "/api/projects/sq/squad/notes/7/delete")):
+                self.assertTrue(m._auth.user_allowed(meth, path), path)
+            page = m._ui.render()
+            for bit in ("id=sqa-pop", "class=sqa-menu role=menu", "id=sqa-fab", "class=sq-ann", "mark class=", "sqaBusy("):
+                self.assertIn(bit, page)
+        finally:
+            undo()
+
     def test_hitl_manager_executed_git_tools_are_gated_by_the_manager(self):
         """git_push_branch / pr_create / issue_create run in the manager, so the
         manager demands the approval itself — a guest that skips its hook and

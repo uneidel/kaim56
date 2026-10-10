@@ -51,6 +51,7 @@ from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import squadgate as _squadgate
+from mgr import squadnotes as _squadnotes
 from mgr import squads as _squads
 from mgr import resources as _resources
 from mgr import router as _router
@@ -295,7 +296,7 @@ _PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
 
 # ---- squads: settings, the channel, posting as the operator (mgr/squads.py) --
 def _squad_get(h, name, sub):
-    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board (also role user)
+    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board, /squad/notes (also role user)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
@@ -304,6 +305,9 @@ def _squad_get(h, name, sub):
         return h._json({"project": name, "members": _squads.members(p), "settings": _squads.settings(p),
                         "messages": _squads.read(name, None, int(since) if since.isdigit() else 0),
                         "working": _squads.working(name)})
+    if sub == "notes":                       # ?msg=<id>: my notes + everybody's sent ones (also role user)
+        mid = _routes._qs(h).get("msg", [""])[0]
+        return h._json({"notes": _squadnotes.notes(name, "user:" + _who(h), int(mid) if mid.isdigit() else None)})
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "board":                       # proposals + tickets (also role user)
@@ -321,15 +325,37 @@ def _squad_get(h, name, sub):
                     "squad_id": _squads.squad_id(p)})
 
 
+def _who(h):
+    pr = getattr(h, "principal", None)
+    return pr.name if pr is not None and pr.sub != "basic" else "admin"
+
+
+def _squad_notes_post(h, p, who, b):
+    # POST …/squad/notes {msg_id, quote, prefix, suffix, comment} | /notes/send {ids | msg_id} | /notes/<id>/delete
+    tail = urllib.parse.unquote(h.path.split("?", 1)[0]).strip("/").split("/")[5:]
+    if not tail:
+        n, why = _squadnotes.create(p, "user:" + who, b)
+        return h._json(n) if n else h._json({"error": why}, 400)
+    if tail == ["send"]:
+        m, why = _squadnotes.send(p, who, b)
+        return h._json(m) if m else h._json({"error": why}, 400)
+    if len(tail) == 2 and tail[0].isdigit() and tail[1] == "delete":
+        pr = getattr(h, "principal", None)
+        ok, why = _squadnotes.delete(p["name"], tail[0], "user:" + who, pr is None or pr.role == "admin")
+        return h._json({"ok": True}) if ok else h._json({"error": why}, 404 if why == "no such note" else 400)
+    return h._json({"error": "unknown operation"}, 404)
+
+
 def _squad_post(h, name, sub):
-    # POST /api/projects/<n>/squad (settings) | /squad/post (as the logged-in person; also role user)
+    # POST /api/projects/<n>/squad (settings) | /squad/post, /squad/notes… (as the logged-in person; also role user)
     #      | /squad/decide (a proposal) | /squad/ticket (edit one)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
     b = h._body() or {}
-    pr = getattr(h, "principal", None)
-    who = pr.name if pr is not None and pr.sub != "basic" else "admin"
+    who = _who(h)
+    if sub == "notes":
+        return _squad_notes_post(h, p, who, b)
     if sub == "post":
         m, why = _squadgate.operator_post(p, who, b)
         return h._json(m) if m else h._json({"error": why}, 400)

@@ -376,6 +376,20 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-bub.me{justify-self:end;background:var(--app-chip)}
 .sk-bub.bad{border-left:3px solid var(--color-warn)}
 .sq-tbub{opacity:.82}
+mark.sq-mk{color:inherit;background:color-mix(in srgb,var(--color-accent) 24%,transparent);border-radius:2px;
+  box-shadow:0 1px 0 var(--color-accent-400);cursor:pointer}
+mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);box-shadow:none}
+.sq-nb{font-size:12px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
+.sq-nb:empty{display:none}
+#sqa-fab,.sqa-menu,.sqa-pop{position:fixed;z-index:70}
+.sqa-menu,.sqa-pop{background:var(--app-card);border:1px solid var(--app-line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);padding:4px}
+.sqa-pop{width:min(380px,calc(100vw - 32px));padding:10px;display:grid;gap:8px;animation:sqa-in .12s ease-out}
+#sqa-fab[hidden],.sqa-menu[hidden],.sqa-pop[hidden],.sqa-edit[hidden]{display:none}
+.sqa-edit{display:grid;gap:8px}
+.sqa-q{font-size:12.5px;max-height:6.5em;overflow:auto;white-space:pre-wrap;color:color-mix(in srgb,var(--color-text) 65%,transparent)}
+.sqa-acts{display:flex;flex-wrap:wrap;gap:6px}
+@keyframes sqa-in{from{opacity:0;transform:translateY(-4px)}}
+@media (prefers-reduced-motion:reduce){.sqa-pop{animation:none}}
 .sq-turn summary{cursor:pointer;white-space:pre-wrap;word-break:break-word;margin:4px 0}
 .sq-work{font-size:12.5px;margin:2px 0}
 .sk-comp{display:flex;gap:6px}

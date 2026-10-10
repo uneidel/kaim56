@@ -66,6 +66,9 @@ def _conn():
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, project TEXT, sender TEXT,
         rcpt TEXT, text TEXT, reply_to INTEGER, kind TEXT, depth INTEGER, woke TEXT, blocked TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_squad_proj ON squad_msg(project, id)")
+    c.execute("""CREATE TABLE IF NOT EXISTS squad_note(            -- the operator's feedback (mgr/squadnotes.py)
+        id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, msg_id INTEGER, quote TEXT, prefix TEXT, suffix TEXT,
+        comment TEXT, by TEXT, created INTEGER, status TEXT, sent_msg_id INTEGER)""")
     try:                    # per member: "ok" or the reason the wake turn failed
         c.execute("ALTER TABLE squad_msg ADD COLUMN outcome TEXT")
     except sqlite3.OperationalError:
@@ -465,3 +468,4 @@ def purge(project):
     if os.path.exists(SQUAD_DB):
         with _db() as c:
             c.execute("DELETE FROM squad_msg WHERE project=?", (project,))
+            c.execute("DELETE FROM squad_note WHERE project=?", (project,))

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- Squads: feedback on messages (`mgr/squadnotes.py`, squad.db `squad_note`) — select text in a turn answer or a long member message (Squads chat + Projects Squad panel), right-click → Comment or the floating 💬 button (touch); drafts are highlighted (quote + prefix/suffix, else "unanchored"), "N comments · Send all" posts them as ONE numbered message to the lead (reply to the message, normal guards) to turn into tickets; notes marked sent → #post, archived (`conversations/feedback`), metrics kind `feedback`; `GET/POST /api/projects/<p>/squad/notes[/send|/<id>/delete]` for admin + role user (own drafts; sent ones visible to all), never guests.
 - Squads: no approvals by default (members run in VMs — the user is asked only via ask_human, the plan and the merge to main; old-default squads switched once); when all tickets are done the lead writes the user a final summary (chat + notification), once per ticket set.
 - UI: Squads composer — typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes.
 - UI: Approve/Reject/Request changes lock their buttons while the manager works and show the result or any error inside the card (a browser-side error used to stop silently).

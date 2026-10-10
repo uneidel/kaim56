@@ -803,13 +803,160 @@ function sqWorking(list){
     ?`⏳ ${escT(w.member)} is working… (${mmss(+w.elapsed||0)})`
     :`⏸ ${escT(w.member)} queued${w.msg?' (msg #'+(+w.msg)+')':''}`)+'</div>').join('');
 }
-/* a message's text; a member's long turn answer (kind "turn") folds */
+/* a message's text; a member's long turn answer (kind "turn") folds. Turn answers and long member
+   messages are annotatable (class sq-ann): select text, comment, send the notes to the lead (mgr/squadnotes.py) */
+function sqAnnot(m){return m.kind==='turn'||(!String(m.from).startsWith('user:')&&String(m.text||'').length>300)}
 function sqText(m){
-  const t=String(m.text||''), pre='white-space:pre-wrap;word-break:break-word;margin:4px 0';
-  return m.kind==='turn'&&t.length>600
-    ?`<details class=sq-turn><summary>${escT(t.slice(0,280))}…</summary><div style="${pre}">${escT(t)}</div></details>`
-    :`<div style="${pre}">${escT(t)}</div>`;
+  const t=String(m.text||''), pre='white-space:pre-wrap;word-break:break-word;margin:4px 0', an=sqAnnot(m);
+  const body=`<div ${an?`class=sq-ann data-mid=${+m.id} `:''}style="${pre}">${escT(t)}</div>`;
+  return (m.kind==='turn'&&t.length>600?`<details class=sq-turn><summary>${escT(t.slice(0,280))}…</summary>${body}</details>`:body)+
+    (an?`<div class=sq-nb data-mid=${+m.id}></div>`:'');
 }
+let SQN={p:'',list:[]}, SQA={sel:null,open:false,note:null,p:'',ret:null,t:0};
+const sqEl=id=>document.getElementById(id);
+async function sqJ(url,body){
+  try{return await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}
+  catch(e){return {error:'manager not reachable'}}
+}
+const sqNotesUrl=p=>'/api/projects/'+encodeURIComponent(p)+'/squad/notes';
+async function sqNotesLoad(){
+  const p=sqName(); if(!p)return;
+  let d={}; try{d=await (await fetch(sqNotesUrl(p))).json()}catch(e){return}
+  if(d.error||p!==sqName())return;
+  SQN={p,list:d.notes||[]}; sqAnnApply();
+}
+/* where a note's quote is in the text now: the hit whose prefix/suffix match, else the first, else -1 */
+function sqAnchor(t,n){
+  let first=-1;
+  for(let i=t.indexOf(n.quote);i>=0;i=t.indexOf(n.quote,i+1)){
+    if(t.slice(0,i).endsWith(n.prefix||'')&&t.slice(i+n.quote.length).startsWith(n.suffix||''))return i;
+    if(first<0)first=i;
+  }
+  return first;
+}
+function sqAnnApply(){
+  if(SQN.p!==sqName())return;
+  document.querySelectorAll('.sq-ann').forEach(el=>{
+    const mid=+el.dataset.mid, t=el.textContent, ns=SQN.list.filter(n=>n.msg_id===mid);
+    const hits=ns.map(n=>({n,i:sqAnchor(t,n)})).filter(x=>x.i>=0).sort((a,b)=>a.i-b.i), shown=new Set();
+    let h='',at=0;
+    for(const x of hits){
+      if(x.i<at)continue;          /* ponytail: an overlapping note is listed under the message, not highlighted */
+      shown.add(x.n.id);
+      h+=escT(t.slice(at,x.i))+`<mark class="sq-mk${x.n.status==='sent'?' sent':''}" tabindex=0 data-nid=${+x.n.id} `+
+        `title="${esc(x.n.comment)}" aria-label="${esc('comment: '+x.n.comment)}">${escT(t.substr(x.i,x.n.quote.length))}</mark>`;
+      at=x.i+x.n.quote.length;
+    }
+    h+=escT(t.slice(at));
+    if(el.dataset.h!==h&&(hits.length||el.dataset.h)){el.dataset.h=h;el.innerHTML=h}
+    const nb=(el.closest('details')||el).nextElementSibling; if(!nb||!nb.classList.contains('sq-nb'))return;
+    const dr=ns.filter(n=>n.status==='draft'), sent=[...new Set(ns.filter(n=>n.status==='sent').map(n=>n.sent_msg_id))];
+    const bh=(dr.length?`<span>${dr.length} comment${dr.length>1?'s':''}</span> · <button class="btn btn-ghost btn-sm" onclick="sqNoteSend({msg_id:${mid}})">Send all</button>`:'')+
+      sent.map(id=>`<span class=text-muted>sent → #${+id}</span>`).join('')+
+      ns.filter(n=>!shown.has(n.id)).map(n=>`<div class=text-muted style="flex-basis:100%">unanchored: «${escT(n.quote.slice(0,80))}» — ${escT(n.comment)}`+
+        (n.status==='draft'?` <button class="btn btn-ghost btn-sm" onclick=sqNoteDel(${+n.id})>Delete</button>`:` (sent → #${+n.sent_msg_id})`)+'</div>').join('');
+    if(nb.dataset.h!==bh){nb.dataset.h=bh;nb.innerHTML=bh}
+  });
+}
+/* the selection when it lies inside one annotatable message -> {mid, quote, prefix, suffix, rect} | null */
+function sqSel(){
+  const s=getSelection(); if(!s||s.isCollapsed||!s.rangeCount)return null;
+  const r=s.getRangeAt(0), c=r.commonAncestorContainer, el=(c.nodeType===1?c:c.parentElement).closest('.sq-ann');
+  if(!el)return null;
+  const pre=document.createRange(); pre.setStart(el,0); pre.setEnd(r.startContainer,r.startOffset);
+  const t=el.textContent, i=pre.toString().length, q=r.toString();
+  if(!q.trim()||q.length>1000)return null;
+  return {mid:+el.dataset.mid,quote:q,prefix:t.slice(Math.max(0,i-40),i),suffix:t.slice(i+q.length,i+q.length+40),rect:r.getBoundingClientRect()};
+}
+/* while a selection or the popover is in a thread, polling does not redraw it */
+function sqaBusy(th){
+  const s=getSelection();
+  return SQA.open||!!(th&&s&&!s.isCollapsed&&s.anchorNode&&th.contains(s.anchorNode));
+}
+function sqPlace(el,x,y){
+  el.hidden=false;
+  const w=el.offsetWidth, h=el.offsetHeight;
+  el.style.left=Math.max(8,Math.min(innerWidth-w-8,x))+'px';
+  el.style.top=Math.max(8,y+h>innerHeight-8?y-h-40:y)+'px';
+}
+function sqPopOpen(rect,quote){
+  sqEl('sqa-menu').hidden=true; sqEl('sqa-fab').hidden=true;
+  SQA.open=true; SQA.p=sqName(); SQA.ret=document.activeElement;
+  sqEl('sqa-q').textContent='«'+(quote.length>300?quote.slice(0,300)+'…':quote)+'»';
+  sqEl('sqa-msg').textContent='';
+  sqPlace(sqEl('sqa-pop'),rect.left,rect.bottom+8);
+}
+function sqPop(){
+  const s=SQA.sel; if(!s)return;
+  SQA.note=null; sqPopOpen(s.rect,s.quote);
+  sqEl('sqa-view').innerHTML=''; sqEl('sqa-edit').hidden=false; sqEl('sqa-text').value=''; sqEl('sqa-text').focus();
+}
+function sqView(mk){
+  const n=SQN.list.find(x=>x.id===+mk.dataset.nid); if(!n)return;
+  SQA.sel=null; SQA.note=n; sqPopOpen(mk.getBoundingClientRect(),n.quote);
+  sqEl('sqa-edit').hidden=true;
+  sqEl('sqa-view').innerHTML=`<div style="white-space:pre-wrap;overflow-wrap:anywhere">${escT(n.comment)}</div>`+
+    `<div class=text-muted style="font-size:12px;margin:4px 0">${escT(n.by)} · ${new Date(n.created*1000).toLocaleString()} · `+
+    (n.status==='sent'?`sent → #${+n.sent_msg_id}`:'draft')+'</div><div class=sqa-acts>'+
+    (n.status==='draft'?`<button class="btn btn-primary btn-sm" onclick="sqNoteSend({ids:[${+n.id}]})">Send now</button>`+
+      `<button class="btn btn-ghost btn-sm" onclick=sqNoteDel(${+n.id})>Delete</button>`:'')+
+    `<button class="btn btn-ghost btn-sm" onclick=sqPopClose()>Close</button></div>`;
+  sqEl('sqa-view').querySelector('button').focus();
+}
+function sqPopClose(){
+  if(!SQA.open)return;
+  SQA.open=false; sqEl('sqa-pop').hidden=true;
+  if(SQA.ret&&SQA.ret.focus&&document.contains(SQA.ret))SQA.ret.focus();
+  if(location.hash==='#squads'&&SK)skLoad();         /* a redraw held back while it was open */
+}
+function sqFlash(t){if(location.hash==='#squads')skMsg(t);else sqEl('sqmsg').textContent=t}
+function sqAfterSend(){if(location.hash==='#squads'&&SK)skLoad();else if(SQ)sqLoad()}
+async function sqNoteSave(send){
+  const s=SQA.sel, c=sqEl('sqa-text').value.trim(); if(!s)return;
+  if(!c){sqEl('sqa-msg').textContent='write a comment first';return}
+  const d=await sqJ(sqNotesUrl(SQA.p),{msg_id:s.mid,quote:s.quote,prefix:s.prefix,suffix:s.suffix,comment:c});
+  if(d.error){sqEl('sqa-msg').textContent=d.error;return}
+  if(send){
+    const r=await sqJ(sqNotesUrl(SQA.p)+'/send',{ids:[d.id]});
+    if(r.error){sqEl('sqa-msg').textContent='saved as a draft; sending failed: '+r.error;sqNotesLoad();return}
+  }
+  getSelection().removeAllRanges(); SQA.sel=null; sqPopClose(); await sqNotesLoad(); if(send)sqAfterSend();
+}
+async function sqNoteSend(body){
+  const d=await sqJ(sqNotesUrl(SQA.open?SQA.p:sqName())+'/send',body);
+  if(d.error){if(SQA.open)sqEl('sqa-msg').textContent=d.error;else sqFlash(d.error);return}
+  sqPopClose(); sqFlash('feedback sent to '+(d.to||[]).join(', ')+' as #'+d.id); await sqNotesLoad(); sqAfterSend();
+}
+async function sqNoteDel(id){
+  const d=await sqJ(sqNotesUrl(SQA.open?SQA.p:sqName())+'/'+(+id)+'/delete',{});
+  if(d.error){if(SQA.open)sqEl('sqa-msg').textContent=d.error;else sqFlash(d.error);return}
+  sqPopClose(); await sqNotesLoad();
+}
+document.addEventListener('selectionchange',()=>{
+  clearTimeout(SQA.t);
+  SQA.t=setTimeout(()=>{
+    if(SQA.open)return;
+    SQA.sel=sqSel(); const b=sqEl('sqa-fab'); if(!b)return;
+    if(!SQA.sel){b.hidden=true;return}
+    sqPlace(b,SQA.sel.rect.left,SQA.sel.rect.bottom+6);
+  },120);
+});
+document.addEventListener('contextmenu',e=>{
+  const s=sqSel(); if(!s)return;                    /* else the browser's own menu */
+  e.preventDefault(); SQA.sel=s; sqEl('sqa-fab').hidden=true;
+  const mn=sqEl('sqa-menu'); sqPlace(mn,e.clientX,e.clientY); mn.querySelector('button').focus();
+});
+document.addEventListener('mousedown',e=>{const mn=sqEl('sqa-menu');if(mn&&!mn.hidden&&!mn.contains(e.target))mn.hidden=true});
+document.addEventListener('scroll',()=>{const b=sqEl('sqa-fab');if(b)b.hidden=true;const mn=sqEl('sqa-menu');if(mn)mn.hidden=true},true);
+document.addEventListener('click',e=>{const mk=e.target.closest&&e.target.closest('mark.sq-mk');if(mk&&getSelection().isCollapsed)sqView(mk)});
+document.addEventListener('keydown',e=>{
+  const mk=e.target.closest&&e.target.closest('mark.sq-mk');
+  if(mk&&(e.key==='Enter'||e.key===' ')){e.preventDefault();sqView(mk);return}
+  if(e.key!=='Escape')return;
+  const mn=sqEl('sqa-menu');
+  if(SQA.open){e.stopPropagation();sqPopClose()}
+  else if(mn&&!mn.hidden){e.stopPropagation();mn.hidden=true}
+},true);
 function fleetInit(){
   icRestore();
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
@@ -1054,13 +1201,13 @@ async function sqLoad(){
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
   const msgs=d.messages||[], th=document.getElementById('sq-thread');
-  th.innerHTML=msgs.length?msgs.map(m=>`<div class="${m.kind==='turn'?'sq-tbub':''}" style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
+  if(!sqaBusy(th)){th.innerHTML=msgs.length?msgs.map(m=>`<div class="${m.kind==='turn'?'sq-tbub':''}" style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
     `<div class=text-muted style="font-size:12px">#${m.id} · ${new Date(m.ts*1000).toLocaleString()} · <b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))}`+
     `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
     sqText(m)+
     sqDelivery(m)+
     `</div>`).join(''):'<span class=text-muted>No messages yet. A message goes to the lead, or to @name / @all.</span>';
-  th.scrollTop=th.scrollHeight;
+  th.scrollTop=th.scrollHeight; sqNotesLoad()}
   document.getElementById('sq-working').innerHTML=sqWorking(d.working);
   sqBoard();sqIndex();sqGit();
 }
@@ -1489,7 +1636,7 @@ async function skLoad(){
     (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
     `<button class="btn btn-ghost btn-sm" onclick=skProject()>Project</button>`;
   const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
-  if(last!==SK_LAST){
+  if(last!==SK_LAST&&!sqaBusy(document.getElementById('sk-thread'))){
     SK_LAST=last; skSeen(name,last);
     const th=document.getElementById('sk-thread');
     th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.kind==='turn'?' sq-tbub':''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
@@ -1497,7 +1644,7 @@ async function skLoad(){
       sqText(m)+
       sqDelivery(m)+'</div>').join('')
       :'<span class=text-muted>No messages yet.</span>';
-    th.scrollTop=th.scrollHeight;
+    th.scrollTop=th.scrollHeight; sqNotesLoad();
   }
   document.getElementById('sk-working').innerHTML=sqWorking(d.working);
   if(b.error)return;
