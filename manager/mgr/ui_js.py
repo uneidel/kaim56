@@ -1679,7 +1679,9 @@ function skStat(n){const st=SKSTATS[n]; if(!st)return '';
 function renderSkills(statsOnly){
   if(!statsOnly){loadProposals();loadSkillStats();}
   const cat=(document.getElementById('skcat')||{}).value||'';
-  document.getElementById('skills').innerHTML=SKILLS.filter(s=>!cat||s.category===cat).map(s=>
+  const qs=((document.getElementById('skq')||{}).value||'').toLowerCase().split(/\\s+/).filter(Boolean);   /* every word must match name or description */
+  document.getElementById('skills').innerHTML=SKILLS.filter(s=>(!cat||s.category===cat)&&
+    qs.every(w=>(s.name+' '+(s.description||'')).toLowerCase().includes(w))).map(s=>
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:8px">`+
     `<span class=card-title style="font-size:15px;font-family:var(--font-mono);font-weight:500">${escT(s.name)}</span>`+

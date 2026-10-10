@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-10
+- UI: Skills tab keyword filter (every word must match name or description), next to the category filter.
 - Squads: "⏳ member is working… (mm:ss)" / "queued" in the chat and Squad panel (`working` in /squad/messages and /squad/board); a finished wake turn's answer lands in the channel as kind `turn` to the thread's user (once, capped 4000, wakes nobody, not for failed turns); members with a fixed AGENT_TOOLS list get the missing squad tools on join and at startup (restart note).
 - LLM_MAX_TOKENS (instance key, runtime; Settings default): the key proxy clamps/adds max_tokens on every proxied call and the agent sends it (the only cap on the direct llama path) — a runaway generation on the local 27B ran into the 10-min timeout.
 - Key proxy job mode: `POST /api/llm/<backend>/jobs` + `GET /api/llm/jobs/<id>` (own jobs only, bounded, results expire after 10 min, booked and budgeted like sync); agent `LLM_ASYNC=1` submits and polls every 2 s instead of holding the connection open.

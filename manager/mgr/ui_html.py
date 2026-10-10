@@ -199,6 +199,7 @@ HTML_TOP = """</head><body>
   <div id=skprops></div>
   <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><label for=skcat class=text-muted style="font-size:12px">Category</label>
     <select class=input id=skcat style="width:auto" onchange=renderSkills(true)><option value="">all</option>__SKCATS__</select>
+    <input class=input id=skq type=search placeholder="Filter by keyword" aria-label="Filter skills by keyword" style="width:220px" oninput=renderSkills(true)>
     <span class=text-muted style="font-size:12px">security skills reach an agent only with SECURITY_SKILLS=1 or its squad&#8217;s &#8220;Security skills&#8221;</span></div>
   <div class=grid3 id=skills></div>
   <div class="panel blueprint" style="margin-top:32px">

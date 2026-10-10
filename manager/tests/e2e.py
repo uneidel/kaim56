@@ -2601,6 +2601,7 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIn("class=ic-tog aria-expanded=false", card)
         self.assertIn("ic-more", card)
         self.assertIn("editConfig('cardx')", card)
+        self.assertIn("id=skq", m._ui.render())                                  # Skills tab: keyword filter
         page = m._ui.render()
         self.assertIn("id=cfdlg", page)
         self.assertIn("/api/instances/${CFDLG}/config", page)
