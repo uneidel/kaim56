@@ -62,6 +62,10 @@ if [ "${AGENT_SUDO:-0}" = "1" ]; then
     rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: sudoers invalid, removed"
   else echo "[init] sudo: on (node may run anything as root)"; fi
 else rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: off"; fi
+# inotify: the kernel default (8192 watches) runs out under file watchers
+# (Claude Code, Node/Go tooling) and surfaces as a misleading ENOSPC.
+echo 524288 > /proc/sys/fs/inotify/max_user_watches 2>/dev/null
+echo 1024 > /proc/sys/fs/inotify/max_user_instances 2>/dev/null
 
 GW=$(ip route 2>/dev/null | awk '/default/{print $3; exit}')
 WORKDIR="${CLAUDE_WORKDIR:-/home/node/workspace}"

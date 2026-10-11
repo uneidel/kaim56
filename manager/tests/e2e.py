@@ -11483,7 +11483,7 @@ class ClaudeGuest(unittest.TestCase):
             with open(os.path.join(ag, init)) as fh:
                 text = fh.read()
             for s in ('"${AGENT_SUDO:-0}" = "1"', 'echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kaim56-agent',
-                      "chmod 0440 /etc/sudoers.d/kaim56-agent", "visudo -cf /etc/sudoers.d/kaim56-agent",
+                      "chmod 0440 /etc/sudoers.d/kaim56-agent", "/proc/sys/fs/inotify/max_user_watches", "visudo -cf /etc/sudoers.d/kaim56-agent",
                       "else rm -f /etc/sudoers.d/kaim56-agent", "[init] sudo:"):
                 self.assertIn(s, text, init)
             self.assertLess(text.index("/config/config.env"), text.index("AGENT_SUDO:-0"), init)   # after the config

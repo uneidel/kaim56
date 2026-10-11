@@ -61,6 +61,10 @@ if [ "${AGENT_SUDO:-0}" = "1" ]; then
     rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: sudoers invalid, removed"
   else echo "[init] sudo: on (node may run anything as root)"; fi
 else rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: off"; fi
+# inotify: the kernel default (8192 watches) runs out under file watchers
+# (Claude Code, Node/Go tooling) and surfaces as a misleading ENOSPC.
+echo 524288 > /proc/sys/fs/inotify/max_user_watches 2>/dev/null
+echo 1024 > /proc/sys/fs/inotify/max_user_instances 2>/dev/null
 
 # Agent code: the read-only harness drive (manager: AGENT_SRC) wins over the
 # copy baked into the rootfs; without the drive the VM boots as before.

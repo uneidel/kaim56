@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- Squads board: all five columns fit without sideways scrolling (a phone still scrolls); the ticket panel overlays the board below 1700 px. VMs: inotify limits raised at boot (the default gave a misleading ENOSPC).
 - Chat: opening an instance lands on its newest message (newest chat, bottom pinned while the layout settles).
 - Squads: members get a persistent disk, so the toolchains they install survive a restart.
 - VMs: write layer 8 GiB (was 1 GiB; a squad member filled it with Go + toolchains), persistent 16 GiB (was 4) — sparse, only used space costs.
