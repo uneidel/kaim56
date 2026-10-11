@@ -4,7 +4,7 @@ FROM node:24-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git curl python3 python3-pip iproute2 iputils-ping nfs-common poppler-utils \
-        python3-openpyxl python3-docx \
+        python3-openpyxl python3-docx sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # stdio<->SSE-Bruecke fuer entfernte MCP-Server (z. B. Home Assistant MCP).

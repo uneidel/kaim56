@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- Agents: root inside the VM via sudo — instance config `AGENT_SUDO=1` (template param, default off) writes a NOPASSWD sudoers drop-in for node at boot; squad members get it on; both rootfs images ship sudo.
 - Squads: members are told their VM is theirs — install toolchains themselves, ask the human only about unclear decisions.
 - Squads: fix comment-on-selection (two functions named sqSel; the annotation menu threw on every text selection).
 - UI: Squads ticket detail is a side panel (mockup ticket-detail; full screen on phones, × / Esc closes, the card stays highlighted) — header with key, title, Status/Assignee pills applied at once via `/squad/ticket`, level badge, "updated HH:MM"; a "Re-scoped by … at …" banner when a comment says RE-SCOPE; description clipped to ~6 lines with "Show all" and minimal safe markdown (`code`, **bold**, "- " lists); dependency chips with status dot that open that ticket + "Waiting on N tickets"; one activity timeline (created, comments tagged re-scope, the assignee's last answer as "turn result" with "Show full answer"); sticky comment box (Ctrl+Enter, Comment, Ask lead = squad post to the lead); English labels, 24-hour times; tickets now record `created`.
