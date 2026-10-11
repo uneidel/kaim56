@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- Squads: board first — waiting cards (capped height) and the Kanban sit right under the header, composer + working line under the board, the chat below as a collapsible "Chat (N messages)" (closed by default, remembered per browser; the Chat button opens it; new squad/kickoff unchanged); fix: a pending merge proposal (no `members`) threw in skLoad and kept the board hidden — cards, waiting list, metrics and board now each fail alone (console.error).
 - Agents: root inside the VM via sudo — instance config `AGENT_SUDO=1` (template param, default off) writes a NOPASSWD sudoers drop-in for node at boot; squad members get it on; both rootfs images ship sudo.
 - Squads: members are told their VM is theirs — install toolchains themselves, ask the human only about unclear decisions.
 - Squads: fix comment-on-selection (two functions named sqSel; the annotation menu threw on every text selection).

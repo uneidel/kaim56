@@ -5222,6 +5222,16 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(s, page)
         for s in ("skBoard()", "kb-dlg", "gestern", "Schließen"):
             self.assertNotIn(s, page)
+        # board first: waiting cards, board, working line, composer, then the collapsible chat (closed by default)
+        sq = page[page.index("<section class=\"screen\" id=s-squads>"):]
+        order = [sq.index(x) for x in ("id=sk-cards", "id=sk-board", "id=sk-working", "class=sk-comp", "<details id=sk-chatbox", "id=sk-thread")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("<details id=sk-chatbox open", page)
+        for s in ("localStorage.getItem('sk-chat-open')", "skChatPref(!this.parentNode.open)", "Chat (${msgs.length} message",
+                  ".sk-kick>#sk-chatbox{order:1}", "skMode(true)", "skMode(false)",
+                  "(p.members||[]).map(m=>m.suggested||0)",          # a merge proposal has no members: the board still renders
+                  "console.error('squad '+what"):
+            self.assertIn(s, page)
 
     def test_squad_lead_rescopes_a_ticket(self):
         """The lead (guest route) or the operator (/squad/ticket) may change a

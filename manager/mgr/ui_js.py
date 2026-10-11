@@ -1587,7 +1587,7 @@ document.getElementById('sk-list').onclick=e=>{
 function skNew(){
   document.getElementById('sk-title').textContent='New squad';
   document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
-  document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML='';
+  document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML=''; skMode(true);
   document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Paste the repository URL and say what the squad should do, e.g. <code>https://github.com/owner/repo add a dark mode with tests</code>. '+
     'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea).</div>';
   document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
@@ -1595,7 +1595,7 @@ function skNew(){
   skMsg('');
 }
 async function skJob(id){
-  SK='';SK_JOB=id; document.getElementById('sk-board').hidden=true;
+  SK='';SK_JOB=id; document.getElementById('sk-board').hidden=true; skMode(true);
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
@@ -1620,7 +1620,14 @@ function skPick(name){
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
   document.getElementById('sk-arch').hidden=true;
-  document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skLoad();
+  document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
+}
+/* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */
+function skChatPref(on){try{localStorage.setItem('sk-chat-open',on?'1':'')}catch(e){}}
+function skMode(kick){
+  document.querySelector('#s-squads .sk-chat').classList.toggle('sk-kick',kick);
+  let on=kick; if(!kick)try{on=localStorage.getItem('sk-chat-open')==='1'}catch(e){}
+  document.getElementById('sk-chatbox').open=on;
 }
 async function skLoad(){
   if(!SK)return;
@@ -1656,16 +1663,21 @@ async function skLoad(){
       sqDelivery(m)+'</div>').join('')
       :'<span class=text-muted>No messages yet.</span>';
     th.scrollTop=th.scrollHeight; sqNotesLoad();
+    document.getElementById('sk-chatsum').textContent=`Chat (${msgs.length} message${msgs.length===1?'':'s'})`;
   }
   document.getElementById('sk-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
-  if(b.error)return;
+  if(b.error)skMsg(b.error);
   SQB=b;
-  await loadWaiting(); if(SK!==name)return;
-  const hq=WAIT.filter(x=>x.project===name);                      /* approvals, questions, reviews (mgr/hitlq.py) */
-  const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
-  if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')+hq.map(hqCard).join('')}   /* never under the user's edits */
-  await skMetrics(name); if(SK!==name)return;
-  SKB_D={d,b}; skBoardRender(d,b,hq); if(SKT)skTkRender();
+  /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
+  const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
+  let hq=[];
+  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name)}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
+  if(SK!==name)return;
+  const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify((p.members||[]).map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
+  if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(p=>safe('card',sqCard,p)).join('')+hq.map(x=>safe('card',hqCard,x)).join('')}   /* never under the user's edits */
+  try{await skMetrics(name)}catch(e){console.error('squad metrics',e)}
+  if(SK!==name)return;
+  SKB_D={d,b}; safe('board',()=>skBoardRender(d,b,hq)); if(SKT)safe('ticket panel',skTkRender);
 }
 /* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
 let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0, SKT_EDIT=false;
@@ -1854,7 +1866,11 @@ async function skTkSave(lead){          /* the comment (ticket comment), or "Ask
   el.value=''; SKB=''; await skLoad(); skTkRender(true);
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.getElementById('sk-tkd').hidden)skTkClose()});
-function skChat(){const th=document.getElementById('sk-thread');th.scrollTop=th.scrollHeight;document.getElementById('sk-text').focus()}
+function skChat(){
+  const c=document.getElementById('sk-chatbox'), th=document.getElementById('sk-thread');
+  c.open=true; skChatPref(true); th.scrollTop=th.scrollHeight;
+  c.scrollIntoView({block:'start',behavior:'smooth'}); document.getElementById('sk-text').focus({preventScroll:true});
+}
 (()=>{
   const bd=document.getElementById('sk-board'), clr=()=>bd.querySelectorAll('.kb-col.drop').forEach(x=>x.classList.remove('drop'));
   bd.addEventListener('click',e=>{const c=e.target.closest('.kb-tk'); if(!c)return;
