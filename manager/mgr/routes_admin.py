@@ -266,9 +266,21 @@ def _project_path(h):
     return (parts + ["", "", ""])[:3]
 
 
+def _no_name(h):
+    """'/api/projects//squad/…' — a page sent an empty project name; the parser
+    then read "squad" as the name and answered a puzzling "unknown operation"."""
+    p = urllib.parse.unquote(h.path.split("?", 1)[0])
+    if p.startswith("/api/projects//"):
+        h._json({"error": f"project name missing in the request ({p}) — reload the page and pick the squad again"}, 400)
+        return True
+    return False
+
+
 @_routes.ROUTER.get("/api/projects/", prefix=True, admin=True)
 def _rt_projects_review(h):
     # GET /api/projects/<name>/status (every writer) | /diff/<member> (a patch)
+    if _no_name(h):
+        return None
     name, op, member = _project_path(h)
     if op == "squad":
         return _squad_get(h, name, member)
@@ -390,6 +402,8 @@ def _squad_post(h, name, sub):
 @_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)
 def _rt_projects_op(h):
     # POST /api/projects/<name>/delete | /merge/<member> | /discard/<member>
+    if _no_name(h):
+        return None
     name, op, member = _project_path(h)
     if op == "squad":
         return _squad_post(h, name, member)

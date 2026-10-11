@@ -5185,6 +5185,15 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         return woke, notes, undo2
 
+    def test_projects_route_with_an_empty_name_says_so(self):
+        """'/api/projects//squad/decide' (a page lost the project name) answers
+        400 'project name missing …' instead of 'unknown operation'."""
+        h = self._post_handler("/api/projects//squad/decide", "127.0.0.1", b"{}")
+        h._do_POST()
+        st = self._status(h)
+        body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+        self.assertEqual(st, 400); self.assertIn("project name missing", body["error"])
+
     def test_squad_reassign_or_restart_wakes_the_assignee(self):
         """Re-assigning a ticket to the member who already holds it, or setting
         it to doing, wakes that member (it used to be silent); a ticket that is

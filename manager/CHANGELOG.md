@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- Projects routes: a request with an empty project name ('/api/projects//…') answers 400 'project name missing …' with the path instead of 'unknown operation'.
 - Squads: an explicit ticket assign (also to the same member) or a status set to open/doing by someone else wakes the assignee; when nobody can be woken the tool says why — a lead re-assigned tickets and believed the team was working.
 
 ## 2026-10-10
