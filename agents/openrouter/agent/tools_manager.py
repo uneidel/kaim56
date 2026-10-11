@@ -759,9 +759,10 @@ def _ticket_done(d, err):
     return _ticket_line(d) + "".join(f"\n{k}: {v}" for k, v in woke.items()) + (f"\n{d['note']}" if d.get("note") else "")
 
 
-def t_ticket_update(id, status="", comment="", project=""):
+def t_ticket_update(id, status="", comment="", project="", title="", description=""):
     return _ticket_done(*_squad_call("/api/squad/ticket-update", {"id": id, "status": status, "comment": comment,
-                                                                  "project": project}))
+                                                                  "project": project, "title": title,
+                                                                  "description": description}))
 
 
 def t_ticket_create(title, description="", assignee="", depends_on=None, key="", project=""):

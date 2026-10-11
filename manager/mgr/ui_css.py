@@ -445,9 +445,67 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 .kb-empty{font-size:12px;color:var(--color-neutral-500);text-align:center;padding:14px 4px;border:1px dashed var(--app-line);border-radius:8px}
 .kb-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--color-neutral-600);margin-top:10px}
 .kb-legend span{display:inline-flex;align-items:center;gap:6px}.kb-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
-.kb-dlg{width:min(640px,100%)}
-.kb-dlg .sk-bub{max-width:none;max-height:30vh;overflow:auto;white-space:pre-wrap;font-size:13px}
-@media (prefers-reduced-motion:reduce){.sk-live,.kb-s.work,.kb-run{animation:none!important}}
+.kb-tk.cur{border-color:var(--color-accent-600);box-shadow:inset 3px 0 0 var(--color-accent-600)}
+/* — ticket side panel (ui_js skTkOpen): right of the board on desktop, full screen on phones — */
+.kb-pane{position:fixed;top:0;right:0;bottom:0;width:min(520px,45vw);z-index:40;display:flex;flex-direction:column;background:var(--app-card);
+  border-left:1px solid var(--app-line);box-shadow:-12px 0 30px rgba(0,0,0,.35);animation:kbin .18s ease-out}
+.kb-pane[hidden]{display:none}
+@keyframes kbin{from{transform:translateX(24px);opacity:0}}
+#s-squads.kb-open{padding-right:min(520px,45vw)}
+#sk-tkd-box{flex:1;min-height:0;display:flex;flex-direction:column}
+.kb-ptop{flex:none;padding:16px 18px 12px;border-bottom:1px solid var(--app-line);display:flex;flex-direction:column;gap:10px}
+.kb-prow{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.kb-ptitle{font-size:24px;line-height:1.15;margin:2px 0 0;text-wrap:balance;overflow-wrap:anywhere}
+.kb-x{background:none;border:0;color:var(--color-neutral-600);font-size:22px;line-height:1;cursor:pointer;padding:2px 8px;border-radius:6px}
+.kb-x:hover{background:var(--app-chip)}
+.kb-ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.kb-sel{appearance:none;font:inherit;font-size:12.5px;color:var(--color-text);background-color:var(--app-chip);border:1px solid var(--app-line);border-radius:999px;
+  padding:3px 26px 3px 10px;cursor:pointer;background-repeat:no-repeat;background-size:4px 4px;background-position:calc(100% - 13px) 55%,calc(100% - 9px) 55%;
+  background-image:linear-gradient(45deg,transparent 50%,var(--color-neutral-600) 50%),linear-gradient(135deg,var(--color-neutral-600) 50%,transparent 50%)}
+.kb-sel.st{border-color:var(--color-accent-400);color:var(--color-accent-700)}
+.kb-badge{font-family:var(--font-mono);font-size:11.5px;padding:3px 8px;border-radius:999px;background:var(--color-accent-100);color:var(--color-accent-700)}
+.kb-when{font-size:12px;color:var(--color-neutral-500);margin-left:auto}
+.kb-rescope{display:flex;gap:10px;align-items:flex-start;border-radius:8px;padding:9px 11px;font-size:12.5px;
+  background:color-mix(in srgb,var(--color-warn) 9%,transparent);border:1px solid color-mix(in srgb,var(--color-warn) 35%,transparent)}
+.kb-rescope b{color:var(--color-warn);font-weight:600}
+.kb-rescope>.kb-more{margin:0 0 0 auto;padding:0;white-space:nowrap}
+.kb-prev{margin-top:6px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--color-warn) 25%,transparent);max-height:30vh;overflow:auto;color:var(--color-neutral-800)}
+.kb-prev b{color:var(--color-neutral-700);font-weight:500}
+.kb-pbody{flex:1;min-height:0;overflow-y:auto;padding:0 18px 14px}
+.kb-pbody .sq-sub{margin-bottom:6px}
+.kb-md{font-size:13.5px;line-height:1.55;color:var(--color-neutral-900);overflow-wrap:anywhere}
+.kb-md ul{margin:4px 0;padding-left:18px;list-style:disc}
+.kb-md code{font-family:var(--font-mono);font-size:.88em;background:var(--app-chip);padding:1px 5px;border-radius:4px}
+.kb-box{background:var(--app-card-hover);border-radius:8px;padding:10px 12px}
+.kb-clip{max-height:calc(9.3em + 20px);overflow:hidden;position:relative}
+.kb-clip::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2.4em;background:linear-gradient(transparent,var(--app-card-hover))}
+.kb-clip.open{max-height:none}.kb-clip.open::after{display:none}
+.kb-more{background:none;border:0;padding:2px 0;margin-top:2px;font:inherit;font-size:12.5px;color:var(--color-accent-600);cursor:pointer}
+.kb-deps{display:flex;gap:6px;flex-wrap:wrap}
+.kb-chip{display:inline-flex;align-items:center;gap:7px;max-width:100%;border:1px solid var(--app-line);background:none;color:inherit;font:inherit;font-size:12.5px;
+  border-radius:999px;padding:3px 10px;cursor:pointer}
+.kb-chip:hover{border-color:var(--color-accent-400)}
+.kb-chip i{width:7px;height:7px;border-radius:50%;flex:none}
+.kb-ct{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-chip small{color:var(--color-neutral-600)}
+.kb-pbody .kb-dep{display:block;margin-top:6px;font-size:12px}
+.kb-tl{list-style:none;margin:0;padding:0}
+.kb-ev{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;padding-bottom:14px;position:relative}
+.kb-ev::before{content:"";position:absolute;left:13px;top:30px;bottom:2px;width:1px;background:var(--app-line)}
+.kb-ev:last-child::before{display:none}
+.kb-ev>.kb-av{width:28px;height:28px}
+.kb-eh{font-size:12.5px;color:var(--color-neutral-600);display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding-top:4px}
+.kb-eh b{color:var(--color-text);font-weight:500}
+.kb-eh time{font-family:var(--font-mono);font-size:11.5px;color:var(--color-neutral-500)}
+.kb-tag{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;border-radius:999px}
+.kb-tag.rs{background:color-mix(in srgb,var(--color-warn) 15%,transparent);color:var(--color-warn)}
+.kb-tag.ans{background:color-mix(in srgb,var(--app-live) 14%,transparent);color:var(--app-live)}
+.kb-ev .kb-md{margin-top:4px}
+.kb-pfoot{flex:none;border-top:1px solid var(--app-line);padding:10px 18px 14px;display:flex;flex-direction:column;gap:8px}
+.kb-pfoot textarea{resize:vertical;min-height:58px;font-size:13.5px}
+.kb-fr{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--color-neutral-500)}
+@media(max-width:900px){.kb-pane{width:100%;border-left:0}#s-squads.kb-open{padding-right:0}}
+@media (prefers-reduced-motion:reduce){.sk-live,.kb-s.work,.kb-run,.kb-pane{animation:none!important}}
 @media(max-width:860px){
   .grid2,.grid3{grid-template-columns:1fr}
   .shell{display:block}

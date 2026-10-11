@@ -386,8 +386,8 @@ def _squad_post(h, name, sub):
         return h._json({"ok": True, "members": _tasks.restart_members(p)})
     if sub == "reindex":                     # queue a code index run (admin only)
         return h._json({"msg": _indexer.reindex(name, "operator " + who)})
-    if sub == "ticket":                      # {id, status?, assignee?, comment?, level?}: the operator, any time
-        body = {k: b[k] for k in ("status", "assignee", "comment", "level") if k in b}
+    if sub == "ticket":                      # {id, status?, assignee?, comment?, level?, title?, description?}: the operator, any time
+        body = {k: b[k] for k in ("status", "assignee", "comment", "level", "title", "description") if k in b}
         t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")
         return h._json(t) if t else h._json({"error": why}, 400)
     if sub:

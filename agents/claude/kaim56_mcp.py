@@ -193,8 +193,9 @@ def t_ask_human(question, options=None, ticket=""):
             + (f" (ticket {d['ticket']} is blocked until then)" if d.get("ticket") else ""))
 
 
-def t_ticket_update(id, status="", comment="", project=""):
-    return _ticket("/api/squad/ticket-update", {"id": id, "status": status, "comment": comment, "project": project})
+def t_ticket_update(id, status="", comment="", project="", title="", description=""):
+    return _ticket("/api/squad/ticket-update", {"id": id, "status": status, "comment": comment, "project": project,
+                                                "title": title, "description": description})
 
 
 def t_ticket_create(title, description="", assignee="", depends_on=None, key="", project=""):
@@ -365,9 +366,13 @@ TOOLS = {
         {"type": "object", "properties": {"project": _PROJ}, "required": []}),
     "ticket_update": (_squad(t_ticket_update),
         "Your ticket (any, as the lead): status open/doing/review/done/blocked and/or a comment. "
-        "Done wakes the members whose tickets waited on it.",
+        "Done wakes the members whose tickets waited on it. title/description: lead only; use when re-scoping "
+        "instead of only commenting (keeps the old version, wakes the assignee).",
         {"type": "object", "properties": {"id": {"type": "string"}, "status": {"type": "string"},
-                                          "comment": {"type": "string"}, "project": _PROJ},
+                                          "comment": {"type": "string"}, "project": _PROJ,
+                                          "title": {"type": "string", "description": "lead only: the new title (re-scope)"},
+                                          "description": {"type": "string",
+                                                          "description": "lead only: the new description (re-scope)"}},
          "required": ["id"]}),
     "ticket_create": (_squad(t_ticket_create),
         "Lead only, after approval: a new ticket; an assignee whose dependencies are done is woken.",
