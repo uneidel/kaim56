@@ -726,7 +726,7 @@ def _create(proj, m, steps):
              f"You are {m['name']}, {m['role']} in the squad of project {proj['name']}."
              + (f" Your purpose: {m['purpose']}" if m["purpose"] else ""), MEMBER_RULES]
     cfg["AGENT_SYSTEM"] = "\n\n".join(x for x in lines if x)
-    msg = _instances.create_instance(m["name"], m["template"], cfg)
+    msg = _instances.create_instance(m["name"], m["template"], cfg, persist=True)   # toolchains survive a restart
     ok = "created" in str(msg)
     steps.append({"step": f"create {m['name']}", "ok": ok, "detail": str(msg)[:300]})
     return ok

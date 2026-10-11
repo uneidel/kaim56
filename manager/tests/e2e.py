@@ -4906,8 +4906,8 @@ class ManagerFunctions(unittest.TestCase):
         g.GATE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-sg-"), "squadgate.json")
         created, notes, merges = [], [], []
 
-        def create(name, template, config=None, mounts=None, internet=True):
-            created.append((name, template, config))
+        def create(name, template, config=None, mounts=None, internet=True, persist=False):
+            created.append((name, template, config, persist))
             self._sq_insts.append({"name": name, "index": 10 + len(created), "template": template,
                                    "rootfs": "x", "mounts": [], "config": config or {}})
             return f"instance '{name}' created from template '{template}'"
@@ -4997,6 +4997,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
             self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
             self.assertIn("install the tools and toolchains you need", e["AGENT_SYSTEM"])
+            self.assertTrue(all(c[3] for c in created))                                       # persistent disk
             self.assertIn("You have root in your VM via sudo", e["AGENT_SYSTEM"])
             self.assertEqual([c[2].get("AGENT_SUDO") for c in created], ["1", "1"])   # root in its VM
             self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
@@ -6798,7 +6799,7 @@ class ManagerFunctions(unittest.TestCase):
                                                         "architect_template": "claude"})
             self.assertEqual((st, j["arch_template"]), (200, "claude"), j)
             self.assertEqual(m._squadkick.get(j["id"])["status"], "done", m._squadkick.get(j["id"])["log"])
-            name, tpl, cfg = created[0]
+            name, tpl, cfg = created[0][:3]
             self.assertEqual((name, tpl, cfg["TRANSPORT"], cfg["ANTHROPIC_MODEL"]), ("repo-architect", "claude", "web", "opus"))
             self.assertNotIn("OPENROUTER_MODEL", cfg)
             self.assertTrue({"squad_catalog", "squad_propose"} <= set(cfg["AGENT_TOOLS"].split(",")))

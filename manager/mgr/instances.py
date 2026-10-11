@@ -151,7 +151,7 @@ def mcp_servers_error(value):
     return f"unknown MCP server(s): {', '.join(bad)}" if bad else ""
 
 
-def create_instance(name, template, config=None, mounts=None, internet=True):
+def create_instance(name, template, config=None, mounts=None, internet=True, persist=False):
     name = "".join(c for c in name if c.isalnum() or c in "-_").lower()
     if not name:
         return "invalid name"
@@ -180,6 +180,8 @@ def create_instance(name, template, config=None, mounts=None, internet=True):
         inst["overlay"] = True
         if tpl.get("persist_disk"):     # e.g. agents/indexer: its clones and indexes outlive a stop
             inst["persist_disk"] = True
+    if persist and _vm.is_overlay(inst):   # e.g. a squad member: what it installs outlives a restart
+        inst["persist_disk"] = True
     if tpl.get("internet") is False:    # a template that must never leave its /30 (agents/indexer)
         inst["internet"] = False
     clean = [{"host": str(m.get("host", "")).strip(),
