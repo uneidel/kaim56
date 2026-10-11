@@ -95,6 +95,10 @@ PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
 # Planning personas: Jev never hands them to a non-lead by itself (it gave a
 # CLI developer code-architect at 0.96 — live 2026-10-09); a hint only.
 LEAD_PERSONAS = {"code-architect", "orchestrator"}
+# Every member's system prompt: its VM is its own, so it sets up what it needs.
+MEMBER_RULES = ("Your VM is yours: install the tools and toolchains you need (apt, official tarballs, "
+                "language installers) yourself; nobody provisions them for you. Ask the human only "
+                "when a decision is unclear, not for setup.")
 JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
 PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
@@ -719,7 +723,7 @@ def _create(proj, m, steps):
     cfg.update(_model_cfg(m, steps))
     lines = [(pers or {}).get("prompt") or "",
              f"You are {m['name']}, {m['role']} in the squad of project {proj['name']}."
-             + (f" Your purpose: {m['purpose']}" if m["purpose"] else "")]
+             + (f" Your purpose: {m['purpose']}" if m["purpose"] else ""), MEMBER_RULES]
     cfg["AGENT_SYSTEM"] = "\n\n".join(x for x in lines if x)
     msg = _instances.create_instance(m["name"], m["template"], cfg)
     ok = "created" in str(msg)

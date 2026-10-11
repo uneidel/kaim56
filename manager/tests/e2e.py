@@ -4996,6 +4996,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(e["AGENT_TOOLS"], ",".join(["bash", *m._squadgate.MEMBER_TOOLS]))
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
             self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
+            self.assertIn("install the tools and toolchains you need", e["AGENT_SYSTEM"])
             self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
             failed = [s["step"] for s in p["steps"] if not s["ok"]]
             self.assertEqual(failed, ["persona f", "model f"])
