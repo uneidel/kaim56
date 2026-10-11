@@ -4997,6 +4997,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(e["AGENT_SYSTEM"].startswith("You code."))
             self.assertNotIn("load_skill", e["AGENT_SYSTEM"]); self.assertIn("writer in the squad of project sq", e["AGENT_SYSTEM"])
             self.assertIn("install the tools and toolchains you need", e["AGENT_SYSTEM"])
+            self.assertIn("You have root in your VM via sudo", e["AGENT_SYSTEM"])
+            self.assertEqual([c[2].get("AGENT_SUDO") for c in created], ["1", "1"])   # root in its VM
             self.assertNotIn("OPENROUTER_MODEL", created[1][2])                              # local tier: flagged
             failed = [s["step"] for s in p["steps"] if not s["ok"]]
             self.assertEqual(failed, ["persona f", "model f"])
@@ -11456,6 +11458,25 @@ class ClaudeGuest(unittest.TestCase):
         with open(md) as fh:
             self.assertEqual(fh.read(), "# mine\n")
         shutil.rmtree(d, ignore_errors=True)
+
+    def test_guest_init_agent_sudo(self):
+        """AGENT_SUDO=1 writes a NOPASSWD sudoers drop-in for node (0440,
+        visudo-checked), otherwise removes it; both images ship sudo."""
+        ag = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents")
+        pairs = [("claude/guest-init.sh", "claude/Dockerfile.rootfs"),
+                 ("openrouter/guest-init-openrouter.sh", "openrouter/Dockerfile.openrouter")]
+        if not os.path.exists(os.path.join(ag, pairs[0][0])):
+            self.skipTest("agents/ not found")
+        for init, docker in pairs:
+            with open(os.path.join(ag, init)) as fh:
+                text = fh.read()
+            for s in ('"${AGENT_SUDO:-0}" = "1"', 'echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kaim56-agent',
+                      "chmod 0440 /etc/sudoers.d/kaim56-agent", "visudo -cf /etc/sudoers.d/kaim56-agent",
+                      "else rm -f /etc/sudoers.d/kaim56-agent", "[init] sudo:"):
+                self.assertIn(s, text, init)
+            self.assertLess(text.index("/config/config.env"), text.index("AGENT_SUDO:-0"), init)   # after the config
+            with open(os.path.join(ag, docker)) as fh:
+                self.assertRegex(fh.read(), r"apt-get install[^&]* sudo\b", docker)
 
     def test_claude_hitl_hook_and_ask_human(self):
         """kaim56_mcp.py --hook (Claude Code PreToolUse): in a squad, risky Bash and

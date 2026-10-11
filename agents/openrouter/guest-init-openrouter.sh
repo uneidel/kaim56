@@ -52,6 +52,15 @@ set -a
 [ -f /app/config.env ] && . /app/config.env
 [ -f /config/config.env ] && . /config/config.env
 echo "nameserver ${GUEST_DNS:-1.1.1.1}" > /etc/resolv.conf   # site.json via the config disk, not the image
+# AGENT_SUDO=1: the agent (uid 1000) gets root in its own VM via sudo — the VM
+# is the sandbox; network limits and git tokens are enforced host-side.
+if [ "${AGENT_SUDO:-0}" = "1" ]; then
+  echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kaim56-agent
+  chmod 0440 /etc/sudoers.d/kaim56-agent
+  if command -v visudo >/dev/null && ! visudo -cf /etc/sudoers.d/kaim56-agent >/dev/null; then
+    rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: sudoers invalid, removed"
+  else echo "[init] sudo: on (node may run anything as root)"; fi
+else rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: off"; fi
 
 # Agent code: the read-only harness drive (manager: AGENT_SRC) wins over the
 # copy baked into the rootfs; without the drive the VM boots as before.

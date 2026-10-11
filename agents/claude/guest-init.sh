@@ -53,6 +53,15 @@ set -a
 [ -f /app/config.env ] && . /app/config.env
 [ -f /config/config.env ] && . /config/config.env
 set +a
+# AGENT_SUDO=1: the agent (uid 1000) gets root in its own VM via sudo — the VM
+# is the sandbox; network limits and git tokens are enforced host-side.
+if [ "${AGENT_SUDO:-0}" = "1" ]; then
+  echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kaim56-agent
+  chmod 0440 /etc/sudoers.d/kaim56-agent
+  if command -v visudo >/dev/null && ! visudo -cf /etc/sudoers.d/kaim56-agent >/dev/null; then
+    rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: sudoers invalid, removed"
+  else echo "[init] sudo: on (node may run anything as root)"; fi
+else rm -f /etc/sudoers.d/kaim56-agent; echo "[init] sudo: off"; fi
 
 GW=$(ip route 2>/dev/null | awk '/default/{print $3; exit}')
 WORKDIR="${CLAUDE_WORKDIR:-/home/node/workspace}"

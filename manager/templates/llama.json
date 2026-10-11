@@ -59,6 +59,16 @@
         "0"
       ],
       "default": "1"
+    },
+    {
+      "key": "AGENT_SUDO",
+      "label": "Root inside the VM via sudo (1 = the agent may sudo, e.g. apt-get install; 0 = off)",
+      "type": "select",
+      "options": [
+        "0",
+        "1"
+      ],
+      "default": "0"
     }
   ]
 }

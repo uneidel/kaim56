@@ -95,10 +95,10 @@ PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
 # Planning personas: Jev never hands them to a non-lead by itself (it gave a
 # CLI developer code-architect at 0.96 — live 2026-10-09); a hint only.
 LEAD_PERSONAS = {"code-architect", "orchestrator"}
-# Every member's system prompt: its VM is its own, so it sets up what it needs.
-MEMBER_RULES = ("Your VM is yours: install the tools and toolchains you need (apt, official tarballs, "
-                "language installers) yourself; nobody provisions them for you. Ask the human only "
-                "when a decision is unclear, not for setup.")
+# Every member's system prompt: it is root in its VM (AGENT_SUDO=1), so it sets up what it needs.
+MEMBER_RULES = ("You have root in your VM via sudo: install the tools and toolchains you need "
+                "(sudo apt-get install, official tarballs) yourself; nobody provisions them for you. "
+                "Ask the human only when a decision is unclear, not for setup.")
 JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
 PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
@@ -707,7 +707,8 @@ def _create(proj, m, steps):
     # TRANSPORT=web: a squad member is reached through its web bridge (wake =
     # task -> _chat_post); a template's own default (signal) left the first
     # live architect deaf to every message (2026-10-09).
-    cfg = {"TRANSPORT": "web"}
+    # AGENT_SUDO=1: root in its own VM — a member installs its toolchains itself.
+    cfg = {"TRANSPORT": "web", "AGENT_SUDO": "1"}
     if m["role"] == "lead":                         # a lead studies code before it plans: 12 tool rounds were
         cfg["AGENT_MAX_STEPS"] = str(LEAD_MAX_STEPS)  # not enough for the first live architect (2026-10-09)
     if m["skills"]:
