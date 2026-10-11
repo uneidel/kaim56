@@ -306,8 +306,8 @@ def make_config_disk(inst):
 
 
 
-UPPER_SIZE_MB = 1024          # throwaway layer per start
-UPPER_PERSIST_SIZE_MB = 4096  # persistent layer (apt/pip need room); sparse
+UPPER_SIZE_MB = 8192          # throwaway layer per start; sparse (toolchains, build caches)
+UPPER_PERSIST_SIZE_MB = 16384  # persistent layer (apt/pip need room); sparse
 
 
 def upper_path(inst):
