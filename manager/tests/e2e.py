@@ -5185,6 +5185,35 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         return woke, notes, undo2
 
+    def test_squads_overview_live_state_and_board_page(self):
+        """/api/squads carries the pills' live state: members working now,
+        done/total tickets, open HITL items; the operator moves a ticket via
+        /squad/ticket; the page has the Kanban board and the ticket panel."""
+        m = self.m
+        woke, notes, undo = self._hq_env()
+        L = "127.0.0.1"
+        pills = lambda: {x["name"]: x for x in self._sq("/api/squads", L)[1]["squads"]}["sq"]
+        try:
+            s = pills()
+            self.assertEqual((s["working"], s["tickets_done"], s["tickets_total"], s["waiting_for_you"]), (0, 0, 2, 0))
+            m._store.load_tasks = lambda: [{"instance": "e", "status": "running", "squad": {"project": "sq", "msg": 1},
+                                            "started": int(time.time())},
+                                           {"instance": "f", "status": "pending", "squad": {"project": "sq"}}]
+            self.assertTrue(m._hitlq.ask("e", "Which DB?")[0])
+            s = pills()
+            self.assertEqual((s["working"], s["waiting_for_you"]), (1, 1))     # queued f does not count
+            t1 = next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            st, d = self._sq("/api/projects/sq/squad/ticket", L, {"id": t1["id"], "status": "done"})
+            self.assertEqual((st, d["status"]), (200, "done"), d)
+            self.assertEqual(pills()["tickets_done"], 1)
+        finally:
+            undo()
+        page = m._ui.render()
+        for s in ("function skBoardRender", "id=sk-tkd", "kb-board", "onclick=skChat()", "skTkSave", "dragstart",
+                  "wartet auf dich", "prefers-reduced-motion:reduce){.sk-live"):
+            self.assertIn(s, page)
+        self.assertNotIn("skBoard()", page)
+
     def test_projects_route_with_an_empty_name_says_so(self):
         """'/api/projects//squad/decide' (a page lost the project name) answers
         400 'project name missing …' instead of 'unknown operation'."""

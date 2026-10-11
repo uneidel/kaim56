@@ -50,6 +50,7 @@ import threading
 import time
 import uuid
 
+from mgr import hitlq as _hitlq
 from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import projects as _projects
@@ -445,8 +446,9 @@ STEPS = (step_token, step_clone, step_project, step_remote, step_architect, step
 
 # ---- the Squads page's list ---------------------------------------------------------
 def overview():
-    """The squad-enabled projects: name, status, lead, pending proposals, last message."""
-    out = []
+    """The squad-enabled projects: name, status, lead, pending proposals, last
+    message, members working now, ticket counts, open HITL items (the pills)."""
+    out, hq = [], [x["project"] for x in _hitlq.items("open")]
     for p in sorted(_projects.load(), key=lambda x: x.get("name", "")):
         s = _squads.settings(p)
         if not s["enabled"]:
@@ -454,6 +456,7 @@ def overview():
         last = _squads.read(p["name"], None, 0, 1)
         pend = sum(1 for x in _squadgate.proposals(p["name"]) if x.get("status") == "pending")
         rec = _squadrec.of_project(p["name"]) or {}
+        tix = _squadgate.tickets(p["name"])
         out.append({"name": p["name"], "lead": _squadgate.lead(p), "id": rec.get("id", ""),
                     "folder": _squadrec.folder(rec) if rec else "",
                     "members_ids": [{"name": m["instance"], "role": m.get("role", ""), "member_id": m["member_id"]}
@@ -461,5 +464,8 @@ def overview():
                     "status": "paused" if s["paused"] else "running" if s["approved"] else "waiting for approval",
                     "pending": pend, "members": len(p.get("members") or {}),
                     "last_id": last[-1]["id"] if last else 0, "last_ts": last[-1]["ts"] if last else 0,
-                    "remote": (_squadgit.settings(p) or {}).get("url", "")})
+                    "remote": (_squadgit.settings(p) or {}).get("url", ""),
+                    "working": sum(1 for w in _squads.working(p["name"]) if w["state"] == "working"),
+                    "tickets_done": sum(1 for t in tix if t["status"] == "done"), "tickets_total": len(tix),
+                    "waiting_for_you": hq.count(p["name"])})
     return out

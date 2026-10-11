@@ -342,7 +342,7 @@ HTML_TOP = """</head><body>
     <nav class=sk-list id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
-      <div id=sk-board hidden></div>
+      <div id=sk-board hidden aria-label="Squad board"></div>
       <div class=sk-thread id=sk-thread aria-live=polite></div>
       <div id=sk-working aria-live=polite></div>
       <div id=sk-cards></div>
@@ -354,6 +354,9 @@ HTML_TOP = """</head><body>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
     </div>
+  </div>
+  <div id=sk-tkd class=dialog-backdrop style="display:none" onclick="if(event.target===this)skTkClose()">
+    <div class="dialog kb-dlg" role=dialog aria-modal=true aria-labelledby=sk-tkd-t id=sk-tkd-box></div>
   </div>
 </section>
 
