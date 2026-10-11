@@ -1572,8 +1572,11 @@ async function loadSquads(){
   document.getElementById('sk-list').innerHTML=
     item('data-new=1',!SK&&!SK_JOB,'<b>+ New squad</b>','')+
     jobs.map(j=>item(`data-job="${esc(j.id)}"`,SK_JOB===j.id,escT(j.name),'kickoff · '+escT(j.status))).join('')+
-    SK_LIST.map(s=>item(`data-n="${esc(s.name)}"`,SK===s.name,escT(s.name)+(s.last_id>(SK_SEEN[s.name]||0)&&SK!==s.name?' <span class="tag tag-accent">new</span>':''),
-      escT(s.status)+(s.pending?' · '+(+s.pending)+' to approve':''))).join('');
+    SK_LIST.map(s=>item(`data-n="${esc(s.name)}"`,SK===s.name,
+      (s.waiting_for_you?'<span class=sk-qdot aria-hidden=true></span>':s.working?'<span class=sk-live aria-hidden=true></span>':'')+
+      escT(s.name)+(s.last_id>(SK_SEEN[s.name]||0)&&SK!==s.name?' <span class="tag tag-accent">new</span>':''),
+      s.waiting_for_you?'❓ wartet auf dich':s.working?`${+s.working} arbeiten · ${+s.tickets_done}/${+s.tickets_total}`   /* live state (mgr/squadkick.overview) */
+        :escT(s.status)+(s.pending?' · '+(+s.pending)+' to approve':''))).join('');
   if(!SK&&!SK_JOB)skNew();
 }
 document.getElementById('sk-list').onclick=e=>{
@@ -1592,7 +1595,7 @@ function skNew(){
   skMsg('');
 }
 async function skJob(id){
-  SK='';SK_JOB=id;
+  SK='';SK_JOB=id; document.getElementById('sk-board').hidden=true;
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
@@ -1617,7 +1620,7 @@ function skPick(name){
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
   document.getElementById('sk-arch').hidden=true;
-  document.getElementById('sk-board').hidden=true; skMsg(''); skLoad();
+  document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skLoad();
 }
 async function skLoad(){
   if(!SK)return;
@@ -1638,7 +1641,7 @@ async function skLoad(){
       `<div class=text-muted style="margin-top:6px" title="Archive: squad.json, conversations, proposals, tickets.jsonl">Folder <code ${cp}>${escT(s.folder)}</code></div></div></details>`:'');
   const stEl=document.getElementById('sk-status');
   if(stEl.dataset.h!==stH){stEl.dataset.h=stH;stEl.innerHTML=stH}   /* an open members list stays open */
-  document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skBoard()>Board</button>`+
+  document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skChat() title="To the chat and the composer">Chat</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skPause(${st.paused?'false':'true'})>${st.paused?'Resume':'Pause'}</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skRestart() title="Stop + start every member (one busy with a turn: right after it) — picks up new images, tools and config">Restart members</button>`+
     (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
@@ -1661,17 +1664,155 @@ async function skLoad(){
   const hq=WAIT.filter(x=>x.project===name);                      /* approvals, questions, reviews (mgr/hitlq.py) */
   const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')+hq.map(hqCard).join('')}   /* never under the user's edits */
-  if(!document.getElementById('sk-board').hidden)skBoardRender();
+  await skMetrics(name); if(SK!==name)return;
+  SKB_D={d,b}; skBoardRender(d,b,hq);
 }
-function skBoard(){const el=document.getElementById('sk-board');el.hidden=!el.hidden;if(!el.hidden)skBoardRender()}
-function skBoardRender(){
-  const cols=SQB.statuses||[], ts=SQB.tickets||[];
-  document.getElementById('sk-board').innerHTML=ts.length?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:12px">'+
-    cols.map(c=>`<div><div class=text-muted style="font-size:12px;margin-bottom:4px">${escT(c)} · ${ts.filter(t=>t.status===c).length}</div>`+
-      ts.filter(t=>t.status===c).map(t=>`<div class=sk-bub style="max-width:none;margin-bottom:6px;font-size:12.5px"><b>${escT(t.key)}</b> ${escT(t.title)}`+
-        `<div class=text-muted>${t.assignee?escT(t.assignee):'unassigned'}${t.depends_on.length?' · after '+escT(t.depends_on.join(', ')):''}</div></div>`).join('')+'</div>').join('')+'</div>'
-    :'<p class=text-muted style="font-size:12.5px;margin:12px 0 0">No tickets yet — they come with the approved plan. Edit tickets in Projects → Squad.</p>';
+/* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
+let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0;
+const KB_COLS=[['open','Open','keine offenen Tickets'],['doing','Doing','niemand arbeitet gerade'],['review','Review','nichts zur Prüfung'],
+  ['blocked','Blocked','keine Rückfrage offen'],['done','Done','noch nichts erledigt']];
+const kbMmss=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
+const kbAv=(n,on)=>`<span class="kb-av${on?'':' idle'}" aria-hidden=true>${escT(String(n||'?').charAt(0).toUpperCase())}</span>`;
+const kbTok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
+function kbWhen(ts){
+  if(!ts)return '';
+  const d=new Date(ts*1000), t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+    days=Math.round((new Date().setHours(0,0,0,0)-new Date(ts*1000).setHours(0,0,0,0))/864e5);
+  return days===0?t:days===1?'gestern '+t:d.toLocaleDateString();
 }
+async function skMetrics(name){       /* turns of the last 12 h + today's cost/tokens (mgr/squadmetrics.py); at most once a minute */
+  if(SKM.name===name&&Date.now()-SKM.at<60000)return;
+  const base='/api/squads/'+encodeURIComponent(name)+'/metrics/', now=Math.floor(Date.now()/1000), mid=Math.floor(new Date().setHours(0,0,0,0)/1000);
+  let ev=[],sum={};
+  try{ev=(await (await fetch(base+'events?kind=turn_end&since='+(now-12*3600))).json()).events||[];
+    sum=await (await fetch(base+'summary?since='+mid)).json()}catch(e){}
+  SKM={name,at:Date.now(),ev,sum};
+}
+function skBoardRender(d,b,hq){
+  const el=document.getElementById('sk-board'), ts=b.tickets||[], ws=b.working||[], msgs=d.messages||[], now=Date.now()/1000;
+  const done=new Set(ts.filter(t=>t.status==='done').map(t=>t.key));
+  const deps=t=>t.status==='done'?[]:(t.depends_on||[]).filter(k=>!done.has(k));
+  const on={};      /* ticket key -> the working turn on it: the waking message names the ticket, else the member's doing ticket */
+  ws.filter(w=>w.state==='working').forEach(w=>{
+    const m=msgs.find(x=>x.id===w.msg), k=m&&(String(m.text||'').match(/Ticket (\\S+) \\(id \\d+\\) is yours/)||[])[1];
+    const t=(k&&ts.find(x=>x.key===k))||ts.find(x=>x.assignee===w.member&&x.status==='doing');
+    if(t&&!on[t.key])on[t.key]=w;
+  });
+  const last={}; SKM.ev.forEach(e=>{last[e.member]=e});
+  const state=n=>{
+    const w=ws.find(x=>x.member===n&&x.state==='working'), l=last[n];
+    if(w)return ['work',kbMmss(+w.elapsed||0),'arbeitet'];
+    if(hq.some(x=>x.instance===n))return ['ask','fragt dich','fragt dich'];
+    if(l&&l.outcome!=='ok')return ['err','Fehler','letzter Turn fehlgeschlagen'];
+    if(ws.some(x=>x.member===n)||ts.some(t=>t.assignee===n&&t.status==='open'&&deps(t).length))return ['wait','wartet','wartet'];
+    const mins=l?Math.max(1,Math.round((now-l.ts)/60)):0;
+    return ['idle',l?'ruht '+(mins>90?Math.round(mins/60)+' h':mins+' min'):'—','ruht'];
+  };
+  const team=(b.members||[]).filter(m=>m.name!=='indexer').map(m=>{const [s,lab,aria]=state(m.name);
+    return `<span class=kb-who title="${esc(m.role||'')}"><span class="kb-av${s==='work'?'':' idle'}">${escT(m.name.charAt(0).toUpperCase())}<i class="kb-s ${s}" role=img aria-label="${aria}"></i></span>${escT(m.name)} <small>${escT(lab)}</small></span>`}).join('');
+  const n=ts.length, nd=ts.filter(t=>t.status==='done').length, ng=ts.filter(t=>t.status==='doing').length, pct=x=>n?(100*x/n).toFixed(1):0;
+  const bins=Array(12).fill(0); SKM.ev.forEach(e=>{const i=11-Math.floor((now-e.ts)/3600); if(i>=0&&i<12)bins[i]++});
+  const mx=Math.max(1,...bins), sum=SKM.sum||{};
+  const head=`<div class=kb-team aria-label=Team>${team}</div><div class=kb-sum>`+
+    (n?`<span><b>${nd}/${n}</b> erledigt</span><span class=kb-pbar role=img aria-label="${nd} erledigt, ${ng} in Arbeit, ${n-nd-ng} offen"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
+      :'<span>noch keine Tickets — sie kommen mit dem genehmigten Plan</span>')+
+    `<span class=kb-spark title="Turns pro Stunde, letzte 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+
+    (sum.cost!==undefined?`<span>heute $${(+sum.cost).toFixed(2)} · ${kbTok((+sum.tokens_in||0)+(+sum.tokens_out||0))} Tokens</span>`:'')+'</div>';
+  const card=t=>{
+    const w=on[t.key], dep=deps(t), q=hq.find(x=>x.ticket===t.key&&x.kind==='question'), dn=t.status==='done';
+    const cls=w?' working':q?' asking':dep.length&&t.status==='open'?' waiting':dn?' donec':'';
+    return `<article class="kb-tk${cls}" tabindex=0 role=button draggable=true data-id="${+t.id}" aria-label="${esc(t.key+' '+t.title+' — '+t.status)}">`+
+      `<span class=kb-key>${escT(t.key)}${t.level&&!dn?` <span class=kb-lvl>L${+t.level}</span>`:''}</span><span class=kb-ti>${escT(t.title)}</span>`+
+      (q?`<span class=kb-q>❓ ${escT(q.title)}</span>`:'')+
+      (dep.length&&!w?`<span class=kb-dep>⏸ wartet auf ${escT(dep.join(', '))}</span>`:'')+
+      `<span class=kb-meta><span class=kb-as>${t.assignee?kbAv(t.assignee,!!w)+escT(t.assignee):'<span class=text-muted>unassigned</span>'}</span>`+
+      (w?`<span class=kb-t>🟢 ${kbMmss(+w.elapsed||0)}</span>`:dn?`<span>${escT(kbWhen(t.updated))}</span>`:'')+'</span>'+
+      (w?'<span class=kb-bar><i class=kb-run></i></span>':'')+'</article>';
+  };
+  const loose=hq.filter(x=>x.kind==='question'&&!ts.some(t=>t.key===x.ticket));   /* a question on no ticket: still Blocked */
+  const cols=KB_COLS.map(([s,label,empty])=>{
+    let mine=ts.filter(t=>t.status===s); if(s==='done')mine=mine.slice().sort((a,c)=>(c.updated||0)-(a.updated||0));
+    const extra=s==='blocked'?loose.map(x=>`<article class="kb-tk asking" tabindex=0 role=button data-hq="${esc(x.id)}"><span class=kb-q>❓ ${escT(x.title)}</span>`+
+      `<span class=kb-meta><span class=kb-as>${kbAv(x.instance,0)}${escT(x.instance)}</span></span></article>`).join(''):'';
+    const cnt=mine.length+(s==='blocked'?loose.length:0);
+    return `<section class=kb-col data-st=${s} aria-label="${label}"><div class=kb-ch>${label} <b>${cnt}</b></div>`+
+      (cnt?mine.map(card).join('')+extra:`<div class=kb-empty>${empty}</div>`)+'</section>';
+  }).join('');
+  const html=head+`<div class=kb-board>${cols}</div><div class=kb-legend><span><i style="background:var(--app-live)"></i>arbeitet gerade (Laufzeit)</span>`+
+    '<span><i style="background:var(--color-warn)"></i>wartet (Abhängigkeit, Limit)</span><span><i style="background:var(--app-ask)"></i>fragt dich (Blocked)</span>'+
+    '<span><i style="background:var(--color-neutral-500)"></i>ruht</span><span><i style="background:var(--app-bad)"></i>letzter Turn fehlgeschlagen</span>'+
+    '<span>Klick auf eine Karte = Ticket, Kommentare, letzte Antwort · Ziehen = Status ändern</span></div>';
+  el.hidden=false;
+  if(html===SKB||SKB_DRAG)return;                       /* redraw only on change, never under a drag */
+  const f=document.activeElement, fid=f&&el.contains(f)?f.dataset.id:null, sx=(el.querySelector('.kb-board')||{}).scrollLeft||0;
+  SKB=html; el.innerHTML=html;
+  el.querySelector('.kb-board').scrollLeft=sx;
+  if(fid){const c=el.querySelector(`.kb-tk[data-id="${fid}"]`); if(c)c.focus({preventScroll:true})}
+}
+async function skTk(id,change){       /* the operator's ticket edit (existing /squad/ticket route) */
+  let d={};
+  try{const r=await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})});
+    try{d=await r.json()}catch(e){d={error:'HTTP '+r.status}}}
+  catch(e){d={error:'manager not reachable'}}
+  return d;
+}
+function skTkOpen(id){
+  const t=(SKB_D.b.tickets||[]).find(x=>+x.id===+id); if(!t)return;
+  SKT=t.id;
+  const msgs=(SKB_D.d.messages||[]).slice().reverse(), names=SK_MEMBERS.map(m=>m.name);
+  if(t.assignee&&!names.includes(t.assignee))names.push(t.assignee);
+  const ans=msgs.find(m=>m.from===t.assignee&&m.kind==='turn')||msgs.find(m=>t.assignee&&m.from===t.assignee);
+  const opt=(v,l,cur)=>`<option value="${esc(v)}"${v===cur?' selected':''}>${escT(l)}</option>`, sub=x=>`<div class=sq-sub>${x}</div>`;
+  document.getElementById('sk-tkd-box').innerHTML=
+    `<div class=dialog-title id=sk-tkd-t><span class=kb-key>${escT(t.key)}</span> ${escT(t.title)}</div>`+
+    `<div class=text-muted style="font-size:12px">${t.level?'L'+(+t.level)+' · ':''}${escT(t.status)} · ${t.assignee?escT(t.assignee):'unassigned'}${t.updated?' · geändert '+escT(kbWhen(t.updated)):''}</div>`+
+    (t.description?`<div class=sk-bub>${escT(t.description)}</div>`:'')+
+    sub('Abhängigkeiten')+`<div style="font-size:13px">${(t.depends_on||[]).length?escT(t.depends_on.join(', ')):'keine'}</div>`+
+    sub('Kommentare')+((t.comments||[]).map(c=>`<div class=sq-cmt><span class=text-muted style="font-size:12px">${escT(c.by)} · ${escT(kbWhen(c.ts))}</span><div style="white-space:pre-wrap;font-size:13px">${escT(c.text)}</div></div>`).join('')
+      ||'<span class=text-muted style="font-size:13px">keine</span>')+
+    sub('Letzte Antwort'+(t.assignee?' von '+escT(t.assignee):''))+(ans?`<div class=sk-bub>${escT(ans.text)}</div><div class=text-muted style="font-size:12px">${escT(kbWhen(ans.ts))}</div>`:'<span class=text-muted style="font-size:13px">noch keine</span>')+
+    `<div class=mrow><label style="font-size:13px">Status <select class=input id=sk-tk-st style="width:auto">${KB_COLS.map(c=>opt(c[0],c[1],t.status)).join('')}</select></label>`+
+    `<label style="font-size:13px">Assignee <select class=input id=sk-tk-as style="width:auto">${opt('','unassigned',t.assignee)}${names.map(n=>opt(n,n,t.assignee)).join('')}</select></label></div>`+
+    `<textarea class=input id=sk-tk-c rows=2 placeholder="Kommentar hinzufügen …" aria-label=Kommentar></textarea><span id=sk-tk-msg class=msg></span>`+
+    `<div class=dialog-actions><button class="btn btn-secondary" onclick=skTkClose()>Schließen</button><button class="btn btn-primary" id=sk-tk-save onclick=skTkSave()>Speichern</button></div>`;
+  document.getElementById('sk-tkd').style.display='';
+  document.getElementById('sk-tk-st').focus();
+}
+function skTkClose(){
+  document.getElementById('sk-tkd').style.display='none';
+  const c=document.querySelector(`#sk-board .kb-tk[data-id="${SKT}"]`); if(c)c.focus(); SKT=0;
+}
+async function skTkSave(){
+  const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT); if(!t)return skTkClose();
+  const st=document.getElementById('sk-tk-st').value, as=document.getElementById('sk-tk-as').value, c=document.getElementById('sk-tk-c').value.trim(), ch={};
+  if(st!==t.status)ch.status=st; if(as!==t.assignee)ch.assignee=as; if(c)ch.comment=c;
+  if(!Object.keys(ch).length)return skTkClose();
+  const btn=document.getElementById('sk-tk-save'); btn.disabled=true;
+  const d=await skTk(t.id,ch); btn.disabled=false;
+  if(d.error){document.getElementById('sk-tk-msg').textContent='⚠️ '+d.error;return}
+  skMsg(d.note?t.key+': '+d.note:''); skTkClose(); SKB=''; skLoad();
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('sk-tkd').style.display!=='none')skTkClose()});
+function skChat(){const th=document.getElementById('sk-thread');th.scrollTop=th.scrollHeight;document.getElementById('sk-text').focus()}
+(()=>{
+  const bd=document.getElementById('sk-board'), clr=()=>bd.querySelectorAll('.kb-col.drop').forEach(x=>x.classList.remove('drop'));
+  bd.addEventListener('click',e=>{const c=e.target.closest('.kb-tk'); if(!c)return;
+    if(c.dataset.hq)document.getElementById('sk-cards').scrollIntoView({block:'nearest'}); else skTkOpen(c.dataset.id)});
+  bd.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.classList.contains('kb-tk')){e.preventDefault();e.target.click()}});
+  bd.addEventListener('dragstart',e=>{const c=e.target.closest('.kb-tk[data-id]'); if(!c)return;
+    SKB_DRAG=true; e.dataTransfer.setData('text/plain',c.dataset.id); e.dataTransfer.effectAllowed='move'});
+  bd.addEventListener('dragend',()=>{SKB_DRAG=false;clr()});
+  bd.addEventListener('dragover',e=>{const col=e.target.closest('.kb-col'); if(!col||!SKB_DRAG)return;
+    e.preventDefault(); if(!col.classList.contains('drop')){clr();col.classList.add('drop')}});
+  bd.addEventListener('drop',async e=>{
+    const col=e.target.closest('.kb-col'); if(!col)return;
+    e.preventDefault(); SKB_DRAG=false; clr();
+    const id=e.dataTransfer.getData('text/plain'), t=(SKB_D.b.tickets||[]).find(x=>String(x.id)===id);
+    if(!t||t.status===col.dataset.st)return;
+    const d=await skTk(t.id,{status:col.dataset.st});
+    skMsg(d.error?'⚠️ '+d.error:t.key+' → '+col.dataset.st+(d.note?' — '+d.note:'')); SKB=''; skLoad();
+  });
+})();
 async function skRestart(){
   if(!SK||!confirm('Restart every member of '+SK+'? A member busy with a turn restarts right after it.'))return;
   try{

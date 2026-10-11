@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- UI: Squads tab Kanban status view (board above the chat; mockup squad-kanban) — pills show live state (pulsing "N arbeiten · done/total", purple "❓ wartet auf dich"; `/api/squads` adds working, tickets_done/total, waiting_for_you), team row with status dots (working/waiting/asks you/idle/last turn failed), done/total + progress bar + turns/hour sparkline (12 h, metrics events) + today's cost/tokens, columns Open·Doing·Review·Blocked·Done (working ticket with elapsed + running bar, ⏸ wartet auf deps, open HITL questions in Blocked); click a card = details (description, deps, comments, the assignee's last answer, status/assignee/comment via `/squad/ticket`), drag a card = status; redraw only on change, reduced motion respected; the "Board" button is now "Chat".
 - Projects routes: a request with an empty project name ('/api/projects//…') answers 400 'project name missing …' with the path instead of 'unknown operation'.
 - Squads: an explicit ticket assign (also to the same member) or a status set to open/doing by someone else wakes the assignee; when nobody can be woken the tool says why — a lead re-assigned tickets and believed the team was working.
 
