@@ -867,7 +867,7 @@ function sqAnnApply(){
   });
 }
 /* the selection when it lies inside one annotatable message -> {mid, quote, prefix, suffix, rect} | null */
-function sqSel(){
+function sqTextSel(){
   const s=getSelection(); if(!s||s.isCollapsed||!s.rangeCount)return null;
   const r=s.getRangeAt(0), c=r.commonAncestorContainer, el=(c.nodeType===1?c:c.parentElement).closest('.sq-ann');
   if(!el)return null;
@@ -944,13 +944,13 @@ document.addEventListener('selectionchange',()=>{
   clearTimeout(SQA.t);
   SQA.t=setTimeout(()=>{
     if(SQA.open)return;
-    SQA.sel=sqSel(); const b=sqEl('sqa-fab'); if(!b)return;
+    SQA.sel=sqTextSel(); const b=sqEl('sqa-fab'); if(!b)return;
     if(!SQA.sel){b.hidden=true;return}
     sqPlace(b,SQA.sel.rect.left,SQA.sel.rect.bottom+6);
   },120);
 });
 document.addEventListener('contextmenu',e=>{
-  const s=sqSel(); if(!s)return;                    /* else the browser's own menu */
+  const s=sqTextSel(); if(!s)return;                    /* else the browser's own menu */
   e.preventDefault(); SQA.sel=s; sqEl('sqa-fab').hidden=true;
   const mn=sqEl('sqa-menu'); sqPlace(mn,e.clientX,e.clientY); mn.querySelector('button').focus();
 });
