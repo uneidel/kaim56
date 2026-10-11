@@ -81,7 +81,7 @@ MAX_VERSIONS = 10               # earlier versions a revised proposal keeps
 OPEN = ("pending", "changes_requested")      # not decided yet
 PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status")
 DIFF_FIELDS = ("role", "purpose", "persona", "skills", "model_tier", "model", "template")
-MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update", "ask_human",
+MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update", "ask_human", "project_sync",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
 LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",

@@ -42,7 +42,7 @@ from mgr import store as _store
 SQUAD_DB = os.path.join(_paths.BASE, "squad.db")
 DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing": False, "security_skills": False,
             "max_wakes_per_hour": 60,
-            "daily_token_budget": 2_000_000, "max_depth": 3,
+            "daily_token_budget": 2_000_000, "max_depth": 8,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
             "approval_tools": [], "autonomy": "trusted"}
@@ -410,6 +410,18 @@ def queue_info(project, now=None):
 
 
 OLD_WAKES_DEFAULT = 20
+OLD_DEPTH_DEFAULT = 3
+
+
+def migrate_depth_default():
+    """Squads saved with the old reply depth of 3 get the new default (8)."""
+    n = 0
+    for p in _projects.load():
+        st = p.get("squad") or {}
+        if st.get("max_depth") == OLD_DEPTH_DEFAULT:
+            _projects.set_squad(p["name"], {**settings(p), "max_depth": DEFAULTS["max_depth"]})
+            n += 1
+    return n
 
 
 def migrate_wakes_default():

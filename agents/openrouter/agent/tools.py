@@ -272,6 +272,9 @@ BUILTIN = {
                       "operator allowed it; a conflict changes nothing and names the files.",
                       {"project": {"type": "string"}, "member": {"type": "string", "description": "the writer instance"}},
                       ["project", "member"]),
+    "project_sync": (_tools_manager.t_project_sync,
+                     "Bring the project's base branch (merged work of others) into your folder; your unmerged work is kept (committed first). On conflict nothing changes and the files are named.",
+                     {}, []),
     "squad_post": (_tools_manager.t_squad_post,
                    "Post to your project's squad channel. Members you address (to, or @name / @all in the "
                    "text) are woken to act on it. Reply to a message with reply_to=<its id>. Address only "

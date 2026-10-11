@@ -296,7 +296,8 @@ def katfs_membership(inst_name):
 
 
 # ---- review: status, diff, merge, discard (operator, or the lead) ----------
-MEMBER_OPS = {"status": _projwt.status, "diff": _projwt.diff, "merge": _projwt.merge, "discard": _projwt.discard}
+MEMBER_OPS = {"status": _projwt.status, "diff": _projwt.diff, "merge": _projwt.merge, "discard": _projwt.discard,
+              "sync": _projwt.sync}
 
 
 def member_op(name, op, member):
@@ -314,7 +315,38 @@ def member_op(name, op, member):
         return {"error": str(e)}, 500
     if isinstance(r, dict) and "error" in r:
         return r, 409
+    if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it
+        _spawn(sync_others, name, member)
     return r, 200
+
+
+def _spawn(fn, *args):
+    threading.Thread(target=fn, args=args, daemon=True, name="projsync").start()
+
+
+def sync_others(name, merged):
+    """After `merged`'s work reached the base: every other writer with a folder
+    is synced; one line each in the squad channel (wakes nobody); a conflict
+    wakes that writer (cc the lead) once, through the squad's guards."""
+    from mgr import squads as _squads                 # late: squads imports this module
+    p = get(name)
+    if not p or p.get("strategy") != "worktree":
+        return
+    lead = [n for n, m in (p.get("members") or {}).items() if m.get("role") == "lead"][:1]
+    for w in writers(p):
+        if w == merged or not os.path.isdir(_projwt.tree_dir(name, w)):
+            continue
+        try:
+            r, st = member_op(name, "sync", w)
+            if st == 200:
+                _squads.post(p, "manager", ["all"], f"synced {w} to {r['note'].split()[-1]}", kind="note")
+            elif r.get("conflicts"):
+                _squads.post(p, "manager", [w, *lead], f"sync {w}: conflict in {', '.join(r['conflicts'])} — "
+                             "resolve and run project_sync")
+            else:
+                _squads.post(p, "manager", ["all"], f"sync {w} failed: {r.get('error')}"[:500], kind="note")
+        except Exception as e:                        # a background thread: one writer must not stop the others
+            print(f"[quiet] sync {name}/{w}: {e!r}", flush=True)
 
 
 def review(name):

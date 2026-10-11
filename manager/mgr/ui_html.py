@@ -879,7 +879,9 @@ HTML_BOTTOM = """
   <code>/project/&#8249;p&#8250;.members/&#8249;writer&#8250;</code>. git never runs on a VM-writable path: folders are filled by <code>tar</code> as the guest user,
   a snapshot is copied by the guest into a private /var/tmp stage, then committed by the repo owner with explicit
   <code>GIT_DIR</code>/<code>GIT_WORK_TREE</code>, no hooks/fsmonitor/ext-diff; merge = <code>git merge --no-ff</code> on a clean checkout or
-  <code>merge-tree</code>+<code>update-ref</code>, conflicts change nothing. The operator reviews in the Projects tab; a lead agent via
+  <code>merge-tree</code>+<code>update-ref</code>, conflicts change nothing. After a merge every other writer is synced (base merged
+  into its branch by <code>merge-tree</code>, folder refilled in place; a conflict changes nothing and wakes it); a writer syncs itself with
+  <code>project_sync</code>. The operator reviews in the Projects tab; a lead agent via
   <code>project_status/diff/merge</code> (merge only with <code>lead_may_merge</code>). The task worker runs one lane per instance, up to
   <code>WORKER_PARALLEL</code> at once. <code>overlay</code> is next (docs/design-projects.md).
   <b>Squads</b> (<code>mgr/squads.py</code>, <code>squad.db</code>): a project's members post to one channel (<code>squad_post/ask/read/members</code>);

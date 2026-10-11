@@ -24,6 +24,10 @@ never runs on anything a VM can write:
   must be clean and ``git merge --no-ff`` runs there; otherwise ``merge-tree``
   + ``commit-tree`` + ``update-ref``. A conflict changes nothing and names the
   files.
+- **Sync** a writer with the base (the others' merged work): snapshot, then the
+  base merged INTO the writer's branch — always ``merge-tree`` + ``commit-tree``
+  + ``update-ref`` (never the operator's checkout, no hooks) — and the folder
+  refilled in place like a discard. A conflict changes nothing and names the files.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -244,29 +248,34 @@ def _stage_copy(src_dir, repo):
 
 def snapshot(proj, member):
     """Commit the writer's folder on its branch when it changed -> tip sha."""
+    with _lock:
+        return _snapshot(proj, member)
+
+
+def _snapshot(proj, member):
+    """snapshot() for a caller that holds _lock."""
     src, name = proj["source"], proj["name"]
     repo, subdir = src["path"], src.get("subdir", "")
     ref = f"refs/heads/{branch(name, member)}"
-    with _lock:
-        tip = _sha(repo, ref)
-        stage, t = _stage_copy(tree_dir(name, member), repo)
-        try:
-            idx = os.path.join(stage, "index")
-            git(repo, ["add", "-A", "--", "."], work_tree=t, index=idx)
-            tree = git(repo, ["write-tree"], work_tree=t, index=idx).strip()
-            if subdir:
-                full = os.path.join(stage, "index-full")
-                git(repo, ["read-tree", tip], index=full)
-                git(repo, ["rm", "-r", "--cached", "-f", "-q", "--ignore-unmatch", "--", subdir], index=full)   # index only
-                git(repo, ["read-tree", f"--prefix={subdir}/", tree], index=full)
-                tree = git(repo, ["write-tree"], index=full).strip()
-            if tree == git(repo, ["rev-parse", f"{tip}^{{tree}}"]).strip():
-                return tip
-            new = git(repo, ["commit-tree", tree, "-p", tip, "-m", f"{name}: {member}'s work"]).strip()
-            git(repo, ["update-ref", ref, new, tip])
-            return new
-        finally:
-            shutil.rmtree(stage, ignore_errors=True)
+    tip = _sha(repo, ref)
+    stage, t = _stage_copy(tree_dir(name, member), repo)
+    try:
+        idx = os.path.join(stage, "index")
+        git(repo, ["add", "-A", "--", "."], work_tree=t, index=idx)
+        tree = git(repo, ["write-tree"], work_tree=t, index=idx).strip()
+        if subdir:
+            full = os.path.join(stage, "index-full")
+            git(repo, ["read-tree", tip], index=full)
+            git(repo, ["rm", "-r", "--cached", "-f", "-q", "--ignore-unmatch", "--", subdir], index=full)   # index only
+            git(repo, ["read-tree", f"--prefix={subdir}/", tree], index=full)
+            tree = git(repo, ["write-tree"], index=full).strip()
+        if tree == git(repo, ["rev-parse", f"{tip}^{{tree}}"]).strip():
+            return tip
+        new = git(repo, ["commit-tree", tree, "-p", tip, "-m", f"{name}: {member}'s work"]).strip()
+        git(repo, ["update-ref", ref, new, tip])
+        return new
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def status(proj, member):
@@ -321,6 +330,38 @@ def merge(proj, member):
         new = git(repo, ["commit-tree", lines[0], "-p", base_sha, "-p", tip, "-m", msg]).strip()
         git(repo, ["update-ref", f"refs/heads/{base}", new, base_sha])
         return {"ok": True, "commit": new}
+
+
+def sync(proj, member):
+    """Merge the base INTO the writer's branch (its work committed first) and
+    refill its folder in place -> {'ok', 'commit', 'note'} or {'error', 'conflicts'}.
+    One lock over snapshot, merge and refill: no other git step in between."""
+    src, name, base = proj["source"], proj["name"], proj["base"]
+    repo, subdir = src["path"], src.get("subdir", "")
+    ref = f"refs/heads/{branch(name, member)}"
+    with _lock:
+        tip = _snapshot(proj, member)
+        base_sha = _sha(repo, f"refs/heads/{base}")
+        at = f"{base}@{base_sha[:7]}"
+        if git_ok(repo, ["merge-base", "--is-ancestor", base_sha, tip]):
+            return {"ok": True, "commit": tip, "note": f"up to date with {at}"}
+        if git_ok(repo, ["merge-base", "--is-ancestor", tip, base_sha]):
+            new = base_sha                                   # no own work: fast-forward
+        else:
+            r = git(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", tip, base_sha], check=False)
+            lines = (r or "").splitlines()
+            if not lines or not re.match(r"^[0-9a-f]{40}$", lines[0]):
+                return {"error": "sync failed", "conflicts": []}
+            conflicts = [x for x in lines[1:] if x]
+            if conflicts:
+                return {"error": f"conflict with {at} — nothing changed", "conflicts": conflicts}
+            new = git(repo, ["commit-tree", lines[0], "-p", tip, "-p", base_sha,
+                             "-m", f"{name}: sync {member} with {base}"]).strip()
+        git(repo, ["update-ref", ref, new, tip])
+        d = tree_dir(name, member)
+        _as_guest(["find", ".", "-mindepth", "1", "-delete"], d)
+        _fill(repo, ref, subdir, d)
+        return {"ok": True, "commit": new, "note": f"synced to {at}"}
 
 
 def discard(proj, member):
