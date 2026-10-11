@@ -394,6 +394,10 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 .sq-turn summary{cursor:pointer;white-space:pre-wrap;word-break:break-word;margin:4px 0}
 .sq-work{font-size:12.5px;margin:2px 0}
 .sk-comp{display:flex;gap:6px}
+#sk-chatbox>summary{cursor:pointer;font-size:13px;margin-top:12px;color:var(--color-neutral-600)}
+.sk-kick>#sk-chatbox{order:1}.sk-kick>#sk-chatbox>summary{display:none}   /* new squad / kickoff: the chat is the main view */
+#sk-cards{max-height:55vh;overflow:auto}   /* waiting cards above the board, never pushing it off screen */
+.sk-kick>#sk-working,.sk-kick>.sk-comp,.sk-kick>#sk-msg{order:2}
 .sk-at{position:absolute;left:0;bottom:calc(100% + 4px);min-width:220px;max-height:240px;overflow:auto;z-index:30;padding:4px;
   background:var(--app-card);border:1px solid var(--app-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
 .sk-at div{padding:6px 10px;border-radius:var(--radius-md);cursor:pointer;font-size:13px;display:flex;justify-content:space-between;gap:12px}

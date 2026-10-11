@@ -342,10 +342,9 @@ HTML_TOP = """</head><body>
     <nav class=sk-list id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
-      <div id=sk-board hidden aria-label="Squad board"></div>
-      <div class=sk-thread id=sk-thread aria-live=polite></div>
-      <div id=sk-working aria-live=polite></div>
       <div id=sk-cards></div>
+      <div id=sk-board hidden aria-label="Squad board"></div>
+      <div id=sk-working aria-live=polite></div>
       <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
         <span style="flex:1;min-width:0;position:relative;display:flex"><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message autocomplete=off
@@ -353,6 +352,9 @@ HTML_TOP = """</head><body>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
+      <details id=sk-chatbox ontoggle="if(this.open){const t=document.getElementById('sk-thread');t.scrollTop=t.scrollHeight}">
+        <summary id=sk-chatsum onclick="skChatPref(!this.parentNode.open)">Chat</summary>
+        <div class=sk-thread id=sk-thread aria-live=polite></div></details>
     </div>
   </div>
   <aside id=sk-tkd class=kb-pane role=dialog aria-labelledby=sk-tkd-t hidden><div id=sk-tkd-box></div>
