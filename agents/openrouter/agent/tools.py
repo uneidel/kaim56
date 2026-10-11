@@ -350,8 +350,11 @@ BUILTIN = {
                     {"project": {"type": "string", "description": "optional when you are in one squad"}}, []),
     "ticket_update": (_tools_manager.t_ticket_update,
                       "Your ticket (or any, as the lead): set status open/doing/review/done/blocked and/or add a "
-                      "comment. Done wakes the members whose tickets waited on it.",
+                      "comment. Done wakes the members whose tickets waited on it. title/description: lead only; "
+                      "use when re-scoping instead of only commenting (keeps the old version, wakes the assignee).",
                       {"id": {"type": "string"}, "status": {"type": "string"}, "comment": {"type": "string"},
+                       "title": {"type": "string", "description": "lead only: the new title (re-scope)"},
+                       "description": {"type": "string", "description": "lead only: the new description (re-scope)"},
                        "project": {"type": "string", "description": "optional when you are in one squad"}},
                       ["id"]),
     "ticket_create": (_tools_manager.t_ticket_create,

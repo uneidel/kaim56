@@ -5215,10 +5215,40 @@ class ManagerFunctions(unittest.TestCase):
                   # the ticket side panel: header selects, re-scope banner, dep chips, timeline, sticky comment box
                   "class=kb-pane", "function kbMd", "onchange=\"skTkSet({status:", "kb-rescope", "/re-scope/i",
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
-                  "hourCycle:'h23'", "#s-squads.kb-open"):
+                  "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]"):
             self.assertIn(s, page)
         for s in ("skBoard()", "kb-dlg", "gestern", "Schließen"):
             self.assertNotIn(s, page)
+
+    def test_squad_lead_rescopes_a_ticket(self):
+        """The lead (guest route) or the operator (/squad/ticket) may change a
+        ticket's title + description: the old version is kept (last 5) and the
+        assignee is woken with 're-scoped'; another member is refused."""
+        m = self.m
+        woke, notes, undo = self._hq_env(approval_tools=[])
+        g = m._squadgate
+        try:
+            t1 = next(t for t in g.tickets("sq") if t["key"] == "T1")
+            ip = lambda n: next(f"172.30.{i['index']}.2" for i in self._sq_insts if i["name"] == n)
+            st, d = self._sq("/api/squad/ticket-update", ip("e"), {"project": "sq", "id": t1["id"], "title": "mine now"})
+            self.assertEqual(st, 400); self.assertIn("only the lead or the operator", d["error"])   # e is the assignee
+            del woke[:]
+            st, d = self._sq("/api/squad/ticket-update", ip("a"), {"project": "sq", "id": t1["id"], "title": "CLI only",
+                                                                   "description": "no web"})
+            self.assertEqual(st, 200, d)
+            self.assertEqual((d["title"], d["description"]), ("CLI only", "no web"))
+            self.assertEqual([(v["title"], v["by"]) for v in d["versions"]], [(t1["title"], "a")])
+            self.assertIn("T1", d["woke"])
+            self.assertEqual(woke[-1][0], "e"); self.assertIn("Ticket T1 re-scoped: CLI only", woke[-1][1])
+            for i in range(6):                                                # the operator's route; the last 5 kept
+                st, d = self._sq("/api/projects/sq/squad/ticket", "127.0.0.1", {"id": t1["id"], "title": f"v{i}"})
+                self.assertEqual(st, 200, d)
+            self.assertEqual([v["title"] for v in d["versions"]], ["v0", "v1", "v2", "v3", "v4"])
+            self.assertEqual((d["title"], d["description"], d["versions"][-1]["by"]), ("v5", "no web", "user:admin"))
+            d, _ = g.update_ticket(m._projects.get("sq"), "user:admin", t1["id"], {"title": "v5"}, lambda tk: "")
+            self.assertEqual(len(d["versions"]), 5)                           # unchanged: no new version
+        finally:
+            undo()
 
     def test_projects_route_with_an_empty_name_says_so(self):
         """'/api/projects//squad/decide' (a page lost the project name) answers

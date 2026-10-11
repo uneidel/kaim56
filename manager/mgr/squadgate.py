@@ -76,6 +76,7 @@ MAX_MEMBERS, MAX_TICKETS, MAX_SKILLS, MAX_DEPS = 8, 50, 10, 10
 MAX_PENDING = 10                # pending proposals per project
 KEEP_PROPOSALS = 200
 MAX_COMMENTS = 100
+MAX_TICKET_VERSIONS = 5                # a ticket's earlier title/description (a re-scope), newest last
 MAX_VERSIONS = 10               # earlier versions a revised proposal keeps
 OPEN = ("pending", "changes_requested")      # not decided yet
 PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status")
@@ -858,6 +859,7 @@ def decide(project, pid, ok, who, note="", edits=None):
     text = (f"Your {what} ({pid}) was {prop['status']} by {who}." + (f" Note: {note}" if note else "")
             + (f" Steps not done: {', '.join(failed)}." if failed else "")
             + (" The members and tickets are set up — start them with ticket_assign or squad_post."
+               " To re-scope a ticket, update its title and description (ticket_update), not only comment on it."
                if ok and prop["kind"] == "squad" else ""))
     _squads.post(_projects.get(project), "user:" + who, [lead_], text)
     return prop, ""
@@ -895,8 +897,8 @@ def _ready(t, all_):
     return t["assignee"] and t["status"] not in ("done",) and all(k in done for k in t["depends_on"])
 
 
-def _wake(proj, t, sender, depth):
-    text = (f"Ticket {t['key']} (id {t['id']}) is yours: {t['title']}"
+def _wake(proj, t, sender, depth, head=""):
+    text = (head + f"Ticket {t['key']} (id {t['id']}) is yours: {t['title']}"
             + (f"\n{t['description']}" if t["description"] else "")
             + f"\nUpdate it with ticket_update id={t['id']} (status doing/review/done/blocked, comment).")
     m, why = _squads.post(proj, sender, [t["assignee"]], text, depth=depth, level=t.get("level") or 0)
@@ -923,9 +925,11 @@ def create_ticket(proj, who, body, depth=1):
 
 
 def update_ticket(proj, who, tid, body, may, depth=1):
-    """Change status / assignee / add a comment. `may(ticket)` -> '' or why
-    the caller may not. Wakes a new assignee, and the assignees whose tickets
-    the change made ready -> (ticket, '') or (None, why)."""
+    """Change status / assignee / title + description (a re-scope: the lead or
+    the operator only; the old version is kept) / add a comment. `may(ticket)`
+    -> '' or why the caller may not. Wakes a new assignee, a re-scoped ticket's
+    assignee, and the assignees whose tickets the change made ready -> (ticket,
+    '') or (None, why)."""
     status = _txt(body.get("status"), 16)
     if status and status not in STATUSES:
         return None, f"status must be one of {', '.join(STATUSES)}"
@@ -938,6 +942,13 @@ def update_ticket(proj, who, tid, body, may, depth=1):
     level = body.get("level")
     if level is not None and level not in (1, 2, 3, 4, 5):
         return None, "level must be 1-5"
+    title, desc = body.get("title"), body.get("description")
+    title = None if title is None else _txt(title, 200)
+    desc = None if desc is None else _txt(desc, 4000)
+    if title == "":
+        return None, "title must not be empty"
+    if (title is not None or desc is not None) and who != lead(proj) and not who.startswith("user:"):
+        return None, "only the lead or the operator may change a ticket's title or description (re-scope)"
     with _lock:
         d = _load()
         mine = [x for x in d["tickets"] if x.get("project") == proj["name"]]
@@ -955,13 +966,19 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             t["assignee"] = assignee
         if level is not None:
             t["level"], t["level_by"] = level, who
+        rescoped = (title not in (None, t["title"])) or (desc not in (None, t["description"]))
+        if rescoped:
+            t["versions"] = ((t.get("versions") or []) + [{"title": t["title"], "description": t["description"],
+                                                           "by": who, "at": int(time.time())}])[-MAX_TICKET_VERSIONS:]
+            t["title"], t["description"] = title or t["title"], t["description"] if desc is None else desc
         if comment:
             t["comments"] = (t["comments"] + [{"ts": int(time.time()), "by": who, "text": comment}])[-MAX_COMMENTS:]
         t["updated"] = int(time.time())
         _save(d)
     _squadrec.log_ticket(proj["name"], "update", t, who,
-                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment), ("level", level))
-                          if v or (k == "assignee" and v is not None)})
+                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment), ("level", level),
+                                            ("title", title if rescoped else None), ("description", desc if rescoped else None))
+                          if v or (k in ("assignee", "description") and v is not None)})
     now = [x for x in mine if _ready(x, mine)]
     wake = [x for x in now if x["key"] not in before
             or (x is t and assignee and assignee != old_assignee)]
@@ -969,7 +986,7 @@ def update_ticket(proj, who, tid, body, may, depth=1):
     # the assignee is a "go": wake the assignee even if it held the ticket
     # already (live 2026-10-10: a lead re-assigned two tickets, nobody was woken,
     # and the lead believed the team was working). Say plainly when nobody is.
-    explicit = bool(assignee) or status in ("open", "doing")
+    explicit = bool(assignee) or status in ("open", "doing") or rescoped
     note = ""
     if explicit and who != t["assignee"] and t not in wake:
         if t in now:
@@ -979,7 +996,8 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             note = ("not woken: " + ("no assignee" if not t["assignee"] else "the ticket is done" if t["status"] == "done"
                                      else f"waiting for {', '.join(missing)}" if missing else "not ready"))
     out = dict(t)
-    out["woke"] = {x["key"]: _wake(proj, x, who, depth) or "woken" for x in wake}
+    head = f"Ticket {t['key']} re-scoped: {t['title']}\n" if rescoped else ""
+    out["woke"] = {x["key"]: _wake(proj, x, who, depth, head if x is t else "") or "woken" for x in wake}
     if note:
         out["note"] = note
     # A finished feature: refresh the code index (mgr/indexer.py; queued, never blocks).

@@ -1668,7 +1668,7 @@ async function skLoad(){
   SKB_D={d,b}; skBoardRender(d,b,hq); if(SKT)skTkRender();
 }
 /* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
-let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0;
+let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0, SKT_EDIT=false;
 const KB_COLS=[['open','Open','keine offenen Tickets'],['doing','Doing','niemand arbeitet gerade'],['review','Review','nichts zur Prüfung'],
   ['blocked','Blocked','keine Rückfrage offen'],['done','Done','noch nichts erledigt']];
 const kbMmss=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
@@ -1768,35 +1768,55 @@ function skTkHtml(t){   /* the side panel's header + body; the footer (comment b
   if(t.assignee&&!names.includes(t.assignee))names.push(t.assignee);
   const ans=msgs.find(m=>m.from===t.assignee&&m.kind==='turn')||msgs.find(m=>t.assignee&&m.from===t.assignee);
   const opt=(v,l,cur)=>`<option value="${esc(v)}"${v===cur?' selected':''}>${escT(l)}</option>`, isRs=c=>/re-scope/i.test(c.text||'');
-  const rs=(t.comments||[]).filter(isRs).pop();
+  const vs=t.versions||[], lv=vs[vs.length-1], rc=(t.comments||[]).filter(isRs).pop();      /* a re-scope: a new version (ticket_update title/description) or a RE-SCOPE comment */
+  const rs=lv&&(!rc||lv.at>=rc.ts)?{by:lv.by,ts:lv.at}:rc;
   const deps=(t.depends_on||[]).map(k=>ts.find(x=>x.key===k)||{key:k,title:'',status:'open'}), wait=t.status==='done'?0:deps.filter(x=>x.status!=='done').length;
-  const ev=[...(t.created?[{ts:t.created,sys:1}]:[]),...(t.comments||[]).map(c=>({ts:c.ts,by:c.by,text:c.text,rs:isRs(c)})),
+  const ev=[...(t.created?[{ts:t.created,sys:1}]:[]),...vs.map((v,i)=>({ts:v.at,by:v.by,ver:i+2})),...(t.comments||[]).map(c=>({ts:c.ts,by:c.by,text:c.text,rs:isRs(c)})),
     ...(ans?[{ts:ans.ts,by:ans.from,text:ans.text,ans:1}]:[])].sort((a,c)=>(a.ts||0)-(c.ts||0));
-  const item=e=>e.sys?`<li class=kb-ev><span class="kb-av idle" aria-hidden=true>+</span><div class=kb-eh>Created${t.by?' by <b>'+escT(who(t.by))+'</b>':''}`+
+  const item=e=>e.ver?`<li class=kb-ev><span class="kb-av idle" aria-hidden=true>↻</span><div class=kb-eh><b>${escT(who(e.by))}</b><span class="kb-tag rs">re-scope</span>`+
+      `title/description → v${e.ver}<time>${escT(kbWhen(e.ts))}</time></div></li>`
+    :e.sys?`<li class=kb-ev><span class="kb-av idle" aria-hidden=true>+</span><div class=kb-eh>Created${t.by?' by <b>'+escT(who(t.by))+'</b>':''}`+
       `${t.assignee?' · assigned to '+escT(t.assignee):''}<time>${escT(kbWhen(e.ts))}</time></div></li>`
     :`<li class=kb-ev>${kbAv(who(e.by),1)}<div><div class=kb-eh><b>${escT(who(e.by))}</b>${e.rs?'<span class="kb-tag rs">re-scope</span>':''}`+
       `${e.ans?'<span class="kb-tag ans">turn result</span>':''}<time>${escT(kbWhen(e.ts))}</time></div>`+
       (e.ans?`<div class="kb-md kb-box kb-clip">${kbMd(e.text)}</div><button class=kb-more data-l="Show full answer" aria-expanded=false onclick=kbMore(this)>Show full answer</button>`
         :`<div class=kb-md>${kbMd(e.text)}</div>`)+'</div></li>';
-  return `<div class=kb-ptop><div class=kb-prow><div><span class=kb-key>${escT(t.key)}</span><h2 class=kb-ptitle id=sk-tkd-t>${kbMd(t.title)}</h2></div>`+
+  const ed=SKT_EDIT;
+  return `<div class=kb-ptop><div class=kb-prow><div style="flex:1;min-width:0"><span class=kb-key>${escT(t.key)}</span>`+
+      (ed?`<input class=input id=sk-tk-ti value="${esc(t.title)}" maxlength=200 aria-label=Title style="margin-top:4px">`
+        :` <button class=kb-more onclick=skTkEdit(1) title="Edit title and description (re-scope; the old version is kept)">Edit</button><h2 class=kb-ptitle id=sk-tkd-t>${kbMd(t.title)}</h2>`)+'</div>'+
       `<button class=kb-x onclick=skTkClose() aria-label=Close title="Close (Esc)">×</button></div>`+
     `<div class=kb-ctl><select class="kb-sel st" id=sk-tk-st aria-label=Status onchange="skTkSet({status:this.value})">${KB_COLS.map(c=>opt(c[0],c[1],t.status)).join('')}</select>`+
       `<select class=kb-sel id=sk-tk-as aria-label=Assignee onchange="skTkSet({assignee:this.value})">${opt('','unassigned',t.assignee)}${names.map(n=>opt(n,n,t.assignee)).join('')}</select>`+
       (t.level?`<span class=kb-badge title="Model level ${+t.level}">L${+t.level}</span>`:'')+(t.updated?`<span class=kb-when>updated ${escT(kbWhen(t.updated))}</span>`:'')+'</div>'+
-    (rs?`<div class=kb-rescope role=note><span aria-hidden=true>↻</span><div><b>Re-scoped</b> by ${escT(who(rs.by))} at ${escT(kbWhen(rs.ts))}</div></div>`:'')+'</div>'+
+    (rs?`<div class=kb-rescope role=note><span aria-hidden=true>↻</span><div style="flex:1;min-width:0"><b>Re-scoped</b> by ${escT(who(rs.by))} at ${escT(kbWhen(rs.ts))}`+
+      (lv?`<div class=kb-prev hidden><b>v${vs.length}:</b> ${kbMd(lv.title)}${lv.description?`<div class=kb-md>${kbMd(lv.description)}</div>`:''}</div>`:'')+'</div>'+
+      (lv?`<button class=kb-more data-v="v${vs.length}" aria-expanded=false onclick=kbPrev(this)>Show v${vs.length}</button>`:'')+'</div>':'')+'</div>'+
     '<div class=kb-pbody>'+
-    (t.description?`<section><div class=sq-sub>Description</div><div class="kb-md kb-box kb-clip">${kbMd(t.description)}</div>`+
+    (ed?`<section><div class=sq-sub>Description</div><textarea class=input id=sk-tk-de rows=8 maxlength=4000 aria-label=Description>${escT(t.description)}</textarea>`+
+      '<div class=mrow><button class="btn btn-primary btn-sm" onclick=skTkEditSave()>Save</button><button class="btn btn-ghost btn-sm" onclick=skTkEdit(0)>Cancel</button></div></section>'
+    :t.description?`<section><div class=sq-sub>Description</div><div class="kb-md kb-box kb-clip">${kbMd(t.description)}</div>`+
       '<button class=kb-more data-l="Show all" aria-expanded=false onclick=kbMore(this)>Show all</button></section>':'')+
     (deps.length?`<section><div class=sq-sub>Depends on</div><div class=kb-deps>${deps.map(x=>`<button class=kb-chip ${x.id?`onclick=skTkOpen(${+x.id})`:'disabled'}>`+
       `<i style="background:${KB_DOT[x.status]||KB_DOT.open}"></i><span class=kb-key>${escT(x.key)}</span><span class=kb-ct>${escT(x.title)}</span><small>${escT(x.status)}</small></button>`).join('')}</div>`+
       (wait?`<div class=kb-dep>Waiting on ${wait} ticket${wait>1?'s':''}</div>`:'')+'</section>':'')+
     `<section><div class=sq-sub>Activity</div><ol class=kb-tl>${ev.map(item).join('')||'<li class=text-muted>No activity yet</li>'}</ol></section></div>`;
 }
+function kbPrev(b){const p=b.parentElement.querySelector('.kb-prev'); p.hidden=!p.hidden; b.textContent=(p.hidden?'Show ':'Hide ')+b.dataset.v; b.setAttribute('aria-expanded',!p.hidden)}
+function skTkEdit(on){SKT_EDIT=!!on; skTkRender(true); if(on)document.getElementById('sk-tk-ti').focus()}
+async function skTkEditSave(){         /* the operator re-scopes: title + description via /squad/ticket (the old version is kept) */
+  const ti=document.getElementById('sk-tk-ti').value.trim(), de=document.getElementById('sk-tk-de').value.trim(), m=document.getElementById('sk-tk-msg');
+  if(!ti){m.textContent='⚠️ title missing';return}
+  const d=await skTk(SKT,{title:ti,description:de});
+  m.textContent=d.error?'⚠️ '+d.error:d.note?d.key+': '+d.note:'';
+  if(d.error)return;
+  SKT_EDIT=false; SKB=''; await skLoad(); skTkRender(true);
+}
 function kbMore(b){const o=b.previousElementSibling.classList.toggle('open'); b.textContent=o?'Show less':b.dataset.l; b.setAttribute('aria-expanded',o)}
 function skTkRender(force){            /* redraw only on change, never under an open select (unless forced) */
   const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT), box=document.getElementById('sk-tkd-box'); if(!t)return;
   const h=skTkHtml(t), a=document.activeElement, fid=a&&box.contains(a)?a.id:'';
-  if(h===box.dataset.h||(!force&&a&&a.tagName==='SELECT'&&fid))return;
+  if(h===box.dataset.h||(!force&&(SKT_EDIT||a&&a.tagName==='SELECT'&&fid)))return;
   const st=(box.querySelector('.kb-pbody')||{}).scrollTop||0;
   box.dataset.h=h; box.innerHTML=h; box.querySelector('.kb-pbody').scrollTop=st;
   box.querySelectorAll('.kb-clip').forEach(c=>{if(c.scrollHeight<=c.clientHeight+2){c.classList.remove('kb-clip');c.nextElementSibling.remove()}});
@@ -1804,7 +1824,7 @@ function skTkRender(force){            /* redraw only on change, never under an 
 }
 function skTkOpen(id){
   const t=(SKB_D.b.tickets||[]).find(x=>+x.id===+id); if(!t)return;
-  if(SKT!==t.id){document.getElementById('sk-tk-c').value='';document.getElementById('sk-tk-msg').textContent=''}
+  if(SKT!==t.id){SKT_EDIT=false;document.getElementById('sk-tk-c').value='';document.getElementById('sk-tk-msg').textContent=''}
   document.querySelectorAll('#sk-board .kb-tk.cur').forEach(c=>c.classList.remove('cur'));
   document.getElementById('sk-tkd').hidden=false; document.getElementById('s-squads').classList.add('kb-open');
   SKT=t.id; document.getElementById('sk-tkd-box').dataset.h=''; skTkRender(true);      /* visible first: the clip check measures */
@@ -1812,7 +1832,7 @@ function skTkOpen(id){
   document.getElementById('sk-tk-st').focus({preventScroll:true});
 }
 function skTkClose(){
-  document.getElementById('sk-tkd').hidden=true; document.getElementById('s-squads').classList.remove('kb-open');
+  document.getElementById('sk-tkd').hidden=true; document.getElementById('s-squads').classList.remove('kb-open'); SKT_EDIT=false;
   const c=document.querySelector(`#sk-board .kb-tk[data-id="${SKT}"]`); SKT=0; if(c){c.classList.remove('cur');c.focus()}
 }
 async function skTkSet(ch){             /* a header select: status / assignee, applied at once */

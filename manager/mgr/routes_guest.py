@@ -925,7 +925,8 @@ def _rt_squad_ticket(h):
         def may(tk):
             return "" if is_lead or tk.get("assignee") == name else "only the assignee or the lead may update this ticket"
         body = {"assignee": b.get("assignee", "")} if op == "assign" else \
-            {"status": b.get("status"), "comment": b.get("comment")}
+            {"status": b.get("status"), "comment": b.get("comment"),     # title/description: a re-scope, the lead only
+             "title": b.get("title") or None, "description": b.get("description") or None}
         # supervised squad (mgr/hitlq.py): a member's "done" is a review for the operator
         review = op == "update" and body["status"] == "done" and _squads.settings(p)["autonomy"] == "supervised"
         if review:

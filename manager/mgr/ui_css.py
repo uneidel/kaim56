@@ -468,6 +468,9 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 .kb-rescope{display:flex;gap:10px;align-items:flex-start;border-radius:8px;padding:9px 11px;font-size:12.5px;
   background:color-mix(in srgb,var(--color-warn) 9%,transparent);border:1px solid color-mix(in srgb,var(--color-warn) 35%,transparent)}
 .kb-rescope b{color:var(--color-warn);font-weight:600}
+.kb-rescope>.kb-more{margin:0 0 0 auto;padding:0;white-space:nowrap}
+.kb-prev{margin-top:6px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--color-warn) 25%,transparent);max-height:30vh;overflow:auto;color:var(--color-neutral-800)}
+.kb-prev b{color:var(--color-neutral-700);font-weight:500}
 .kb-pbody{flex:1;min-height:0;overflow-y:auto;padding:0 18px 14px}
 .kb-pbody .sq-sub{margin-bottom:6px}
 .kb-md{font-size:13.5px;line-height:1.55;color:var(--color-neutral-900);overflow-wrap:anywhere}
