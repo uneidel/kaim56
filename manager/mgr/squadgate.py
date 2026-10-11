@@ -882,7 +882,7 @@ def _ticket_add(project, t, who):
         tid = max([x["id"] for x in mine] or [0]) + 1
         new = {"id": tid, "project": project, "key": t.get("key") or f"T{tid}", "title": t["title"],
                "description": t.get("description", ""), "assignee": t.get("assignee", ""), "status": "open",
-               "depends_on": t.get("depends_on") or [], "comments": [], "updated": int(time.time()), "by": who,
+               "depends_on": t.get("depends_on") or [], "comments": [], "created": int(time.time()), "updated": int(time.time()), "by": who,
                "level": level, "level_by": "judge" + (f" ({note})" if note else "")}
         d["tickets"].append(new)
         _save(d)

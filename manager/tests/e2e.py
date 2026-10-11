@@ -5203,6 +5203,7 @@ class ManagerFunctions(unittest.TestCase):
             s = pills()
             self.assertEqual((s["working"], s["waiting_for_you"]), (1, 1))     # queued f does not count
             t1 = next(t for t in m._squadgate.tickets("sq") if t["key"] == "T1")
+            self.assertGreater(t1["created"], 0)                       # the ticket panel's "Created" event
             st, d = self._sq("/api/projects/sq/squad/ticket", L, {"id": t1["id"], "status": "done"})
             self.assertEqual((st, d["status"]), (200, "done"), d)
             self.assertEqual(pills()["tickets_done"], 1)
@@ -5210,9 +5211,14 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         page = m._ui.render()
         for s in ("function skBoardRender", "id=sk-tkd", "kb-board", "onclick=skChat()", "skTkSave", "dragstart",
-                  "wartet auf dich", "prefers-reduced-motion:reduce){.sk-live"):
+                  "wartet auf dich", "prefers-reduced-motion:reduce){.sk-live",
+                  # the ticket side panel: header selects, re-scope banner, dep chips, timeline, sticky comment box
+                  "class=kb-pane", "function kbMd", "onchange=\"skTkSet({status:", "kb-rescope", "/re-scope/i",
+                  "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
+                  "hourCycle:'h23'", "#s-squads.kb-open"):
             self.assertIn(s, page)
-        self.assertNotIn("skBoard()", page)
+        for s in ("skBoard()", "kb-dlg", "gestern", "Schließen"):
+            self.assertNotIn(s, page)
 
     def test_projects_route_with_an_empty_name_says_so(self):
         """'/api/projects//squad/decide' (a page lost the project name) answers

@@ -1616,7 +1616,7 @@ async function skRetry(){
   skMsg(d.error||''); if(!d.error)skJob(SK_JOB);
 }
 function skPick(name){
-  SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND='';
+  SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND=''; if(SKT)skTkClose();
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
   document.getElementById('sk-arch').hidden=true;
@@ -1665,7 +1665,7 @@ async function skLoad(){
   const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify(p.members.map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(sqCard).join('')+hq.map(hqCard).join('')}   /* never under the user's edits */
   await skMetrics(name); if(SK!==name)return;
-  SKB_D={d,b}; skBoardRender(d,b,hq);
+  SKB_D={d,b}; skBoardRender(d,b,hq); if(SKT)skTkRender();
 }
 /* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
 let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0;
@@ -1676,9 +1676,9 @@ const kbAv=(n,on)=>`<span class="kb-av${on?'':' idle'}" aria-hidden=true>${escT(
 const kbTok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
 function kbWhen(ts){
   if(!ts)return '';
-  const d=new Date(ts*1000), t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+  const d=new Date(ts*1000), t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}),
     days=Math.round((new Date().setHours(0,0,0,0)-new Date(ts*1000).setHours(0,0,0,0))/864e5);
-  return days===0?t:days===1?'gestern '+t:d.toLocaleDateString();
+  return days===0?t:days===1?'yesterday '+t:d.toLocaleDateString();
 }
 async function skMetrics(name){       /* turns of the last 12 h + today's cost/tokens (mgr/squadmetrics.py); at most once a minute */
   if(SKM.name===name&&Date.now()-SKM.at<60000)return;
@@ -1720,7 +1720,7 @@ function skBoardRender(d,b,hq){
     (sum.cost!==undefined?`<span>heute $${(+sum.cost).toFixed(2)} · ${kbTok((+sum.tokens_in||0)+(+sum.tokens_out||0))} Tokens</span>`:'')+'</div>';
   const card=t=>{
     const w=on[t.key], dep=deps(t), q=hq.find(x=>x.ticket===t.key&&x.kind==='question'), dn=t.status==='done';
-    const cls=w?' working':q?' asking':dep.length&&t.status==='open'?' waiting':dn?' donec':'';
+    const cls=(w?' working':q?' asking':dep.length&&t.status==='open'?' waiting':dn?' donec':'')+(t.id===SKT?' cur':'');
     return `<article class="kb-tk${cls}" tabindex=0 role=button draggable=true data-id="${+t.id}" aria-label="${esc(t.key+' '+t.title+' — '+t.status)}">`+
       `<span class=kb-key>${escT(t.key)}${t.level&&!dn?` <span class=kb-lvl>L${+t.level}</span>`:''}</span><span class=kb-ti>${escT(t.title)}</span>`+
       (q?`<span class=kb-q>❓ ${escT(q.title)}</span>`:'')+
@@ -1756,43 +1756,84 @@ async function skTk(id,change){       /* the operator's ticket edit (existing /s
   catch(e){d={error:'manager not reachable'}}
   return d;
 }
-function skTkOpen(id){
-  const t=(SKB_D.b.tickets||[]).find(x=>+x.id===+id); if(!t)return;
-  SKT=t.id;
-  const msgs=(SKB_D.d.messages||[]).slice().reverse(), names=SK_MEMBERS.map(m=>m.name);
+const KB_DOT={done:'var(--app-live)',doing:'var(--color-accent-600)',review:'var(--app-ask)',blocked:'var(--color-warn)',open:'var(--color-neutral-500)'};
+function kbMd(s){        /* minimal safe markdown: escape first, then `code`, **bold**, "- " lists */
+  const il=x=>x.split(/(`[^`\\n]+`)/).map((p,i)=>i%2?'<code>'+p.slice(1,-1)+'</code>':p.replace(/\\*\\*([^*\\n]+)\\*\\*/g,'<b>$1</b>')).join(''), b=[];
+  escT(String(s||'')).split('\\n').forEach(l=>{const m=l.match(/^\\s*[-*] +(.*)/), p=b[b.length-1]||'';
+    if(!m)b.push(il(l)); else if(p.startsWith('<ul>'))b[b.length-1]=p.slice(0,-5)+'<li>'+il(m[1])+'</li></ul>'; else b.push('<ul><li>'+il(m[1])+'</li></ul>')});
+  return b.map((x,i)=>i&&!x.startsWith('<ul>')&&!b[i-1].startsWith('<ul>')?'<br>'+x:x).join('');
+}
+function skTkHtml(t){   /* the side panel's header + body; the footer (comment box) is static in ui_html */
+  const ts=SKB_D.b.tickets||[], msgs=(SKB_D.d.messages||[]).slice().reverse(), names=SK_MEMBERS.map(m=>m.name), who=n=>String(n||'').replace(/^user:/,'');
   if(t.assignee&&!names.includes(t.assignee))names.push(t.assignee);
   const ans=msgs.find(m=>m.from===t.assignee&&m.kind==='turn')||msgs.find(m=>t.assignee&&m.from===t.assignee);
-  const opt=(v,l,cur)=>`<option value="${esc(v)}"${v===cur?' selected':''}>${escT(l)}</option>`, sub=x=>`<div class=sq-sub>${x}</div>`;
-  document.getElementById('sk-tkd-box').innerHTML=
-    `<div class=dialog-title id=sk-tkd-t><span class=kb-key>${escT(t.key)}</span> ${escT(t.title)}</div>`+
-    `<div class=text-muted style="font-size:12px">${t.level?'L'+(+t.level)+' · ':''}${escT(t.status)} · ${t.assignee?escT(t.assignee):'unassigned'}${t.updated?' · geändert '+escT(kbWhen(t.updated)):''}</div>`+
-    (t.description?`<div class=sk-bub>${escT(t.description)}</div>`:'')+
-    sub('Abhängigkeiten')+`<div style="font-size:13px">${(t.depends_on||[]).length?escT(t.depends_on.join(', ')):'keine'}</div>`+
-    sub('Kommentare')+((t.comments||[]).map(c=>`<div class=sq-cmt><span class=text-muted style="font-size:12px">${escT(c.by)} · ${escT(kbWhen(c.ts))}</span><div style="white-space:pre-wrap;font-size:13px">${escT(c.text)}</div></div>`).join('')
-      ||'<span class=text-muted style="font-size:13px">keine</span>')+
-    sub('Letzte Antwort'+(t.assignee?' von '+escT(t.assignee):''))+(ans?`<div class=sk-bub>${escT(ans.text)}</div><div class=text-muted style="font-size:12px">${escT(kbWhen(ans.ts))}</div>`:'<span class=text-muted style="font-size:13px">noch keine</span>')+
-    `<div class=mrow><label style="font-size:13px">Status <select class=input id=sk-tk-st style="width:auto">${KB_COLS.map(c=>opt(c[0],c[1],t.status)).join('')}</select></label>`+
-    `<label style="font-size:13px">Assignee <select class=input id=sk-tk-as style="width:auto">${opt('','unassigned',t.assignee)}${names.map(n=>opt(n,n,t.assignee)).join('')}</select></label></div>`+
-    `<textarea class=input id=sk-tk-c rows=2 placeholder="Kommentar hinzufügen …" aria-label=Kommentar></textarea><span id=sk-tk-msg class=msg></span>`+
-    `<div class=dialog-actions><button class="btn btn-secondary" onclick=skTkClose()>Schließen</button><button class="btn btn-primary" id=sk-tk-save onclick=skTkSave()>Speichern</button></div>`;
-  document.getElementById('sk-tkd').style.display='';
-  document.getElementById('sk-tk-st').focus();
+  const opt=(v,l,cur)=>`<option value="${esc(v)}"${v===cur?' selected':''}>${escT(l)}</option>`, isRs=c=>/re-scope/i.test(c.text||'');
+  const rs=(t.comments||[]).filter(isRs).pop();
+  const deps=(t.depends_on||[]).map(k=>ts.find(x=>x.key===k)||{key:k,title:'',status:'open'}), wait=t.status==='done'?0:deps.filter(x=>x.status!=='done').length;
+  const ev=[...(t.created?[{ts:t.created,sys:1}]:[]),...(t.comments||[]).map(c=>({ts:c.ts,by:c.by,text:c.text,rs:isRs(c)})),
+    ...(ans?[{ts:ans.ts,by:ans.from,text:ans.text,ans:1}]:[])].sort((a,c)=>(a.ts||0)-(c.ts||0));
+  const item=e=>e.sys?`<li class=kb-ev><span class="kb-av idle" aria-hidden=true>+</span><div class=kb-eh>Created${t.by?' by <b>'+escT(who(t.by))+'</b>':''}`+
+      `${t.assignee?' · assigned to '+escT(t.assignee):''}<time>${escT(kbWhen(e.ts))}</time></div></li>`
+    :`<li class=kb-ev>${kbAv(who(e.by),1)}<div><div class=kb-eh><b>${escT(who(e.by))}</b>${e.rs?'<span class="kb-tag rs">re-scope</span>':''}`+
+      `${e.ans?'<span class="kb-tag ans">turn result</span>':''}<time>${escT(kbWhen(e.ts))}</time></div>`+
+      (e.ans?`<div class="kb-md kb-box kb-clip">${kbMd(e.text)}</div><button class=kb-more data-l="Show full answer" aria-expanded=false onclick=kbMore(this)>Show full answer</button>`
+        :`<div class=kb-md>${kbMd(e.text)}</div>`)+'</div></li>';
+  return `<div class=kb-ptop><div class=kb-prow><div><span class=kb-key>${escT(t.key)}</span><h2 class=kb-ptitle id=sk-tkd-t>${kbMd(t.title)}</h2></div>`+
+      `<button class=kb-x onclick=skTkClose() aria-label=Close title="Close (Esc)">×</button></div>`+
+    `<div class=kb-ctl><select class="kb-sel st" id=sk-tk-st aria-label=Status onchange="skTkSet({status:this.value})">${KB_COLS.map(c=>opt(c[0],c[1],t.status)).join('')}</select>`+
+      `<select class=kb-sel id=sk-tk-as aria-label=Assignee onchange="skTkSet({assignee:this.value})">${opt('','unassigned',t.assignee)}${names.map(n=>opt(n,n,t.assignee)).join('')}</select>`+
+      (t.level?`<span class=kb-badge title="Model level ${+t.level}">L${+t.level}</span>`:'')+(t.updated?`<span class=kb-when>updated ${escT(kbWhen(t.updated))}</span>`:'')+'</div>'+
+    (rs?`<div class=kb-rescope role=note><span aria-hidden=true>↻</span><div><b>Re-scoped</b> by ${escT(who(rs.by))} at ${escT(kbWhen(rs.ts))}</div></div>`:'')+'</div>'+
+    '<div class=kb-pbody>'+
+    (t.description?`<section><div class=sq-sub>Description</div><div class="kb-md kb-box kb-clip">${kbMd(t.description)}</div>`+
+      '<button class=kb-more data-l="Show all" aria-expanded=false onclick=kbMore(this)>Show all</button></section>':'')+
+    (deps.length?`<section><div class=sq-sub>Depends on</div><div class=kb-deps>${deps.map(x=>`<button class=kb-chip ${x.id?`onclick=skTkOpen(${+x.id})`:'disabled'}>`+
+      `<i style="background:${KB_DOT[x.status]||KB_DOT.open}"></i><span class=kb-key>${escT(x.key)}</span><span class=kb-ct>${escT(x.title)}</span><small>${escT(x.status)}</small></button>`).join('')}</div>`+
+      (wait?`<div class=kb-dep>Waiting on ${wait} ticket${wait>1?'s':''}</div>`:'')+'</section>':'')+
+    `<section><div class=sq-sub>Activity</div><ol class=kb-tl>${ev.map(item).join('')||'<li class=text-muted>No activity yet</li>'}</ol></section></div>`;
+}
+function kbMore(b){const o=b.previousElementSibling.classList.toggle('open'); b.textContent=o?'Show less':b.dataset.l; b.setAttribute('aria-expanded',o)}
+function skTkRender(force){            /* redraw only on change, never under an open select (unless forced) */
+  const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT), box=document.getElementById('sk-tkd-box'); if(!t)return;
+  const h=skTkHtml(t), a=document.activeElement, fid=a&&box.contains(a)?a.id:'';
+  if(h===box.dataset.h||(!force&&a&&a.tagName==='SELECT'&&fid))return;
+  const st=(box.querySelector('.kb-pbody')||{}).scrollTop||0;
+  box.dataset.h=h; box.innerHTML=h; box.querySelector('.kb-pbody').scrollTop=st;
+  box.querySelectorAll('.kb-clip').forEach(c=>{if(c.scrollHeight<=c.clientHeight+2){c.classList.remove('kb-clip');c.nextElementSibling.remove()}});
+  if(fid&&document.getElementById(fid))document.getElementById(fid).focus({preventScroll:true});
+}
+function skTkOpen(id){
+  const t=(SKB_D.b.tickets||[]).find(x=>+x.id===+id); if(!t)return;
+  if(SKT!==t.id){document.getElementById('sk-tk-c').value='';document.getElementById('sk-tk-msg').textContent=''}
+  document.querySelectorAll('#sk-board .kb-tk.cur').forEach(c=>c.classList.remove('cur'));
+  document.getElementById('sk-tkd').hidden=false; document.getElementById('s-squads').classList.add('kb-open');
+  SKT=t.id; document.getElementById('sk-tkd-box').dataset.h=''; skTkRender(true);      /* visible first: the clip check measures */
+  const c=document.querySelector(`#sk-board .kb-tk[data-id="${t.id}"]`); if(c){c.classList.add('cur');c.scrollIntoView({block:'nearest',inline:'nearest'})}
+  document.getElementById('sk-tk-st').focus({preventScroll:true});
 }
 function skTkClose(){
-  document.getElementById('sk-tkd').style.display='none';
-  const c=document.querySelector(`#sk-board .kb-tk[data-id="${SKT}"]`); if(c)c.focus(); SKT=0;
+  document.getElementById('sk-tkd').hidden=true; document.getElementById('s-squads').classList.remove('kb-open');
+  const c=document.querySelector(`#sk-board .kb-tk[data-id="${SKT}"]`); SKT=0; if(c){c.classList.remove('cur');c.focus()}
 }
-async function skTkSave(){
-  const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT); if(!t)return skTkClose();
-  const st=document.getElementById('sk-tk-st').value, as=document.getElementById('sk-tk-as').value, c=document.getElementById('sk-tk-c').value.trim(), ch={};
-  if(st!==t.status)ch.status=st; if(as!==t.assignee)ch.assignee=as; if(c)ch.comment=c;
-  if(!Object.keys(ch).length)return skTkClose();
-  const btn=document.getElementById('sk-tk-save'); btn.disabled=true;
-  const d=await skTk(t.id,ch); btn.disabled=false;
-  if(d.error){document.getElementById('sk-tk-msg').textContent='⚠️ '+d.error;return}
-  skMsg(d.note?t.key+': '+d.note:''); skTkClose(); SKB=''; skLoad();
+async function skTkSet(ch){             /* a header select: status / assignee, applied at once */
+  const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT); if(!t)return;
+  const d=await skTk(t.id,ch);
+  document.getElementById('sk-tk-msg').textContent=d.error?'⚠️ '+d.error:d.note?t.key+': '+d.note:'';
+  SKB=''; await skLoad(); skTkRender(true);
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('sk-tkd').style.display!=='none')skTkClose()});
+async function skTkSave(lead){          /* the comment (ticket comment), or "Ask lead" (a squad post: no addressee = the lead) */
+  const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT), el=document.getElementById('sk-tk-c'), c=el.value.trim(); if(!t||!c)return;
+  const btns=document.querySelectorAll('.kb-pfoot button'); btns.forEach(b=>b.disabled=true);
+  let d={};
+  if(lead){try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:`About ticket ${t.key} (id ${t.id}): ${c}`})})).json()}catch(e){d={error:'manager not reachable'}}}
+  else d=await skTk(t.id,{comment:c});
+  btns.forEach(b=>b.disabled=false);
+  document.getElementById('sk-tk-msg').textContent=d.error?'⚠️ '+d.error:lead?'sent to the lead':'';
+  if(d.error)return;
+  el.value=''; SKB=''; await skLoad(); skTkRender(true);
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.getElementById('sk-tkd').hidden)skTkClose()});
 function skChat(){const th=document.getElementById('sk-thread');th.scrollTop=th.scrollHeight;document.getElementById('sk-text').focus()}
 (()=>{
   const bd=document.getElementById('sk-board'), clr=()=>bd.querySelectorAll('.kb-col.drop').forEach(x=>x.classList.remove('drop'));

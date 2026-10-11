@@ -355,9 +355,13 @@ HTML_TOP = """</head><body>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
     </div>
   </div>
-  <div id=sk-tkd class=dialog-backdrop style="display:none" onclick="if(event.target===this)skTkClose()">
-    <div class="dialog kb-dlg" role=dialog aria-modal=true aria-labelledby=sk-tkd-t id=sk-tkd-box></div>
-  </div>
+  <aside id=sk-tkd class=kb-pane role=dialog aria-labelledby=sk-tkd-t hidden><div id=sk-tkd-box></div>
+    <div class=kb-pfoot><textarea class=input id=sk-tk-c rows=2 placeholder="Comment on this ticket …" aria-label=Comment
+      onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();skTkSave()}"></textarea>
+      <div class=kb-fr><span>Ctrl+Enter sends <span id=sk-tk-msg class=msg></span></span><span class=mrow style="margin:0">
+        <button class="btn btn-ghost btn-sm" onclick=skTkSave(1) title="Post it in the squad chat to the lead">Ask lead</button>
+        <button class="btn btn-primary btn-sm" onclick=skTkSave()>Comment</button></span></div></div>
+  </aside>
 </section>
 
 <section class="screen" id=s-waiting>
