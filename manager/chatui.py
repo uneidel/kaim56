@@ -559,7 +559,7 @@ function openChat(id){cur=convs.find(c=>c.id===id)||null;
   if(innerWidth<820)$('side').classList.add('hidden');
   if(cur){agent=cur.agent;$('agent').value=agent;refreshState()}
   if(cur&&cur.abranch===undefined)cur.abranch=(cur.msgs.length?(cur.msgs[cur.msgs.length-1].branch||0):0);
-  draw();drawConvs();branchUi()}
+  draw();drawConvs();branchUi();stickBottom()}
 function delChat(e,id){e.stopPropagation();
   TOMBS[id]=Date.now();saveTombs();
   convs=convs.filter(c=>c.id!==id);if(cur&&cur.id===id)cur=null;save();draw();drawConvs()}
@@ -642,6 +642,13 @@ function waitHtml(content){
   return `<span class=cursor></span><span class=text-muted style="font-size:12px;margin-left:8px">waiting for the model · ${s} s</span>`;
 }
 function scroll(){const l=$('log');l.scrollTop=l.scrollHeight}
+/* Opening a chat lands on the newest message: keep pinning the bottom while
+   the layout settles (side panel, fonts, code blocks) — until the user scrolls. */
+function stickBottom(){
+  const l=$('log'); scroll(); if(!window.ResizeObserver)return;
+  const ro=new ResizeObserver(()=>scroll()), stop=()=>{ro.disconnect();['wheel','touchstart','keydown'].forEach(e=>l.removeEventListener(e,stop))};
+  ro.observe($('msgs')); ro.observe(l); ['wheel','touchstart','keydown'].forEach(e=>l.addEventListener(e,stop,{passive:true})); setTimeout(stop,2500);
+}
 function atBottom(){const l=$('log');return l.scrollHeight-l.scrollTop-l.clientHeight<80}
 let pend=false;
 function paint(){                      /* streaming: only update the last block */
@@ -1167,9 +1174,9 @@ load();loadTombs();drawAgents();
    click (?i=<agent>): prefer the task chat, otherwise the most recent one. */
 (async()=>{
   await syncChats();
-  const last=convs.find(c=>c.id==='task-'+agent)
-    ||convs.filter(c=>c.agent===agent).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+  const last=convs.filter(c=>c.agent===agent||c.id==='task-'+agent).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];   /* the newest, task chat included */
   if(last&&!cur)openChat(last.id); else if(!cur){draw();drawConvs()}
+  stickBottom();
   chatSyncLoop();
 })();
 panelPaint();refreshState();gwLoad();setInterval(refreshState,15000);

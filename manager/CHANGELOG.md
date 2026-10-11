@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-11
+- Chat: opening an instance lands on its newest message (newest chat, bottom pinned while the layout settles).
 - Squads: members get a persistent disk, so the toolchains they install survive a restart.
 - VMs: write layer 8 GiB (was 1 GiB; a squad member filled it with Go + toolchains), persistent 16 GiB (was 4) — sparse, only used space costs.
 - Squads: board first — waiting cards (capped height) and the Kanban sit right under the header, composer + working line under the board, the chat below as a collapsible "Chat (N messages)" (closed by default, remembered per browser; the Chat button opens it; new squad/kickoff unchanged); fix: a pending merge proposal (no `members`) threw in skLoad and kept the board hidden — cards, waiting list, metrics and board now each fail alone (console.error).
