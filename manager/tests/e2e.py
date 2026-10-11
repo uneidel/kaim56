@@ -4347,6 +4347,75 @@ class ManagerFunctions(unittest.TestCase):
             restore()
 
     # ---- squads: a project's members talk, addressed members are woken ---------------
+    def test_projects_sync_brings_merged_work_to_the_other_writers(self):
+        """project_sync: the base merged INTO a writer's branch, its own unmerged
+        edit kept, the folder refilled in place; up to date is a no-op; a conflict
+        changes nothing and names the file. A merge syncs every OTHER writer (a
+        note each, nobody woken), a conflict wakes that writer and the lead. The
+        guest route serves writers of worktree projects only."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        pj, wt, sq = m._projects, m._projwt, m._squads
+        tmp = os.path.dirname(sq.SQUAD_DB)
+        old = m._mounts.AGENT_ROOT, wt.STAGE_ROOT, pj._spawn
+        try:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+            pj._spawn = lambda fn, *a: fn(*a)                                     # the thread, inline
+            repo, g = self._git_repo(tmp)
+            self.assertTrue(pj.upsert({"name": "wp", "strategy": "worktree",
+                                       "source": {"type": "host", "path": repo, "subdir": "apps/x"},
+                                       "members": {"a": "lead", "b": "writer", "c": "writer", "d": "reader"}}).get("ok"))
+            pj.set_squad("wp", sq.normalize_settings({"enabled": True, "approved": True})[0])
+            db, dc = wt.tree_dir("wp", "b"), wt.tree_dir("wp", "c")
+            def rd(f):
+                with open(os.path.join(dc, f)) as fh:
+                    return fh.read()
+            # up to date: nothing happens
+            tip = g("rev-parse", "proj/wp/c").strip()
+            r, st = pj.member_op("wp", "sync", "c")
+            self.assertEqual((st, r["commit"], r["note"].startswith("up to date")), (200, tip, True), r)
+            # b's work is merged: c gets it and keeps its own uncommitted edit; b is not synced
+            _wtext(os.path.join(dc, "mine.txt"), "c\n")
+            _wtext(os.path.join(db, "feat.txt"), "b\n")
+            ino, btip = os.stat(dc).st_ino, wt.snapshot(pj.get("wp"), "b")
+            r, st = pj.member_op("wp", "merge", "b")
+            self.assertEqual(st, 200, r)
+            self.assertEqual((rd("feat.txt"), rd("mine.txt"), os.stat(dc).st_ino), ("b\n", "c\n", ino))
+            self.assertEqual(len(g("log", "-1", "--format=%P", "proj/wp/c").split()), 2)   # c's work + the base
+            self.assertNotIn("mine.txt", g("ls-tree", "-r", "--name-only", "main"))       # the base untouched
+            self.assertEqual(g("rev-parse", "proj/wp/b").strip(), btip)
+            texts = [x["text"] for x in sq.read("wp")]
+            self.assertTrue(any(t.startswith("synced c to main@") for t in texts), texts)
+            self.assertFalse(any("synced b" in t for t in texts), texts)
+            self.assertEqual(woke, [])                                                    # a note wakes nobody
+            # conflict: c's folder and branch stay as they were, the file is named, c and the lead are woken
+            _wtext(os.path.join(dc, "file.txt"), "C\n")
+            _wtext(os.path.join(db, "file.txt"), "B\n")
+            ctip = wt.snapshot(pj.get("wp"), "c")
+            r, st = pj.member_op("wp", "merge", "b")
+            self.assertEqual(st, 200, r)
+            self.assertEqual((g("rev-parse", "proj/wp/c").strip(), rd("file.txt")), (ctip, "C\n"))
+            last = sq.read("wp")[-1]
+            self.assertIn("conflict in apps/x/file.txt", last["text"])
+            self.assertEqual(sorted(w[0] for w in woke), ["a", "c"])
+            r, st = pj.member_op("wp", "sync", "c")
+            self.assertEqual((st, r["conflicts"], g("rev-parse", "proj/wp/c").strip()), (409, ["apps/x/file.txt"], ctip))
+            # the guest route: lead and reader refused, the writer syncs itself
+            for ip in ("172.30.3.2", "172.30.6.2"):
+                h = self._post_handler("/api/project/sync", ip, b"{}"); h._do_POST()
+                self.assertEqual(self._status(h), 403, ip)
+                self.assertIn(b"no writer", h.wfile.getvalue())
+            h = self._post_handler("/api/project/sync", "172.30.5.2", b"{}"); h._do_POST()
+            self.assertEqual(self._status(h), 409, h.wfile.getvalue())
+            self.assertIn(b"apps/x/file.txt", h.wfile.getvalue())
+            _wtext(os.path.join(dc, "file.txt"), "B\n")                                  # c resolves
+            h = self._post_handler("/api/project/sync", "172.30.5.2", b"{}"); h._do_POST()
+            self.assertEqual(self._status(h), 200, h.wfile.getvalue())
+            self.assertEqual((rd("file.txt"), rd("mine.txt")), ("B\n", "c\n"))
+        finally:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT, pj._spawn = old
+            undo()
+
     def _squad_env(self):
         """Project 'sq' with members a (lead), b (writer), d (reader); c is no
         member. Guests by IP 172.30.<index>.2; wakes recorded, not queued."""
@@ -4632,6 +4701,11 @@ class ManagerFunctions(unittest.TestCase):
             m._projects.set_squad("sq", {**sq.settings(p()), "enabled": True, "max_wakes_per_hour": 20})
             self.assertEqual(sq.migrate_wakes_default(), 1)
             self.assertEqual(sq.settings(p())["max_wakes_per_hour"], 60)
+            # migration of the old reply depth: exactly 3 moves to 8, a chosen 5 stays
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_depth": 3})
+            self.assertEqual((sq.migrate_depth_default(), sq.settings(p())["max_depth"]), (1, 8))
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_depth": 5})
+            self.assertEqual((sq.migrate_depth_default(), sq.settings(p())["max_depth"]), (0, 5))
         finally:
             undo()
 
@@ -4833,8 +4907,8 @@ class ManagerFunctions(unittest.TestCase):
             m._llmproxy.used_today = lambda name: 600
             self.assertIn("budget: members used 1800", blocked(daily_token_budget=1000))
             m._llmproxy.used_today = lambda name: 0
-            tasks.append({"instance": "a", "status": "running", "squad": {"project": "sq", "depth": 3}})
-            self.assertIn("depth 4 > max_depth 3", blocked())
+            tasks.append({"instance": "a", "status": "running", "squad": {"project": "sq", "depth": 8}})
+            self.assertIn("depth 9 > max_depth 8", blocked())
             tasks[0]["squad"]["depth"] = 2
             self.assertEqual(blocked(), "")
             self.assertEqual(woke[-1][2], 3)                                              # the woken turn's depth

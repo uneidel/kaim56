@@ -194,6 +194,9 @@ if __name__ == "__main__":
         _squadmetrics.backfill()     # squad_events from the archive; per-file offsets, (kind, ref) dedupe: re-runs add nothing
         if _squads.migrate_wakes_default():
             print("[migrate] squads: old default 20 wakes/hour -> 60", flush=True)
+        n = _squads.migrate_depth_default()
+        if n:
+            print(f"[migrate] squads: {n} squad(s) reply depth 3 -> 8", flush=True)
         n = _squads.migrate_approval_default()
         if n:
             print(f"[migrate] squads: {n} squad(s) switched to 'no approvals by default'", flush=True)

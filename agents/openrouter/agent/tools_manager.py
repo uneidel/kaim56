@@ -618,6 +618,12 @@ def t_project_merge(project, member):
 
 
 
+def t_project_sync():
+    """Merge the project's base into this writer's folder (on the host)."""
+    d, err = _squad_call("/api/project/sync", {}, 180)
+    return err or f"{d.get('note') or 'synced'} ({d.get('commit', '')[:12]})"
+
+
 # ---- squads: the members of a project talk (mgr/squads.py) -----------------
 def _squad_line(m):
     st = (" — not delivered: " + m["blocked"]) if m.get("blocked") else ""

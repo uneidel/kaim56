@@ -779,6 +779,27 @@ def _rt_project_merge_guest(h):
     return h._json(r, st)
 
 
+@_routes.ROUTER.post("/api/project/sync")
+def _rt_project_sync_guest(h):
+    # A writer brings the base (the others' merged work) into its OWN folder only.
+    b = h._body() or {}
+    inst = h._guest()
+    if inst is None:
+        return h._json({"error": "guests only"}, 403)
+    if not _policy.tool_allowed(inst, "project_sync"):
+        return h._json({"error": "project_sync not allowed for this instance"}, 403)
+    want = str(b.get("project") or "").strip()
+    mine = [p["name"] for p, m in _projects.memberships(inst["name"])
+            if m.get("role") == "writer" and p.get("strategy") == "worktree" and (not want or p["name"] == want)]
+    if len(mine) != 1:
+        return h._json({"error": "you are no writer of a worktree project" + (f" {want!r}" if want else "")
+                        if not mine else "name the project: " + ", ".join(mine)}, 403 if not mine else 400)
+    r, st = _projects.member_op(mine[0], "sync", inst["name"])
+    if r.get("conflicts"):                 # the tools show only the error text
+        r = {**r, "error": f"{r['error']}; conflicting files: {', '.join(r['conflicts'])}"}
+    return h._json(r, st)
+
+
 # ---- squads: the members of a project talk (mgr/squads.py) ------------------
 def _squad_guest(h, tool, project):
     """(instance, project, '') for a member guest allowed `tool`, else (None, None, why)."""

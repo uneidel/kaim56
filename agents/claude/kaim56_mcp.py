@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, ask_human, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, ask_human, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host; project_sync: the base into your folder). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -223,6 +223,11 @@ def t_git_push_branch(name="", writer="", project=""):
     return f"Pushed {d.get('commit', '')[:12]} to {d.get('branch')} on {d.get('repo')}."
 
 
+def t_project_sync():
+    d = json.loads(_post("/api/project/sync", {}, 180))
+    return f"{d.get('note') or 'synced'} ({d.get('commit', '')[:12]})"
+
+
 def t_git_fetch(project=""):
     d = _git("fetch", {"project": project})
     return f"Fetched {d.get('repo')}: {d.get('refs')} branches in {d.get('namespace')} (base at {d.get('base') or '?'})."
@@ -391,6 +396,9 @@ TOOLS = {
         {"type": "object", "properties": {"name": {"type": "string", "description": "branch name part, default the project name"},
                                           "writer": {"type": "string", "description": "lead only: whose branch"},
                                           "project": _GPROJ}, "required": []}),
+    "project_sync": (_squad(t_project_sync),
+        "Bring the project's base branch (merged work of others) into your folder; your unmerged work is kept (committed first). On conflict nothing changes and the files are named.",
+        {"type": "object", "properties": {}, "required": []}),
     "git_fetch": (_squad(t_git_fetch),
         "Squad git: fetch the remote's branches into the project repo as refs/remotes/kaim56/*.",
         {"type": "object", "properties": {"project": _GPROJ}, "required": []}),
