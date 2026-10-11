@@ -5185,6 +5185,31 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         return woke, notes, undo2
 
+    def test_squad_reassign_or_restart_wakes_the_assignee(self):
+        """Re-assigning a ticket to the member who already holds it, or setting
+        it to doing, wakes that member (it used to be silent); a ticket that is
+        not ready says why nobody was woken; the assignee updating its own
+        ticket wakes nobody."""
+        m = self.m
+        woke, notes, undo = self._hq_env(approval_tools=[])
+        g, p = m._squadgate, lambda: m._projects.get("sq")
+        try:
+            ts = {t["key"]: t for t in g.tickets("sq")}
+            first = next(t for t in ts.values() if not t["depends_on"])
+            later = next(t for t in ts.values() if t["depends_on"])
+            del woke[:]
+            out, _ = g.update_ticket(p(), "a", first["id"], {"assignee": first["assignee"]}, lambda tk: "")
+            self.assertIn(first["key"], out["woke"]); self.assertEqual(woke[-1][0], first["assignee"])
+            n = len(woke)
+            out, _ = g.update_ticket(p(), "a", first["id"], {"status": "doing"}, lambda tk: "")
+            self.assertEqual(len(woke), n + 1)
+            out, _ = g.update_ticket(p(), first["assignee"], first["id"], {"status": "doing"}, lambda tk: "")
+            self.assertEqual(out["woke"], {})                                     # its own update
+            out, _ = g.update_ticket(p(), "a", later["id"], {"assignee": later["assignee"]}, lambda tk: "")
+            self.assertEqual(out["woke"], {}); self.assertIn("waiting for", out["note"])
+        finally:
+            undo()
+
     def test_squad_all_tickets_done_asks_the_lead_for_a_summary_once(self):
         """When the last ticket is done the lead is woken to write the user a
         final summary and the user gets a notification — once per ticket set;

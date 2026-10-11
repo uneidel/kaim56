@@ -965,8 +965,23 @@ def update_ticket(proj, who, tid, body, may, depth=1):
     now = [x for x in mine if _ready(x, mine)]
     wake = [x for x in now if x["key"] not in before
             or (x is t and assignee and assignee != old_assignee)]
+    # An explicit assign, or a status set to open/doing, by someone other than
+    # the assignee is a "go": wake the assignee even if it held the ticket
+    # already (live 2026-10-10: a lead re-assigned two tickets, nobody was woken,
+    # and the lead believed the team was working). Say plainly when nobody is.
+    explicit = bool(assignee) or status in ("open", "doing")
+    note = ""
+    if explicit and who != t["assignee"] and t not in wake:
+        if t in now:
+            wake.append(t)
+        else:
+            missing = [k for k in t["depends_on"] if k not in {x["key"] for x in mine if x["status"] == "done"}]
+            note = ("not woken: " + ("no assignee" if not t["assignee"] else "the ticket is done" if t["status"] == "done"
+                                     else f"waiting for {', '.join(missing)}" if missing else "not ready"))
     out = dict(t)
     out["woke"] = {x["key"]: _wake(proj, x, who, depth) or "woken" for x in wake}
+    if note:
+        out["note"] = note
     # A finished feature: refresh the code index (mgr/indexer.py; queued, never blocks).
     if t["status"] == "done" and old_status != "done" and _indexer.instance():
         out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
