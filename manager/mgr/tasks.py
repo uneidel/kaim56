@@ -35,6 +35,7 @@ from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 from mgr import store as _store
+from mgr import toolchain as _toolchain
 from mgr import util as _util
 from mgr import vm as _vm
 
@@ -688,6 +689,10 @@ def _task_worker():
                 _vm.image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
                 _util._wlog(f"image-sweep failed: {e!r}")
+            try:
+                _toolchain.sweep()         # squad toolchain layers: due builds, orphaned builders
+            except Exception as e:
+                _util._wlog(f"toolchain-sweep failed: {e!r}")
             _claudeaccts.poll_usage_bg()   # usage gauges, every 5 min, in a thread (never raises)
             try:
                 _squads.deliver_queued()   # rate/budget-held squad wakes, once there is room

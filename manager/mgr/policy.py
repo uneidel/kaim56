@@ -72,6 +72,8 @@ AGENT_TOOLS_CATALOG = [
     {"name": "squad_propose", "desc": "Squad lead: propose the plan (members, tickets) for approval"},
     {"name": "squad_request_member", "desc": "Squad lead: ask the user for one more member"},
     {"name": "squad_request_merge", "desc": "Squad lead: ask the user to merge a writer's branch"},
+    {"name": "toolchain_propose", "desc": "Squad lead: propose the shared toolchain (apt packages, install script, env) for approval"},
+    {"name": "toolchain_status", "desc": "Squad: what the shared toolchain layer holds (read-only)"},
     {"name": "ticket_list", "desc": "Squad: the project's tickets"},
     {"name": "ticket_create", "desc": "Squad lead: create a ticket (after approval)"},
     {"name": "ticket_assign", "desc": "Squad lead: assign a ticket (wakes the assignee)"},

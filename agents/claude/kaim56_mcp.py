@@ -4,7 +4,7 @@
 Claude Code has a native tool mechanism (MCP over stdio); curl recipes in the
 CLAUDE.md were the stopgap. This server turns the manager APIs into real,
 typed tools: memory_store, memory_recall, web_search, list_skills, load_skill,
-notify, ask_human, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge and ticket_*: plans the user approves, tickets; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host; project_sync: the base into your folder). The manager is the host gateway (.1 of the /30) on :8700 — guests only
+notify, ask_human, and the squad tools (squad_post/ask/read/members: the project channel; squad_catalog/squad_propose/request_member/request_merge/toolchain_propose and ticket_*: plans the user approves, tickets; toolchain_status: the shared toolchain; git_push_branch/git_fetch/pr_*/issue_*: the project's git remote, run on the host; project_sync: the base into your folder). The manager is the host gateway (.1 of the /30) on :8700 — guests only
 ever read/write their own memory, the manager decides by source IP.
 
 It also relays the instance's catalog MCPs (MCP_SERVERS): names come from
@@ -168,6 +168,33 @@ def t_squad_request_member(member, reason="", project=""):
 
 def t_squad_request_merge(writer, summary, project=""):
     return _proposed("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project})
+
+
+def t_toolchain_propose(apt=None, script="", env=None, reason="", project=""):
+    return _proposed("/api/squad/toolchain-propose", {"apt": apt or [], "script": script or "", "env": env or {},
+                                                     "reason": reason, "project": project})
+
+
+def toolchain_text(d):
+    """The squad's shared toolchain as a member reads it (shared wording with the Claude guest)."""
+    sp = d.get("spec") or {}
+    if not (sp.get("apt") or sp.get("script") or sp.get("env")):
+        return (f"Squad {d.get('project', '')}: no shared toolchain yet "
+                "(the lead proposes one with toolchain_propose; until then install what you need with sudo).")
+    out = [f"Squad {d.get('project', '')} toolchain v{d.get('version', 0)}: your VM "
+           + ("HAS it (read-only layer under your disk)." if d.get("active") else
+              "does NOT have it yet (it applies after a restart, once the layer for your image is ready)."),
+           "apt: " + (" ".join(sp.get("apt") or []) or "-"),
+           "env: " + (", ".join(f"{k}={v}" for k, v in (sp.get("env") or {}).items()) or "-"),
+           "layers: " + (", ".join(f"{t['template']} {t['state']}" + (f" (v{t['layer_version']})" if t.get("layer_version") else "")
+                                   for t in d.get("templates") or []) or "-")]
+    if sp.get("script"):
+        out += ["script:", sp["script"]]
+    return "\n".join(out)
+
+
+def t_toolchain_status(project=""):
+    return toolchain_text(json.loads(_get("/api/squad/toolchain?" + _q(project=project))))
 
 
 def _tline(t):
@@ -362,6 +389,16 @@ TOOLS = {
         "Lead only, after approval: ask the user for one more member (fields as in squad_propose).",
         {"type": "object", "properties": {"member": {"type": "object"}, "reason": {"type": "string"}, "project": _PROJ},
          "required": ["member"]}),
+    "toolchain_propose": (_squad(t_toolchain_propose),
+        "Lead only: propose the squad's SHARED toolchain — apt packages, an install script (runs as root after apt, e.g. an official tarball into /usr/local) and env (e.g. PATH=/usr/local/go/bin:$PATH). Describe it once here instead of every member installing it: after the user approves, the manager builds it in a throwaway VM and every member gets it as a read-only layer at its next restart. The whole spec each time (it replaces the current one).",
+        {"type": "object", "properties": {"apt": {"type": "array", "items": {"type": "string"}, "description": "Debian package names"},
+                                          "script": {"type": "string", "description": "shell, runs as root after apt (at most 8 KB)"},
+                                          "env": {"type": "object", "description": "NAME: value; $NAME / ${NAME} expand"},
+                                          "reason": {"type": "string"}, "project": _PROJ},
+         "required": []}),
+    "toolchain_status": (_squad(t_toolchain_status),
+        "What the squad's shared toolchain holds (apt packages, script, env) and whether your VM has it. Read-only.",
+        {"type": "object", "properties": {"project": _PROJ}, "required": []}),
     "squad_request_merge": (_squad(t_squad_request_merge),
         "Lead only: ask the user to merge a writer's branch; the user reviews the diff and approves.",
         {"type": "object", "properties": {"writer": {"type": "string"}, "summary": {"type": "string"}, "project": _PROJ},

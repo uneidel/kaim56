@@ -47,10 +47,16 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
             "approval_tools": [], "autonomy": "trusted",
-            "claude_account": ""}         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
+            "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
+            # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
+            "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
 AUTONOMY = ("trusted", "supervised")
 TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 ACCOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+PKG_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,62}$")       # a Debian package name
+ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,40}$")
+_ENV_REF = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
+TC_PKGS, TC_SCRIPT, TC_ENV, TC_ENV_VAL = 100, 8192, 50, 512
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
 KEEP = 500                      # messages kept per project
@@ -164,7 +170,49 @@ def normalize_settings(body, old=None):
         if bad or len(tools) > 50 or not isinstance(raw, (str, list)):
             return None, "approval_tools: up to 50 tool names (a-z 0-9 _)"
         s["approval_tools"] = tools
+    if "toolchain" in body:
+        tc, why = toolchain_spec(body["toolchain"])
+        if tc is None:
+            return None, why
+        if tc != s["toolchain"]:
+            s["toolchain"], s["toolchain_version"] = tc, int(s.get("toolchain_version") or 0) + 1
     return s, ""
+
+
+def toolchain_spec(raw):
+    """A squad's toolchain spec {apt, script, env} -> (spec, '') or (None, why).
+    Package names are Debian names (no shell metacharacter can pass), the
+    script is the operator-approved text (at most 8 KB), env values printable
+    with $NAME / ${NAME} as the only expansion (no ` or $(...): guest-init
+    sources the env file at every boot)."""
+    if not isinstance(raw, dict):
+        return None, "toolchain: an object {apt, script, env}"
+    apt = raw.get("apt") or []
+    apt = re.split(r"[,\s]+", apt) if isinstance(apt, str) else apt
+    if not isinstance(apt, list):
+        return None, "toolchain.apt: a list of package names"
+    apt = list(dict.fromkeys(str(x).strip() for x in apt if str(x).strip()))
+    bad = [x for x in apt if not PKG_RE.match(x)]
+    if bad:
+        return None, "toolchain.apt: not a package name: " + ", ".join(repr(x[:70]) for x in bad[:5])
+    if len(apt) > TC_PKGS:
+        return None, f"toolchain.apt: at most {TC_PKGS} packages"
+    script = raw.get("script") or ""
+    if not isinstance(script, str) or "\0" in script or len(script.replace("\r\n", "\n").encode()) > TC_SCRIPT:
+        return None, f"toolchain.script: text, at most {TC_SCRIPT} bytes"
+    env = raw.get("env") or {}
+    if not isinstance(env, dict) or len(env) > TC_ENV:
+        return None, f"toolchain.env: an object of at most {TC_ENV} variables"
+    out = {}
+    for k, v in env.items():
+        v = str(v) if isinstance(v, (str, int, float)) else None
+        if not ENV_KEY_RE.match(str(k)):
+            return None, f"toolchain.env: name {str(k)[:50]!r}: A-Z 0-9 _, starting with a letter"
+        if v is None or len(v) > TC_ENV_VAL or not v.isprintable() or "`" in v or "$" in _ENV_REF.sub("", v):
+            return None, (f"toolchain.env {k}: printable, at most {TC_ENV_VAL} characters; "
+                          "$NAME or ${NAME} is the only expansion (no ` or $(…))")
+        out[k] = v
+    return {"apt": apt, "script": script.replace("\r\n", "\n").strip("\n"), "env": dict(sorted(out.items()))}, ""
 
 
 def save_settings(name, s):

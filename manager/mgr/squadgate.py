@@ -20,6 +20,9 @@ A project's lead PROPOSES; only the operator's approval in the UI acts:
   already done, so approving again retries only what failed.
 - ``member``: one more member later (after the squad is approved).
 - ``merge``: a writer's branch to the project's base, by the existing merge path.
+- ``toolchain``: the squad's shared toolchain spec (apt packages, a root
+  script, env — mgr/toolchain.py); approving stores it as the squad setting
+  and starts the builder VM. One pending per project, revisable like a plan.
 
 Revising: the operator may "request changes" (a comment, plus the card's edits
 as a summary) instead of approve/reject -> status changes_requested; the lead
@@ -65,9 +68,10 @@ from mgr import router as _router
 from mgr import skills as _skills
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
+from mgr import toolchain as _toolchain
 
 GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
-KINDS = ("squad", "member", "merge")
+KINDS = ("squad", "member", "merge", "toolchain")
 STATUSES = ("open", "doing", "review", "done", "blocked")
 MEMBER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9-]{1,16}$")
@@ -79,13 +83,14 @@ MAX_COMMENTS = 100
 MAX_TICKET_VERSIONS = 5                # a ticket's earlier title/description (a re-scope), newest last
 MAX_VERSIONS = 10               # earlier versions a revised proposal keeps
 OPEN = ("pending", "changes_requested")      # not decided yet
-PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status")
+PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status", "toolchain")
 DIFF_FIELDS = ("role", "purpose", "persona", "skills", "model_tier", "model", "template")
 MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update", "ask_human", "project_sync",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
-                "issue_create", "issue_list", "issue_comment")   # git: only with a project remote, role-checked
+                "issue_create", "issue_list", "issue_comment",   # git: only with a project remote, role-checked
+                "toolchain_status")                              # read-only: what the shared toolchain layer holds
 LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
-              "project_status", "project_diff")   # a lead created here (the kickoff's architect)
+              "project_status", "project_diff", "toolchain_propose")   # a lead created here (the kickoff's architect)
 # The templates a squad member may use, with what the architect is told.
 MEMBER_TEMPLATES = {"openrouter": "API model via OpenRouter (512 MiB); counts against the squad's daily token budget",
                     "claude": "Claude Code on the user's subscription (1024 MiB); the tier picks haiku/sonnet/opus"}
@@ -97,7 +102,8 @@ PERSONA_PROMPT_MAX, PERSONA_DESC_MAX = 6000, 300
 LEAD_PERSONAS = {"code-architect", "orchestrator"}
 # Every member's system prompt: it is root in its VM (AGENT_SUDO=1), so it sets up what it needs.
 MEMBER_RULES = ("You have root in your VM via sudo: install the tools and toolchains you need "
-                "(sudo apt-get install, official tarballs) yourself; nobody provisions them for you. "
+                "(sudo apt-get install, official tarballs) yourself — but check toolchain_status first: the "
+                "squad's shared toolchain may have them already (the lead extends it with toolchain_propose). "
                 "Ask the human only when a decision is unclear, not for setup.")
 JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
 PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
@@ -418,17 +424,27 @@ def propose(proj, by, kind, body):
         if not summary:
             return None, "summary missing"
         prop.update(writer=writer, summary=summary)
+    elif kind == "toolchain":
+        spec, why = _squads.toolchain_spec({k: body.get(k) for k in ("apt", "script", "env")})
+        if not spec:
+            return None, why
+        if _toolchain.empty(spec):
+            return None, "an empty toolchain: give apt packages and/or a script"
+        cur = _squads.settings(proj)["toolchain"]
+        if spec == cur:
+            return None, "that is the squad's toolchain already (toolchain_status)"
+        prop.update(toolchain=spec, goal=_txt(body.get("reason"), 1000), spec_diff=toolchain_diff(cur, spec))
     else:
         return None, "unknown kind"
     same = next((p for p in pending if p.get("kind") == kind and kind != "merge"
-                 and (kind == "squad" or p["members"][0]["name"] == prop["members"][0]["name"])), None)
+                 and (kind in ("squad", "toolchain") or p["members"][0]["name"] == prop["members"][0]["name"])), None)
     if same and not same.get("revisable"):
-        what = "a squad proposal" if kind == "squad" else f"a proposal for {prop['members'][0]['name']}"
+        what = {"squad": "a squad proposal", "toolchain": "a toolchain proposal"}.get(kind) or f"a proposal for {prop['members'][0]['name']}"
         return None, (f"{what} ({same['id']}) is waiting for approval already — it can be revised "
                       "once the user asks for changes")
     if not same and len(pending) >= MAX_PENDING:
         return None, f"{MAX_PENDING} proposals are waiting already"
-    if kind != "merge":
+    if kind in ("squad", "member"):
         prop["profile"] = profile(proj)          # what the choices are based on (the card shows it)
     if same:                                     # the next version of the same proposal
         prop.update(id=same["id"], created=same["created"], updated=prop["created"],
@@ -436,7 +452,7 @@ def propose(proj, by, kind, body):
                     versions=((same.get("versions") or []) + [_snapshot(same)])[-MAX_VERSIONS:],
                     changes=diff(same, prop))
     _put(prop)
-    if kind != "merge" and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
+    if kind in ("squad", "member") and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
         _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval"
@@ -462,9 +478,26 @@ def _fmt(v):
     return repr(v[:200]) if v else "—"
 
 
+def toolchain_diff(old, new):
+    """What differs between two toolchain specs -> lines (the card, the versions)."""
+    old, new, out = old or {}, new or {}, []
+    oa, na = old.get("apt") or [], new.get("apt") or []
+    if [x for x in na if x not in oa]:
+        out.append("apt added: " + " ".join(x for x in na if x not in oa))
+    if [x for x in oa if x not in na]:
+        out.append("apt removed: " + " ".join(x for x in oa if x not in na))
+    if (old.get("script") or "") != (new.get("script") or ""):
+        out.append(f"script: {len((old.get('script') or '').splitlines())} -> {len((new.get('script') or '').splitlines())} lines")
+    oe, ne = old.get("env") or {}, new.get("env") or {}
+    out += [f"env {k}: {_fmt(oe.get(k))} -> {_fmt(ne.get(k))}" for k in sorted(set(oe) | set(ne)) if oe.get(k) != ne.get(k)]
+    return out
+
+
 def diff(old, new):
     """What differs from `old` to `new` (two plans) -> lines, for the card and the lead."""
     out = []
+    if old.get("toolchain") is not None or new.get("toolchain") is not None:
+        out += toolchain_diff(old.get("toolchain"), new.get("toolchain"))
     if (old.get("goal") or "") != (new.get("goal") or ""):
         out.append(f"goal: {_fmt(new.get('goal'))}")
     if old.get("budget_tokens_per_day") != new.get("budget_tokens_per_day"):
@@ -495,6 +528,10 @@ def _edited(proj, prop, edits):
     if prop["kind"] == "squad":
         return validate_squad(proj, prop["by"], {"goal": prop["goal"], **edits}, strict=False,
                               avoid={t["key"] for t in prop.get("tickets") or []})
+    if prop["kind"] == "toolchain":
+        spec, why = _squads.toolchain_spec(edits.get("toolchain") if "toolchain" in edits else prop["toolchain"])
+        return ({"toolchain": spec, "spec_diff": toolchain_diff(_squads.settings(proj)["toolchain"], spec)}, "") \
+            if spec else (None, why)
     warn = []
     m, why = _member((edits.get("members") or [None])[0], proj, prop["by"], warn, strict=False)
     return ({"members": [m], "warnings": warn}, "") if m else (None, why)
@@ -531,7 +568,7 @@ def request_changes(project, pid, who, comment, edits=None):
         _put(prop)
     _audit.audit_append(prop["by"], "squad_decision", f"{project} {prop['kind']} {pid}", True,
                         result=f"changes requested by {who}: {comment}"[:500])
-    tool = "squad_propose" if prop["kind"] == "squad" else "squad_request_member (same member)"
+    tool = _REVISE_TOOL[prop["kind"]]
     text = (f"Revise proposal {pid} (v{v}): {comment}"
             + (" The user already changed in the card: " + "; ".join(summary) + "." if summary else "")
             + f" Call {tool} again with the updated plan; it replaces this proposal as v{v + 1}.")
@@ -540,12 +577,16 @@ def request_changes(project, pid, who, comment, edits=None):
     return prop, ""
 
 
+_REVISE_TOOL = {"squad": "squad_propose", "member": "squad_request_member (same member)",
+                "toolchain": "toolchain_propose"}
+
+
 def revise_hint(proj):
     """The open proposals the lead may revise, as one line for its wake (a
     channel message from the operator) — '' when there is none."""
     ps = [p for p in proposals(proj["name"]) if p.get("status") in OPEN and p["kind"] != "merge"]
     return " ".join(f"(Proposal {p['id']} v{p.get('version', 1)} is waiting for approval: if this message asks for "
-                    f"changes, revise it with {'squad_propose' if p['kind'] == 'squad' else 'squad_request_member'} "
+                    f"changes, revise it with {_REVISE_TOOL[p['kind']].split(' ')[0]} "
                     f"— it becomes v{p.get('version', 1) + 1}.)" for p in ps)
 
 
@@ -588,7 +629,7 @@ def fill_suggestions(project, pid, only="", force=False):
     force ('Suggest again'): that member gets all three, whatever the score.
     Written only while the proposal is pending; the user approves."""
     prop = _get(project, pid)
-    if prop is None or prop.get("status") not in OPEN or prop["kind"] == "merge":
+    if prop is None or prop.get("status") not in OPEN or prop["kind"] not in ("squad", "member"):
         return None
     done = {}
     for m in prop["members"]:
@@ -800,6 +841,17 @@ def _run(prop, who):
                       "detail": (r.get("error") or r.get("note") or r.get("commit") or "merged") if isinstance(r, dict) else str(r)[:300]})
         if st == 200 and _indexer.instance():
             steps.append({"step": "reindex", "ok": True, "detail": _indexer.reindex(name, f"merge {prop['writer']}")})
+    elif prop["kind"] == "toolchain":
+        s, why = _squads.normalize_settings({"toolchain": prop["toolchain"]}, proj.get("squad"))
+        if s is None:
+            return [{"step": "toolchain spec", "ok": False, "detail": why}]
+        _squads.save_settings(name, s)
+        steps.append({"step": "toolchain spec", "ok": True, "detail": f"v{s['toolchain_version']}"})
+        try:
+            msg = _toolchain.ensure(_projects.get(name), who=who)
+        except Exception as e:
+            msg = f"error: {e!r}"[:300]
+        steps.append({"step": "toolchain build", "ok": not msg.startswith("error"), "detail": msg})
     else:
         for m in prop["members"]:
             _persona_for(m, steps)
@@ -853,7 +905,9 @@ def decide(project, pid, ok, who, note="", edits=None):
             if not f:
                 return None, why
             prop["edits"] = edits                 # what the operator changed (the archive keeps it)
-            prop.update(f, members=[_chose(m, "you", before.get(m["name"], {})) for m in f["members"]])
+            prop.update(f)
+            if "members" in f:
+                prop["members"] = [_chose(m, "you", before.get(m["name"], {})) for m in f["members"]]
         prop.pop("revisable", None)
         prop.update(status="approved" if ok else "rejected", decided=int(time.time()), decided_by=who, note=note)
         if ok:
@@ -863,7 +917,8 @@ def decide(project, pid, ok, who, note="", edits=None):
     _audit.audit_append(prop["by"], "squad_decision", f"{project} {prop['kind']} {pid}", ok and not failed,
                         err=", ".join(failed), result=f"{prop['status']} by {who}" + (f": {note}" if note else ""))
     lead_ = lead(_projects.get(project) or {}) or prop["by"]
-    what = {"squad": "squad plan", "member": "member request", "merge": f"merge of {prop.get('writer', '')}"}[prop["kind"]]
+    what = {"squad": "squad plan", "member": "member request", "merge": f"merge of {prop.get('writer', '')}",
+            "toolchain": "toolchain"}[prop["kind"]]
     text = (f"Your {what} ({pid}) was {prop['status']} by {who}." + (f" Note: {note}" if note else "")
             + (f" Steps not done: {', '.join(failed)}." if failed else "")
             + (" The members and tickets are set up — start them with ticket_assign or squad_post."

@@ -385,6 +385,8 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-item small{font-size:11px;color:var(--color-neutral-600)}
 .sk-chat{display:flex;flex-direction:column;min-width:0}
 .sk-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
+.sk-tc{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:4px 0}
+.sk-tc:empty{display:none}
 .sk-thread{overflow:auto;max-height:60vh;min-height:240px;display:grid;gap:8px;align-content:start;margin:12px 0}
 .sk-bub{padding:8px 10px;border-radius:8px;background:var(--app-bg);max-width:88%;overflow-wrap:anywhere}
 .sk-bub.me{justify-self:end;background:var(--app-chip)}

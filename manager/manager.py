@@ -25,7 +25,8 @@ else lives in mgr/, one concern per module:
     projects      one folder set joined by instances with a role (shared / worktree)
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
     squads        a project's members talk in one channel; addressed members are woken (guarded)
-    squadgate     the lead proposes (squad plan, member, merge), the user approves; tickets
+    squadgate     the lead proposes (squad plan, member, merge, toolchain), the user approves; tickets
+    toolchain     a squad's shared toolchain: built in a throwaway builder VM, attached read-only to members
     squadgit      a squad's git remote: push, fetch, PRs + issues host-side (token never in a VM)
     squadmetrics  one row per squad event in history.db (squad_events): turns, tokens, tickets, waits; backfilled from the archive
     hitlq         human in the loop: approvals, questions, reviews that wait for the operator
@@ -130,6 +131,7 @@ from mgr import squads as _squads            # noqa: F401
 from mgr import startup as _startup
 from mgr import store as _store
 from mgr import tasks as _tasks
+from mgr import toolchain as _toolchain        # noqa: F401
 from mgr import ui as _ui                    # noqa: F401
 from mgr import util as _util                # noqa: F401
 from mgr import vm as _vm                    # noqa: F401

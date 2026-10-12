@@ -433,7 +433,9 @@ def step_post(job):
             f"bash: ls/grep/cat). Then call squad_catalog. For each member choose "
             f"persona (or propose new_persona if none fits), skills from the catalog, model tier and template "
             f"(openrouter or claude), and a role. Then call squad_propose with the members, tickets with their "
-            f"dependencies, and a daily token budget (default {BUDGET}). Nothing else runs before I approve.")
+            f"dependencies, and a daily token budget (default {BUDGET}). If the members need tools beyond the image "
+            f"(compilers, SDKs, libraries), describe the shared toolchain (apt packages, install script) once with "
+            f"toolchain_propose instead of every member installing it. Nothing else runs before I approve.")
     m, why = _squads.post(_projects.get(job["name"]), "user:" + job["who"], [arch], text)
     if not m:
         raise Stop("posting the goal failed: " + why)

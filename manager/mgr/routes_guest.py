@@ -44,6 +44,7 @@ from mgr import signal as _signal_mod
 from mgr import skills as _skills
 from mgr import squadgate as _squadgate
 from mgr import squads as _squads
+from mgr import toolchain as _toolchain
 from mgr import store as _store
 from mgr import tasks as _tasks
 from mgr import ui as _ui
@@ -887,12 +888,14 @@ def _gate_guest(h, tool, project):
 
 _GATE_KIND = {"/api/squad/propose": ("squad_propose", "squad"),
               "/api/squad/request-member": ("squad_request_member", "member"),
-              "/api/squad/request-merge": ("squad_request_merge", "merge")}
+              "/api/squad/request-merge": ("squad_request_merge", "merge"),
+              "/api/squad/toolchain-propose": ("toolchain_propose", "toolchain")}
 
 
 @_routes.ROUTER.post("/api/squad/propose")
 @_routes.ROUTER.post("/api/squad/request-member")
 @_routes.ROUTER.post("/api/squad/request-merge")
+@_routes.ROUTER.post("/api/squad/toolchain-propose")
 def _rt_squad_propose(h):
     # The project's lead only; nothing happens until the user approves in the UI.
     tool, kind = _GATE_KIND[h.path.split("?", 1)[0]]
@@ -917,6 +920,17 @@ def _rt_squad_catalog(h):
     if err:
         return h._json({"error": err}, 403)
     return h._json({"project": p["name"], **_squadgate.catalog(p)})
+
+
+@_routes.ROUTER.get("/api/squad/toolchain")
+def _rt_squad_toolchain(h):
+    # Read-only, every member: the squad's toolchain spec and its layers (mgr/toolchain.py).
+    inst, p, err = _gate_guest(h, "toolchain_status", _routes._qs(h).get("project", [""])[0])
+    if err:
+        return h._json({"error": err}, 403)
+    st = _toolchain.status(p)
+    return h._json({"project": p["name"], "version": st["version"], "spec": st["spec"], "templates": st["templates"],
+                    "yours": _toolchain.base_of(inst), "active": bool(_toolchain.layer_for(inst))})
 
 
 @_routes.ROUTER.get("/api/squad/tickets")
