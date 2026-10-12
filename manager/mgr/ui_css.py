@@ -426,7 +426,7 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
   background:color-mix(in srgb,var(--color-warn) 8%,transparent);border:1px solid color-mix(in srgb,var(--color-warn) 35%,transparent)}
 .kb-prob[hidden]{display:none}.kb-ptx{flex:1;min-width:200px}.kb-ptx b{color:var(--color-warn);font-weight:600}
 .kb-mem{border:1px solid var(--app-line);border-radius:10px;overflow:hidden;margin:14px 0 4px}
-.kb-mh,.kb-mr{display:grid;grid-template-columns:minmax(150px,200px) minmax(0,1fr) minmax(240px,420px)}
+.kb-mh,.kb-mr{display:grid;grid-template-columns:minmax(140px,190px) minmax(200px,340px) minmax(0,1fr)}   /* the timeline gets the room */
 .kb-mh>span,.kb-mr>div{padding:8px 12px;min-width:0;display:flex;align-items:center;gap:9px}
 .kb-mr+.kb-mr{border-top:1px solid var(--app-line)}
 .kb-mh{background:var(--app-side);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-500)}
@@ -446,7 +446,7 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 .kb-live i:nth-child(2){animation-delay:.2s}.kb-live i:nth-child(3){animation-delay:.4s}
 @keyframes kbdot{0%,100%{opacity:.25}50%{opacity:1}}
 .kb-strip{position:relative;height:18px;width:100%;overflow:hidden;border-radius:3px;
-  background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--app-line) calc(25% - 1px),var(--app-line) 25%)}   /* grid = 30 min */
+  background:repeating-linear-gradient(90deg,transparent 0,transparent calc(16.6667% - 1px),var(--app-line) calc(16.6667% - 1px),var(--app-line) 16.6667%)}   /* grid = 1 h */
 .kb-b{position:absolute;top:3px;height:12px;border-radius:2px;background:var(--app-live);opacity:.85}
 .kb-b.f{background:var(--app-bad)}.kb-b.now{box-shadow:0 0 0 1px color-mix(in srgb,var(--app-live) 60%,transparent);animation:skpulse 1.6s infinite}
 .kb-m{position:absolute;top:6px;width:6px;height:6px;border-radius:50%;background:var(--color-accent-400)}

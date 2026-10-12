@@ -5449,7 +5449,7 @@ class ManagerFunctions(unittest.TestCase):
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
                   "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]",
                   # who does what: member rows with the 2 h strip, the problem line, blocked reasons
-                  "class=kb-mem", "<span>-2h</span><span>-1h</span><span>now</span>", "kb-strip", "id=sk-prob",
+                  "class=kb-mem", "<span>-6h</span><span>-3h</span><span>now</span>", "kb-strip", "id=sk-prob",
                   "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
                   "last turn failed", "starts when", "no ticket ready"):
             self.assertIn(s, page)
@@ -5485,7 +5485,7 @@ class ManagerFunctions(unittest.TestCase):
                       detail={"msg": msg["id"]})
             sm.record(sid, "turn_end", "task:td", now - 1800, member="d", outcome="ok", duration_ms=120000, detail={})
             sm.record(sid, "message", "m999", now - 1700, member="d")
-            sm.record(sid, "turn_end", "task:old", now - 9000, member="d", outcome="ok", duration_ms=1000, detail={})
+            sm.record(sid, "turn_end", "task:old", now - 25200, member="d", outcome="ok", duration_ms=1000, detail={})
             m._store.load_tasks = lambda: [{"instance": "e", "status": "running", "started": now - 30,
                                             "squad": {"project": "sq", "msg": msg["id"]}}]
             self.assertTrue(m._hitlq.ask("a", "Which DB?")[0])
@@ -5496,7 +5496,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((a["b"]["reason"], a["b"]["last_turn"]["ok"]), ("Not logged in · Please run /login", False))
             self.assertEqual((a["f"]["ticket"], a["f"]["dep"], a["f"]["reason"]), ("T2", "T1", "open"))
             self.assertEqual((a["e"]["ticket"], a["e"]["since"], a["a"]["reason"]), ("T1", now - 30, "Which DB?"))
-            self.assertEqual(a["d"]["strip"], [{"start": now - 1920, "end": now - 1800, "ok": True}])   # not the 2.5 h old one
+            self.assertEqual(a["d"]["strip"], [{"start": now - 1920, "end": now - 1800, "ok": True}])   # not the 7 h old one
             self.assertEqual((a["d"]["msgs"], a["d"]["last_turn"]["dur"]), ([now - 1700], 120))
             self.assertEqual(a["e"]["strip"][-1], {"start": now - 30, "end": 0, "ok": True})
             self.assertEqual((act["failed_members"], act["stalled_min"], act["queued"]), (1, None, 0))

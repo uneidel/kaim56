@@ -1725,7 +1725,7 @@ function skBoardRender(d,b,hq){
     const t=(k&&ts.find(x=>x.key===k))||ts.find(x=>x.assignee===w.member&&x.status==='doing');
     if(t&&!on[t.key])on[t.key]=w;
   });
-  const act=b.activity||{}, am=act.members||{}, t0=now-7200, px=x=>Math.max(0,Math.min(100,(x-t0)/72)).toFixed(1);
+  const act=b.activity||{}, am=act.members||{}, t0=now-21600, px=x=>Math.max(0,Math.min(100,(x-t0)/216)).toFixed(1);
   const hm=ts=>ts?new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}):'';
   const key=k=>k?`<span class=kb-key>${escT(k)}</span>`:'';
   const now1=a=>{        /* the "Now" cell: what the member does, or why not (mgr/squadkick.activity) */
@@ -1757,7 +1757,7 @@ function skBoardRender(d,b,hq){
   const bins=Array(12).fill(0); SKM.ev.forEach(e=>{const i=11-Math.floor((now-e.ts)/3600); if(i>=0&&i<12)bins[i]++});
   const mx=Math.max(1,...bins), sum=SKM.sum||{};
   const head=`<div class=kb-mem role=table aria-label="Who does what"><div class=kb-mh role=row><span role=columnheader>Member</span><span role=columnheader>Now</span>`+
-    `<span role=columnheader class=kb-axis><span>-2h</span><span>-1h</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
+    `<span role=columnheader class=kb-axis><span>-6h</span><span>-3h</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
     (n?`<span><b>${nd}/${n}</b> erledigt</span><span class=kb-pbar role=img aria-label="${nd} erledigt, ${ng} in Arbeit, ${n-nd-ng} offen"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
       :'<span>noch keine Tickets — sie kommen mit dem genehmigten Plan</span>')+
     `<span class=kb-spark title="Turns pro Stunde, letzte 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+
@@ -1785,7 +1785,7 @@ function skBoardRender(d,b,hq){
   const html=head+`<div class=kb-board>${cols}</div><div class=kb-legend><span><i style="background:var(--app-live)"></i>arbeitet gerade (Laufzeit)</span>`+
     '<span><i style="background:var(--color-warn)"></i>wartet (Abhängigkeit, Limit)</span><span><i style="background:var(--app-ask)"></i>fragt dich (Blocked)</span>'+
     '<span><i style="background:var(--color-neutral-500)"></i>ruht</span><span><i style="background:var(--app-bad)"></i>letzter Turn fehlgeschlagen</span>'+
-    '<span><i class=kb-lb></i>Turn · <i class="kb-lb f"></i>fehlgeschlagen · <i style="background:var(--color-accent-400)"></i>Nachricht (Raster 30 min)</span>'+
+    '<span><i class=kb-lb></i>Turn · <i class="kb-lb f"></i>fehlgeschlagen · <i style="background:var(--color-accent-400)"></i>Nachricht (Raster 1 h)</span>'+
     '<span>Klick auf eine Karte = Ticket, Kommentare, letzte Antwort · Ziehen = Status ändern</span></div>';
   el.hidden=false;
   if(html===SKB||SKB_DRAG)return;                       /* redraw only on change, never under a drag */

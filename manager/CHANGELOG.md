@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-12
+- Squads: the member timeline gets the room (6 h, hourly grid), the "Now" column is narrower.
 - Squads board: a member table says what each member does or why not (working + ticket + last tool, last turn failed + reason + retry, asks you, waiting for a dependency, idle) with a 2 h activity strip (turns, failed turns, messages); blocked cards show their reason; a problem line in the header (failed turns · blocked · waiting for you, "stalled N min") with Retry failed turns (`/squad/retry`, depth 0, guards apply) and Nudge lead (`/squad/nudge`).
 - Squads: "Not logged in" counts as a failed provider turn; after Restart members such a member's failed wake is re-delivered once.
 - Claude accounts: several subscriptions — Settings → Claude accounts stores a `claude setup-token` per account (0600, write-only); an instance (or a squad's `claude_account`) picks one with `CLAUDE_ACCOUNT` and its VM runs with `CLAUDE_CODE_OAUTH_TOKEN` instead of the host login (claude image rebuild needed). Usage gauges (5 h / week) per account in the sidebar and the card, polled every 5 min from `/api/oauth/usage`; an optional manager-owned login is refreshed for it, the host login never.
