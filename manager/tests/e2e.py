@@ -4735,6 +4735,42 @@ class ManagerFunctions(unittest.TestCase):
             m._instances.is_running, m._vm.stop, m._vm.start, m._tasks.threading.Thread = old
             undo()
 
+    def test_squad_idle_sweep_stops_idle_members_keeps_layer(self):
+        """An idle squad member with a persistent write layer stops after
+        SQUAD_IDLE_STOP s; busy (task or open turn), fresh, not persistent, not in
+        an enabled squad or switched off (0): left running."""
+        woke, tasks, undo = self._squad_env()
+        m, now, calls = self.m, 100000, []
+        d = tempfile.mkdtemp(prefix="e2e-idle-")
+        insts = [{"name": n, "persist_disk": n != "d", "template": "claude"} for n in ("a", "b", "d", "x")]
+        turns = {"a": [{"ts_start": now - 2000, "ts_end": now - 1900}], "b": [{"ts_start": now - 60, "ts_end": None}]}
+        old = (m._instances.load_instances, m._instances.is_running, m._instances.pidfile, m._vm.stop,
+               m._store.turns_read, m._tasks.SQUAD_IDLE_STOP)
+        m._instances.load_instances = lambda: insts
+        m._instances.is_running = lambda i: True
+        m._instances.pidfile = lambda i: os.path.join(d, i["name"] + ".pid")
+        m._vm.stop = lambda i: calls.append(i["name"])
+        m._store.turns_read = lambda n, limit=50, since=0: turns.get(n, [])
+        for n in ("a", "b", "d", "x"):
+            _wtext(os.path.join(d, n + ".pid"), "1")
+            os.utime(os.path.join(d, n + ".pid"), (now - 5000, now - 5000))
+        try:
+            m._tasks.SQUAD_IDLE_STOP = 900
+            self.assertEqual(m._tasks.squad_idle_sweep(now=now), ["a"])     # b: open turn, d: no layer, x: no squad
+            tasks.append({"id": "t1", "instance": "a", "status": "pending"})
+            self.assertEqual(m._tasks.squad_idle_sweep(now=now), [])        # a wake is queued for a
+            del tasks[:]
+            os.utime(os.path.join(d, "a.pid"), (now - 100, now - 100))
+            self.assertEqual(m._tasks.squad_idle_sweep(now=now), [])        # just started
+            m._tasks.SQUAD_IDLE_STOP = 0
+            self.assertEqual(m._tasks.squad_idle_sweep(now=now + 9999), [])
+            self.assertEqual(calls, ["a"])
+        finally:
+            (m._instances.load_instances, m._instances.is_running, m._instances.pidfile, m._vm.stop,
+             m._store.turns_read, m._tasks.SQUAD_IDLE_STOP) = old
+            shutil.rmtree(d, ignore_errors=True)
+            undo()
+
     def test_claude_guest_image_has_what_its_init_calls(self):
         """guest-init.sh fetches its mount list and the skills block with curl:
         the image must install it (live 2026-10-10: Claude members had no

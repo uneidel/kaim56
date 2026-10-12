@@ -28,6 +28,7 @@ from mgr import instances as _instances
 from mgr import memfs as _memfs
 from mgr import missions as _missions
 from mgr import notify as _notify
+from mgr import projects as _projects
 from mgr import router as _router
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
@@ -428,6 +429,44 @@ def _busy(name):
     return any(x.get("instance") == name and x.get("status") == "running" for x in _store.load_tasks())
 
 
+# ---- squad members sleep when idle: stop the VM, keep its write layer --------
+# A member VM holds its RAM (1 GiB each) while it waits for the next wake. After
+# SQUAD_IDLE_STOP s without a turn it is stopped — only one with a persistent
+# write layer (persist_disk): installs and files stay, the next wake starts it.
+SQUAD_IDLE_STOP = int(os.environ.get("SQUAD_IDLE_STOP", "900"))     # 0 = off
+_OPEN_TURN_MAX = 3600          # a turn without an end older than this was lost, not running
+
+
+def squad_idle_sweep(now=None):
+    """Task worker, every idle cycle -> the names it stopped."""
+    if SQUAD_IDLE_STOP <= 0:
+        return []
+    now = int(now or time.time())
+    members = {n for p in _projects.load() if _squads.settings(p)["enabled"] for n in (p.get("members") or {})}
+    tasks = _store.load_tasks()
+    out = []
+    for inst in _instances.load_instances():
+        n = inst["name"]
+        if n not in members or not inst.get("persist_disk") or inst.get("template") == "indexer" \
+                or any(t.get("instance") == n and t.get("status") in ("running", "pending") for t in tasks) \
+                or not _instances.is_running(inst):
+            continue
+        turns = _store.turns_read(n, 20, now - _OPEN_TURN_MAX)
+        if any(not t["ts_end"] for t in turns):
+            continue                    # a turn runs (a direct chat, too)
+        try:
+            up = os.path.getmtime(_instances.pidfile(inst))
+        except OSError:
+            continue
+        last = max([up] + [t["ts_end"] for t in turns])
+        if now - last < SQUAD_IDLE_STOP:
+            continue
+        _vm.stop(inst)
+        print(f"[squad] {n} idle {SQUAD_IDLE_STOP}s -> stopped (write layer kept)", flush=True)
+        out.append(n)
+    return out
+
+
 def _restart_now(name):
     with _restart_lock:
         _restart_after.discard(name)
@@ -702,6 +741,10 @@ def _task_worker():
                 _indexer.idle_sweep()      # the code indexer stops after 30 min unused
             except Exception as e:
                 _util._wlog(f"indexer-idle failed: {e!r}")
+            try:
+                squad_idle_sweep()         # idle squad members stop after 15 min, their write layer stays
+            except Exception as e:
+                _util._wlog(f"squad-idle failed: {e!r}")
 
 
 
