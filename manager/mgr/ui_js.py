@@ -1752,7 +1752,7 @@ function skBoardRender(d,b,hq){
   const now1=a=>{        /* the "Now" cell: what the member does, or why not (mgr/squadkick.activity) */
     const lt=a.last_turn, ltx=lt?`last turn ${hm(lt.ts)} · ${lt.ok?'ok':'failed'} · ${Math.max(1,Math.round(lt.dur/60))} min`:'no turn yet';
     if(a.state==='work')return [`<span class="kb-st work">working</span><span class=kb-live aria-hidden=true><i></i><i></i><i></i></span> ${key(a.ticket)} · <span class=kb-t>${kbMmss(Math.max(0,Math.round(now-a.since)))}</span>`,
-      a.tool?`<code class=kb-cmd title="${esc(a.tool)}">${escT(a.tool)}</code>`:`since ${hm(a.since)}`];
+      a.tool?`<code class=kb-cmd title="${esc(a.tool)}">${escT(a.tool)}</code>`:lt&&!lt.ok&&lt.error?`<span class=kb-why1 title="${esc(lt.error)}">previous turn failed: ${escT(lt.error)}</span>`:`since ${hm(a.since)}`];
     if(a.state==='err')return [`<span class="kb-st err">last turn failed</span> <span class=kb-why1>${escT(a.reason)}</span> <button class=kb-retry onclick="skRetryTurns('${esc(a.name)}')">retry</button>`,
       `${hm(a.since)}${a.ticket?' · was on '+key(a.ticket):''}`];
     if(a.state==='ask')return [`<span class="kb-st ask">asks you:</span> ${escT(a.reason)}`,a.ticket?`on ${key(a.ticket)} · answer in the cards above`:'answer in the cards above'];
@@ -1762,7 +1762,7 @@ function skBoardRender(d,b,hq){
   };
   const strip=a=>`<div class=kb-strip role=img aria-label="${esc(a.name)}: ${(a.strip||[]).length} turns, ${(a.msgs||[]).length} messages in 2 h">`+
     (a.strip||[]).filter(x=>(x.end||now)>t0).map(x=>{const l=px(x.start), r=px(x.end||now);
-      return `<i class="kb-b${x.end?'':' now'}${x.ok?'':' f'}" style="left:${l}%;width:${Math.max(.8,r-l).toFixed(1)}%"></i>`}).join('')+
+      return `<i class="kb-b${x.end?'':' now'}${x.ok?'':' f'}" style="left:${l}%;width:${Math.max(.8,r-l).toFixed(1)}%"${x.why?` title="${esc('failed: '+x.why)}"`:''}></i>`}).join('')+
     (a.msgs||[]).filter(x=>x>t0).map(x=>`<i class=kb-m style="left:calc(${px(x)}% - 3px)"></i>`).join('')+'<i class=kb-nowl></i></div>';
   const LBL={work:'working',wait:'waiting',err:'last turn failed',ask:'asks you',idle:'idle'};
   const team=(b.members||[]).filter(m=>am[m.name]).map(m=>{const a={...am[m.name],name:m.name}, s=a.state||'idle', [l1,l2]=now1(a);

@@ -5475,7 +5475,7 @@ class ManagerFunctions(unittest.TestCase):
                   # who does what: member rows with the 2 h strip, the problem line, blocked reasons
                   "class=kb-mem", "<span>-6h</span><span>-3h</span><span>now</span>", "kb-strip", "id=sk-prob",
                   "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
-                  "last turn failed", "starts when", "no ticket ready"):
+                  "last turn failed", "starts when", "no ticket ready", "previous turn failed: ", "esc('failed: '+x.why)"):
             self.assertIn(s, page)
         for s in ("skBoard()", "kb-dlg", "gestern", "Schließen", "kb-who"):
             self.assertNotIn(s, page)
@@ -5524,6 +5524,12 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((a["d"]["msgs"], a["d"]["last_turn"]["dur"]), ([now - 1700], 120))
             self.assertEqual(a["e"]["strip"][-1], {"start": now - 30, "end": 0, "ok": True})
             self.assertEqual((act["failed_members"], act["stalled_min"], act["queued"]), (1, None, 0))
+            self.assertEqual(a["b"]["strip"][0]["why"], "Not logged in · Please run /login")   # the red block's tooltip
+            # working again (a retry): the last failure stays visible next to "working"
+            m._store.load_tasks = lambda: [{"instance": "b", "status": "running", "started": now - 10,
+                                            "squad": {"project": "sq", "msg": msg["id"]}}]
+            b = self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["members"]["b"]
+            self.assertEqual((b["state"], b["last_turn"]["error"]), ("work", "Not logged in · Please run /login"))
             m._store.load_tasks = lambda: []
             self.assertEqual(self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["stalled_min"], 10)
             # retry: paused -> refused; running -> re-delivered at depth 0; then nothing left

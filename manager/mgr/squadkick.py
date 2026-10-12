@@ -41,6 +41,7 @@ Jobs live in memory (the last KEEP_JOBS). Part of the mgr package: no import
 from manager.py. Sibling modules are used as ``_name.func`` (module
 attribute), so a test can replace one definition in one place.
 """
+import json
 import os
 import pwd
 import re
@@ -491,6 +492,13 @@ def _tool(member, since):
     return _gateway.redact_secrets(line)[0][:90]
 
 
+def _why(member, msg, outcome):
+    """A failed turn's reason, one line: what its waking message recorded, else the outcome."""
+    m = _squads._get(msg) if str(msg or "").isdigit() else None
+    why = ((m or {}).get("failed") or {}).get(member) or outcome
+    return (str(why).strip().splitlines() or [""])[0][:120]
+
+
 def activity(proj, now=None):
     """Per member what it does or why not: {members: {name: {state work|wait|err|ask|idle,
     reason, ticket, dep, since, tool, template, last_turn, strip, msgs}}, failed_members,
@@ -525,19 +533,17 @@ def activity(proj, now=None):
             if w["state"] == "working":
                 a["tool"] = _tool(n, w["since"])
         elif lt and lt["outcome"] != "ok":
-            m = _squads._get(lt["msg"]) if str(lt["msg"] or "").isdigit() else None
-            why = ((m or {}).get("failed") or {}).get(n) or lt["outcome"]
-            a.update(state="err", reason=(str(why).strip().splitlines() or [""])[0][:120], since=lt["ts"],
-                     ticket=lt["ticket"] or a["ticket"])
+            a.update(state="err", reason=_why(n, lt["msg"], lt["outcome"]), since=lt["ts"], ticket=lt["ticket"] or a["ticket"])
         elif q:
             a.update(state="ask", reason=str(q.get("title") or "")[:120], since=int(q.get("created") or 0),
                      ticket=q.get("ticket") or a["ticket"])
         elif dep and not ready:
             a.update(state="wait", ticket=dep[0]["key"], dep=dep[1], reason=st.get(dep[1], "missing"))
-        if lt:
+        if lt:      # error also while a new turn runs: a retry loop must not hide why the last one failed
             a["last_turn"] = {"ts": lt["ts"], "ok": lt["outcome"] == "ok", "dur": int((lt["duration_ms"] or 0) / 1000),
-                              "error": a["reason"] if a["state"] == "err" else ""}
-        a["strip"] = [{"start": int(e["ts"] - (e["duration_ms"] or 0) / 1000), "end": e["ts"], "ok": e["outcome"] == "ok"}
+                              "error": a["reason"] if a["state"] == "err" else "" if lt["outcome"] == "ok" else _why(n, lt["msg"], lt["outcome"])}
+        a["strip"] = [{"start": int(e["ts"] - (e["duration_ms"] or 0) / 1000), "end": e["ts"], "ok": e["outcome"] == "ok",
+                       **({} if e["outcome"] == "ok" else {"why": _why(n, json.loads(e.get("detail") or "{}").get("msg"), e["outcome"])})}
                       for e in ev if e["kind"] == "turn_end" and e["member"] == n]
         if a["state"] == "work":
             a["strip"].append({"start": a["since"], "end": 0, "ok": True})     # the running turn

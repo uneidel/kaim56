@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-12
+- Squads board: a failed turn's reason stays visible — "previous turn failed: …" next to "working" while a retry runs, and as the tooltip of a red block in the timeline (activity `last_turn.error` also while working, strip `why`).
 - Squads board: Claude members show their live tool too — the PreToolUse hook (now for all tools) reports each call to `/api/audit` before it runs ("tool: target", 2 s timeout, errors ignored). Needs the Claude rootfs rebuilt.
 - Projects: the Squad panel keeps only the settings (members, index, git); proposals, tickets and the channel live only in Squads ("Board & chat in Squads →"); the ticket level (cost routing) is now a select in the Squads ticket panel.
 - Squads board: the remaining German labels (column empty states, summary, legend, sidebar pill, dependency hint) are English like the rest of the UI.
