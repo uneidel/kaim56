@@ -9660,6 +9660,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m._vm.guest_env(inst)["AGENT_EXPORT"], ws)
             self.assertEqual(m._vm.guest_env(inst)["MEMORY_DIR"], "/memory")
             self.assertEqual(m._vm.guest_env(inst)["GUEST_DNS"], m._netfw.GUEST_DNS)
+            self.assertEqual(m._vm.guest_env(inst)["WEB_TIMEOUT"], os.environ.get("TASK_TIMEOUT", "1800"))   # Claude bridge = worker
+            self.assertEqual(m._vm.guest_env({**inst, "config": {"WEB_TIMEOUT": "60"}})["WEB_TIMEOUT"], "60")
             # real mount_specs: absolute host paths as NFS subpaths, fsid slots 0..13 for folders
             m._mounts.mount_specs = old[5]
             sp = m._mounts.mount_specs({**inst, "index": 3, "template": "claude", "rootfs": "instances/claude-rootfs.ext4"})

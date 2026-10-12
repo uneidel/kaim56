@@ -241,6 +241,9 @@ def guest_env(inst):
     cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
     cfg.setdefault("TZ", _host.HOST_TZ)        # the agent's clock: [Now] line per turn
     cfg["GUEST_DNS"] = _netfw.GUEST_DNS         # guest-init writes resolv.conf from it (site.json, not the image)
+    # The Claude bridge's turn limit (its default 600 s) = the task worker's patience
+    # (tasks.TASK_TIMEOUT): a long squad turn was cut off at 10 min. An instance may set its own.
+    cfg.setdefault("WEB_TIMEOUT", os.environ.get("TASK_TIMEOUT", "1800"))
     cfg["AGENT_EXPORT"] = _mounts.workspace_dir(inst)   # its own workspace export, by absolute path
     if uses_harness(inst):
         cfg["MEMORY_DIR"] = "/memory"    # Markdown memory folder (mgr/memfs.py)

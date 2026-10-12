@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-12
+- Claude members: a turn may run as long as the task worker waits — the manager passes `WEB_TIMEOUT` = `TASK_TIMEOUT` (1800 s) to the guest; the bridge's 600 s default cut long squad turns off ("Zeitlimit (600s) erreicht"). Applies at the next VM start.
 - Squads: an idle member sleeps — after `SQUAD_IDLE_STOP` s (default 900, 0 = off) without a turn (no running/queued task, no open turn, not just started) the task worker stops its VM to free the RAM; only members with a persistent write layer (`persist_disk`), which stays; the next wake starts it again.
 - Squads board: a failed turn's reason stays visible — "previous turn failed: …" next to "working" while a retry runs, and as the tooltip of a red block in the timeline (activity `last_turn.error` also while working, strip `why`).
 - Squads board: Claude members show their live tool too — the PreToolUse hook (now for all tools) reports each call to `/api/audit` before it runs ("tool: target", 2 s timeout, errors ignored). Needs the Claude rootfs rebuilt.
