@@ -12154,7 +12154,8 @@ class ClaudeGuest(unittest.TestCase):
     def test_claude_hitl_hook_and_ask_human(self):
         """kaim56_mcp.py --hook (Claude Code PreToolUse): in a squad, risky Bash and
         listed kaim56 tools are denied with "waiting for approval <id>"; approved,
-        other tools, no squad or no manager: allowed. ask_human is an MCP tool. The
+        other tools, no squad or no manager: allowed; every call is reported to
+        /api/audit first (the board's live tool). ask_human is an MCP tool. The
         guest-init block merges the hook into settings.json once, keeping the rest."""
         import subprocess as sp
         src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py")
@@ -12171,6 +12172,10 @@ class ClaudeGuest(unittest.TestCase):
         self.assertEqual((d["hookEventName"], d["permissionDecision"]), ("PreToolUse", "deny"))
         self.assertEqual(d["permissionDecisionReason"], "waiting for approval abcabcabcabc — end your turn; you will be woken with the decision")
         self.assertEqual(sent[-1], ("/api/hitl", {"tool": "bash", "target": "curl x", "async": True}))
+        self.assertEqual(sent[-2], ("/api/audit", {"tool": "bash", "target": "curl x", "ok": True, "result": "started"}))
+        n = len(sent)
+        self.assertEqual((km.hook(io.StringIO(json.dumps(ev("Read", {"file_path": "/w/a.go"}))), out), len(sent)), (0, n + 1))
+        self.assertEqual(sent[-1], ("/api/audit", {"tool": "Read", "target": "/w/a.go", "ok": True, "result": "started"}))
         self.assertTrue(km.hook_decision(ev("mcp__kaim56__pr_create", {"title": "t"})))
         self.assertEqual(sent[-1][1]["tool"], "pr_create")
         n = len(sent)
@@ -12206,7 +12211,7 @@ class ClaudeGuest(unittest.TestCase):
         got = _readj(st)
         self.assertEqual(got["model"], "opus")
         pre = got["hooks"]["PreToolUse"]
-        self.assertEqual([h["matcher"] for h in pre], ["Write", "Bash|mcp__kaim56__.*"])
+        self.assertEqual([h["matcher"] for h in pre], ["Write", "*"])
         self.assertEqual(pre[1]["hooks"][0]["command"], "python3 /app/kaim56_mcp.py --hook")
         os.remove(st); run()
         self.assertEqual(len(_readj(st)["hooks"]["PreToolUse"]), 1)

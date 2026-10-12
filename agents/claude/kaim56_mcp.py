@@ -531,6 +531,7 @@ def call_hub(name, args):
 # denied with "waiting for approval <id>" until the operator decides — the
 # decision wakes the member, and the same call then goes through once.
 # Manager unreachable / not in a squad: allowed (as the openrouter agent).
+# Every call is also reported first (hook_report), so the board shows it live.
 def hook_decision(event):
     """'' = allow, else the reason to block."""
     name = str(event.get("tool_name") or "")
@@ -554,12 +555,28 @@ def hook_decision(event):
     return f"waiting for approval {d['id']} — end your turn; you will be woken with the decision"
 
 
+def hook_report(event):
+    """Every tool call, before it runs, into the instance's audit trail: the Squads board
+    shows it live as "tool: target" (mgr/squadkick._tool), like the OpenRouter agent's."""
+    name, args = str(event.get("tool_name") or ""), event.get("tool_input") or {}
+    if not name or not isinstance(args, dict):
+        return
+    tool = "bash" if name == "Bash" else name[len("mcp__kaim56__"):] if name.startswith("mcp__kaim56__") else name
+    target = next((str(args[k]) for k in ("command", "file_path", "pattern", "url", "path", "description") if args.get(k)), "")
+    try:
+        _post("/api/audit", {"tool": tool, "target": target[:200], "ok": True, "result": "started"}, timeout=2)
+    except Exception:
+        pass
+
+
 def hook(stdin, stdout):
     try:
         event = json.load(stdin)
     except ValueError:
         return 0
-    why = hook_decision(event if isinstance(event, dict) else {})
+    event = event if isinstance(event, dict) else {}
+    hook_report(event)
+    why = hook_decision(event)
     if why:
         stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                         "permissionDecisionReason": why}}))

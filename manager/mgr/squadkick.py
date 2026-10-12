@@ -483,7 +483,7 @@ _TICKET = re.compile(r"Ticket (\S{1,32}) \(id \d+\) is yours")
 
 def _tool(member, since):
     """The member's latest tool call in this turn (its audit trail: the OpenRouter agent
-    reports each call; Claude Code reports none) -> "tool: target", short, no secrets."""
+    reports each call after it, Claude Code before it via the PreToolUse hook) -> "tool: target", short, no secrets."""
     a = next((x for x in _audit.audit_read(member, 20) if int(x.get("ts") or 0) >= since), None)
     if not a:
         return ""

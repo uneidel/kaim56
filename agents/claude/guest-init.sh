@@ -193,7 +193,8 @@ PY
   unset CLAUDE_TOK
 fi
 
-# Human in the loop: a PreToolUse hook in Claude Code's user settings asks the
+# Human in the loop: a PreToolUse hook in Claude Code's user settings (all tools:
+# each call is reported to the audit trail for the Squads board) asks the
 # manager before risky Bash commands and the kaim56 git/PR/issue tools of a
 # squad member (kaim56_mcp.py --hook; mgr/hitlq.py). Merged into an existing
 # settings.json at every boot, never piled up. (tests/e2e.py runs this block.)
@@ -209,7 +210,7 @@ except (OSError, ValueError):
 d = d if isinstance(d, dict) else {}
 hooks = d.get("hooks") if isinstance(d.get("hooks"), dict) else {}
 pre = [h for h in hooks.get("PreToolUse") or [] if cmd not in json.dumps(h)]
-pre.append({"matcher": "Bash|mcp__kaim56__.*", "hooks": [{"type": "command", "command": cmd, "timeout": 30}]})
+pre.append({"matcher": "*", "hooks": [{"type": "command", "command": cmd, "timeout": 30}]})
 hooks["PreToolUse"] = pre
 d["hooks"] = hooks
 with open(p, "w") as fh:
