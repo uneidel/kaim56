@@ -344,6 +344,7 @@ HTML_TOP = """</head><body>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
       <div id=sk-prob class=kb-prob role=status hidden></div>
+      <div id=sk-tc class=sk-tc aria-live=polite></div>
       <div id=sk-cards></div>
       <div id=sk-board hidden aria-label="Squad board"></div>
       <div id=sk-working aria-live=polite></div>
@@ -699,7 +700,9 @@ HTML_BOTTOM = """
   <p class=card-body>One concern per module in <code>mgr/</code>; manager.py is only the composition root (imports, wiring, main). The security boundaries are their own short files: <code>auth</code> (login: Basic, or OIDC sessions from <code>oidc</code>/<code>sessions</code> with roles admin|user &#8212; a user gets only the routes in its table, default deny), <code>guests</code> (a VM is its source IP; what it may reach), <code>secrets</code>, <code>policy</code> (tool gating), <code>llmproxy</code> (keys never enter a VM), <code>guestproxy</code> (admin&#8594;VM relays), <code>netfw</code> (egress; opt-in host firewall <code>HOST_FIREWALL</code>), <code>mounts</code> (NFS), and the HTTP surface split by who may call it: <code>routes_guest</code> vs <code>routes_admin</code>. The route table (<code>mgr/routes.py</code>): exact paths beat prefixes, every route carries whether a guest VM may call it, the inventory is enumerable for audits. mgr modules never import back (no cycles); siblings are used as modules. Single-file Python service (stdlib only), runs as root under systemd
   (<code>kaim56</code>), listens on :8700 behind Traefik basicAuth. Serves the admin UI,
   the chat UI (<code>chatui.py</code>), and every API. Creates/starts/stops microVMs (openrouter rootfs boots as a shared read-only base +
-  per-instance overlay upper &#8212; optionally persistent, so installs survive restarts), sets up
+  per-instance overlay upper &#8212; optionally persistent, so installs survive restarts; a squad's shared toolchain
+  (<code>mgr/toolchain.py</code>: apt packages + a root script, built in a throwaway builder VM without secrets or mounts) is a third,
+  read-only layer in between: base &lt; toolchain &lt; upper), sets up
   tap devices and NAT, builds per-instance config disks, proxies requests into the guests
   (<code>/i/&#8249;name&#8250;/&#8230;</code>), and is the only component that guests can talk to.
   Guest requests are identified by source IP (a per-tap anti-spoof rule pins it); writes from
@@ -1180,6 +1183,24 @@ HTML_BOTTOM = """
       <button class="btn btn-secondary" onclick=pjDlgClose()>Close</button>
       <button class="btn btn-secondary" onclick=pjDiscard()>Discard</button>
       <button class="btn btn-primary" onclick=pjMerge()>Merge into base</button>
+    </div>
+  </div>
+</div>
+
+<div id=tcdlg class=dialog-backdrop style="display:none">
+  <div class="dialog blueprint" style="width:min(860px,100%)">
+    <div class=dialog-title>Toolchain — <span id=tcdlgname class=mono style="font-size:16px"></span></div>
+    <div id=tcdlg-edit class=dialog-body>
+      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">One read-only layer for every member, built in a throwaway VM (no secrets, no mounts) — saving starts the build; members use it after Restart members.</p>
+      <label for=tc-apt>apt packages <span class=text-muted>(space separated)</span></label><input class="input mono" id=tc-apt placeholder="golang-go gcc libgl1-mesa-dev">
+      <label for=tc-script style="margin-top:8px;display:block">Script <span class=text-muted>(root, after apt; at most 8 KB)</span></label><textarea class="input mono" id=tc-script rows=10 placeholder="curl -fsSL https://go.dev/dl/go1.23.4.linux-amd64.tar.gz | tar -C /usr/local -xz"></textarea>
+      <label for=tc-env style="margin-top:8px;display:block">Env <span class=text-muted>(NAME=value per line; $NAME expands)</span></label><textarea class="input mono" id=tc-env rows=3 placeholder="PATH=/usr/local/go/bin:$PATH"></textarea>
+    </div>
+    <pre id=tcdlglog class=mono hidden style="max-height:60vh;overflow:auto;font-size:12px;line-height:1.45;margin:0;padding:10px;background:var(--color-neutral-100);white-space:pre-wrap"></pre>
+    <div class=dialog-actions>
+      <span id=tcdlgmsg class=msg style="margin-right:auto"></span>
+      <button class="btn btn-secondary" onclick=tcClose()>Close</button>
+      <button class="btn btn-primary" id=tc-save onclick=tcSave()>Save &amp; build</button>
     </div>
   </div>
 </div>

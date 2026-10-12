@@ -184,6 +184,7 @@ Per-client details live next to the code: `app/README.md`, `voice-client/README.
 - **Missions**: multi-step plans that survive resets and restarts; steps are delegated to whichever instance has the tools, completions advance the mission event-driven.
 - **Orchestrator**: an instance that routes work with `create_task` instead of doing it, sees the inbox of user messages, and prunes its own queue.
 - **Sub-agents**: ephemeral VMs for a bounded job, capped in number.
+- **Squad toolchain**: a squad's tools (apt packages, an install script, env) are built once per base image in a throwaway VM and attached read-only under every member's disk — no member installs the same compiler again.
 - **Skills from experience**: after a long successful turn the agent proposes a skill; the Skills tab shows proposals for approval.
 
 ### Traces and observability

@@ -1655,6 +1655,30 @@ class AgentSquad(unittest.TestCase):
                   "ticket_list", "ticket_update", "ticket_create", "ticket_assign"):
             self.assertIn(t, a._tools.BUILTIN)
 
+    def test_toolchain_tools(self):
+        """toolchain_propose posts the spec to the gate (the user approves first);
+        toolchain_status lists it and says whether this VM has the layer."""
+        a = _load("agent_tc_e2e", AGENT_PATH, {"CLAUDE_WORKDIR": tempfile.mkdtemp(prefix="e2e-tc-"),
+                                               "OPENROUTER_API_KEY": "dummy"})
+        tm, c = a._tools_manager, a._mgrclient
+        sent = []
+        c._manager_base = lambda: "http://mgr"
+        c._mgr = lambda base, path, payload=None, timeout=60: (sent.append((path, payload)), json.dumps(
+            {"id": "p9", "project": "sq", "kind": "toolchain", "status": "pending"}))[1]
+        out = tm.t_toolchain_propose(["golang-go"], "go version", {"GOFLAGS": "-mod=mod"}, "Go for all")
+        self.assertEqual(sent[-1], ("/api/squad/toolchain-propose", {"apt": ["golang-go"], "script": "go version",
+                                    "env": {"GOFLAGS": "-mod=mod"}, "reason": "Go for all", "project": ""}))
+        self.assertIn("waiting for the user's approval", out)
+        c._mgr_get = lambda base, path, timeout=30: json.dumps({"project": "sq", "version": 2, "active": True,
+            "spec": {"apt": ["gcc"], "script": "", "env": {"CC": "gcc"}}, "templates": [{"template": "openrouter", "state": "ready", "layer_version": 2}]})
+        st = tm.t_toolchain_status()
+        for x in ("toolchain v2", "HAS it", "apt: gcc", "env: CC=gcc", "openrouter ready (v2)"):
+            self.assertIn(x, st)
+        c._mgr_get = lambda base, path, timeout=30: json.dumps({"project": "sq", "spec": {"apt": [], "script": "", "env": {}}})
+        self.assertIn("no shared toolchain yet", tm.t_toolchain_status())
+        for t in ("toolchain_propose", "toolchain_status"):
+            self.assertIn(t, a._tools.BUILTIN)
+
 
     def test_squad_catalog_tool(self):
         """squad_catalog GETs /api/squad/catalog and lists what a lead picks
@@ -6153,6 +6177,286 @@ class ManagerFunctions(unittest.TestCase):
             st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True})
             self.assertEqual((st, merges, p["steps"][0]["ok"], p["steps"][0]["detail"]),
                              (200, [("sq", "merge", "b")], True, "abc123"))
+        finally:
+            undo()
+
+    # ---- squad toolchain layer (mgr/toolchain.py) ----
+    def test_toolchain_spec_validation_and_version(self):
+        """Package names, script size, env names/values are checked; a changed
+        spec bumps toolchain_version, the same spec (or none in the body) does not."""
+        sq = self.m._squads
+        ok, why = sq.toolchain_spec({"apt": "golang-go, g++  libgl1-mesa-dev golang-go", "script": "echo hi\r\n",
+                                     "env": {"PATH": "/usr/local/go/bin:$PATH", "GOROOT": "${HOME}/go", "N": 3}})
+        self.assertEqual(why, "")
+        self.assertEqual(ok, {"apt": ["golang-go", "g++", "libgl1-mesa-dev"], "script": "echo hi",
+                              "env": {"GOROOT": "${HOME}/go", "N": "3", "PATH": "/usr/local/go/bin:$PATH"}})
+        bad = [({"apt": ["rm -rf /"]}, "not a package name"), ({"apt": ["Foo"]}, "not a package name"),
+               ({"apt": ["a;b"]}, "not a package name"), ({"apt": ["$(id)"]}, "not a package name"),
+               ({"apt": ["-y"]}, "not a package name"), ({"apt": [f"p{i}" for i in range(101)]}, "at most 100"),
+               ({"apt": 5}, "a list"), ({"script": "x" * 8193}, "8192 bytes"), ({"script": "a\0b"}, "8192 bytes"),
+               ({"env": {"path": "x"}}, "A-Z 0-9 _"), ({"env": {"1X": "x"}}, "A-Z 0-9 _"),
+               ({"env": {"X": "a\nb"}}, "printable"), ({"env": {"X": "`id`"}}, "printable"),
+               ({"env": {"X": "$(id)"}}, "printable"), ({"env": {"X": "${X:-$(id)}"}}, "printable"),
+               ({"env": {"X": "x" * 513}}, "printable"), ({"env": {"X": ["a"]}}, "printable"),
+               ({"env": {f"K{i}": "v" for i in range(51)}}, "at most 50"), ("apt", "an object")]
+        for raw, want in bad:
+            spec, why = sq.toolchain_spec(raw)
+            self.assertIsNone(spec, raw); self.assertIn(want, why, raw)
+        self.assertEqual(sq.settings({})["toolchain_version"], 0)
+        s1 = sq.normalize_settings({"toolchain": {"apt": ["gcc"]}})[0]
+        self.assertEqual((s1["toolchain"]["apt"], s1["toolchain_version"]), (["gcc"], 1))
+        self.assertEqual(sq.normalize_settings({"toolchain": {"apt": ["gcc"]}}, s1)[0]["toolchain_version"], 1)   # same spec
+        self.assertEqual(sq.normalize_settings({"paused": True}, s1)[0]["toolchain"]["apt"], ["gcc"])          # kept
+        self.assertEqual(sq.normalize_settings({"toolchain": {"apt": ["gcc", "make"]}}, s1)[0]["toolchain_version"], 2)
+        self.assertIn("not a package name", sq.normalize_settings({"toolchain": {"apt": ["x y"]}}, s1)[1])
+
+    def test_toolchain_script_generation(self):
+        """toolchain.sh: set -e, apt update/install (names shell-quoted), the
+        squad's script, clean, lists removed, env file + profile.d, the marker
+        — in that order; the env file is valid sh where only $NAME expands."""
+        import subprocess
+        tc = self.m._toolchain
+        spec = {"apt": ["gcc", "g++", "a b"], "script": "echo hi", "env": {"PATH": "/opt/go/bin:$PATH", "Q": 'a"b\\c', "R": "${HOME}/x"}}
+        sh = tc.build_script(spec, 3)
+        order = ["set -e", "apt-get update", "apt-get install -y --no-install-recommends gcc g++ 'a b'",
+                 "bash -e /config/toolchain-user.sh", "apt-get clean", "rm -rf /var/lib/apt/lists/*",
+                 f"cat > {tc.ENV_FILE} <<'KAIM56_ENV'", 'export PATH="/opt/go/bin:$PATH"', "\nKAIM56_ENV\n",
+                 f"cp {tc.ENV_FILE} {tc.PROFILE_FILE}", "echo v3 > /.kaim56-toolchain-ok"]
+        pos = [sh.index(x) for x in order]
+        self.assertEqual(pos, sorted(pos), sh)
+        self.assertEqual(subprocess.run(["sh", "-n"], input=sh, text=True).returncode, 0)
+        self.assertNotIn("bash -e", tc.build_script({"apt": ["gcc"], "script": " ", "env": {}}, 1))
+        self.assertNotIn("apt-get install", tc.build_script({"apt": [], "script": "true", "env": {}}, 1))
+        env = os.path.join(tempfile.mkdtemp(prefix="e2e-tcenv-"), "env")
+        with open(env, "w") as fh:
+            fh.write(tc.env_text(spec["env"]))
+        out = subprocess.run(["sh", "-c", f'. {env}; printf "%s|%s|%s" "$PATH" "$Q" "$R"'], text=True, capture_output=True,
+                             env={"PATH": "/usr/bin:/bin", "HOME": "/h"}).stdout
+        self.assertEqual(out, '/opt/go/bin:/usr/bin:/bin|a"b\\c|/h/x')
+        self.assertEqual(tc.result("boot\nKAIM56_TOOLCHAIN_RESULT=ok\nKAIM56_TOOLCHAIN_RESULT=fail rc=2\n"), "fail rc=2")
+        self.assertEqual(tc.result("no verdict"), "")
+        with self.assertRaises(ValueError):
+            tc.layer_path("../etc", "claude", 1)
+        with self.assertRaises(ValueError):
+            tc.layer_path("a" * 16, "../x", 1)
+
+    def test_toolchain_propose_card_approve_builds(self):
+        """The lead proposes (members may not; a bad spec is refused; one
+        pending), the card carries the diff, the operator's edit is what is
+        approved: the spec lands in the squad settings (v1) and the build is
+        started; members read it with toolchain_status."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, B, C, L = "172.30.3.2", "172.30.4.2", "172.30.5.2", "127.0.0.1"
+        tc, spawned = m._toolchain, []
+        old = (tc._spawn, tc.STATE_FILE, tc._active.copy())
+        tc._spawn = lambda fn, *a: spawned.append((fn.__name__, a))
+        tc.STATE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-tc-"), "toolchains.json")
+        try:
+            body = {"apt": ["golang-go"], "script": "go version", "env": {"GOFLAGS": "-mod=mod"}, "reason": "Go for everybody"}
+            st, d = self._sq("/api/squad/toolchain-propose", B, body)
+            self.assertEqual(st, 400); self.assertIn("only the lead", d["error"])
+            self.assertEqual(self._sq("/api/squad/toolchain-propose", C, body)[0], 403)
+            st, d = self._sq("/api/squad/toolchain-propose", A, {"apt": ["x;reboot"]})
+            self.assertEqual(st, 400); self.assertIn("not a package name", d["error"])
+            self.assertIn("empty", self._sq("/api/squad/toolchain-propose", A, {"apt": []})[1]["error"])
+            st, d = self._sq("/api/squad/toolchain-propose", A, body)
+            self.assertEqual((st, d["kind"], d["status"]), (200, "toolchain", "pending"), d)
+            self.assertIn("waiting for approval already", self._sq("/api/squad/toolchain-propose", A, body)[1]["error"])
+            board = self._sq("/api/projects/sq/squad/board", L)[1]
+            card = board["proposals"][0]
+            self.assertEqual((card["kind"], card["goal"], card["toolchain"]["apt"]), ("toolchain", "Go for everybody", ["golang-go"]))
+            self.assertIn("apt added: golang-go", card["spec_diff"]); self.assertIn("env GOFLAGS: — -> '-mod=mod'", card["spec_diff"])
+            self.assertEqual(board["toolchain"]["empty"], True)
+            self.assertEqual(spawned, [])                                       # nothing before approval
+            edit = {"toolchain": {"apt": ["golang-go", "gcc"], "script": "go version", "env": {}}}
+            st, p = self._sq("/api/projects/sq/squad/decide", L, {"id": d["id"], "approve": True, **edit})
+            self.assertEqual((st, p["status"]), (200, "approved"), p)
+            steps = {s["step"]: s for s in p["steps"]}
+            self.assertEqual(steps["toolchain spec"]["detail"], "v1")
+            self.assertEqual(steps["toolchain build"]["detail"], "building toolchain v1 for openrouter", p["steps"])
+            s = m._squads.settings(m._projects.get("sq"))
+            self.assertEqual((s["toolchain"]["apt"], s["toolchain_version"]), (["golang-go", "gcc"], 1))
+            self.assertEqual(spawned[0][0], "_build_all")
+            self.assertEqual(spawned[0][1][2:], (["openrouter"], s["toolchain"], 1))
+            self.assertIn("Your toolchain", woke[-1][1]); self.assertIn("was approved", woke[-1][1])
+            st, ts = self._sq("/api/squad/toolchain", B)                        # every member reads it
+            self.assertEqual((st, ts["version"], ts["spec"]["apt"], ts["active"]), (200, 1, ["golang-go", "gcc"], False), ts)
+            self.assertEqual(ts["templates"][0]["state"], "queued")
+            self.assertEqual(self._sq("/api/squad/toolchain", C)[0], 403)
+            self.assertIn("toolchain_propose", m._squadgate.LEAD_TOOLS)
+            self.assertIn("toolchain_status", m._squadgate.MEMBER_TOOLS)
+            self.assertTrue({"toolchain_propose", "toolchain_status"} <= m._policy.AGENT_TOOL_NAMES)
+            self.assertIn("/api/squad/toolchain-propose", m._guests.GUEST_POST_PATHS)
+            # the operator edits the spec directly: saved = approved, built
+            st, r = self._sq("/api/projects/sq/squad", L, {"toolchain": {"apt": ["gcc"]}})
+            self.assertEqual((st, r["settings"]["toolchain_version"]), (200, 2), r)
+            self.assertEqual(r["toolchain"], "a build is running already")      # the v1 thread (never started here)
+            tc._active.discard(m._squads.squad_id(m._projects.get("sq")))
+            st, r = self._sq("/api/projects/sq/squad/toolchain", L, {})           # Rebuild
+            self.assertEqual((st, r["msg"]), (200, "building toolchain v2 for openrouter"), r)
+            import inspect
+            self.assertIn("toolchain_propose", inspect.getsource(m._squadkick.step_post))
+        finally:
+            tc._spawn, tc.STATE_FILE = old[0], old[1]
+            tc._active.clear(); tc._active.update(old[2])
+            undo()
+
+    def _tc_env(self):
+        """_squad_env plus a fake base image tree (BASE/instances/<base>-rootfs.ext4),
+        the toolchain state, layers and RUN_DIR in a temp dir, network and
+        iptables off, a fake Firecracker (`fc["log"]` is what its console
+        prints, `fc["exit"]` False = it never exits)."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        tc = m._toolchain
+        tmp = tempfile.mkdtemp(prefix="e2e-tcb-")
+        os.makedirs(os.path.join(tmp, "instances"))
+        for b in tc.BASES.values():
+            with open(os.path.join(tmp, b), "wb") as fh:
+                fh.write(b"base")
+        fc = {"log": "", "exit": True, "args": []}
+
+        class Proc:
+            pid = 4242
+            def __init__(self, args, stdout=None, stderr=None, start_new_session=False):
+                fc["args"].append(args); stdout.write(fc["log"].encode()); stdout.flush(); self.done = fc["exit"]
+                fc["conf"] = _readj(args[args.index("--config-file") + 1])
+            def poll(self):
+                return 0 if self.done else None
+            def terminate(self):
+                self.done = True
+            kill = terminate
+            def wait(self, t=None):
+                return 0
+        old = (m._paths.BASE, m._paths.RUN_DIR, tc.STATE_FILE, tc.LAYER_DIR, tc.UPPER_MB, tc._popen, tc._sleep,
+               tc._host_guard, m._netfw.ensure_net_base, m._netfw.setup_tap, m._netfw.teardown_tap, tc._spawn,
+               tc.BUILD_TIMEOUT, tc._active.copy(), m._notify.notify_add)
+        m._paths.BASE = tmp
+        m._paths.RUN_DIR = os.path.join(tmp, "run"); os.makedirs(m._paths.RUN_DIR)
+        tc.STATE_FILE, tc.LAYER_DIR, tc.UPPER_MB = os.path.join(tmp, "toolchains.json"), os.path.join(tmp, "instances", "toolchains"), 8
+        tc._popen, tc._sleep, tc._host_guard = Proc, lambda s: None, lambda inst, on: None
+        m._netfw.ensure_net_base = m._netfw.setup_tap = m._netfw.teardown_tap = lambda *a: None
+        spawned = []
+        tc._spawn = lambda fn, *a: spawned.append(a)
+        m._notify.notify_add = lambda *a, **k: ("n", "ok")
+        proj = m._projects.get("sq")
+        m._squads.record(proj)                          # the squad id
+        m._projects.set_squad("sq", m._squads.normalize_settings({"toolchain": {"apt": ["gcc"]}}, proj["squad"])[0])
+
+        def undo2():
+            (m._paths.BASE, m._paths.RUN_DIR, tc.STATE_FILE, tc.LAYER_DIR, tc.UPPER_MB, tc._popen, tc._sleep,
+             tc._host_guard, m._netfw.ensure_net_base, m._netfw.setup_tap, m._netfw.teardown_tap, tc._spawn,
+             tc.BUILD_TIMEOUT, active, m._notify.notify_add) = old
+            tc._active.clear(); tc._active.update(active)
+            undo()
+        return woke, fc, spawned, undo2
+
+    def test_toolchain_build_ok_fail_timeout_stale(self):
+        """A build boots the builder (no secrets on its config disk), installs
+        the upper as the layer (cp + e2fsck), records it; a failed build keeps
+        its log and the previous layer; a hung builder is killed at the
+        timeout; a changed base image makes the layer stale (skipped, rebuilt
+        once). The member's VM gets the layer read-only only while it is ready."""
+        if not shutil.which("mkfs.ext4", path="/usr/sbin:/sbin:" + os.environ.get("PATH", "")):
+            self.skipTest("no mkfs.ext4")
+        m = self.m
+        woke, fc, spawned, undo = self._tc_env()
+        tc = m._toolchain
+        try:
+            proj = m._projects.get("sq")
+            sid, spec = m._squads.squad_id(proj), m._squads.settings(proj)["toolchain"]
+            self.assertRegex(sid, r"^[a-z0-9]{16}$")
+            self.assertEqual(tc.ensure(proj), "building toolchain v1 for openrouter")
+            self.assertEqual(spawned, [(sid, "sq", ["openrouter"], spec, 1)])
+            self.assertEqual(tc.ensure(proj), "a build is running already")
+            fc["log"] = "[toolchain] build starts\ngcc installed\nKAIM56_TOOLCHAIN_RESULT=ok\n"
+            tc._build_all(*spawned[0])                                          # what the thread runs
+            st = _readj(tc.STATE_FILE)[sid]
+            lay, b = st["layers"]["openrouter"], st["builds"]["openrouter"]
+            self.assertEqual((lay["version"], lay["ok"], lay["base_image_id"], b["status"]),
+                             (1, True, tc.base_image_id("openrouter"), "ok"))
+            self.assertTrue(lay["size"] > 0); self.assertIn("gcc installed", lay["log_tail"])
+            path = tc.layer_path(sid, "openrouter", 1)
+            self.assertTrue(os.path.exists(path))
+            self.assertEqual([f for f in os.listdir(m._paths.RUN_DIR) if f.endswith(".ext4")], [])   # upper + config gone
+            args = fc["args"][0]
+            conf = args[args.index("--config-file") + 1]
+            self.assertFalse(os.path.exists(conf))
+            self.assertEqual(tc.ensure(proj), "up to date")
+            self.assertTrue(any("Toolchain v1: ready for openrouter" in x["text"] for x in m._squads.read("sq")))
+            # the builder's config disk: the build flag and the scripts, nothing of an instance
+            files = tc.builder_files(spec, 1)
+            self.assertEqual(sorted(files), ["config.env", "toolchain-user.sh", "toolchain.sh"])
+            self.assertEqual([ln.split("=")[0] for ln in files["config.env"].splitlines()], ["TOOLCHAIN_BUILD", "GUEST_DNS", "PATH"])
+            vmc = fc["conf"]                                                    # the builder's VM: base + config ro, empty upper rw, nothing else
+            self.assertEqual([(d["drive_id"], d["is_read_only"]) for d in vmc["drives"]],
+                             [("rootfs", True), ("config", True), ("upper", False)])
+            self.assertTrue(vmc["boot-source"]["boot_args"].endswith("init=/init fc_upper=/dev/vdc fc_build=1"))
+            self.assertEqual(vmc["network-interfaces"][0]["host_dev_name"], "fc250")
+            # the member VM: the layer read-only between harness and upper, fc_layer names its device
+            inst = next(i for i in m._instances.load_instances() if i["name"] == "b")
+            old_mk, old_h = m._vm.make_upper, m._vm.harness_image
+            m._vm.make_upper, m._vm.harness_image = (lambda i: "/x/upper.ext4"), (lambda: None)
+            try:
+                drives = lambda c: [d["drive_id"] for d in c["drives"]]
+                c = m._vm.gen_config(inst)
+                self.assertEqual(drives(c)[-2:], ["toolchain", "upper"])
+                lay_d = c["drives"][-2]
+                self.assertEqual((lay_d["path_on_host"], lay_d["is_read_only"]), (path, True))
+                self.assertIn(f"fc_layer=/dev/vd{chr(ord('a') + len(c['drives']) - 2)}", c["boot-source"]["boot_args"])
+                self.assertEqual(tc.layer_for({**inst, "rootfs": "instances/other.ext4"}), None)
+                self.assertEqual(tc.layer_for({**inst, "name": "c"}), None)          # no member
+                # fail: the log tail stays, the previous layer stays active
+                m._projects.set_squad("sq", m._squads.normalize_settings({"toolchain": {"apt": ["gcc", "make"]}},
+                                                                         m._projects.get("sq")["squad"])[0])
+                fc["log"] = "E: Unable to locate package make\nKAIM56_TOOLCHAIN_RESULT=fail rc=100\n"
+                spawned.clear()
+                self.assertEqual(tc.ensure(m._projects.get("sq")), "building toolchain v2 for openrouter")
+                tc._build_all(*spawned[0])
+                st = _readj(tc.STATE_FILE)[sid]
+                self.assertEqual((st["builds"]["openrouter"]["status"], st["layers"]["openrouter"]["version"]), ("failed", 1))
+                self.assertIn("rc=100", st["builds"]["openrouter"]["error"])
+                self.assertIn("Unable to locate", tc.logs(m._projects.get("sq"))["openrouter"]["log"])
+                row = tc.status(m._projects.get("sq"))["templates"][0]
+                self.assertEqual((row["state"], row["ready"]), ("failed", True))
+                self.assertEqual(m._vm.gen_config(inst)["drives"][-2]["path_on_host"], path)   # v1 still used
+                self.assertEqual(tc.ensure(m._projects.get("sq")), "up to date")             # tried once
+                # timeout: a builder that never answers is killed
+                tc.BUILD_TIMEOUT, fc["exit"], fc["log"] = -1, False, "apt-get update\n"
+                spawned.clear()
+                self.assertEqual(tc.ensure(m._projects.get("sq"), force=True), "building toolchain v2 for openrouter")
+                tc._build_all(*spawned[0])
+                self.assertIn("timeout", _readj(tc.STATE_FILE)[sid]["builds"]["openrouter"]["error"])
+                # stale: the base image was rebuilt -> no layer, "stale", one automatic rebuild
+                base = os.path.join(m._paths.BASE, tc.BASES["openrouter"])
+                os.utime(base, (time.time() + 60, time.time() + 60))
+                self.assertIsNone(tc.layer_for(inst))
+                self.assertNotIn("toolchain", drives(m._vm.gen_config(inst)))
+                self.assertNotIn("fc_layer", m._vm.gen_config(inst)["boot-source"]["boot_args"])
+                self.assertEqual(tc.status(m._projects.get("sq"))["templates"][0]["state"], "stale")
+                spawned.clear()
+                self.assertEqual(tc.sweep(), {"sq": "building toolchain v2 for openrouter"})
+                tc._active.clear()
+                self.assertEqual(tc.sweep(), {})                                    # once per base image
+            finally:
+                m._vm.make_upper, m._vm.harness_image = old_mk, old_h
+        finally:
+            undo()
+
+    def test_toolchain_sweep_fails_orphaned_builds(self):
+        """A build left 'building' by a manager restart is failed, its leftovers removed."""
+        m = self.m
+        woke, fc, spawned, undo = self._tc_env()
+        tc = m._toolchain
+        try:
+            sid = m._squads.squad_id(m._projects.get("sq"))
+            tc._set_build(sid, "claude", status="building", index=251, version=1, base_image_id=tc.base_image_id("claude"))
+            open(os.path.join(m._paths.RUN_DIR, f"tc-{sid}-claude.upper.ext4"), "w").close()
+            tc.sweep()
+            b = _readj(tc.STATE_FILE)[sid]["builds"]["claude"]
+            self.assertEqual(b["status"], "failed"); self.assertIn("restarted", b["error"])
+            self.assertEqual(os.listdir(m._paths.RUN_DIR), [])
         finally:
             undo()
 
@@ -11723,6 +12027,23 @@ class ClaudeGuest(unittest.TestCase):
         self.assertEqual(km.TOOLS["ticket_list"][0](), "Project sq (squad plan not approved yet):\nno tickets")
 
 
+    def test_claude_mcp_toolchain_tools(self):
+        """The claude guest's MCP server has toolchain_propose / toolchain_status, same wording."""
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py")
+        if not os.path.exists(src):
+            self.skipTest("kaim56_mcp.py not found")
+        km = _load("kaim56_mcp_tc", src)
+        sent = []
+        km._post = lambda path, payload, timeout=30: (sent.append((path, payload)), json.dumps(
+            {"id": "p9", "project": "sq", "kind": "toolchain", "status": "pending"}))[1]
+        self.assertIn("waiting for the user's approval", km.TOOLS["toolchain_propose"][0](apt=["gcc"], reason="C"))
+        self.assertEqual(sent[-1][0], "/api/squad/toolchain-propose"); self.assertEqual(sent[-1][1]["apt"], ["gcc"])
+        km._get = lambda path: json.dumps({"project": "sq", "version": 1, "active": False,
+                                           "spec": {"apt": ["gcc"], "script": "make install", "env": {}}, "templates": []})
+        out = km.TOOLS["toolchain_status"][0]()
+        self.assertIn("does NOT have it yet", out); self.assertIn("make install", out)
+        self.assertIn("apt", km.TOOLS["toolchain_propose"][2]["properties"])
+
     def test_claude_mcp_squad_catalog(self):
         """squad_catalog in the claude guest's MCP server: same listing; squad_propose documents template/new_persona."""
         src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "kaim56_mcp.py")
@@ -11782,6 +12103,34 @@ class ClaudeGuest(unittest.TestCase):
         with open(md) as fh:
             self.assertEqual(fh.read(), "# mine\n")
         shutil.rmtree(d, ignore_errors=True)
+
+    def test_guest_init_toolchain_layer_and_build_mode(self):
+        """Both guest-inits: the layer (fc_layer=) mounted read-only and stacked
+        under the upper, without it when it fails; build mode right after the
+        config, skipping everything else; the env file sourced for the agent."""
+        ag = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents")
+        env_file = "/etc/kaim56-toolchain.env"                     # mgr/toolchain.ENV_FILE
+        for init in ("claude/guest-init.sh", "openrouter/guest-init-openrouter.sh"):
+            p = os.path.join(ag, init)
+            if not os.path.exists(p):
+                self.skipTest("agents/ not found")
+            with open(p) as fh:
+                text = fh.read()
+            for s in ("s/.*fc_layer=\\([^ ]*\\).*/\\1/p", 'mount -o ro "$LY" /mnt/layer', 'LOWER="lowerdir=/mnt/layer/upper:/"',
+                      'ov "lowerdir=/"', "toolchain layer $LY not mountable", '"${TOOLCHAIN_BUILD:-0}" = "1"',
+                      "timeout 1800 sh /config/toolchain.sh", "rm -f /.fc-overlay; rm -rf /root/.cache /tmp/*",
+                      "fsfreeze -f /oldroot/mnt", 'echo "KAIM56_TOOLCHAIN_RESULT=ok"', "echo b > /proc/sysrq-trigger",
+                      f"[ -f {env_file} ] && . {env_file}", '*" fc_build=1 "*) MOPT=async'):
+                self.assertIn(s, text, (init, s))
+            start = text.index('if [ "${TOOLCHAIN_BUILD:-0}" = "1" ]')
+            block = text[start:text.index("\nfi\n", start)]
+            self.assertLess(text.index("/config/config.env"), start, init)          # after the config ...
+            for later in ("AGENT_SUDO", "mount -t nfs4", "fc_reconcile", "webterm.py"):  # ... before everything else
+                self.assertLess(start, text.index(later), (init, later))
+                self.assertNotIn(later, block)
+            self.assertNotIn("8700", block)
+            self.assertLess(text.index(env_file), text.index("webterm.py"))
+            self.assertTrue(block.rstrip().endswith("while true; do sleep 3600; done"), init)
 
     def test_guest_init_agent_sudo(self):
         """AGENT_SUDO=1 writes a NOPASSWD sudoers drop-in for node (0440,

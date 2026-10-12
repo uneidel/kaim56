@@ -30,6 +30,7 @@ from mgr import mcp as _mcp
 from mgr import mounts as _mounts
 from mgr import netfw as _netfw
 from mgr import plugins as _plugins
+from mgr import toolchain as _toolchain
 
 
 def mkfs_image(path, size_mb, label=None, srcdir=None):
@@ -407,6 +408,18 @@ def gen_config(inst):
             drives.append({"drive_id": "harness", "path_on_host": himg,
                            "is_root_device": False, "is_read_only": True})
             boot += f" fc_harness={_vdev(drives)}"
+    if overlay:
+        # The squad's shared toolchain (mgr/toolchain.py): read-only, stacked
+        # by guest-init between the base and the upper. Never costs a start.
+        try:
+            layer = _toolchain.layer_for(inst)
+        except Exception as e:
+            print(f"[toolchain] {inst['name']}: layer lookup failed: {e!r}", flush=True)
+            layer = None
+        if layer:
+            drives.append({"drive_id": "toolchain", "path_on_host": layer,
+                           "is_root_device": False, "is_read_only": True})
+            boot += f" fc_layer={_vdev(drives)}"
     if overlay:
         # Last drive = upper; the device name follows from the position
         # (virtio-blk: vda, vdb, ...). The guest reads it from /proc/cmdline.

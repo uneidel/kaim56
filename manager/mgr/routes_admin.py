@@ -64,6 +64,7 @@ from mgr import settings as _settings
 from mgr import skills as _skills
 from mgr import store as _store
 from mgr import tasks as _tasks
+from mgr import toolchain as _toolchain
 from mgr import ui as _ui
 from mgr import util as _util
 from mgr import vm as _vm
@@ -295,6 +296,10 @@ def _rt_projects_review(h):
 
 
 def _project_delete(name, _member):
+    try:
+        _toolchain.purge(_projects.get(name))     # its layers (by squad id: before the record detaches)
+    except Exception as e:
+        print(f"[quiet] toolchain purge {name}: {e!r}", flush=True)
     r = _projects.delete(name)
     if "error" in r:
         return r, 404
@@ -324,18 +329,24 @@ def _squad_get(h, name, sub):
         return h._json({"notes": _squadnotes.notes(name, "user:" + _who(h), int(mid) if mid.isdigit() else None)})
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
+    if sub == "toolchain":                   # the shared toolchain layer: spec, state, the build logs (admin)
+        return h._json({"project": name, **_toolchain.status(p), "logs": _toolchain.logs(p)})
     if sub == "board":                       # proposals + tickets (also role user)
         tm = _router.load()["tiers"]         # the card's model select: "<Tier> — <concrete model>"
         try:
             act = _squadkick.activity(p)
         except Exception as e:               # the member rows are extra: never cost the board
             act = {"error": str(e)[:200]}
+        try:
+            tc = _toolchain.status(p)
+        except Exception as e:               # nor the toolchain row
+            tc = {"error": str(e)[:200]}
         return h._json({"project": name, "approved": _squadgate.approved(p), "tiers": list(_router.TIERS),
                         "tier_models": {t: sorted(k for k, v in tm.items() if v == t) for t in _router.TIERS},
                         "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
                         "statuses": list(_squadgate.STATUSES), "members": _squads.members(p),
-                        "working": _squads.working(name), "activity": act})
+                        "working": _squads.working(name), "activity": act, "toolchain": tc})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
@@ -382,7 +393,7 @@ def _squad_post(h, name, sub):
         m, why = _squadgate.operator_post(p, who, b)
         return h._json(m) if m else h._json({"error": why}, 400)
     if sub == "decide":                      # {id, approve | changes, note, goal?, members?, tickets?, budget_tokens_per_day?}
-        edits = {k: b[k] for k in ("goal", "members", "tickets", "budget_tokens_per_day") if k in b}
+        edits = {k: b[k] for k in ("goal", "members", "tickets", "budget_tokens_per_day", "toolchain") if k in b}
         if b.get("changes"):                 # request changes: the note is the required comment
             r, why = _squadgate.request_changes(name, str(b.get("id") or ""), who, b.get("note"), edits or None)
             return h._json(r) if r else h._json({"error": why}, 400)
@@ -402,6 +413,9 @@ def _squad_post(h, name, sub):
         return h._json(m) if m else h._json({"error": why}, 400)
     if sub == "reindex":                     # queue a code index run (admin only)
         return h._json({"msg": _indexer.reindex(name, "operator " + who)})
+    if sub == "toolchain":                   # Rebuild the shared toolchain layer (admin only)
+        msg = _toolchain.ensure(p, force=True, who=who)
+        return h._json({"msg": msg}) if msg.startswith("building") else h._json({"error": msg}, 400)
     if sub == "ticket":                      # {id, status?, assignee?, comment?, level?, title?, description?}: the operator, any time
         body = {k: b[k] for k in ("status", "assignee", "comment", "level", "title", "description") if k in b}
         t, why = _squadgate.update_ticket(p, "user:" + who, b.get("id"), body, lambda tk: "")
@@ -412,7 +426,10 @@ def _squad_post(h, name, sub):
     if s is None:
         return h._json({"error": why}, 400)
     _squads.save_settings(name, s)
-    return h._json({"ok": True, "settings": s, "squad_tools": _squadgate.squad_tools(_projects.get(name))})
+    out = {"ok": True, "settings": s, "squad_tools": _squadgate.squad_tools(_projects.get(name))}
+    if s["toolchain_version"] != _squads.settings(p)["toolchain_version"]:    # the operator edited the spec
+        out["toolchain"] = _toolchain.ensure(_projects.get(name), who=who)
+    return h._json(out)
 
 
 @_routes.ROUTER.post("/api/projects/", prefix=True, admin=True)

@@ -1288,7 +1288,7 @@ async function sqSend(){
 }
 /* squad gate: proposals the user approves, tickets (mgr/squadgate.py) */
 let SQB={};
-const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request'};
+const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request',toolchain:'Toolchain'};
 function sqSel(k,opts,cur,lab){return `<select class=input data-k=${k}${lab?` aria-label="${esc(lab)}"`:''}><option value="">—</option>`+
   opts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${escT(o)}</option>`).join('')+'</select>'}
 const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" aria-label="remove" onclick="this.closest('[data-t]').remove()">✕</button>`;
@@ -1434,6 +1434,7 @@ function sqCard(p){
   const id=esc(p.id);
   let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
   if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
+  else if(p.kind==='toolchain')body+=sqHistory(p)+(p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+sqTc(p);
   else body+=sqHistory(p)+(p.kind==='squad'?`<div class=sq-sub>Goal</div><textarea class="input sq-goal" data-k=goal rows=3 aria-label="squad goal">${escT(p.goal||'')}</textarea>`
     :p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+p.members.map(m=>sqMem(p,m)).join('')+(p.kind==='squad'?sqTicketRows(p)+
     `<div class=sq-row style="margin-top:10px"><label for="sqb-${id}">Budget</label><div class=sq-fld style="display:flex;gap:8px;align-items:center">`+
@@ -1454,8 +1455,19 @@ function sqDone(p){
     (p.steps||[]).map(s=>`<div ${s.ok?'class=text-muted':'style="color:var(--color-warn)"'}>${s.ok?'✓':'✗'} ${escT(s.step)}: ${escT(s.detail)}</div>`).join('')+
     (bad?`<button class="btn btn-ghost btn-sm" onclick="sqDecide('${esc(p.id)}',true)">Retry the failed steps</button>`:'')+'</div>';
 }
+/* a toolchain proposal (mgr/toolchain.py): what changes against the current spec, the spec editable before Approve */
+const tcEnvTxt=e=>Object.entries(e||{}).map(([k,v])=>k+'='+v).join('\\n');
+function tcEnvObj(t){const o={};String(t||'').split('\\n').forEach(l=>{const i=l.indexOf('=');if(l.trim()&&i>0)o[l.slice(0,i).trim()]=l.slice(i+1)});return o}
+function sqTc(p){
+  const t=p.toolchain||{}, d=p.spec_diff||[];
+  return (d.length?'<div class=sq-sub>Changes to the current toolchain</div><ul style="font-size:12.5px;margin:4px 0">'+d.map(x=>`<li>${escT(x)}</li>`).join('')+'</ul>':'')+
+    `<div class=sq-sub>apt packages</div><input class="input mono" data-k=tc_apt value="${esc((t.apt||[]).join(' '))}" aria-label="apt packages">`+
+    `<div class=sq-sub>Script (root, after apt)</div><textarea class="input mono" data-k=tc_script rows=6 aria-label="install script">${escT(t.script||'')}</textarea>`+
+    `<div class=sq-sub>Env (NAME=value per line)</div><textarea class="input mono" data-k=tc_env rows=2 aria-label="toolchain env">${escT(tcEnvTxt(t.env))}</textarea>`;
+}
 function sqCollect(p,c){
   const v=(r,k)=>{const e=r.querySelector('[data-k='+k+']');return e?e.value:''}, out={};
+  if(p.kind==='toolchain')return {toolchain:{apt:v(c,'tc_apt').split(/[\\s,]+/).filter(Boolean),script:v(c,'tc_script'),env:tcEnvObj(v(c,'tc_env'))}};
   const list=x=>x.split(',').map(s=>s.trim()).filter(Boolean);
   out.members=[...c.querySelectorAll('[data-m]')].map(r=>{
     const b=p.members.find(m=>m.name===r.dataset.m);
@@ -1668,6 +1680,7 @@ async function skLoad(){
   document.getElementById('sk-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
   if(b.error)skMsg(b.error);
   SQB=b;
+  try{skTcRow(b.toolchain)}catch(e){console.error('squad toolchain',e)}
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
   let hq=[];
@@ -1697,6 +1710,54 @@ function kbWhy(t,q){      /* a blocked card's reason: its last real comment (not
   const x=c?{by:String(c.by||'').replace(/^user:/,''),text:c.text}:q?{by:q.instance,text:q.title}:null;
   return x?`<div class=kb-why><b>${escT(x.by)}:</b> ${escT(String(x.text).slice(0,220))}${String(x.text).length>220?'…':''}</div>`:'';
 }
+/* the squad's shared toolchain layer (mgr/toolchain.py): one row under the header, the spec dialog, the build log */
+const tcSize=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':Math.round((n||0)/1e6)+' MB';
+function skTcRow(tc){
+  const el=document.getElementById('sk-tc'); if(!el)return;
+  if(!tc||tc.error){el.innerHTML=tc&&tc.error?`<span class=text-muted>Toolchain: ${escT(tc.error)}</span>`:'';return}
+  const ts=tc.templates||[], one=t=>escT(t.template)+' '+(t.state==='ready'?tcSize(t.size)
+    :t.state==='building'?'building… '+kbMmss(t.elapsed||0):t.state==='queued'?'queued'
+    :t.state==='failed'?`failed — <a href="#" onclick="tcLog();return false">log</a>${t.ready?' (the previous layer stays)':''}`
+    :t.state==='stale'?'stale — rebuild':'none');
+  const head=tc.empty?'none':`v${+tc.version}`+(ts.length&&ts.every(t=>t.state==='ready')?' ready':'');
+  el.innerHTML=`<b>Toolchain</b> <span class=text-muted>${head}${!tc.empty&&ts.length?' · '+ts.map(one).join(' · '):''}</span> `+
+    `<button class="btn btn-ghost btn-sm" onclick=tcEdit()>Edit spec</button>`+
+    (tc.empty?'':`<button class="btn btn-ghost btn-sm" onclick=tcBuild() title="Build the layer again in a throwaway VM">Rebuild</button>`+
+      `<button class="btn btn-ghost btn-sm" onclick=tcLog()>View log</button>`+
+      `<span class=text-muted style="font-size:11.5px"> · members pick up a new layer after Restart members</span>`);
+}
+let TC_P='';
+function tcDlg(edit){
+  TC_P=SK; document.getElementById('tcdlgname').textContent=SK; document.getElementById('tcdlgmsg').textContent='';
+  document.getElementById('tcdlg-edit').hidden=!edit; document.getElementById('tc-save').hidden=!edit; document.getElementById('tcdlglog').hidden=edit;
+  document.getElementById('tcdlg').style.display='grid';
+}
+function tcEdit(){
+  const sp=((SQB||{}).toolchain||{}).spec||{};
+  document.getElementById('tc-apt').value=(sp.apt||[]).join(' ');
+  document.getElementById('tc-script').value=sp.script||'';
+  document.getElementById('tc-env').value=tcEnvTxt(sp.env);
+  tcDlg(true);
+}
+async function tcSave(){
+  const body={toolchain:{apt:document.getElementById('tc-apt').value.split(/[\\s,]+/).filter(Boolean),
+    script:document.getElementById('tc-script').value,env:tcEnvObj(document.getElementById('tc-env').value)}};
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(TC_P)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
+  document.getElementById('tcdlgmsg').textContent=d.error?'⚠️ '+d.error:'saved ✓'+(d.toolchain?' · '+d.toolchain:' · unchanged');
+  if(!d.error)skLoad();
+}
+async function tcBuild(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/toolchain',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error||d.msg); skLoad();
+}
+async function tcLog(){
+  tcDlg(false);
+  const pre=document.getElementById('tcdlglog'); pre.textContent='loading …';
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(TC_P)+'/squad/toolchain')).json()}catch(e){d={error:'manager not reachable'}}
+  pre.textContent=d.error||Object.entries(d.logs||{}).map(([t,l])=>`== ${t} · v${l.version} · ${l.status}${l.error?' — '+l.error:''}\\n${l.log||'(no log)'}`).join('\\n\\n')||'No build yet.';
+  pre.scrollTop=pre.scrollHeight;
+}
+function tcClose(){document.getElementById('tcdlg').style.display='none'}
 async function skRetryTurns(member){   /* re-deliver the wakes of failed turns (all, or one member's) */
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/retry',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(member?{member}:{})})).json()}catch(e){d={error:'manager not reachable'}}

@@ -18,10 +18,26 @@ if [ ! -f /.fc-overlay ]; then
     # -o sync: stop() pulls the plug on the VM (SIGTERM to Firecracker) —
     # without sync the last writes would still sit in the page cache and be
     # lost (observed: 0-byte file). Synchronous is fine for our write load.
-    if mount -o sync "$UP" /mnt 2>/dev/null; then
+    # A toolchain builder (fc_build=1) writes async: it syncs and freezes before it ends.
+    MOPT=sync; case " $(cat /proc/cmdline) " in *" fc_build=1 "*) MOPT=async ;; esac
+    if mount -o "$MOPT" "$UP" /mnt 2>/dev/null; then
       mkdir -p /mnt/upper /mnt/work /mnt/root
-      if mount -t overlay overlay \
-           -o lowerdir=/,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; then
+      # The squad's shared toolchain (manager: fc_layer=, a read-only drive)
+      # sits between the base and the upper: base < toolchain < upper. Not
+      # mountable, or refused by overlayfs -> without it, as before.
+      LOWER="lowerdir=/"
+      LY=$(sed -n 's/.*fc_layer=\([^ ]*\).*/\1/p' /proc/cmdline)
+      if [ -n "$LY" ]; then
+        mkdir -p /mnt/layer
+        if mount -o ro "$LY" /mnt/layer 2>/dev/null && [ -d /mnt/layer/upper ]; then
+          LOWER="lowerdir=/mnt/layer/upper:/"; echo "[init] toolchain layer from $LY"
+        else
+          umount /mnt/layer 2>/dev/null; echo "[init] WARN: toolchain layer $LY not mountable — continuing without it"
+        fi
+      fi
+      ov() { mount -t overlay overlay -o "$1,upperdir=/mnt/upper,workdir=/mnt/work" /mnt/root; }
+      if ov "$LOWER" || { [ "$LOWER" != "lowerdir=/" ] \
+           && echo "[init] WARN: overlay with the toolchain layer failed — continuing without it" && ov "lowerdir=/"; }; then
         touch /mnt/root/.fc-overlay
         mkdir -p /mnt/root/oldroot
         cd /mnt/root
@@ -53,6 +69,28 @@ set -a
 [ -f /app/config.env ] && . /app/config.env
 [ -f /config/config.env ] && . /config/config.env
 set +a
+# --- Toolchain build mode (manager: mgr/toolchain.py) ---------------------------
+# A throwaway builder VM: no secrets, no mounts, no bridge. Run the manager's
+# toolchain.sh as root (30 min limit) — its output is the console log the
+# manager reads —, drop build-only leftovers, freeze the upper (a clean
+# journal: the host only copies and e2fscks the image, never mounts it) and
+# reboot (reboot=k ends Firecracker; the image has no poweroff binary).
+# Everything below — sudo, NFS, host folders, credentials, skills, the agent —
+# is skipped.
+if [ "${TOOLCHAIN_BUILD:-0}" = "1" ]; then
+  echo "nameserver ${GUEST_DNS:-1.1.1.1}" > /etc/resolv.conf
+  echo "[toolchain] build starts"
+  rc=0
+  timeout 1800 sh /config/toolchain.sh || rc=$?
+  rm -f /.fc-overlay; rm -rf /root/.cache /tmp/* /var/tmp/* 2>/dev/null
+  [ "$rc" = 0 ] && [ -f /.kaim56-toolchain-ok ] || { rm -f /.kaim56-toolchain-ok; [ "$rc" = 0 ] && rc=1; }
+  sync; fsfreeze -f /oldroot/mnt 2>/dev/null || echo "[toolchain] WARN: freeze failed (the host replays the journal)"
+  if [ "$rc" = 0 ]; then echo "KAIM56_TOOLCHAIN_RESULT=ok"; else echo "KAIM56_TOOLCHAIN_RESULT=fail rc=$rc"; fi
+  echo b > /proc/sysrq-trigger
+  while true; do sleep 3600; done
+fi
+# The shared toolchain's env (on the read-only layer): PATH and friends for the agent.
+[ -f /etc/kaim56-toolchain.env ] && . /etc/kaim56-toolchain.env
 # AGENT_SUDO=1: the agent (uid 1000) gets root in its own VM via sudo — the VM
 # is the sandbox; network limits and git tokens are enforced host-side.
 if [ "${AGENT_SUDO:-0}" = "1" ]; then

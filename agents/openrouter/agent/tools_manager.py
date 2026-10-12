@@ -745,6 +745,35 @@ def t_squad_request_merge(writer, summary, project=""):
     return _gate_out(*_squad_call("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project}))
 
 
+def t_toolchain_propose(apt=None, script="", env=None, reason="", project=""):
+    """Lead: the squad's shared toolchain, for the user to approve."""
+    return _gate_out(*_squad_call("/api/squad/toolchain-propose", {
+        "apt": apt or [], "script": script or "", "env": env or {}, "reason": reason, "project": project}))
+
+
+def toolchain_text(d):
+    """The squad's shared toolchain as a member reads it (shared wording with the Claude guest)."""
+    sp = d.get("spec") or {}
+    if not (sp.get("apt") or sp.get("script") or sp.get("env")):
+        return (f"Squad {d.get('project', '')}: no shared toolchain yet "
+                "(the lead proposes one with toolchain_propose; until then install what you need with sudo).")
+    out = [f"Squad {d.get('project', '')} toolchain v{d.get('version', 0)}: your VM "
+           + ("HAS it (read-only layer under your disk)." if d.get("active") else
+              "does NOT have it yet (it applies after a restart, once the layer for your image is ready)."),
+           "apt: " + (" ".join(sp.get("apt") or []) or "-"),
+           "env: " + (", ".join(f"{k}={v}" for k, v in (sp.get("env") or {}).items()) or "-"),
+           "layers: " + (", ".join(f"{t['template']} {t['state']}" + (f" (v{t['layer_version']})" if t.get("layer_version") else "")
+                                   for t in d.get("templates") or []) or "-")]
+    if sp.get("script"):
+        out += ["script:", sp["script"]]
+    return "\n".join(out)
+
+
+def t_toolchain_status(project=""):
+    d, err = _squad_call("/api/squad/toolchain?" + urllib.parse.urlencode({"project": project}))
+    return err or toolchain_text(d)
+
+
 def _ticket_line(t):
     deps = f" after {','.join(t['depends_on'])}" if t.get("depends_on") else ""
     return f"#{t['id']} {t['key']} [{t['status']}] {t['title']} -> {t.get('assignee') or 'unassigned'}{deps}"
