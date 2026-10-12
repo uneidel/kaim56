@@ -3239,6 +3239,160 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._guests.instance_by_ip, m._secrets.load_secret_policy, m._secrets.secret_store = old
 
+    # ---- Claude accounts (mgr/claudeaccts.py) ---------------------------------
+    def _ca_env(self):
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-ca-")
+        old = (m._claudeaccts.ACCTS_FILE, m._audit.AUDIT_DIR, m._secrets.CLAUDE_CRED_SRC,
+               m._claudeaccts._open, dict(m._claudeaccts.USAGE), m._claudeaccts._last[0])
+        m._claudeaccts.ACCTS_FILE = os.path.join(tmp, "claude_accounts.json")
+        m._audit.AUDIT_DIR = os.path.join(tmp, "audit")
+        m._secrets.CLAUDE_CRED_SRC = os.path.join(tmp, "host-creds.json")
+        m._claudeaccts.USAGE.clear()
+
+        def undo():
+            (m._claudeaccts.ACCTS_FILE, m._audit.AUDIT_DIR, m._secrets.CLAUDE_CRED_SRC,
+             m._claudeaccts._open, usage, m._claudeaccts._last[0]) = old
+            m._claudeaccts.USAGE.clear(); m._claudeaccts.USAGE.update(usage)
+        return tmp, undo
+
+    def test_claude_accounts_add_validate_list_without_secrets(self):
+        """Accounts: names and tokens validated, the creds JSON needs an
+        accessToken, the store is 0600, the list never carries a secret,
+        an update keeps the stored token, default cannot be removed, audited."""
+        m = self.m
+        tmp, undo = self._ca_env()
+        ca = m._claudeaccts
+        try:
+            self.assertIn("invalid name", ca.add("Bad Name", "", "tok"))
+            self.assertIn("invalid name", ca.add("default", "", "tok"))
+            self.assertIn("token required", ca.add("work", "", ""))
+            self.assertIn("without spaces", ca.add("work", "", "a b"))
+            self.assertIn("without spaces", ca.add("work", "", "ab\ncd"))
+            self.assertIn("accessToken", ca.add("work", "", "fake-tok-SECRET1", '{"claudeAiOauth": {}}'))
+            self.assertIn("accessToken", ca.add("work", "", "fake-tok-SECRET1", "not json"))
+            self.assertEqual(ca.add("work", "Work", "fake-tok-SECRET1",
+                                    json.dumps({"claudeAiOauth": {"accessToken": "AT-SECRET2", "refreshToken": "RT-SECRET3"}})), "work added")
+            self.assertEqual(os.stat(ca.ACCTS_FILE).st_mode & 0o777, 0o600)
+            self.assertEqual(ca.add("work", "Work 2", ""), "work updated")     # empty token = keep
+            self.assertEqual(ca.token_for("work"), "fake-tok-SECRET1")
+            self.assertEqual(ca.token_for("nope"), "")
+            lst = ca.list_public()
+            self.assertEqual([a["name"] for a in lst], ["default", "work"])
+            w = lst[1]
+            self.assertEqual((w["label"], w["has_token"], w["has_creds"]), ("Work 2", True, True))
+            self.assertNotIn("SECRET", json.dumps(lst))
+            h = self._handler("/api/claude/accounts", "127.0.0.1"); h._do_GET()
+            self.assertEqual(self._status(h), 200)
+            self.assertNotIn(b"SECRET", h.wfile.getvalue())
+            self.assertIn("cannot be removed", ca.remove("default"))
+            self.assertEqual(ca.remove("work"), "work removed")
+            self.assertEqual(ca.list_public()[1:], [])
+            with open(os.path.join(m._audit.AUDIT_DIR, "admin.jsonl")) as fh:
+                recs = [json.loads(x) for x in fh]
+            self.assertEqual([r["tool"] for r in recs], ["claude_account_set", "claude_account_set", "claude_account_remove"])
+            self.assertNotIn("SECRET", json.dumps(recs))
+        finally:
+            undo()
+
+    def test_claude_credentials_route_per_account(self):
+        """/api/claude-credentials: an instance with CLAUDE_ACCOUNT gets its
+        setup-token as oauth_token, an unknown account an error, one without
+        the host's claudeAiOauth block as before; non-claude guests 403."""
+        m = self.m
+        tmp, undo = self._ca_env()
+        guests = {"172.30.5.2": {"name": "c1", "template": "claude", "index": 5, "config": {"CLAUDE_ACCOUNT": "work"}},
+                  "172.30.6.2": {"name": "c2", "template": "claude", "index": 6, "config": {"CLAUDE_ACCOUNT": ""}},
+                  "172.30.7.2": {"name": "c3", "template": "claude", "index": 7, "config": {"CLAUDE_ACCOUNT": "ghost"}},
+                  "172.30.8.2": {"name": "o1", "template": "openrouter", "index": 8, "config": {}}}
+        old_ip = m._guests.instance_by_ip
+        try:
+            m._guests.instance_by_ip = lambda ip: guests.get(ip)
+            _wtext(m._secrets.CLAUDE_CRED_SRC, json.dumps({"claudeAiOauth": {"accessToken": "host-at"}, "mcpOAuth": {"x": 1}}))
+            m._claudeaccts.add("work", "", "tok-work")
+            h = self._handler("/api/claude-credentials", "172.30.5.2"); h._do_GET()
+            self.assertEqual(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]), {"oauth_token": "tok-work"})
+            h = self._handler("/api/claude-credentials", "172.30.6.2"); h._do_GET()
+            self.assertEqual(json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]), {"claudeAiOauth": {"accessToken": "host-at"}})
+            h = self._handler("/api/claude-credentials", "172.30.7.2"); h._do_GET()
+            self.assertEqual(self._status(h), 404); self.assertIn(b"unknown Claude account", h.wfile.getvalue())
+            h = self._handler("/api/claude-credentials", "172.30.8.2"); h._do_GET()
+            self.assertEqual(self._status(h), 403)
+        finally:
+            m._guests.instance_by_ip = old_ip
+            undo()
+
+    def test_claude_usage_poller_parses_and_maps_errors(self):
+        """The poller reads five_hour/seven_day per account (at most every
+        5 min), a 403 becomes a short error without the token, an expired
+        manager-owned login is refreshed and stored back, and the host login
+        (default) is never refreshed — only marked expired."""
+        import urllib.error
+        m = self.m
+        tmp, undo = self._ca_env()
+        ca = m._claudeaccts
+        calls = []
+
+        def fake_open(req):
+            calls.append((req.full_url, req.get_header("Authorization")))
+            if req.full_url == ca.TOKEN_URL:
+                body = json.loads(req.data)
+                self.assertEqual((body["grant_type"], body["client_id"], body["refresh_token"]), ("refresh_token", ca.CLIENT_ID, "rt-own"))
+                return io.BytesIO(json.dumps({"access_token": "at-new", "refresh_token": "rt-new", "expires_in": 3600}).encode())
+            if req.get_header("Authorization") == "Bearer tok-forbidden":
+                raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, io.BytesIO(b"{}"))
+            return io.BytesIO(json.dumps({"five_hour": {"utilization": 42.5, "resets_at": "2026-10-12T15:00:00Z"},
+                                          "seven_day": {"utilization": 81, "resets_at": "2026-10-15T09:00:00Z"},
+                                          "seven_day_opus": None}).encode())
+        try:
+            ca._open = fake_open
+            now = 2_000_000_000
+            _wtext(m._secrets.CLAUDE_CRED_SRC, json.dumps({"claudeAiOauth": {"accessToken": "host-at", "refreshToken": "host-rt",
+                                                                               "expiresAt": (now - 10) * 1000}}))
+            ca.add("own", "", "tok-own", json.dumps({"claudeAiOauth": {"accessToken": "at-old", "refreshToken": "rt-own",
+                                                                       "expiresAt": (now - 10) * 1000, "scopes": ["user:inference", "user:profile"]}}))
+            ca.add("plain", "", "tok-forbidden")
+            ca._last[0] = 0
+            u = ca.poll_usage(now=now)
+            self.assertEqual(u["own"]["five_hour"], {"pct": 42.5, "resets_at": "2026-10-12T15:00:00Z"})
+            self.assertEqual(u["own"]["seven_day"]["pct"], 81.0)
+            self.assertEqual(u["own"]["error"], "")
+            self.assertEqual(u["plain"]["error"], "no usage access for this token (403)")
+            self.assertNotIn("tok-forbidden", json.dumps(u))
+            self.assertEqual(u["default"], {"error": "expired", "checked": now})
+            # default never refreshed: only the own login hit the token endpoint, with its own refresh token
+            self.assertEqual([c for c in calls if c[0] == ca.TOKEN_URL], [(ca.TOKEN_URL, None)])
+            self.assertNotIn("Bearer host-at", [c[1] for c in calls])
+            stored = _readj(ca.ACCTS_FILE)["own"]["creds"]
+            self.assertEqual((stored["accessToken"], stored["refreshToken"]), ("at-new", "rt-new"))
+            self.assertIn(("https://api.anthropic.com/api/oauth/usage", "Bearer at-new"), calls)
+            n = len(calls)
+            ca.poll_usage(now=now + 60)                     # not due yet
+            self.assertEqual(len(calls), n)
+            h = self._handler("/api/claude/usage", "127.0.0.1"); h._do_GET()
+            self.assertIn(b'"pct": 42.5', h.wfile.getvalue())
+        finally:
+            undo()
+
+    def test_squad_member_gets_claude_account(self):
+        """A squad's claude_account reaches new claude members as CLAUDE_ACCOUNT, not API members."""
+        m = self.m
+        self.assertEqual(m._squads.normalize_settings({"claude_account": "work"})[0]["claude_account"], "work")
+        self.assertIsNone(m._squads.normalize_settings({"claude_account": "Bad Name"})[0])
+        created, old = [], (m._instances.create_instance, m._instances.load_instances)
+        try:
+            m._instances.load_instances = lambda: []
+            m._instances.create_instance = lambda n, t, cfg, persist=False: created.append((n, cfg)) or f"instance '{n}' created"
+            proj = {"name": "sq", "squad": {"claude_account": "work"}}
+            for name, tpl in (("c", "claude"), ("o", "openrouter")):
+                mem = {"name": name, "role": "writer", "skills": [], "persona": "", "template": tpl,
+                       "purpose": "", "model": "", "model_tier": ""}
+                self.assertTrue(m._squadgate._create(proj, mem, []))
+            self.assertEqual(created[0][1]["CLAUDE_ACCOUNT"], "work")
+            self.assertNotIn("CLAUDE_ACCOUNT", created[1][1])
+        finally:
+            m._instances.create_instance, m._instances.load_instances = old
+
     def test_harness_disk_rebuilds_when_agent_source_changes(self):
         """The agent code rides a read-only drive built from AGENT_SRC: built
         once, reused while the sources' content is unchanged (mtimes are not
@@ -11515,6 +11669,22 @@ class ClaudeGuest(unittest.TestCase):
             self.assertIn(line, out)
         props = km.TOOLS["squad_propose"][2]["properties"]["members"]["items"]["properties"]
         self.assertEqual(props["template"]["enum"], ["openrouter", "claude"]); self.assertIn("new_persona", props)
+
+    def test_claude_guest_init_account_token(self):
+        """guest-init: an oauth_token from the manager becomes
+        CLAUDE_CODE_OAUTH_TOKEN for the agent processes (no file, no log), a
+        stale credential file goes first; the old file path stays."""
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "agents", "claude", "guest-init.sh")
+        if not os.path.exists(src):
+            self.skipTest("guest-init.sh not found")
+        with open(src) as fh:
+            text = fh.read()
+        self.assertIn('export CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_TOK"', text)
+        self.assertIn('print(d["oauth_token"])', text)
+        self.assertIn("rm -f /home/node/.claude/.credentials.json", text)
+        self.assertIn('open("/home/node/.claude/.credentials.json", "w")', text)
+        self.assertLess(text.index("export CLAUDE_CODE_OAUTH_TOKEN"), text.index("RUNAS="))   # inherited by bridge/webterm
+        self.assertNotRegex(text, r"echo[^\n]*CLAUDE_TOK")
 
     def test_claude_guest_init_role_section(self):
         """guest-init.sh writes AGENT_SYSTEM into CLAUDE.md under "## Your role"

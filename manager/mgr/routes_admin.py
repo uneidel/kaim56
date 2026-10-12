@@ -30,6 +30,7 @@ from mgr import auth as _auth
 from mgr import checkout as _checkout
 from mgr import browse as _browse
 from mgr import chats as _chats
+from mgr import claudeaccts as _claudeaccts
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat
 from mgr import guestproxy as _guestproxy
@@ -836,6 +837,25 @@ def _rt_secret_store_delete(h):
     if len(parts) == 4 and parts[3] == "delete":
         return _secrets.secret_delete(parts[2])
     return "unknown"
+
+
+# ---- Claude subscription accounts (mgr/claudeaccts.py): token/creds write-only
+@_routes.ROUTER.get("/api/claude/accounts", admin=True)
+def _rt_claude_accounts(h):
+    return h._json({"accounts": _claudeaccts.list_public(), "usage": _claudeaccts.USAGE})
+
+
+@_routes._msg_route("POST", "/api/claude/accounts")
+def _rt_claude_accounts_set(h):
+    b = h._body() or {}
+    if b.get("op") == "delete":
+        return _claudeaccts.remove(b.get("name", ""))
+    return _claudeaccts.add(b.get("name", ""), b.get("label", ""), b.get("token", ""), b.get("creds", ""))
+
+
+@_routes.ROUTER.get("/api/claude/usage", admin=True)
+def _rt_claude_usage(h):
+    return h._json(_claudeaccts.USAGE)
 
 
 @_routes.ROUTER.get("/api/secret-policy", admin=True)

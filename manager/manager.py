@@ -72,6 +72,7 @@ from mgr import browse as _browse            # noqa: F401
 from mgr import checkout as _checkout        # noqa: F401
 from mgr import cfapi as _cfapi              # noqa: F401
 from mgr import chats as _chats              # noqa: F401
+from mgr import claudeaccts as _claudeaccts  # noqa: F401
 from mgr import cloud as _cloud              # noqa: F401
 from mgr import decision as _decision        # noqa: F401
 from mgr import gateway as _gateway

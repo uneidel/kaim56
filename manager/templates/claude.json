@@ -63,6 +63,11 @@
       ]
     },
     {
+      "key": "CLAUDE_ACCOUNT",
+      "label": "Claude account (Settings → Claude accounts); empty = host login",
+      "default": ""
+    },
+    {
       "key": "ALLOW_ACTIONS",
       "label": "Allow actions",
       "type": "select",
