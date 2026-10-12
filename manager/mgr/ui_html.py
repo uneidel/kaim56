@@ -383,7 +383,7 @@ HTML_TOP = """</head><body>
   </table>
   <div class="panel blueprint" id=sq-panel style="display:none;margin-top:24px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h4 style="margin:0" id=sq-head>Squad</h4>
-      <span><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
+      <span><button class="btn btn-secondary btn-sm" onclick=sqToSquads()>Board &amp; chat in Squads →</button><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
     <p class=text-muted style="font-size:12.5px;margin:0 0 12px">The members talk in one channel; a message wakes the members it names (<code>@name</code>, <code>@all</code>) as a new turn. Blocked messages are kept with the reason.</p>
     <div class=grid2>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
@@ -405,15 +405,6 @@ HTML_TOP = """</head><body>
       <div class="field span2"><label>Code index (repowise)</label><div id=sq-index></div></div>
       <div class="field span2"><label>Git remote (GitHub / Gitea)</label><div id=sq-git></div></div>
     </div>
-    <h4 style="margin:16px 0 4px">Proposals</h4>
-    <div id=sq-gate></div>
-    <h4 style="margin:16px 0 8px">Tickets</h4>
-    <div id=sq-board></div>
-    <h4 style="margin:16px 0 0">Channel</h4>
-    <div id=sq-thread style="max-height:440px;overflow:auto;display:grid;gap:8px;margin:12px 0"></div>
-    <div id=sq-working aria-live=polite></div>
-    <div style="display:flex;gap:6px"><input class=input id=sq-text placeholder="message the lead, or @member / @all …" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')sqSend()">
-      <button class="btn btn-secondary" onclick=sqSend()>Send</button></div>
     <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
   </div>
   <div class="panel blueprint" style="margin-top:32px">

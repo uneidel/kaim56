@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-12
+- Projects: the Squad panel keeps only the settings (members, index, git); proposals, tickets and the channel live only in Squads ("Board & chat in Squads →"); the ticket level (cost routing) is now a select in the Squads ticket panel.
 - Squads board: the remaining German labels (column empty states, summary, legend, sidebar pill, dependency hint) are English like the rest of the UI.
 - Squads: shared toolchain layer — a squad spec `toolchain` {apt, script, env} (operator: Squads → Toolchain → Edit spec; lead: `toolchain_propose`, approved on a card) is built once per base image in a throwaway builder VM (no secrets, no mounts, no host access) and attached read-only to every member (`fc_layer=`, base < toolchain < upper); status/Rebuild/log in the Squads header, `toolchain_status` for members; a rebuilt base image makes it stale and rebuilds it once. Needs both rootfs images rebuilt (guest-init).
 - Squads: the member timeline gets the room (6 h, hourly grid), the "Now" column is narrower.

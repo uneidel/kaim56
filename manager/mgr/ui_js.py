@@ -1194,12 +1194,13 @@ let SQ='';
 function sqName(){return SQ||(typeof SK!=='undefined'?SK:'')}
 async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
   await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
-function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none';document.getElementById('sq-gate').innerHTML=''}
+function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none'}
+function sqToSquads(){const n=SQ;location.hash='#squads';setTimeout(()=>skPick(n),300)}
 async function sqLoad(){
   if(!SQ)return;
   const base='/api/projects/'+encodeURIComponent(sqName())+'/squad';
-  let s={},d={};
-  try{s=await (await fetch(base)).json();d=await (await fetch(base+'/messages')).json()}catch(e){document.getElementById('sqmsg').textContent='manager not reachable';return}
+  let s={};
+  try{s=await (await fetch(base)).json()}catch(e){document.getElementById('sqmsg').textContent='manager not reachable';return}
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
@@ -1208,16 +1209,7 @@ async function sqLoad(){
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
   document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
-  const msgs=d.messages||[], th=document.getElementById('sq-thread');
-  if(!sqaBusy(th)){th.innerHTML=msgs.length?msgs.map(m=>`<div class="${m.kind==='turn'?'sq-tbub':''}" style="padding:8px 10px;border-radius:8px;background:var(--app-bg);${m.reply_to?'margin-left:24px;':''}">`+
-    `<div class=text-muted style="font-size:12px">#${m.id} · ${new Date(m.ts*1000).toLocaleString()} · <b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))}`+
-    `${m.reply_to?' · re #'+m.reply_to:''}${m.kind!=='post'?' · '+escT(m.kind):''} · depth ${m.depth}</div>`+
-    sqText(m)+
-    sqDelivery(m)+
-    `</div>`).join(''):'<span class=text-muted>No messages yet. A message goes to the lead, or to @name / @all.</span>';
-  th.scrollTop=th.scrollHeight; sqNotesLoad()}
-  document.getElementById('sq-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
-  sqBoard();sqIndex();sqGit();
+  sqIndex();sqGit();
 }
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
 async function sqIndex(){
@@ -1279,12 +1271,6 @@ async function sqSave(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
   if(!d.error){sqLoad();loadProjects()}
-}
-async function sqSend(){
-  const el=document.getElementById('sq-text'), text=el.value.trim(); if(!text)return;
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()}catch(e){d={error:'manager not reachable'}}
-  document.getElementById('sqmsg').textContent=d.error||'';
-  if(!d.error){el.value='';sqLoad()}
 }
 /* squad gate: proposals the user approves, tickets (mgr/squadgate.py) */
 let SQB={};
@@ -1491,27 +1477,6 @@ function sqCollect(p,c){
   return out;
 }
 const sqOpenP=p=>p.status==='pending'||p.status==='changes_requested';
-async function sqBoard(){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/board')).json()}catch(e){return}
-  if(d.error)return;
-  SQB=d;
-  const ps=d.proposals||[], pend=ps.filter(sqOpenP), done=ps.filter(p=>!sqOpenP(p)).slice(0,10);
-  document.getElementById('sq-gate').innerHTML=(d.approved?'':'<p class=text-muted style="font-size:12.5px;margin:0">No approved plan yet: only the lead can be woken. It proposes with squad_propose.</p>')+
-    pend.map(sqCard).join('')+(done.length?`<details><summary class=text-muted style="font-size:12.5px">Decided (${done.length})</summary>${done.map(sqDone).join('')}</details>`:'');
-  const cols=d.statuses||[], ts=d.tickets||[], mem=(d.members||[]).map(m=>m.name);
-  document.getElementById('sq-board').innerHTML=ts.length?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">'+
-    cols.map(c=>`<div><div class=text-muted style="font-size:12px;margin-bottom:4px">${c} · ${ts.filter(t=>t.status===c).length}</div>`+
-      ts.filter(t=>t.status===c).map(t=>`<div style="padding:8px;border-radius:8px;background:var(--app-bg);margin-bottom:6px;font-size:12.5px">`+
-        `<b>${escT(t.key)}</b> ${escT(t.title)}`+(t.depends_on.length?`<div class=text-muted>after ${escT(t.depends_on.join(', '))}</div>`:'')+
-        (t.comments.length?`<div class=text-muted title="${esc(t.comments[t.comments.length-1].text)}">${t.comments.length} comment(s), last by ${escT(t.comments[t.comments.length-1].by)}</div>`:'')+
-        `<div style="display:flex;gap:4px;margin-top:6px"><select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{status:this.value})">`+
-        cols.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('')+'</select>'+
-        `<select class=input style="font-size:12px;padding:2px 4px" onchange="sqTicket(${+t.id},{assignee:this.value})"><option value="">—</option>`+
-        mem.map(n=>`<option value="${esc(n)}"${n===t.assignee?' selected':''}>${escT(n)}</option>`).join('')+'</select>'+
-        `<select class=input style="font-size:12px;padding:2px 4px" title="level for cost routing (${esc(t.level_by||'')})" onchange="sqTicket(${+t.id},{level:+this.value})">`+
-        [1,2,3,4,5].map(n=>`<option value=${n}${n===(t.level||3)?' selected':''}>L${n}</option>`).join('')+'</select></div></div>').join('')+'</div>').join('')+'</div>'
-    :'<span class=text-muted style="font-size:12.5px">No tickets yet.</span>';
-}
 async function sqDecide(id,ok,changes){
   /* Approve / Reject / Request changes. The buttons are locked while the manager works (an approval
      creates the members' VMs — that can take a minute) and the outcome or any error is shown IN the
@@ -1541,11 +1506,6 @@ async function sqDecide(id,ok,changes){
     say(d.status+(bad.length?' — failed: '+bad.map(s=>s.step+': '+s.detail).join('; '):' ✓'),bad.length>0);
     if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}
   }catch(e){btns.forEach(b=>b.disabled=false);say('⚠️ '+(e&&e.message||e)+' — nothing was sent',true)}
-}
-async function sqTicket(id,change){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/ticket',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,...change})})).json()}catch(e){d={error:'manager not reachable'}}
-  document.getElementById('sqmsg').textContent=d.error||'';
-  sqLoad();
 }
 /* — Squads: one chat per squad; a kickoff from one line (mgr/squadkick.py) — */
 let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false, SK_MEMBERS=[], SK_AT=0;
@@ -1894,7 +1854,7 @@ function skTkHtml(t){   /* the side panel's header + body; the footer (comment b
       `<button class=kb-x onclick=skTkClose() aria-label=Close title="Close (Esc)">×</button></div>`+
     `<div class=kb-ctl><select class="kb-sel st" id=sk-tk-st aria-label=Status onchange="skTkSet({status:this.value})">${KB_COLS.map(c=>opt(c[0],c[1],t.status)).join('')}</select>`+
       `<select class=kb-sel id=sk-tk-as aria-label=Assignee onchange="skTkSet({assignee:this.value})">${opt('','unassigned',t.assignee)}${names.map(n=>opt(n,n,t.assignee)).join('')}</select>`+
-      (t.level?`<span class=kb-badge title="Model level ${+t.level}">L${+t.level}</span>`:'')+(t.updated?`<span class=kb-when>updated ${escT(kbWhen(t.updated))}</span>`:'')+'</div>'+
+      `<select class=kb-sel id=sk-tk-lv aria-label=Level title="model level for cost routing${t.level_by?' (set by '+esc(t.level_by)+')':''}" onchange="skTkSet({level:+this.value})">${['1','2','3','4','5'].map(n=>opt(n,'L'+n,String(t.level||3))).join('')}</select>`+(t.updated?`<span class=kb-when>updated ${escT(kbWhen(t.updated))}</span>`:'')+'</div>'+
     (rs?`<div class=kb-rescope role=note><span aria-hidden=true>↻</span><div style="flex:1;min-width:0"><b>Re-scoped</b> by ${escT(who(rs.by))} at ${escT(kbWhen(rs.ts))}`+
       (lv?`<div class=kb-prev hidden><b>v${vs.length}:</b> ${kbMd(lv.title)}${lv.description?`<div class=kb-md>${kbMd(lv.description)}</div>`:''}</div>`:'')+'</div>'+
       (lv?`<button class=kb-more data-v="v${vs.length}" aria-expanded=false onclick=kbPrev(this)>Show v${vs.length}</button>`:'')+'</div>':'')+'</div>'+
@@ -1941,7 +1901,7 @@ function skTkClose(){
   document.getElementById('sk-tkd').hidden=true; document.getElementById('s-squads').classList.remove('kb-open'); SKT_EDIT=false;
   const c=document.querySelector(`#sk-board .kb-tk[data-id="${SKT}"]`); SKT=0; if(c){c.classList.remove('cur');c.focus()}
 }
-async function skTkSet(ch){             /* a header select: status / assignee, applied at once */
+async function skTkSet(ch){             /* a header select: status / assignee / level, applied at once */
   const t=(SKB_D.b.tickets||[]).find(x=>x.id===SKT); if(!t)return;
   const d=await skTk(t.id,ch);
   document.getElementById('sk-tk-msg').textContent=d.error?'⚠️ '+d.error:d.note?t.key+': '+d.note:'';
@@ -2010,12 +1970,7 @@ async function skSend(){
   el.value='';
   if(SK)skLoad(); else {skJob(d.id);loadSquads()}
 }
-setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();else if(!document.hidden&&location.hash==='#projects'&&SQ)sqWork()},5000);
-/* Projects → Squad: only the working line refreshes (the settings form stays as edited) */
-async function sqWork(){
-  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad/messages?since=999999999')).json()}catch(e){return}
-  if(!d.error)document.getElementById('sq-working').innerHTML=sqWorking(d.working)+sqQueued(d.queued);
-}
+setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5000);
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 /* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */
 let WAIT=[];
