@@ -438,9 +438,27 @@ def _restart_now(name):
             _vm.stop(inst)
             _vm.start(inst)
             _util._wlog(f"{name}: restarted (squad 'Restart members')")
+            _auto_retry(name)
         except Exception as e:
             _util._wlog(f"{name}: restart failed: {e!r}")
     threading.Thread(target=run, daemon=True, name=f"restart-{name}").start()
+
+
+_auto_retried = set()                 # failed turns (task:<id>) a restart re-delivered once
+
+
+def _auto_retry(name):
+    """Back from 'Restart members': a member whose latest turn failed on its
+    provider (API error, "Not logged in") gets that wake again — once per failed turn."""
+    try:
+        proj, _why = _squads.resolve(name)
+        lt = _squads.last_turns(proj).get(name) if proj else None
+        if not lt or lt["outcome"] != "api_error" or lt["ref"] in _auto_retried:
+            return
+        _auto_retried.add(lt["ref"])
+        _util._wlog(f"{name}: auto-retry after restart: {_squads.retry_failed(proj, [name])}")
+    except Exception as e:
+        _util._wlog(f"{name}: auto-retry failed: {e!r}")
 
 
 def restart_members(proj):
@@ -453,6 +471,7 @@ def restart_members(proj):
             continue
         if not _instances.is_running(inst):
             out[name] = "stopped (starts fresh on its next wake)"
+            _auto_retry(name)
         elif _busy(name):
             with _restart_lock:
                 _restart_after.add(name)
@@ -467,7 +486,7 @@ def restart_members(proj):
 # Claude Code's "API Error: … safeguards flagged …") did not get the work done;
 # it counted as "received" in the squad channel (live 2026-10-10).
 _API_FAIL = re.compile(r"^\s*(API Error\b|Error: API\b|Failed to authenticate|Credit balance is too low|"
-                       r"Invalid API key)|safeguards flagged this message", re.I)
+                       r"Invalid API key|Not logged in\b)|safeguards flagged this message", re.I)
 
 
 def _api_failure(res):

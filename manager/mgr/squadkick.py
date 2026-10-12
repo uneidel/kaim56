@@ -50,6 +50,8 @@ import threading
 import time
 import uuid
 
+from mgr import audit as _audit
+from mgr import gateway as _gateway
 from mgr import hitlq as _hitlq
 from mgr import indexer as _indexer
 from mgr import instances as _instances
@@ -60,6 +62,7 @@ from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import squadgate as _squadgate
 from mgr import squadgit as _squadgit
+from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 
@@ -469,3 +472,78 @@ def overview():
                     "tickets_done": sum(1 for t in tix if t["status"] == "done"), "tickets_total": len(tix),
                     "waiting_for_you": hq.count(p["name"])})
     return out
+
+
+# ---- who does what (the Squads board's member rows) -------------------------------------
+STRIP_S = 7200                       # the activity strip: the last 2 h
+_TICKET = re.compile(r"Ticket (\S{1,32}) \(id \d+\) is yours")
+
+
+def _tool(member, since):
+    """The member's latest tool call in this turn (its audit trail: the OpenRouter agent
+    reports each call; Claude Code reports none) -> "tool: target", short, no secrets."""
+    a = next((x for x in _audit.audit_read(member, 20) if int(x.get("ts") or 0) >= since), None)
+    if not a:
+        return ""
+    line = (str(a.get("tool") or "") + (": " + str(a["target"]) if a.get("target") else "")).splitlines()[0]
+    return _gateway.redact_secrets(line)[0][:90]
+
+
+def activity(proj, now=None):
+    """Per member what it does or why not: {members: {name: {state work|wait|err|ask|idle,
+    reason, ticket, dep, since, tool, template, last_turn, strip, msgs}}, failed_members,
+    stalled_min, queued}. First match wins: working, queued, last turn failed, asks you,
+    waiting for a dependency, idle."""
+    now, name = int(now or time.time()), proj["name"]
+    insts = {i["name"]: i for i in _instances.load_instances()}
+    names = sorted(n for n in (proj.get("members") or {}) if (insts.get(n) or {}).get("template") != "indexer")
+    sid = (_squadrec.of_project(name) or {}).get("id", "")
+    ev = _squadmetrics.events(sid, now - STRIP_S, "", _squadmetrics.EVENTS_MAX) if sid else []
+    last = _squadmetrics.last_turns(sid) if sid else {}
+    ws, tix = _squads.working(name), _squadgate.tickets(name)
+    st = {t["key"]: t["status"] for t in tix}
+    hq = [x for x in _hitlq.items("open") if x.get("project") == name]
+    out = {}
+    for n in names:
+        w = next((x for x in ws if x["member"] == n), None)
+        lt = last.get(n)
+        mine = [t for t in tix if t.get("assignee") == n and t["status"] in ("doing", "open")]
+        mine.sort(key=lambda t: (t["status"] != "doing", t["id"]))
+        dep = next(((t, d) for t in mine for d in t.get("depends_on") or [] if st.get(d) != "done"), None)
+        ready = next((t for t in mine if not any(st.get(d) != "done" for d in t.get("depends_on") or [])), None)
+        a = {"state": "idle", "reason": "", "ticket": (ready or (mine[0] if mine else {})).get("key", ""), "dep": "",
+             "since": 0, "tool": "", "template": (insts.get(n) or {}).get("template", "")}
+        q = next((x for x in hq if x.get("instance") == n), None)
+        if w:
+            m = _squads._get(w["msg"]) if str(w["msg"] or "").isdigit() else None
+            k = _TICKET.search((m or {}).get("text") or "")
+            a.update(state="work" if w["state"] == "working" else "wait", since=w["since"],
+                     reason="" if w["state"] == "working" else "turn queued",
+                     ticket=k.group(1) if k else next((t["key"] for t in mine if t["status"] == "doing"), a["ticket"]))
+            if w["state"] == "working":
+                a["tool"] = _tool(n, w["since"])
+        elif lt and lt["outcome"] != "ok":
+            m = _squads._get(lt["msg"]) if str(lt["msg"] or "").isdigit() else None
+            why = ((m or {}).get("failed") or {}).get(n) or lt["outcome"]
+            a.update(state="err", reason=(str(why).strip().splitlines() or [""])[0][:120], since=lt["ts"],
+                     ticket=lt["ticket"] or a["ticket"])
+        elif q:
+            a.update(state="ask", reason=str(q.get("title") or "")[:120], since=int(q.get("created") or 0),
+                     ticket=q.get("ticket") or a["ticket"])
+        elif dep and not ready:
+            a.update(state="wait", ticket=dep[0]["key"], dep=dep[1], reason=st.get(dep[1], "missing"))
+        if lt:
+            a["last_turn"] = {"ts": lt["ts"], "ok": lt["outcome"] == "ok", "dur": int((lt["duration_ms"] or 0) / 1000),
+                              "error": a["reason"] if a["state"] == "err" else ""}
+        a["strip"] = [{"start": int(e["ts"] - (e["duration_ms"] or 0) / 1000), "end": e["ts"], "ok": e["outcome"] == "ok"}
+                      for e in ev if e["kind"] == "turn_end" and e["member"] == n]
+        if a["state"] == "work":
+            a["strip"].append({"start": a["since"], "end": 0, "ok": True})     # the running turn
+        a["msgs"] = [e["ts"] for e in ev if e["kind"] == "message" and e["member"] == n][-60:]
+        out[n] = a
+    queued = _squads.queue_info(name)["count"] + sum(1 for w in ws if w["state"] != "working")
+    s = _squads.settings(proj)
+    idle = s["approved"] and not s["paused"] and not ws and not queued and any(t["status"] != "done" for t in tix)
+    ended = max((x["ts"] for x in last.values()), default=0)
+    return {"members": out, "failed_members": sum(1 for a in out.values() if a["state"] == "err"),
+            "stalled_min": max(0, (now - ended) // 60) if idle and ended else None, "queued": queued}

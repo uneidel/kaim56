@@ -1692,6 +1692,21 @@ function kbWhen(ts){
     days=Math.round((new Date().setHours(0,0,0,0)-new Date(ts*1000).setHours(0,0,0,0))/864e5);
   return days===0?t:days===1?'yesterday '+t:d.toLocaleDateString();
 }
+function kbWhy(t,q){      /* a blocked card's reason: its last real comment (not a bare status word), else the open question */
+  const c=(t.comments||[]).filter(c=>!/^\W*(status\W*)?(open|doing|review|blocked|done)\W*$/i.test(c.text||'')).pop();
+  const x=c?{by:String(c.by||'').replace(/^user:/,''),text:c.text}:q?{by:q.instance,text:q.title}:null;
+  return x?`<div class=kb-why><b>${escT(x.by)}:</b> ${escT(String(x.text).slice(0,220))}${String(x.text).length>220?'…':''}</div>`:'';
+}
+async function skRetryTurns(member){   /* re-deliver the wakes of failed turns (all, or one member's) */
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/retry',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(member?{member}:{})})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error?'⚠️ '+d.error:'Retry: '+[...Object.keys(d.retried||{}).map(n=>n+' — re-delivered'),...Object.entries(d.refused||{}).map(([n,v])=>n+' — '+v)].join(' · '));
+  SKB=''; skLoad();
+}
+async function skNudge(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/nudge',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error?'⚠️ '+d.error:'Status check sent to the lead'); skLoad();
+}
 async function skMetrics(name){       /* turns of the last 12 h + today's cost/tokens (mgr/squadmetrics.py); at most once a minute */
   if(SKM.name===name&&Date.now()-SKM.at<60000)return;
   const base='/api/squads/'+encodeURIComponent(name)+'/metrics/', now=Math.floor(Date.now()/1000), mid=Math.floor(new Date().setHours(0,0,0,0)/1000);
@@ -1710,32 +1725,49 @@ function skBoardRender(d,b,hq){
     const t=(k&&ts.find(x=>x.key===k))||ts.find(x=>x.assignee===w.member&&x.status==='doing');
     if(t&&!on[t.key])on[t.key]=w;
   });
-  const last={}; SKM.ev.forEach(e=>{last[e.member]=e});
-  const state=n=>{
-    const w=ws.find(x=>x.member===n&&x.state==='working'), l=last[n];
-    if(w)return ['work',kbMmss(+w.elapsed||0),'arbeitet'];
-    if(hq.some(x=>x.instance===n))return ['ask','fragt dich','fragt dich'];
-    if(l&&l.outcome!=='ok')return ['err','Fehler','letzter Turn fehlgeschlagen'];
-    if(ws.some(x=>x.member===n)||ts.some(t=>t.assignee===n&&t.status==='open'&&deps(t).length))return ['wait','wartet','wartet'];
-    const mins=l?Math.max(1,Math.round((now-l.ts)/60)):0;
-    return ['idle',l?'ruht '+(mins>90?Math.round(mins/60)+' h':mins+' min'):'—','ruht'];
+  const act=b.activity||{}, am=act.members||{}, t0=now-7200, px=x=>Math.max(0,Math.min(100,(x-t0)/72)).toFixed(1);
+  const hm=ts=>ts?new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}):'';
+  const key=k=>k?`<span class=kb-key>${escT(k)}</span>`:'';
+  const now1=a=>{        /* the "Now" cell: what the member does, or why not (mgr/squadkick.activity) */
+    const lt=a.last_turn, ltx=lt?`last turn ${hm(lt.ts)} · ${lt.ok?'ok':'failed'} · ${Math.max(1,Math.round(lt.dur/60))} min`:'no turn yet';
+    if(a.state==='work')return [`<span class="kb-st work">working</span><span class=kb-live aria-hidden=true><i></i><i></i><i></i></span> ${key(a.ticket)} · <span class=kb-t>${kbMmss(Math.max(0,Math.round(now-a.since)))}</span>`,
+      a.tool?`<code class=kb-cmd title="${esc(a.tool)}">${escT(a.tool)}</code>`:`since ${hm(a.since)}`];
+    if(a.state==='err')return [`<span class="kb-st err">last turn failed</span> <span class=kb-why1>${escT(a.reason)}</span> <button class=kb-retry onclick="skRetryTurns('${esc(a.name)}')">retry</button>`,
+      `${hm(a.since)}${a.ticket?' · was on '+key(a.ticket):''}`];
+    if(a.state==='ask')return [`<span class="kb-st ask">asks you:</span> ${escT(a.reason)}`,a.ticket?`on ${key(a.ticket)} · answer in the cards above`:'answer in the cards above'];
+    if(a.state==='wait'&&a.dep)return [`<span class="kb-st wait">waiting</span> for ${key(a.dep)} (${escT(a.reason)})`,`${key(a.ticket)} starts when ${escT(a.dep)} is done`];
+    if(a.state==='wait')return [`<span class="kb-st wait">waiting</span> ${escT(a.reason)}`,a.ticket?'on '+key(a.ticket):ltx];
+    return [`<span class="kb-st idle">idle</span> ${a.ticket?'next '+key(a.ticket):'no ticket ready'}`,ltx];
   };
-  const team=(b.members||[]).filter(m=>m.name!=='indexer').map(m=>{const [s,lab,aria]=state(m.name);
-    return `<span class=kb-who title="${esc(m.role||'')}"><span class="kb-av${s==='work'?'':' idle'}">${escT(m.name.charAt(0).toUpperCase())}<i class="kb-s ${s}" role=img aria-label="${aria}"></i></span>${escT(m.name)} <small>${escT(lab)}</small></span>`}).join('');
+  const strip=a=>`<div class=kb-strip role=img aria-label="${esc(a.name)}: ${(a.strip||[]).length} turns, ${(a.msgs||[]).length} messages in 2 h">`+
+    (a.strip||[]).filter(x=>(x.end||now)>t0).map(x=>{const l=px(x.start), r=px(x.end||now);
+      return `<i class="kb-b${x.end?'':' now'}${x.ok?'':' f'}" style="left:${l}%;width:${Math.max(.8,r-l).toFixed(1)}%"></i>`}).join('')+
+    (a.msgs||[]).filter(x=>x>t0).map(x=>`<i class=kb-m style="left:calc(${px(x)}% - 3px)"></i>`).join('')+'<i class=kb-nowl></i></div>';
+  const LBL={work:'working',wait:'waiting',err:'last turn failed',ask:'asks you',idle:'idle'};
+  const team=(b.members||[]).filter(m=>am[m.name]).map(m=>{const a={...am[m.name],name:m.name}, s=a.state||'idle', [l1,l2]=now1(a);
+    return `<div class=kb-mr role=row><div class=kb-mn role=cell><span class="kb-av${s==='work'?'':' idle'}">${escT(m.name.charAt(0).toUpperCase())}<i class="kb-s ${s}" role=img aria-label="${LBL[s]||s}"></i></span>`+
+      `<span class=kb-nm><b>${escT(m.name)}</b><small>${escT([m.role,a.template].filter(Boolean).join(' · '))}</small></span></div>`+
+      `<div class=kb-now role=cell><span class=kb-l1>${l1}</span><span class=kb-l2>${l2}</span></div><div role=cell>${strip(a)}</div></div>`}).join('');
+  const nf=+act.failed_members||0, nb=ts.filter(t=>t.status==='blocked').length, nq=hq.length, stall=act.stalled_min!=null&&act.stalled_min!==undefined;
+  const prob=nf||nb||nq||stall?`<span class=kb-ptx>⚠ ${[stall?`<b>stalled ${+act.stalled_min} min</b>`:'',nf?`${nf} failed turn${nf>1?'s':''}`:'',nb?`${nb} blocked`:'',nq?`${nq} waiting for you`:''].filter(Boolean).join(' · ')}</span>`+
+    (nf?`<button class="btn btn-ghost btn-sm" onclick="skRetryTurns('')">Retry failed turns (${nf})</button>`:'')+
+    (stall?`<button class="btn btn-ghost btn-sm" onclick=skNudge() title="Asks the lead to review the board and wake who can continue">Nudge lead</button>`:''):'';
+  const pe=document.getElementById('sk-prob'); if(pe.dataset.h!==prob){pe.dataset.h=prob;pe.innerHTML=prob;pe.hidden=!prob}
   const n=ts.length, nd=ts.filter(t=>t.status==='done').length, ng=ts.filter(t=>t.status==='doing').length, pct=x=>n?(100*x/n).toFixed(1):0;
   const bins=Array(12).fill(0); SKM.ev.forEach(e=>{const i=11-Math.floor((now-e.ts)/3600); if(i>=0&&i<12)bins[i]++});
   const mx=Math.max(1,...bins), sum=SKM.sum||{};
-  const head=`<div class=kb-team aria-label=Team>${team}</div><div class=kb-sum>`+
+  const head=`<div class=kb-mem role=table aria-label="Who does what"><div class=kb-mh role=row><span role=columnheader>Member</span><span role=columnheader>Now</span>`+
+    `<span role=columnheader class=kb-axis><span>-2h</span><span>-1h</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
     (n?`<span><b>${nd}/${n}</b> erledigt</span><span class=kb-pbar role=img aria-label="${nd} erledigt, ${ng} in Arbeit, ${n-nd-ng} offen"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
       :'<span>noch keine Tickets — sie kommen mit dem genehmigten Plan</span>')+
     `<span class=kb-spark title="Turns pro Stunde, letzte 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+
     (sum.cost!==undefined?`<span>heute $${(+sum.cost).toFixed(2)} · ${kbTok((+sum.tokens_in||0)+(+sum.tokens_out||0))} Tokens</span>`:'')+'</div>';
   const card=t=>{
     const w=on[t.key], dep=deps(t), q=hq.find(x=>x.ticket===t.key&&x.kind==='question'), dn=t.status==='done';
-    const cls=(w?' working':q?' asking':dep.length&&t.status==='open'?' waiting':dn?' donec':'')+(t.id===SKT?' cur':'');
+    const cls=(w?' working':q?' asking':dep.length&&t.status==='open'||t.status==='blocked'?' waiting':dn?' donec':'')+(t.id===SKT?' cur':'');
     return `<article class="kb-tk${cls}" tabindex=0 role=button draggable=true data-id="${+t.id}" aria-label="${esc(t.key+' '+t.title+' — '+t.status)}">`+
       `<span class=kb-key>${escT(t.key)}${t.level&&!dn?` <span class=kb-lvl>L${+t.level}</span>`:''}</span><span class=kb-ti>${escT(t.title)}</span>`+
-      (q?`<span class=kb-q>❓ ${escT(q.title)}</span>`:'')+
+      (q?`<span class=kb-q>❓ ${escT(q.title)}</span>`:'')+(t.status==='blocked'?kbWhy(t,q):'')+
       (dep.length&&!w?`<span class=kb-dep>⏸ wartet auf ${escT(dep.join(', '))}</span>`:'')+
       `<span class=kb-meta><span class=kb-as>${t.assignee?kbAv(t.assignee,!!w)+escT(t.assignee):'<span class=text-muted>unassigned</span>'}</span>`+
       (w?`<span class=kb-t>🟢 ${kbMmss(+w.elapsed||0)}</span>`:dn?`<span>${escT(kbWhen(t.updated))}</span>`:'')+'</span>'+
@@ -1753,6 +1785,7 @@ function skBoardRender(d,b,hq){
   const html=head+`<div class=kb-board>${cols}</div><div class=kb-legend><span><i style="background:var(--app-live)"></i>arbeitet gerade (Laufzeit)</span>`+
     '<span><i style="background:var(--color-warn)"></i>wartet (Abhängigkeit, Limit)</span><span><i style="background:var(--app-ask)"></i>fragt dich (Blocked)</span>'+
     '<span><i style="background:var(--color-neutral-500)"></i>ruht</span><span><i style="background:var(--app-bad)"></i>letzter Turn fehlgeschlagen</span>'+
+    '<span><i class=kb-lb></i>Turn · <i class="kb-lb f"></i>fehlgeschlagen · <i style="background:var(--color-accent-400)"></i>Nachricht (Raster 30 min)</span>'+
     '<span>Klick auf eine Karte = Ticket, Kommentare, letzte Antwort · Ziehen = Status ändern</span></div>';
   el.hidden=false;
   if(html===SKB||SKB_DRAG)return;                       /* redraw only on change, never under a drag */

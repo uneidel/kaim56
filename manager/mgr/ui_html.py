@@ -343,6 +343,7 @@ HTML_TOP = """</head><body>
     <nav class=sk-list id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
+      <div id=sk-prob class=kb-prob role=status hidden></div>
       <div id=sk-cards></div>
       <div id=sk-board hidden aria-label="Squad board"></div>
       <div id=sk-working aria-live=polite></div>

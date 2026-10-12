@@ -5447,9 +5447,13 @@ class ManagerFunctions(unittest.TestCase):
                   # the ticket side panel: header selects, re-scope banner, dep chips, timeline, sticky comment box
                   "class=kb-pane", "function kbMd", "onchange=\"skTkSet({status:", "kb-rescope", "/re-scope/i",
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
-                  "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]"):
+                  "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]",
+                  # who does what: member rows with the 2 h strip, the problem line, blocked reasons
+                  "class=kb-mem", "<span>-2h</span><span>-1h</span><span>now</span>", "kb-strip", "id=sk-prob",
+                  "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
+                  "last turn failed", "starts when", "no ticket ready"):
             self.assertIn(s, page)
-        for s in ("skBoard()", "kb-dlg", "gestern", "Schließen"):
+        for s in ("skBoard()", "kb-dlg", "gestern", "Schließen", "kb-who"):
             self.assertNotIn(s, page)
         # board first: waiting cards, board, working line, composer, then the collapsible chat (closed by default)
         sq = page[page.index("<section class=\"screen\" id=s-squads>"):]
@@ -5461,6 +5465,70 @@ class ManagerFunctions(unittest.TestCase):
                   "(p.members||[]).map(m=>m.suggested||0)",          # a merge proposal has no members: the board still renders
                   "console.error('squad '+what"):
             self.assertIn(s, page)
+
+    def test_squad_activity_rows_retry_nudge_and_auto_retry(self):
+        """Per member what it does or why not (working, failed, asks, waiting, idle) with
+        a 2 h strip from squad_events; /squad/retry re-delivers a failed turn's wake at
+        depth 0 (not when paused, 400 without a failure); /squad/nudge posts to the lead;
+        'Restart members' retries a member whose last turn failed on its provider once."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        sm, L, now = m._squadmetrics, "127.0.0.1", int(time.time())
+        old = m._instances.is_running, m._tasks._auto_retried.copy()
+        try:
+            proj = m._projects.get("sq")
+            sid = m._squads.squad_id(proj)
+            msg = self._sq("/api/projects/sq/squad/post", L, {"to": ["b"], "text": "build it"})[1]
+            del woke[:]
+            m._squads.wake_result(msg["id"], "b", False, "Not logged in · Please run /login\nmore")
+            sm.record(sid, "turn_end", "task:tb", now - 600, member="b", outcome="api_error", duration_ms=5000,
+                      detail={"msg": msg["id"]})
+            sm.record(sid, "turn_end", "task:td", now - 1800, member="d", outcome="ok", duration_ms=120000, detail={})
+            sm.record(sid, "message", "m999", now - 1700, member="d")
+            sm.record(sid, "turn_end", "task:old", now - 9000, member="d", outcome="ok", duration_ms=1000, detail={})
+            m._store.load_tasks = lambda: [{"instance": "e", "status": "running", "started": now - 30,
+                                            "squad": {"project": "sq", "msg": msg["id"]}}]
+            self.assertTrue(m._hitlq.ask("a", "Which DB?")[0])
+            act = self._sq("/api/projects/sq/squad/board", L)[1]["activity"]
+            a = act["members"]
+            self.assertEqual({n: x["state"] for n, x in a.items()},
+                             {"a": "ask", "b": "err", "d": "idle", "e": "work", "f": "wait"})
+            self.assertEqual((a["b"]["reason"], a["b"]["last_turn"]["ok"]), ("Not logged in · Please run /login", False))
+            self.assertEqual((a["f"]["ticket"], a["f"]["dep"], a["f"]["reason"]), ("T2", "T1", "open"))
+            self.assertEqual((a["e"]["ticket"], a["e"]["since"], a["a"]["reason"]), ("T1", now - 30, "Which DB?"))
+            self.assertEqual(a["d"]["strip"], [{"start": now - 1920, "end": now - 1800, "ok": True}])   # not the 2.5 h old one
+            self.assertEqual((a["d"]["msgs"], a["d"]["last_turn"]["dur"]), ([now - 1700], 120))
+            self.assertEqual(a["e"]["strip"][-1], {"start": now - 30, "end": 0, "ok": True})
+            self.assertEqual((act["failed_members"], act["stalled_min"], act["queued"]), (1, None, 0))
+            m._store.load_tasks = lambda: []
+            self.assertEqual(self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["stalled_min"], 10)
+            # retry: paused -> refused; running -> re-delivered at depth 0; then nothing left
+            self._sq("/api/projects/sq/squad", L, {"paused": True})
+            st, d = self._sq("/api/projects/sq/squad/retry", L, {})
+            self.assertEqual((st, d["retried"], d["refused"]), (200, {}, {"b": "squad paused"}))
+            self._sq("/api/projects/sq/squad", L, {"paused": False})
+            st, d = self._sq("/api/projects/sq/squad/retry", L, {})
+            self.assertEqual((st, list(d["retried"]), woke[-1][0], woke[-1][2]), (200, ["b"], "b", 0))
+            self.assertIn("build it", woke[-1][1])
+            self.assertNotIn("b", m._squads._get(msg["id"])["failed"])
+            sm.record(sid, "turn_end", "task:tb2", now - 5, member="b", outcome="ok", detail={"msg": msg["id"]})
+            self.assertEqual(self._sq("/api/projects/sq/squad/retry", L, {})[0], 400)
+            self.assertEqual(self._sq("/api/projects/sq/squad/retry", "172.30.3.2", {})[0], 403)
+            # nudge: an operator post to the lead
+            st, d = self._sq("/api/projects/sq/squad/nudge", L, {})
+            self.assertEqual((st, d["to"], woke[-1][0]), (200, ["a"], "a"))
+            self.assertIn("Status check: nobody is working", woke[-1][1])
+            # auto-retry after "Restart members": once per failed provider turn
+            sm.record(sid, "turn_end", "task:tb3", now - 1, member="b", outcome="api_error", detail={"msg": msg["id"]})
+            m._instances.is_running = lambda i: False
+            del woke[:]
+            self._sq("/api/projects/sq/squad/restart", L, {})
+            self._sq("/api/projects/sq/squad/restart", L, {})
+            self.assertEqual([w[0] for w in woke], ["b"])
+        finally:
+            m._instances.is_running = old[0]
+            m._tasks._auto_retried.clear(); m._tasks._auto_retried.update(old[1])
+            undo()
 
     def test_squad_lead_rescopes_a_ticket(self):
         """The lead (guest route) or the operator (/squad/ticket) may change a
