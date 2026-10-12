@@ -362,6 +362,15 @@ def events(squad_id, since=0, kind="", limit=1000):
         return [dict(r) for r in c.execute(q, args)]
 
 
+def last_turns(squad_id):
+    """{member: {ts, outcome, duration_ms, ticket, ref, msg}} of each member's latest turn_end."""
+    with _db() as c:      # SQLite: the bare columns come from the MAX(ts) row
+        rows = c.execute("SELECT member, MAX(ts), outcome, duration_ms, ticket, ref, detail FROM squad_events "
+                         "WHERE squad_id=? AND kind='turn_end' GROUP BY member", (squad_id,)).fetchall()
+    return {r[0]: {"ts": r[1], "outcome": r[2], "duration_ms": r[3], "ticket": r[4], "ref": r[5],
+                   "msg": json.loads(r[6] or "{}").get("msg")} for r in rows}
+
+
 def to_csv(rows):
     buf = io.StringIO()
     w = csv.DictWriter(buf, COLS, extrasaction="ignore")

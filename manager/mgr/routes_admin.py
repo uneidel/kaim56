@@ -52,6 +52,7 @@ from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import squadgate as _squadgate
+from mgr import squadkick as _squadkick
 from mgr import squadnotes as _squadnotes
 from mgr import squads as _squads
 from mgr import resources as _resources
@@ -330,7 +331,7 @@ def _squad_get(h, name, sub):
                         "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
                         "statuses": list(_squadgate.STATUSES), "members": _squads.members(p),
-                        "working": _squads.working(name)})
+                        "working": _squads.working(name), "activity": _squadkick.activity(p)})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
@@ -359,6 +360,10 @@ def _squad_notes_post(h, p, who, b):
     return h._json({"error": "unknown operation"}, 404)
 
 
+NUDGE = ("Status check: nobody is working. Review the board, unblock what you can, "
+         "and wake the members who can continue.")
+
+
 def _squad_post(h, name, sub):
     # POST /api/projects/<n>/squad (settings) | /squad/post, /squad/notes… (as the logged-in person; also role user)
     #      | /squad/decide (a proposal) | /squad/ticket (edit one)
@@ -385,6 +390,12 @@ def _squad_post(h, name, sub):
         return h._json(r) if r else h._json({"error": why}, 400)
     if sub == "restart":                     # restart the members (busy ones after their turn), admin only
         return h._json({"ok": True, "members": _tasks.restart_members(p)})
+    if sub == "retry":                       # {member?}: re-deliver the failed turns' wakes (admin only)
+        r = _squads.retry_failed(p, [str(b["member"])] if b.get("member") else None)
+        return h._json(r) if r["retried"] or r["refused"] else h._json({"error": "no failed turn to retry"}, 400)
+    if sub == "nudge":                       # a status check to the lead (admin only)
+        m, why = _squadgate.operator_post(p, who, {"text": NUDGE})
+        return h._json(m) if m else h._json({"error": why}, 400)
     if sub == "reindex":                     # queue a code index run (admin only)
         return h._json({"msg": _indexer.reindex(name, "operator " + who)})
     if sub == "ticket":                      # {id, status?, assignee?, comment?, level?, title?, description?}: the operator, any time

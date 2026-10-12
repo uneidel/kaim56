@@ -36,6 +36,7 @@ from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
 from mgr import paths as _paths
 from mgr import projects as _projects
+from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import store as _store
 
@@ -414,6 +415,50 @@ def queue_info(project, now=None):
         old = c.execute("SELECT MIN(ts) FROM squad_msg WHERE project=? AND ts>? AND woke<>'{}'",
                         (project, now - 3600)).fetchone()[0]
     return {"count": n, "next_at": (old + 3600) if (n and old) else 0}
+
+
+def last_turns(proj):
+    """{member: its latest wake turn (mgr/squadmetrics.last_turns)}; {} without a squad record."""
+    sid = squad_id(proj)
+    return _squadmetrics.last_turns(sid) if sid else {}
+
+
+def retry_failed(proj, only=None):
+    """Re-deliver the wake of each member (or of `only`) whose latest turn
+    failed: the message that woke it, depth 0, through the guards (paused,
+    rate, budget …) -> {"retried": {member: task id}, "refused": {member: why}}."""
+    names = set(proj.get("members") or {}) - {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
+    last, out = last_turns(proj), {"retried": {}, "refused": {}}
+    busy = {w["member"] for w in working(proj["name"])}
+    for m in sorted(names & set(only) if only else names):
+        lt = last.get(m)
+        if not lt or lt["outcome"] == "ok":
+            if only:
+                out["refused"][m] = "its last turn did not fail"
+            continue
+        msg = _get(lt["msg"]) if str(lt["msg"] or "").isdigit() else None
+        if m in busy:
+            out["refused"][m] = "a turn is running or queued"
+        elif not msg or msg["project"] != proj["name"]:
+            out["refused"][m] = "the message that woke it is gone"
+        else:
+            with _lock:
+                why = _guard(proj, [m], 0, int(time.time()))
+                if why:
+                    out["refused"][m] = why
+                    continue
+                woke, err = _deliver(proj, msg["id"], msg["from"], msg["text"], msg["kind"], [m], 0)
+                with _db() as c:
+                    row = c.execute("SELECT woke, outcome FROM squad_msg WHERE id=?", (msg["id"],)).fetchone()
+                    w, o = json.loads(row[0] or "{}"), json.loads(row[1] or "{}")
+                    w.update(woke)
+                    o.pop(m, None)                  # the new turn books its own outcome
+                    c.execute("UPDATE squad_msg SET woke=?, outcome=? WHERE id=?", (json.dumps(w), json.dumps(o), msg["id"]))
+            if m in woke:
+                out["retried"][m] = woke[m]
+            else:
+                out["refused"][m] = err or "wake failed"
+    return out
 
 
 OLD_WAKES_DEFAULT = 20
