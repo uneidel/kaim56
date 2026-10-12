@@ -711,6 +711,9 @@ def _create(proj, m, steps):
     cfg = {"TRANSPORT": "web", "AGENT_SUDO": "1"}
     if m["role"] == "lead":                         # a lead studies code before it plans: 12 tool rounds were
         cfg["AGENT_MAX_STEPS"] = str(LEAD_MAX_STEPS)  # not enough for the first live architect (2026-10-09)
+    acct = _squads.settings(proj).get("claude_account")
+    if acct and m["template"] == "claude":
+        cfg["CLAUDE_ACCOUNT"] = acct
     if m["skills"]:
         cfg["SKILLS"] = ",".join(m["skills"])
     pers = next((p for p in _personas.load_personas() if p.get("name") == m["persona"]), None) if m["persona"] else None

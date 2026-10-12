@@ -19,6 +19,7 @@ import uuid
 
 from mgr import auth as _auth
 from mgr import chats as _chats
+from mgr import claudeaccts as _claudeaccts
 from mgr import decision as _decision
 from mgr import guestchat as _guestchat
 from mgr import guests as _guests
@@ -668,6 +669,7 @@ def _task_worker():
                 _vm.image_sweep()          # one stat per base image, every idle cycle
             except Exception as e:
                 _util._wlog(f"image-sweep failed: {e!r}")
+            _claudeaccts.poll_usage_bg()   # usage gauges, every 5 min, in a thread (never raises)
             try:
                 _squads.deliver_queued()   # rate/budget-held squad wakes, once there is room
             except Exception as e:

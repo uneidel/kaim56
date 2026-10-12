@@ -45,9 +45,11 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "daily_token_budget": 2_000_000, "max_depth": 8,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
-            "approval_tools": [], "autonomy": "trusted"}
+            "approval_tools": [], "autonomy": "trusted",
+            "claude_account": ""}         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
 AUTONOMY = ("trusted", "supervised")
 TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+ACCOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
 KEEP = 500                      # messages kept per project
@@ -148,6 +150,11 @@ def normalize_settings(body, old=None):
         if body["autonomy"] not in AUTONOMY:
             return None, "autonomy must be trusted or supervised"
         s["autonomy"] = body["autonomy"]
+    if "claude_account" in body:
+        a = str(body["claude_account"] or "").strip()
+        if a and not ACCOUNT_RE.match(a):
+            return None, "claude_account: an account name (a-z 0-9 -) or empty"
+        s["claude_account"] = a
     if "approval_tools" in body:
         raw = body["approval_tools"]
         tools = [str(t).strip() for t in (raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else [])]

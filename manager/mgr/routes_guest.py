@@ -14,6 +14,7 @@ import urllib.request
 
 from mgr import audit as _audit
 from mgr import chats as _chats
+from mgr import claudeaccts as _claudeaccts
 from mgr import gateway as _gateway
 from mgr import guests as _guests
 from mgr import haalias as _haalias
@@ -187,6 +188,10 @@ def _rt_claude_credentials(h):
     inst = h._guest()
     if inst is None or inst.get("template") != "claude":
         return h._json({"error": "claude template guests only"}, 403)
+    acct = str((inst.get("config") or {}).get("CLAUDE_ACCOUNT") or "").strip()
+    if acct and acct != "default":                # an account of its own (mgr/claudeaccts.py)
+        tok = _claudeaccts.token_for(acct)
+        return h._json({"oauth_token": tok} if tok else {"error": f"unknown Claude account {acct!r}"}, 200 if tok else 404)
     try:
         with open(_secrets.CLAUDE_CRED_SRC) as fh:
             full = json.load(fh)

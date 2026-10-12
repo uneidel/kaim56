@@ -1203,7 +1203,7 @@ async function sqLoad(){
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Squad · '+SQ;
-  document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');
+  document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');document.getElementById('sq-claude_account').value=st.claude_account||'';
   document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing; document.getElementById('sq-security_skills').checked=!!st.security_skills;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
@@ -1275,7 +1275,7 @@ async function sqGitFetch(){
 async function sqSave(){
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
-  body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;
+  body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;body.claude_account=document.getElementById('sq-claude_account').value.trim();
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
   document.getElementById('sqmsg').textContent=d.error||'saved ✓';
   if(!d.error){sqLoad();loadProjects()}
@@ -2856,6 +2856,7 @@ window.onload=()=>{
   if(location.hash==='#squads')loadSquads();
   renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
+  loadClaudeAccts();setInterval(()=>{if(!document.hidden)loadUsageGauges()},60000);
   // Tasks, policy and the usage numbers used to arrive only on page load —
   // whoever left the tab open saw arbitrarily stale state (and thought a
   // long-fixed problem was current). Refresh every 15s, but only for the
@@ -2987,5 +2988,45 @@ async function revokeSession(id){
   await fetch('/api/auth/sessions/revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   loadSessions();
 }
+/* — Claude accounts (mgr/claudeaccts.py): the Settings card and the usage gauges above the user — */
+let CA_USAGE={};
+function caTime(iso){const d=new Date(iso||'');return isNaN(d)?'?':d.toLocaleString([],{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}
+function caTip(u){return '5h resets '+caTime(u.five_hour&&u.five_hour.resets_at)+' · week resets '+caTime(u.seven_day&&u.seven_day.resets_at)}
+function caBar(lbl,w){
+  if(!w)return '';
+  const p=Math.max(0,Math.min(100,+w.pct||0)), c=p>=95?'bad':p>=80?'warn':'ok';
+  return `<span>${lbl}</span><span class=cg-bar><i class=${c} style="width:${p.toFixed(0)}%"></i></span><span class="cg-p ${c}">${p.toFixed(0)}%</span>`;
+}
+function caGauges(u){return `<div class=cg-g>${caBar('5h',u.five_hour)}${caBar('Wk',u.seven_day)}</div>`}
+function renderGauges(){
+  const el=document.getElementById('cgauges'); if(!el)return;
+  const rows=Object.entries(CA_USAGE||{}).filter(([n,u])=>u&&(u.five_hour||u.seven_day));
+  el.hidden=!rows.length;
+  el.innerHTML=rows.map(([n,u])=>`<div class=cg-row title="${esc(caTip(u))}"><span class=cg-name>${escT(n)}</span>${caGauges(u)}</div>`).join('');
+}
+async function loadUsageGauges(){
+  try{const r=await fetch('/api/claude/usage');if(!r.ok)return;CA_USAGE=await r.json()}catch(e){return}
+  renderGauges();
+}
+async function loadClaudeAccts(){
+  let d={};try{const r=await fetch('/api/claude/accounts');if(!r.ok)return;d=await r.json()}catch(e){return}
+  CA_USAGE=d.usage||{};renderGauges();
+  document.getElementById('calist').innerHTML=(d.accounts||[]).map(a=>{const u=CA_USAGE[a.name]||{};
+    return `<div class=ca-row><b class=mono>${escT(a.name)}</b><span class=text-muted>${escT(a.label||'')}</span>`+
+      `<span title="setup-token for the VMs">token ${a.has_token?'✓':'–'}</span><span title="credentials JSON for the usage gauges">usage ${a.has_creds?'✓':'–'}</span>`+
+      `<span class=ca-u title="${esc(u.error||caTip(u))}">${(u.five_hour||u.seven_day)?caGauges(u):'<span class=text-muted>'+escT(u.error||'no data yet')+'</span>'}</span>`+
+      (a.readonly?'':`<button class="btn btn-ghost btn-sm" onclick="caDel('${esc(a.name)}')">Delete</button>`)+'</div>';}).join('');
+}
+async function caPost(body){
+  let r={};try{r=await (await fetch('/api/claude/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){r={msg:'manager not reachable'}}
+  document.getElementById('camsg').textContent=r.msg||'';
+  return r.msg||'';
+}
+async function caSave(){
+  const v=id=>document.getElementById(id).value.trim();
+  const msg=await caPost({name:v('ca-name'),label:v('ca-label'),token:v('ca-token'),creds:v('ca-creds')});
+  if(/ (added|updated)$/.test(msg)){['ca-token','ca-creds'].forEach(i=>document.getElementById(i).value='');loadClaudeAccts()}
+}
+async function caDel(n){if(confirm('Delete Claude account '+n+'?')){await caPost({op:'delete',name:n});loadClaudeAccts()}}
 loadMe();
 </script></body></html>"""

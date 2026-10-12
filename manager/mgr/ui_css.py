@@ -137,6 +137,19 @@ input[type=checkbox]{accent-color:var(--color-accent)}
 .navcnt{font-size:11px;color:var(--color-neutral-600)}
 .user{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-radius:var(--radius-lg);
   background:rgba(255,255,255,.04)}
+/* — Claude usage gauges (sidebar, above the user; mgr/claudeaccts.py) — */
+.cgauges{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding:0 10px}
+.cgauges[hidden]{display:none}
+.cgauges:not([hidden])+.user{margin-top:0}
+.cg-row{display:flex;flex-direction:column;gap:2px;font-size:11px;min-width:0}
+.cg-name{color:var(--color-neutral-700);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cg-g{display:grid;grid-template-columns:auto minmax(0,1fr) 3em;gap:1px 6px;align-items:center;font-size:10.5px;color:var(--color-neutral-600)}
+.cg-bar{height:4px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden}
+.cg-bar i{display:block;height:100%;background:var(--app-live)}
+.cg-bar i.warn{background:var(--color-warn)}.cg-bar i.bad{background:var(--app-bad)}
+.cg-p{text-align:right;font-family:var(--font-mono)}.cg-p.warn{color:var(--color-warn)}.cg-p.bad{color:var(--app-bad)}
+.ca-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:13px}
+.ca-u{flex:1 1 150px;min-width:140px;font-size:12px}
 .avatar{width:32px;height:32px;flex:none;border-radius:50%;background:var(--color-accent-200);color:var(--color-accent-800);
   display:grid;place-items:center;font-family:var(--font-heading);font-weight:600}
 .uinfo{display:flex;flex-direction:column;line-height:1.2;flex:1;min-width:0}

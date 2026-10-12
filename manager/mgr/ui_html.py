@@ -44,6 +44,7 @@ HTML_TOP = """</head><body>
       <a href="#architecture"><span>Architecture</span></a>
     </div>
   </nav>
+  <div class=cgauges id=cgauges aria-label="Claude usage" hidden></div>
   <div class=user>
     <div class=avatar id=uavatar>A</div>
     <div class=uinfo><span id=uname>Admin</span><span id=urole>basic</span></div>
@@ -393,6 +394,7 @@ HTML_TOP = """</head><body>
         <option value=supervised>supervised — also every ticket a member sets done is a review for you</option></select></div>
       <div class=field><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false>
         <span class=text-muted style="font-size:12px">comma-separated; <code>bash</code> = network, install, delete and push commands only. Shown in <a href="#waiting">Waiting for you</a>.</span></div>
+      <div class=field><label>Claude account of new Claude members</label><input class="input mono" id=sq-claude_account placeholder="empty = host login" spellcheck=false></div>
       <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
       <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
@@ -765,7 +767,7 @@ HTML_BOTTOM = """
   lets the MCP hub substitute the value into a server config <i>on the host</i>; only a key that is
   also <b>guest-readable</b> leaves the host raw via <code>/api/secret/&#8249;name&#8250;</code>, the
   instance identified by source IP. Sources: the 0600 secret store and the manager settings. MCP
-  configs are assembled server-side the same way (<code>/api/mcp-config</code>).</p></div>
+  configs are assembled server-side the same way (<code>/api/mcp-config</code>). <b>Claude accounts</b> (<code>mgr/claudeaccts.py</code>, 0600 <code>claude_accounts.json</code>): a claude VM with <code>CLAUDE_ACCOUNT</code> gets that account&#8217;s setup-token from <code>/api/claude-credentials</code> as <code>CLAUDE_CODE_OAUTH_TOKEN</code> (env only, no file), otherwise the host login; the 5 h/week usage gauges are polled every 5 min (a manager-owned login is refreshed, the host login never).</p></div>
 
   <div class="card blueprint"><span class=card-title>Security gateway</span>
   <p class=card-body>Per-chat toggle (shield icon in app and web). Strips invisible Unicode
@@ -1055,6 +1057,18 @@ HTML_BOTTOM = """
     <pre id=updlog hidden class=mono style="font-size:11.5px;max-height:180px;overflow:auto;margin:-8px 0 16px;padding:8px 12px;border:1px solid var(--color-divider);white-space:pre-wrap"></pre>
     <div class=stack id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-secondary" title="One sample setup suggestion with the saved decision backend" onclick=decisionTest()>Test decision backend</button><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
+  </div>
+  <div class="panel blueprint" id=capanel style="margin-top:18px">
+    <h6 style="margin:0 0 10px">Claude accounts</h6>
+    <p class=text-muted style="font-size:12.5px">Create a token per account with <code>claude setup-token</code>. For the usage gauges, optionally paste the account&#8217;s <code>~/.claude/.credentials.json</code> from a login made just for kAIm56 (e.g. <code>CLAUDE_CONFIG_DIR=/tmp/k claude login</code>) &#8212; the manager then owns and refreshes it. An instance picks its account with <code>CLAUDE_ACCOUNT</code>; <code>default</code> is the host login (read only).</p>
+    <div class=stack id=calist></div>
+    <div class=grid2 style="margin-top:12px">
+      <div class=field><label>Name</label><input class="input mono" id=ca-name placeholder="work" maxlength=32 spellcheck=false autocomplete=off></div>
+      <div class=field><label>Label</label><input class=input id=ca-label maxlength=64 autocomplete=off></div>
+      <div class="field span2"><label>Token (claude setup-token)</label><input class="input mono" type=password id=ca-token autocomplete=new-password spellcheck=false placeholder="empty on update = keep the stored one"></div>
+      <div class="field span2"><label>Credentials JSON for usage (optional)</label><textarea class="input mono" id=ca-creds rows=3 spellcheck=false autocomplete=off></textarea></div>
+    </div>
+    <div class=panel-foot><span id=camsg class=msg></span><button class="btn btn-primary" onclick=caSave()>Save account</button></div>
   </div>
   <div class="panel blueprint" id=sesspanel hidden style="margin-top:18px">
     <h6 style="margin:0 0 10px">Sessions (OIDC logins)</h6>

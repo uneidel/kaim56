@@ -113,29 +113,46 @@ fi
 # Subscription login (Claude Max/Pro): fetch the host's live credential at boot
 # so `claude -p` runs as a subscription instead of reporting "Not logged in".
 # Comes via the manager (claude template only, by source IP); Claude Code then
-# does the short-lived accessToken renewal itself per session.
+# does the short-lived accessToken renewal itself per session. An instance with
+# its own account (CLAUDE_ACCOUNT, Settings -> Claude accounts) gets a
+# setup-token instead: exported as CLAUDE_CODE_OAUTH_TOKEN for the agent
+# processes below, never written to a file or the log. A credential file left
+# on a persistent overlay goes first either way.
 if [ -n "$GW" ]; then
   mkdir -p /home/node/.claude
+  rm -f /home/node/.claude/.credentials.json
   # No curl in the image -> python3 (present anyway). Writes the file only if
-  # the claudeAiOauth block really arrived, never an error message.
-  if python3 - "$GW" <<'PY'
-import json, sys, urllib.request
+  # the claudeAiOauth block really arrived, never an error message; a token
+  # goes to stdout (captured below), messages to stderr.
+  if CLAUDE_TOK=$(python3 - "$GW" <<'PY'
+import json, sys, urllib.error, urllib.request
 gw = sys.argv[1]
 try:
-    d = json.load(urllib.request.urlopen(f"http://{gw}:8700/api/claude-credentials", timeout=10))
+    try:
+        d = json.load(urllib.request.urlopen(f"http://{gw}:8700/api/claude-credentials", timeout=10))
+    except urllib.error.HTTPError as e:
+        d = json.load(e)
+    if d.get("oauth_token"):
+        print(d["oauth_token"]); sys.exit(0)
     if "claudeAiOauth" not in d:
-        raise ValueError("no oauth block")
+        raise ValueError(d.get("error") or "no oauth block")
     open("/home/node/.claude/.credentials.json", "w").write(json.dumps(d))
 except Exception as e:
-    print("[init] claude-cred:", e); sys.exit(1)
+    print("[init] claude-cred:", e, file=sys.stderr); sys.exit(1)
 PY
-  then
+); then
     chown -R node:node /home/node/.claude
-    chmod 600 /home/node/.claude/.credentials.json
-    echo "[init] Claude subscription login loaded"
+    if [ -n "$CLAUDE_TOK" ]; then
+      export CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_TOK"
+      echo "[init] Claude account token loaded ($CLAUDE_ACCOUNT)"
+    else
+      chmod 600 /home/node/.claude/.credentials.json
+      echo "[init] Claude subscription login loaded"
+    fi
   else
     echo "[init] WARN: no Claude login from the manager (claude -p reports 'Not logged in')"
   fi
+  unset CLAUDE_TOK
 fi
 
 # Human in the loop: a PreToolUse hook in Claude Code's user settings asks the

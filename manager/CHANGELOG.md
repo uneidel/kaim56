@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-12
+- Claude accounts: several subscriptions — Settings → Claude accounts stores a `claude setup-token` per account (0600, write-only); an instance (or a squad's `claude_account`) picks one with `CLAUDE_ACCOUNT` and its VM runs with `CLAUDE_CODE_OAUTH_TOKEN` instead of the host login (claude image rebuild needed). Usage gauges (5 h / week) per account in the sidebar and the card, polled every 5 min from `/api/oauth/usage`; an optional manager-owned login is refreshed for it, the host login never.
+
 ## 2026-10-11
 - Squads: merged work reaches the other writers — after a merge every other writer's branch gets the base merged in and its folder refilled in place (own work kept; a conflict changes nothing, wakes the writer + lead); writers sync themselves with the new `project_sync` tool. Wake depth default 3 → 8 (squads still at 3 migrated at startup).
 - Squads board: all five columns fit without sideways scrolling (a phone still scrolls); the ticket panel overlays the board below 1700 px. VMs: inotify limits raised at boot (the default gave a misleading ENOSPC).
