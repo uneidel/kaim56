@@ -5467,7 +5467,7 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         page = m._ui.render()
         for s in ("function skBoardRender", "id=sk-tkd", "kb-board", "onclick=skChat()", "skTkSave", "dragstart",
-                  "wartet auf dich", "prefers-reduced-motion:reduce){.sk-live",
+                  "waiting for you", "prefers-reduced-motion:reduce){.sk-live",
                   # the ticket side panel: header selects, re-scope banner, dep chips, timeline, sticky comment box
                   "class=kb-pane", "function kbMd", "onchange=\"skTkSet({status:", "kb-rescope", "/re-scope/i",
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",

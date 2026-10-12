@@ -1587,7 +1587,7 @@ async function loadSquads(){
     SK_LIST.map(s=>item(`data-n="${esc(s.name)}"`,SK===s.name,
       (s.waiting_for_you?'<span class=sk-qdot aria-hidden=true></span>':s.working?'<span class=sk-live aria-hidden=true></span>':'')+
       escT(s.name)+(s.last_id>(SK_SEEN[s.name]||0)&&SK!==s.name?' <span class="tag tag-accent">new</span>':''),
-      s.waiting_for_you?'❓ wartet auf dich':s.working?`${+s.working} arbeiten · ${+s.tickets_done}/${+s.tickets_total}`   /* live state (mgr/squadkick.overview) */
+      s.waiting_for_you?'❓ waiting for you':s.working?`${+s.working} working · ${+s.tickets_done}/${+s.tickets_total}`   /* live state (mgr/squadkick.overview) */
         :escT(s.status)+(s.pending?' · '+(+s.pending)+' to approve':''))).join('');
   if(!SK&&!SK_JOB)skNew();
 }
@@ -1694,8 +1694,8 @@ async function skLoad(){
 }
 /* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
 let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0, SKT_EDIT=false;
-const KB_COLS=[['open','Open','keine offenen Tickets'],['doing','Doing','niemand arbeitet gerade'],['review','Review','nichts zur Prüfung'],
-  ['blocked','Blocked','keine Rückfrage offen'],['done','Done','noch nichts erledigt']];
+const KB_COLS=[['open','Open','no open tickets'],['doing','Doing','nobody is working'],['review','Review','nothing to review'],
+  ['blocked','Blocked','no open questions'],['done','Done','nothing done yet']];
 const kbMmss=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
 const kbAv=(n,on)=>`<span class="kb-av${on?'':' idle'}" aria-hidden=true>${escT(String(n||'?').charAt(0).toUpperCase())}</span>`;
 const kbTok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
@@ -1819,17 +1819,17 @@ function skBoardRender(d,b,hq){
   const mx=Math.max(1,...bins), sum=SKM.sum||{};
   const head=`<div class=kb-mem role=table aria-label="Who does what"><div class=kb-mh role=row><span role=columnheader>Member</span><span role=columnheader>Now</span>`+
     `<span role=columnheader class=kb-axis><span>-6h</span><span>-3h</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
-    (n?`<span><b>${nd}/${n}</b> erledigt</span><span class=kb-pbar role=img aria-label="${nd} erledigt, ${ng} in Arbeit, ${n-nd-ng} offen"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
-      :'<span>noch keine Tickets — sie kommen mit dem genehmigten Plan</span>')+
-    `<span class=kb-spark title="Turns pro Stunde, letzte 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+
-    (sum.cost!==undefined?`<span>heute $${(+sum.cost).toFixed(2)} · ${kbTok((+sum.tokens_in||0)+(+sum.tokens_out||0))} Tokens</span>`:'')+'</div>';
+    (n?`<span><b>${nd}/${n}</b> done</span><span class=kb-pbar role=img aria-label="${nd} done, ${ng} in progress, ${n-nd-ng} open"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
+      :'<span>no tickets yet — they come with the approved plan</span>')+
+    `<span class=kb-spark title="Turns per hour, last 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+
+    (sum.cost!==undefined?`<span>today $${(+sum.cost).toFixed(2)} · ${kbTok((+sum.tokens_in||0)+(+sum.tokens_out||0))} Tokens</span>`:'')+'</div>';
   const card=t=>{
     const w=on[t.key], dep=deps(t), q=hq.find(x=>x.ticket===t.key&&x.kind==='question'), dn=t.status==='done';
     const cls=(w?' working':q?' asking':dep.length&&t.status==='open'||t.status==='blocked'?' waiting':dn?' donec':'')+(t.id===SKT?' cur':'');
     return `<article class="kb-tk${cls}" tabindex=0 role=button draggable=true data-id="${+t.id}" aria-label="${esc(t.key+' '+t.title+' — '+t.status)}">`+
       `<span class=kb-key>${escT(t.key)}${t.level&&!dn?` <span class=kb-lvl>L${+t.level}</span>`:''}</span><span class=kb-ti>${escT(t.title)}</span>`+
       (q?`<span class=kb-q>❓ ${escT(q.title)}</span>`:'')+(t.status==='blocked'?kbWhy(t,q):'')+
-      (dep.length&&!w?`<span class=kb-dep>⏸ wartet auf ${escT(dep.join(', '))}</span>`:'')+
+      (dep.length&&!w?`<span class=kb-dep>⏸ waiting for ${escT(dep.join(', '))}</span>`:'')+
       `<span class=kb-meta><span class=kb-as>${t.assignee?kbAv(t.assignee,!!w)+escT(t.assignee):'<span class=text-muted>unassigned</span>'}</span>`+
       (w?`<span class=kb-t>🟢 ${kbMmss(+w.elapsed||0)}</span>`:dn?`<span>${escT(kbWhen(t.updated))}</span>`:'')+'</span>'+
       (w?'<span class=kb-bar><i class=kb-run></i></span>':'')+'</article>';
@@ -1843,11 +1843,11 @@ function skBoardRender(d,b,hq){
     return `<section class=kb-col data-st=${s} aria-label="${label}"><div class=kb-ch>${label} <b>${cnt}</b></div>`+
       (cnt?mine.map(card).join('')+extra:`<div class=kb-empty>${empty}</div>`)+'</section>';
   }).join('');
-  const html=head+`<div class=kb-board>${cols}</div><div class=kb-legend><span><i style="background:var(--app-live)"></i>arbeitet gerade (Laufzeit)</span>`+
-    '<span><i style="background:var(--color-warn)"></i>wartet (Abhängigkeit, Limit)</span><span><i style="background:var(--app-ask)"></i>fragt dich (Blocked)</span>'+
-    '<span><i style="background:var(--color-neutral-500)"></i>ruht</span><span><i style="background:var(--app-bad)"></i>letzter Turn fehlgeschlagen</span>'+
-    '<span><i class=kb-lb></i>Turn · <i class="kb-lb f"></i>fehlgeschlagen · <i style="background:var(--color-accent-400)"></i>Nachricht (Raster 1 h)</span>'+
-    '<span>Klick auf eine Karte = Ticket, Kommentare, letzte Antwort · Ziehen = Status ändern</span></div>';
+  const html=head+`<div class=kb-board>${cols}</div><div class=kb-legend><span><i style="background:var(--app-live)"></i>working (elapsed)</span>`+
+    '<span><i style="background:var(--color-warn)"></i>waiting (dependency, limit)</span><span><i style="background:var(--app-ask)"></i>asks you (Blocked)</span>'+
+    '<span><i style="background:var(--color-neutral-500)"></i>idle</span><span><i style="background:var(--app-bad)"></i>last turn failed</span>'+
+    '<span><i class=kb-lb></i>Turn · <i class="kb-lb f"></i>failed · <i style="background:var(--color-accent-400)"></i>message (1 h grid)</span>'+
+    '<span>Click a card = ticket, comments, last answer · drag = change status</span></div>';
   el.hidden=false;
   if(html===SKB||SKB_DRAG)return;                       /* redraw only on change, never under a drag */
   const f=document.activeElement, fid=f&&el.contains(f)?f.dataset.id:null, sx=(el.querySelector('.kb-board')||{}).scrollLeft||0;
