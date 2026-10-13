@@ -28,7 +28,7 @@ HTML_TOP = """</head><body>
     <div class=navgrp><div class=navlbl>Work</div>
       <a href="#tasks"><span>Tasks</span></a>
       <a href="#missions"><span>Missions</span></a>
-      <a href="#projects"><span>Projects</span></a>
+      <a href="#projects"><span>Repos</span></a>
       <a href="#squads"><span>Squads</span></a>
       <a href="#waiting"><span>Waiting for you</span> <span class=navcnt id=waitcnt></span></a>
     </div>
@@ -351,6 +351,8 @@ HTML_TOP = """</head><body>
       <div id=sk-working aria-live=polite></div>
       <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
+        <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
+          <option value="">Repo: from a URL</option></select>
         <span style="flex:1;min-width:0;position:relative;display:flex"><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message autocomplete=off
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)">
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
@@ -361,30 +363,9 @@ HTML_TOP = """</head><body>
         <div class=sk-thread id=sk-thread aria-live=polite></div></details>
     </div>
   </div>
-  <aside id=sk-tkd class=kb-pane role=dialog aria-labelledby=sk-tkd-t hidden><div id=sk-tkd-box></div>
-    <div class=kb-pfoot><textarea class=input id=sk-tk-c rows=2 placeholder="Comment on this ticket …" aria-label=Comment
-      onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();skTkSave()}"></textarea>
-      <div class=kb-fr><span>Ctrl+Enter sends <span id=sk-tk-msg class=msg></span></span><span class=mrow style="margin:0">
-        <button class="btn btn-ghost btn-sm" onclick=skTkSave(1) title="Post it in the squad chat to the lead">Ask lead</button>
-        <button class="btn btn-primary btn-sm" onclick=skTkSave()>Comment</button></span></div></div>
-  </aside>
-</section>
-
-<section class="screen" id=s-waiting>
-  <p class=lede>Approvals, questions and reviews from the squads · a gated tool call, an <code>ask_human</code> question, a ticket a supervised squad set done · your decision wakes the member</p>
-  <div id=wait-list class=wait-list><span class=text-muted style="font-size:13px">…</span></div>
-  <span id=wait-msg class=msg></span>
-</section>
-
-<section class="screen" id=s-projects>
-  <p class=lede>Name a folder once, let instances join it with a role · lead and reader see it read-only, writers read-write · mounted at <code>/project/&#8249;name&#8250;</code>, joins and leaves apply live</p>
-  <table class=table>
-    <thead><tr><th style="width:18%">Project</th><th>Source</th><th>Members</th><th style="width:1%"></th></tr></thead>
-    <tbody id=projrows></tbody>
-  </table>
-  <div class="panel blueprint" id=sq-panel style="display:none;margin-top:24px">
+  <div class="panel blueprint" id=sq-panel style="display:none;margin-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h4 style="margin:0" id=sq-head>Squad</h4>
-      <span><button class="btn btn-secondary btn-sm" onclick=sqToSquads()>Board &amp; chat in Squads →</button><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
+      <span><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
     <p class=text-muted style="font-size:12.5px;margin:0 0 12px">The members talk in one channel; a message wakes the members it names (<code>@name</code>, <code>@all</code>) as a new turn. Blocked messages are kept with the reason.</p>
     <div class=grid2>
       <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
@@ -402,14 +383,36 @@ HTML_TOP = """</head><body>
       <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
-      <div class="field span2"><label>Members</label><div id=sq-members></div></div>
+      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-push_when_done> Push when done (all tickets done: the result goes out as branch <code>squad/&#8249;id&#8250;</code> to the repo&#8217;s remotes)</label></div>
+      <div class="field span2"><label>Members · Changes per writer</label><div id=sq-members></div></div>
       <div class="field span2"><label>Code index</label><div id=sq-index></div></div>
       <div class="field span2"><label>Git remote (GitHub / Gitea)</label><div id=sq-git></div></div>
     </div>
     <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
   </div>
+  <aside id=sk-tkd class=kb-pane role=dialog aria-labelledby=sk-tkd-t hidden><div id=sk-tkd-box></div>
+    <div class=kb-pfoot><textarea class=input id=sk-tk-c rows=2 placeholder="Comment on this ticket …" aria-label=Comment
+      onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();skTkSave()}"></textarea>
+      <div class=kb-fr><span>Ctrl+Enter sends <span id=sk-tk-msg class=msg></span></span><span class=mrow style="margin:0">
+        <button class="btn btn-ghost btn-sm" onclick=skTkSave(1) title="Post it in the squad chat to the lead">Ask lead</button>
+        <button class="btn btn-primary btn-sm" onclick=skTkSave()>Comment</button></span></div></div>
+  </aside>
+</section>
+
+<section class="screen" id=s-waiting>
+  <p class=lede>Approvals, questions and reviews from the squads · a gated tool call, an <code>ask_human</code> question, a ticket a supervised squad set done · your decision wakes the member</p>
+  <div id=wait-list class=wait-list><span class=text-muted style="font-size:13px">…</span></div>
+  <span id=wait-msg class=msg></span>
+</section>
+
+<section class="screen" id=s-projects>
+  <p class=lede>The code sources: a folder or clone, its base branch and remotes · instances join with a role (lead and reader read-only, writers read-write) at <code>/project/&#8249;name&#8250;</code> · a squad's repo is run from <a href="#squads">Squads</a></p>
+  <table class=table>
+    <thead><tr><th style="width:18%">Project</th><th>Source</th><th>Members</th><th style="width:1%"></th></tr></thead>
+    <tbody id=projrows></tbody>
+  </table>
   <div class="panel blueprint" style="margin-top:32px">
-    <h4 style="margin:0 0 16px" id=pj-head>New project</h4>
+    <h4 style="margin:0 0 16px" id=pj-head>New repo</h4>
     <div class=grid2>
       <div class=field><label>Name</label><input class="input mono" id=pj-name placeholder="codeflow-dev" spellcheck=false autocomplete=off></div>
       <div class=field><label>Strategy (for several writers)</label>
@@ -435,7 +438,8 @@ HTML_TOP = """</head><body>
         <span class=text-muted style="font-size:12px">The host folder must be the top of the repo (use the subfolder field to narrow). Each writer works on <code>proj/&#8249;project&#8250;/&#8249;writer&#8250;</code>.</span></div>
       <div class="field span2"><label>Members</label>
         <div id=pj-members style="display:grid;gap:6px"></div>
-        <div><button type=button class="btn btn-secondary btn-sm" onclick=pjAddMember()>+ Member</button>
+        <div id=pj-memnote class=text-muted style="font-size:12.5px;display:none">The squad manages these members — change them in <a href="#squads">Squads</a>.</div>
+        <div id=pj-memadd><button type=button class="btn btn-secondary btn-sm" onclick=pjAddMember()>+ Member</button>
           <span class=text-muted style="font-size:12px;margin-left:8px">lead = the planner (sees everything, read-only) · writer = changes files · reader = looks only</span></div></div>
       <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none">
         <input type=checkbox id=pj-merge> The lead may merge writers' work on its own (applies from the worktree strategy on)</label></div>

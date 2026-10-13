@@ -10,7 +10,8 @@
 - ``GET /api/squads/<name|id>/metrics/events?since=&kind=&limit=&format=csv``
   and ``…/metrics/summary?since=`` (mgr/squadmetrics.py; also role "user").
 - admin only (default deny in mgr/auth.py): ``POST /api/squads/kickoff``
-  {text, architect_template?: openrouter|claude}, ``GET /api/squads/kickoff`` (the jobs), ``GET …/kickoff/<id>`` (one,
+  {text, architect_template?: openrouter|claude, project?: an existing repo instead of a URL in text},
+  ``GET /api/squads/kickoff`` (the jobs), ``GET …/kickoff/<id>`` (one,
   polled), ``POST …/kickoff/<id>/retry``.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
@@ -51,7 +52,9 @@ def _rt_kick_post(h):
     rest = h.path.split("?", 1)[0][len(_KICK):].strip("/")
     b = h._body() or {}
     who = _who(h)
-    if not rest:
+    if not rest and b.get("project"):        # a squad on an existing repo (no clone)
+        j, why = _squadkick.start_repo(b.get("project"), b.get("text"), who, b.get("architect_template"))
+    elif not rest:
         j, why = _squadkick.start(b.get("text"), who, b.get("architect_template"))
     elif rest.endswith("/retry"):
         j, why = _squadkick.retry(rest[:-len("/retry")])

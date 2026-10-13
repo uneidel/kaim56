@@ -353,7 +353,7 @@ def _squad_get(h, name, sub):
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
                     "members": _squads.members(p), "tokens_today": _squads.tokens_today(p),
-                    "squad_id": _squads.squad_id(p)})
+                    "squad_id": _squads.squad_id(p), "strategy": p.get("strategy", "shared")})
 
 
 def _who(h):

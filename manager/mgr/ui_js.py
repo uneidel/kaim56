@@ -1086,9 +1086,8 @@ async function loadProjects(){
   document.getElementById('projrows').innerHTML=PROJECTS.length?PROJECTS.map(p=>
     `<tr><td><b class=mono>${escT(p.name)}</b><div class=text-muted style="font-size:12px">${escT(p.strategy)}${p.base?' · base '+escT(p.base):''}${p.lead_may_merge?' · lead merges':''}</div></td>`+
     `<td class=mono style="font-size:12.5px;word-break:break-all">${escT(src(p))}</td>`+
-    `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`+
-      (p.strategy==='worktree'&&m.role==='writer'?` <button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(p.name)}','${esc(n)}')">Changes</button>`:'')).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
-    `<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="sqOpen('${esc(p.name)}')">Squad${(p.squad||{}).enabled?((p.squad||{}).paused?' ⏸':' ●'):''}</button>`+
+    `<td>${Object.entries(p.members||{}).map(([n,m])=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(n)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>none yet</span>'}</td>`+
+    `<td style="white-space:nowrap">${(p.squad||{}).enabled?`<button class="btn btn-secondary btn-sm" data-n="${esc(p.name)}" onclick="sqToSquads(this.dataset.n)">Open in Squads →</button>`:''}`+
     `<button class="btn btn-ghost btn-sm" onclick="editProject('${esc(p.name)}')">Edit</button>`+
     `<button class="btn btn-ghost btn-sm" onclick="delProject('${esc(p.name)}')">✕</button></td></tr>`).join('')
     :'<tr><td colspan=4 class=text-muted>No projects yet — name a folder below and add the instances that work on it.</td></tr>';
@@ -1113,13 +1112,18 @@ function pjAddMember(name,role){
     `<button type=button class="btn btn-ghost btn-sm" onclick="this.parentNode.remove()">✕</button>`;
   document.getElementById('pj-members').appendChild(row);
 }
+function pjSquadLock(on){
+  document.getElementById('pj-members').querySelectorAll('input,select,button').forEach(e=>e.disabled=on);
+  document.getElementById('pj-memnote').style.display=on?'':'none'; document.getElementById('pj-memadd').style.display=on?'none':'';
+}
 function pjReset(){
+  pjSquadLock(false);
   PJ_EDIT=''; ['pj-name','pj-path','pj-subdir','pj-base'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('pj-strategy').value='shared';
   document.getElementById('pj-name').disabled=false; document.getElementById('pj-merge').checked=false;
   document.getElementById('pj-type').value='host'; pjType();
   document.getElementById('pj-members').innerHTML=''; pjAddMember();
-  document.getElementById('pj-head').textContent='New project';
+  document.getElementById('pj-head').textContent='New repo';
   document.getElementById('pj-save').textContent='Create project';
   document.getElementById('pj-cancel').style.display='none';
 }
@@ -1135,7 +1139,8 @@ function editProject(name){
   document.getElementById('pj-merge').checked=!!p.lead_may_merge;
   document.getElementById('pj-members').innerHTML='';
   Object.entries(p.members||{}).forEach(([n,m])=>pjAddMember(n,m.role));
-  document.getElementById('pj-head').textContent='Edit project '+name;
+  pjSquadLock(!!(p.squad||{}).enabled);       /* a squad's members change in Squads, not here */
+  document.getElementById('pj-head').textContent='Edit repo '+name;
   document.getElementById('pj-save').textContent='Save';
   document.getElementById('pj-cancel').style.display='';
   document.getElementById('pj-head').scrollIntoView({block:'nearest'});
@@ -1195,7 +1200,7 @@ function sqName(){return SQ||(typeof SK!=='undefined'?SK:'')}
 async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
   await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
 function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none'}
-function sqToSquads(){const n=SQ;location.hash='#squads';setTimeout(()=>skPick(n),300)}
+function sqToSquads(n){location.hash='#squads';setTimeout(()=>skPick(n),300)}
 async function sqLoad(){
   if(!SQ)return;
   const base='/api/projects/'+encodeURIComponent(sqName())+'/squad';
@@ -1203,12 +1208,14 @@ async function sqLoad(){
   try{s=await (await fetch(base)).json()}catch(e){document.getElementById('sqmsg').textContent='manager not reachable';return}
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
-  document.getElementById('sq-head').textContent='Squad · '+SQ;
+  document.getElementById('sq-head').textContent='Settings · '+SQ;
   document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');document.getElementById('sq-claude_account').value=st.claude_account||'';
   document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing; document.getElementById('sq-security_skills').checked=!!st.security_skills;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
-  document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`).join(' ')||'<span class=text-muted>no members</span>';
+  document.getElementById('sq-push_when_done').checked=st.push_when_done!==false;
+  document.getElementById('sq-members').innerHTML=(s.members||[]).map(m=>`<span class="tag ${m.role==='writer'?'tag-accent':'tag-neutral'}">${escT(m.name)} · ${escT(m.role)}</span>`+
+    (s.strategy==='worktree'&&m.role==='writer'?` <button class="btn btn-ghost btn-sm" data-w="${esc(m.name)}" onclick="pjReview(sqName(),this.dataset.w)">Changes</button>`:'')).join(' ')||'<span class=text-muted>no members</span>';
   sqIndex();sqGit();
 }
 /* code index (mgr/indexer.py): the indexer VM, this project's last run, Reindex, Dashboard */
@@ -1265,7 +1272,7 @@ async function sqGitFetch(){
   document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
-  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked};
+  const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked,push_when_done:document.getElementById('sq-push_when_done').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;body.claude_account=document.getElementById('sq-claude_account').value.trim();
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(sqName())+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){d={error:'manager not reachable'}}
@@ -1558,7 +1565,7 @@ document.getElementById('sk-list').onclick=e=>{
 };
 // the selected squad's problem bar, toolchain line and requirements stay behind otherwise
 function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML='';
-  const r=document.getElementById('sk-req');r.innerHTML='';r.dataset.h=''}
+  const r=document.getElementById('sk-req');r.innerHTML='';r.dataset.h='';sqClose()}
 // requirements before the plan (mgr/squadreq.py): the lead's REQUIREMENTS.md, "agreed" lets it plan
 function skReq(q){
   const el=document.getElementById('sk-req'); q=q||{};
@@ -1573,15 +1580,28 @@ async function skReqAgree(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/requirements',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
   if(d.error){skMsg(d.error);return} skReq(d); skLoad();
 }
+/* "+ New squad" on an existing repo (Repos tab): a host folder without a squad, no clone */
+async function skRepos(){
+  const sel=document.getElementById('sk-repo'); let ps=[];
+  try{ps=(await (await fetch('/api/projects')).json()).projects||[]}catch(e){}
+  sel.innerHTML='<option value="">Repo: from a URL</option>'+ps.filter(p=>p.source.type==='host'&&!(p.squad||{}).enabled)
+    .map(p=>`<option value="${esc(p.name)}">Repo: ${escT(p.name)}</option>`).join('');
+  skRepoPick();
+}
+function skRepoPick(){
+  const r=document.getElementById('sk-repo').value;
+  document.getElementById('sk-text').placeholder=r?'what should the squad do in '+r+'?':'https://github.com/owner/repo — the goal';
+}
 function skNew(){
-  skClearSquad();
+  skClearSquad(); skRepos();
   document.getElementById('sk-title').textContent='New squad';
   document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
   document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML=''; skMode(true);
   document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Paste the repository URL and say what the squad should do, e.g. <code>https://github.com/owner/repo add a dark mode with tests</code>. '+
-    'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea).</div>';
+    'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea). '+
+    'Or pick a repo you already have in the <b>Repo</b> list and just say what to do — no clone.</div>';
   document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
-  document.getElementById('sk-arch').hidden=false;
+  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;
   skMsg('');
 }
 async function skJob(id){
@@ -1589,7 +1609,7 @@ async function skJob(id){
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
-  document.getElementById('sk-arch').hidden=false;
+  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;
   document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[j.status]||'tag-neutral'}">${escT(j.status)}</span>`;
   document.getElementById('sk-acts').innerHTML=j.status==='failed'?'<button class="btn btn-secondary btn-sm" onclick=skRetry()>Retry</button>'
     :j.status==='done'?`<button class="btn btn-primary btn-sm" data-open="${esc(j.name)}" onclick="skPick(this.dataset.open);loadSquads()">Open squad</button>`:'';
@@ -1607,9 +1627,10 @@ async function skRetry(){
 }
 function skPick(name){
   SK=name;SK_JOB='';SQ=name;SK_LAST=-1;SK_PEND=''; if(SKT)skTkClose();
+  if(document.getElementById('sq-panel').style.display!=='none')sqLoad();   /* the open Settings follow the squad */
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
-  document.getElementById('sk-arch').hidden=true;
+  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;
   document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
 }
 /* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */
@@ -1643,7 +1664,7 @@ async function skLoad(){
     `<button class="btn btn-ghost btn-sm" onclick=skRestart() title="Stop + start every member (one busy with a turn: right after it) — picks up new images, tools and config">Restart members</button>`+
     (INDEX_HOST?`<button class="btn btn-ghost btn-sm" onclick=skReindex() title="queue a code index run for this squad's project">Reindex</button>`+
       `<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
-    `<button class="btn btn-ghost btn-sm" onclick=skProject()>Project</button>`;
+    `<button class="btn btn-ghost btn-sm" onclick="sqOpen(SK)" title="Budget, autonomy, members and their changes, code index, git remote">Settings</button>`;
   const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
   if(last!==SK_LAST&&!sqaBusy(document.getElementById('sk-thread'))){
     SK_LAST=last; skSeen(name,last);
@@ -1982,7 +2003,6 @@ async function skPause(on){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:on})})).json()}catch(e){d={error:'manager not reachable'}}
   skMsg(d.error||(on?'paused':'resumed')); skLoad(); loadSquads();
 }
-function skProject(){const n=SK;location.hash='#projects';setTimeout(()=>sqOpen(n),300)}
 async function skSend(){
   const el=document.getElementById('sk-text'), text=el.value.trim(); if(!text)return;
   const btn=document.getElementById('sk-send'); btn.disabled=true;
@@ -1990,7 +2010,7 @@ async function skSend(){
   try{
     d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
        :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
-         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value})})).json();
+         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;

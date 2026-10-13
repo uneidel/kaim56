@@ -195,6 +195,37 @@ def start(text, who, architect_template=""):
     return view(job), ""
 
 
+def start_repo(project, goal, who, architect_template=""):
+    """A squad on an existing repo (the Repos tab): no clone, no new project —
+    the architect, the squad, the goal (STEPS_REPO) -> (job view, '') or (None, why)."""
+    tpl = str(architect_template or "openrouter").strip()
+    if tpl not in _squadgate.MEMBER_TEMPLATES:
+        return None, f"architect_template must be {' or '.join(_squadgate.MEMBER_TEMPLATES)}"
+    goal = str(goal or "").strip()
+    if not goal:
+        return None, "say what the squad should do"
+    p = _projects.get(str(project or "").strip())
+    if p is None:
+        return None, "unknown repo"
+    if (p.get("source") or {}).get("type") != "host":
+        return None, "a squad needs a host-folder repo"
+    if _squads.settings(p).get("enabled"):
+        return None, f"{p['name']} has a squad already"
+    path = p["source"]["path"]
+    lead = next((n for n, m in (p.get("members") or {}).items() if m.get("role") == "lead"), "")
+    with _lock:
+        job = {"id": uuid.uuid4().hex[:10], "name": p["name"], "arch": lead or p["name"] + ARCH_SUFFIX, "who": who,
+               "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(),
+               "base": p.get("base") or "", "url": path, "repo": p["name"], "provider": "local", "goal": goal,
+               "path": path, "steps": "lead" if lead else "repo"}       # the repo's lead plans
+        _jobs[job["id"]] = job
+        for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
+            _jobs.pop(old["id"], None)
+    _say(job, f"Squad on the existing repo {p['name']} ({path})")
+    _spawn(run, job["id"])
+    return view(job), ""
+
+
 def retry(jid):
     job = _jobs.get(str(jid))
     if job is None:
@@ -215,7 +246,7 @@ def run(jid):
     job = _jobs[jid]
     with _run_lock:
         try:
-            for step in STEPS:
+            for step in {"repo": STEPS_REPO, "lead": STEPS_LEAD}.get(job.get("steps"), STEPS):
                 step(job)
             job["status"] = "done"
             _say(job, f"Squad {job['name']} is set up. {job['arch']} answers in this channel with a plan to approve.")
@@ -446,6 +477,8 @@ def step_post(job):
 
 
 STEPS = (step_token, step_clone, step_project, step_remote, step_architect, step_squad, step_post)
+STEPS_REPO = (step_architect, step_squad, step_post)          # an existing repo: no clone, no new project
+STEPS_LEAD = (step_squad, step_post)                          # … whose lead becomes the architect
 
 
 # ---- the Squads page's list ---------------------------------------------------------

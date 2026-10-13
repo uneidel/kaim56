@@ -5600,7 +5600,7 @@ class ManagerFunctions(unittest.TestCase):
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
                   "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]",
                   # who does what: member rows with the 2 h strip, the problem line, blocked reasons
-                  "class=kb-mem", "<span>-1h</span><span>-30m</span><span>now</span>", "t0=now-3600", "skClearSquad();\n  document.getElementById('sk-title').textContent='New squad'", "onclick=skReindex()", "/squad/reindex',{method:'POST'", "kb-strip", "id=sk-prob",
+                  "class=kb-mem", "<span>-1h</span><span>-30m</span><span>now</span>", "t0=now-3600", "skClearSquad(); skRepos();\n  document.getElementById('sk-title').textContent='New squad'", "onclick=skReindex()", "onclick=\"sqOpen(SK)\"", "id=sk-repo", "Open in Squads →", "pjSquadLock(!!(p.squad||{}).enabled)", "/squad/reindex',{method:'POST'", "kb-strip", "id=sk-prob",
                   "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
                   "last turn failed", "starts when", "no ticket ready", "previous turn failed: ", "esc('failed: '+x.why)"):
             self.assertIn(s, page)
@@ -7631,6 +7631,41 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m._squadgate._model_cfg({"name": "x", "template": "claude", "model": "acme/big",
                                                       "model_tier": ""}, steps), {})
             self.assertIn("no Claude model", steps[0]["detail"])
+        finally:
+            undo()
+
+    def test_squadkick_on_an_existing_repo(self):
+        """"+ New squad" on a repo from the Repos tab: no clone, no new project —
+        the architect joins as lead, the squad is enabled in the requirements
+        phase and the goal goes to the architect; a repo with a squad, an
+        unknown repo and an empty goal are refused."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        L, k = "127.0.0.1", m._squadkick
+        try:
+            st, d = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests"})
+            self.assertEqual(st, 400); self.assertIn("has a squad already", d["error"])
+            p = m._projects.get("sq")
+            m._projects.set_squad("sq", m._squads.normalize_settings({"enabled": False}, p.get("squad"))[0])
+            self.assertIn("unknown repo", self._sq("/api/squads/kickoff", L, {"project": "nope", "text": "x"})[1]["error"])
+            self.assertIn("say what", self._sq("/api/squads/kickoff", L, {"project": "sq", "text": " "})[1]["error"])
+            before = [x["name"] for x in m._projects.load()]
+            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests"})
+            self.assertEqual(st, 200, j)
+            self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
+            self.assertEqual([x["name"] for x in m._projects.load()], before)                  # no new project
+            self.assertFalse(any("clone" in a for a, _env in calls))                           # no clone
+            self.assertEqual(created, [])                                                      # its lead a plans
+            self.assertEqual(woke[-1][0], "a"); self.assertIn("add tests", woke[-1][1])
+            # without a lead: an architect instance joins as the lead
+            items = m._projects.load(); items[0]["members"].pop("a"); items[0]["squad"] = {}; m._projects._save(items)
+            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests"})
+            self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
+            self.assertEqual(created[0][0], "sq-architect")
+            s = m._squads.settings(m._projects.get("sq"))
+            self.assertEqual((s["enabled"], s["requirements"]), (True, "drafting"))
+            self.assertEqual(m._projects.get("sq")["members"]["sq-architect"]["role"], "lead")
+            self.assertEqual(woke[-1][0], "sq-architect"); self.assertIn("add tests", woke[-1][1])
         finally:
             undo()
 
