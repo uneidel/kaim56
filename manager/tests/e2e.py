@@ -4926,6 +4926,55 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_queued_member_replies_expire(self):
+        """A member's throttled reply is dropped once its addressee posted since
+        or after QUEUE_TTL; the operator's queued message still goes out (live
+        2026-10-13: late acks woke members and fed an ack loop)."""
+        woke, tasks, undo = self._squad_env()
+        m = self.m
+        sq = m._squads
+        p = lambda: m._projects.get("sq")
+        try:
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 1})
+            x, _ = sq.post(p(), "a", ["b"], "go")
+            r1, _ = sq.post(p(), "b", [], "ok, holding", reply_to=x["id"])
+            op, _ = sq.post(p(), "user:ulrich", ["d"], "please look")
+            self.assertEqual((r1["to"], r1["queued"], op["queued"]), (["a"], True, True))
+            sq.post(p(), "a", ["user"], "status: waiting")                     # a posted since r1
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10})
+            n0 = len(woke)
+            self.assertEqual(sq.deliver_queued(), 1)
+            self.assertEqual([w[0] for w in woke[n0:]], ["d"])
+            got = {y["id"]: y for y in sq.read("sq")}
+            self.assertTrue(got[r1["id"]]["blocked"].startswith("expired"))
+            self.assertFalse(got[r1["id"]]["queued"])
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 0})
+            r2, _ = sq.post(p(), "b", [], "still holding", reply_to=x["id"])
+            m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10})
+            self.assertEqual(sq.deliver_queued(now=int(time.time()) + sq.QUEUE_TTL + 5), 0)
+            self.assertTrue({y["id"]: y for y in sq.read("sq")}[r2["id"]]["blocked"].startswith("expired"))
+        finally:
+            undo()
+
+    def test_squad_code_goes_through_git_not_the_channel(self):
+        """A diff or a long code block in a member's post is refused with the git
+        hint; short snippets and the operator's posts pass; the frame says work
+        happens on the ticket (live 2026-10-13: pasted patches were cut off)."""
+        woke, tasks, undo = self._squad_env()
+        m, B = self.m, "172.30.4.2"
+        block = "```go\n" + "x := 1\n" * 31 + "```"
+        try:
+            st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "patch:\n" + block})
+            self.assertEqual(st, 400); self.assertIn("through git", d["error"])
+            st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "diff --git a/x.go b/x.go\n+x"})
+            self.assertEqual(st, 400); self.assertIn("a diff", d["error"])
+            st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "fixed in `run_gui.go`:\n```go\nx := 1\n```"})
+            self.assertEqual(st, 200, d)
+            self.assertIn("progress goes on the ticket", woke[-1][1])
+            self.assertTrue(m._squads.post(m._projects.get("sq"), "user:ulrich", ["a"], block)[0])
+        finally:
+            undo()
+
     def test_squad_wake_outcome_reaches_the_channel(self):
         """'delivered' only means a wake turn was queued: the task worker books
         how it ended, so the channel shows received / not received + reason
@@ -5458,6 +5507,35 @@ class ManagerFunctions(unittest.TestCase):
             self.assertFalse(ua("POST", "/api/projects/sq/squad/decide"))
             self.assertFalse(ua("POST", "/api/projects/sq/squad/ticket"))
             self.assertTrue(m._routes.ROUTER.resolve("POST", "/api/projects/sq/squad/decide")[1])   # admin route
+        finally:
+            undo()
+
+    def test_squadgate_comments_by_anyone_review_wakes_the_lead(self):
+        """Any member comments on any ticket (only the assignee/lead change it);
+        an over-long or code-carrying comment is refused, not cut; the assignee
+        setting review wakes the lead (live 2026-10-13: a member could not
+        comment, posted to the channel instead, and review was a message)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, D, E = "172.30.3.2", "172.30.6.2", "172.30.11.2"
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            self.assertEqual(m._squadgate.decide("sq", pid, True, "admin")[0]["status"], "approved")
+            self._sq("/api/squad/ticket-create", A, {"title": "docs", "assignee": "d"})
+            self.assertIn("Only you work on it", woke[-1][1])
+            st, d = self._sq("/api/squad/ticket-update", D, {"id": 1, "comment": "edge case: empty list"})
+            self.assertEqual((st, d["comments"][-1]["by"]), (200, "d"), d)
+            st, d = self._sq("/api/squad/ticket-update", D, {"id": 1, "status": "done"})
+            self.assertEqual(st, 400); self.assertIn("add a comment instead", d["error"])
+            st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "comment": "x" * 2001})
+            self.assertEqual(st, 400); self.assertIn("longer than 2000", d["error"])
+            st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "comment": "@@ -1,2 +1,2 @@\n-a\n+b"})
+            self.assertEqual(st, 400); self.assertIn("through git", d["error"])
+            del woke[:]
+            st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "review", "comment": "green, sha abc123"})
+            self.assertEqual((st, d["review_wake"]), (200, "woken"), d)
+            self.assertEqual(woke[-1][0], "a"); self.assertIn("ready for review", woke[-1][1])
+            self.assertIn("sha abc123", woke[-1][1])
         finally:
             undo()
 

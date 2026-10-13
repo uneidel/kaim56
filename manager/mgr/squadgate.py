@@ -73,6 +73,7 @@ from mgr import toolchain as _toolchain
 GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
 KINDS = ("squad", "member", "merge", "toolchain")
 STATUSES = ("open", "doing", "review", "done", "blocked")
+COMMENT_MAX = 2000
 MEMBER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,160}$")
@@ -963,7 +964,8 @@ def _ready(t, all_):
 def _wake(proj, t, sender, depth, head=""):
     text = (head + f"Ticket {t['key']} (id {t['id']}) is yours: {t['title']}"
             + (f"\n{t['description']}" if t["description"] else "")
-            + f"\nUpdate it with ticket_update id={t['id']} (status doing/review/done/blocked, comment).")
+            + f"\nUpdate it with ticket_update id={t['id']} (status doing/review/done/blocked, comment)."
+            + "\nOnly you work on it; others comment on it. Code goes through git, never into comments.")
     m, why = _squads.post(proj, sender, [t["assignee"]], text, depth=depth, level=t.get("level") or 0)
     return (m or {}).get("blocked") or why
 
@@ -1001,7 +1003,13 @@ def update_ticket(proj, who, tid, body, may, depth=1):
         assignee = _txt(assignee, 64)
         if assignee and assignee not in (proj.get("members") or {}):
             return None, f"{assignee!r} is no member"
-    comment = _txt(body.get("comment"), 2000)
+    raw = str(body.get("comment") or "").strip()
+    if len(raw) > COMMENT_MAX:            # was cut silently: patches arrived truncated (live 2026-10-13)
+        return None, f"comment longer than {COMMENT_MAX} characters — {_squads.GIT_HINT}"
+    code = "" if who.startswith("user:") else _squads.code_in_text(raw)
+    if code:
+        return None, f"{code} in the comment — {_squads.GIT_HINT}"
+    comment = raw
     level = body.get("level")
     if level is not None and level not in (1, 2, 3, 4, 5):
         return None, "level must be 1-5"
@@ -1064,6 +1072,16 @@ def update_ticket(proj, who, tid, body, may, depth=1):
     if note:
         out["note"] = note
     # A finished feature: refresh the code index (mgr/indexer.py; queued, never blocks).
+    # Review is a hand-over, not a channel post: the lead is woken to check it
+    # (a supervised squad's review goes to the operator instead, mgr/hitlq.py).
+    ld = lead(proj)
+    if (t["status"] == "review" and old_status != "review" and ld and who not in (ld,) and not who.startswith("user:")
+            and _squads.settings(proj).get("autonomy") != "supervised"):
+        m, why = _squads.post(proj, who, [ld], f"Ticket {t['key']} (id {t['id']}) is ready for review: {t['title']}"
+                              + (f"\n{comment}" if comment else "")
+                              + f"\nCheck it (or ask a reader to), then ticket_update id={t['id']} status=done, "
+                              "or status=doing with a comment for the assignee.", depth=depth)
+        out["review_wake"] = (m or {}).get("blocked") or why or "woken"
     if t["status"] == "done" and old_status != "done" and _indexer.instance():
         out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
     if t["status"] == "done" and old_status != "done":

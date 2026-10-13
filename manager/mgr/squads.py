@@ -61,6 +61,10 @@ LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "m
 TEXT_MAX = 8000
 KEEP = 500                      # messages kept per project
 ASK_TTL = 3600                  # an unanswered ask expires after this
+QUEUE_TTL = 1800                # a member's queued reply expires after this (or once its addressee posted)
+CODE_LINES = 30                 # a longer code block / any diff goes through git, not the channel
+_FENCE = re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)", re.S)
+_DIFF = re.compile(r"^(?:diff --git |@@ -\d)", re.M)
 _MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,63})", re.I)
 _lock = threading.Lock()        # guard check + insert: the hourly wake count stays honest
 _COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome", "queued")
@@ -291,12 +295,30 @@ def cost_routing_on(project):
     return bool(p) and bool(settings(p).get("cost_routing"))
 
 
+def code_in_text(text):
+    """Why `text` carries code that belongs in git, or ''. Live 2026-10-13: patches
+    pasted into posts and 2000-char ticket comments arrived cut off and were rebuilt
+    by hand, then re-verified in more messages."""
+    t = str(text or "")
+    if _DIFF.search(t):
+        return "a diff"
+    if any(b.count("\n") >= CODE_LINES for b in _FENCE.findall(t)):
+        return f"a code block of {CODE_LINES}+ lines"
+    return ""
+
+
+GIT_HINT = ("code goes through git, not the channel: commit it in your folder, git_push_branch / "
+            "request_merge, and post the commit and file names")
+WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
+        "not into the channel. For someone else's ticket, comment on it instead of doing it.)")
+
+
 def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     how = (f"question {mid} — answer with squad_post reply_to={mid}" if kind == "ask"
            else f"msg {mid}, reply with squad_post reply_to={mid} — only if it needs an action; "
                 "an ack, thanks or 'holding' goes with wake=false")
     ids = f"\n(squad id {sid}; your member id {member_id})" if sid else ""
-    return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}"
+    return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}\n{WORK}"
 
 
 def _guard(proj, targets, depth, now):
@@ -344,6 +366,9 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
         return None, "text missing"
     if len(text) > TEXT_MAX:
         return None, f"text longer than {TEXT_MAX} characters"
+    code = "" if str(sender).startswith("user:") or kind in ("turn", "note", "hitl") else code_in_text(text)
+    if code:
+        return None, f"{code} in the message — {GIT_HINT}"
     # The code indexer (template 'indexer', mgr/indexer.py) reads the project and takes no turns.
     idx = {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
     names = set(proj.get("members") or {}) - idx
@@ -439,7 +464,12 @@ def deliver_queued(now=None):
         if r["project"] in stuck:
             continue
         proj, q = _projects.get(r["project"]), json.loads(r["queued"] or "{}")
-        targets = q.get("targets") or []
+        targets = _unexpired(r, q.get("targets") or [], now)
+        if not targets:
+            with _db() as c:
+                c.execute("UPDATE squad_msg SET blocked=?, queued=NULL WHERE id=?",
+                          ("expired: a queued reply its addressees no longer need", r["id"]))
+            continue
         with _lock:
             why = _guard(proj, targets, r["depth"], now) if proj and targets else "project gone"
             if why.startswith(_WAIT_REASONS):
@@ -453,6 +483,21 @@ def deliver_queued(now=None):
                 c.execute("UPDATE squad_msg SET woke=?, blocked=?, queued=NULL WHERE id=?", (json.dumps(woke), err, r["id"]))
         done += 0 if why else 1
     return done
+
+
+def _unexpired(r, targets, now):
+    """The targets a queued wake still goes to. A member's reply (an ack, a
+    'holding') expires after QUEUE_TTL or for an addressee that posted since:
+    live 2026-10-13 throttled acks woke members late and fed an ack loop. The
+    operator's messages and fresh posts (ticket wakes) always go out."""
+    if not r["reply_to"] or str(r["sender"]).startswith("user:"):
+        return targets
+    if now - r["ts"] > QUEUE_TTL:
+        return []
+    with _db() as c:
+        return [t for t in targets if not c.execute(
+            "SELECT 1 FROM squad_msg WHERE project=? AND sender=? AND id>? LIMIT 1",
+            (r["project"], t, r["id"])).fetchone()]
 
 
 def queue_info(project, now=None):

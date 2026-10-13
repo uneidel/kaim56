@@ -408,8 +408,9 @@ TOOLS = {
         "The squad's tickets (id, key, status, assignee, dependencies).",
         {"type": "object", "properties": {"project": _PROJ}, "required": []}),
     "ticket_update": (_squad(t_ticket_update),
-        "Your ticket (any, as the lead): status open/doing/review/done/blocked and/or a comment. "
-        "Done wakes the members whose tickets waited on it. title/description: lead only; use when re-scoping "
+        "Any ticket: a comment (no code — that goes through git). Your ticket (any, as the lead): status "
+        "open/doing/review/done/blocked. Review wakes the lead; done wakes the members whose tickets waited on it. "
+        "title/description: lead only; use when re-scoping "
         "instead of only commenting (keeps the old version, wakes the assignee).",
         {"type": "object", "properties": {"id": {"type": "string"}, "status": {"type": "string"},
                                           "comment": {"type": "string"}, "project": _PROJ,

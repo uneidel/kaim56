@@ -963,8 +963,12 @@ def _rt_squad_ticket(h):
     elif op == "create":
         t, why = _squadgate.create_ticket(p, name, b, depth)
     else:
+        comment_only = op == "update" and not any(b.get(k) for k in ("status", "title", "description"))
+
         def may(tk):
-            return "" if is_lead or tk.get("assignee") == name else "only the assignee or the lead may update this ticket"
+            # anyone in the squad may comment (else it went to the channel, live 2026-10-13)
+            return "" if is_lead or tk.get("assignee") == name or comment_only else \
+                "only the assignee or the lead may change this ticket — add a comment instead"
         body = {"assignee": b.get("assignee", "")} if op == "assign" else \
             {"status": b.get("status"), "comment": b.get("comment"),     # title/description: a re-scope, the lead only
              "title": b.get("title") or None, "description": b.get("description") or None}
