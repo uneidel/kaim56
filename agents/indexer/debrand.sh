@@ -19,7 +19,14 @@ swap() {  # swap <file> <from> <to>: a literal replacement that must happen
   FROM="$2" TO="$3" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/g' "$1"
 }
 
+brand() {  # brand <file>: the bare "repowise" text node next to the logo becomes "Code index"
+  grep -qE '^[[:space:]]*repowise[[:space:]]*$' "$1" || { echo "debrand: no brand text in $1" >&2; exit 1; }
+  perl -pi -e 's/^(\s*)repowise(\s*)$/$1Code index$2/' "$1"
+}
+
 C=src/components
+brand $C/layout/sidebar.tsx
+brand $C/layout/mobile-nav.tsx
 stub $C/layout/brand-logo.tsx 'export function BrandLogo(props: { size?: number; className?: string }) { void props; return null; }'
 stub $C/layout/feedback-button.tsx 'export function FeedbackButton() { return null; }'
 stub $C/layout/upgrade-banner.tsx 'export function UpgradeBanner() { return null; }'
@@ -28,7 +35,13 @@ stub $C/hosted/publish.tsx 'export function PublishPanel(props: { repoId: string
 export function PublishOverviewSection(props: { repoId: string }) { void props; return null; }
 export function PublishItFree(props: { repoId: string }) { void props; return null; }'
 stub $C/hosted/hosted-nudge-slot.tsx 'export function HostedNudgeSlot(props: { candidates?: unknown; repoId?: string; className?: string }) { void props; return null; }'
-rm -f $C/hosted/publish.test.tsx $C/hosted/hosted-nudge-slot.test.tsx public/repowise-logo.png public/repowise-logo-light.png
+rm -f $C/hosted/publish.test.tsx $C/hosted/hosted-nudge-slot.test.tsx
+# the shared UI package (loader, chat avatar) still points at the logo files:
+# a transparent 1x1 PNG makes every one of them render nothing, never a broken image
+for f in public/repowise-logo.png public/repowise-logo-light.png; do
+  [ -f "$f" ] || { echo "debrand: $f missing" >&2; exit 1; }
+  printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=' | base64 -d > "$f"
+done
 
 swap src/app/layout.tsx 'default: "repowise",' 'default: "Code index",'
 swap src/app/layout.tsx 'template: "%s — repowise",' 'template: "%s — Code index",'

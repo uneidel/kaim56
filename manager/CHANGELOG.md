@@ -6,7 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
-- Code index (indexer): the dashboard works again — repowise's API answered 403 "reachable from the network" because uvicorn trusted the UI proxy's X-Forwarded-For (`FORWARDED_ALLOW_IPS` now trusts no proxy); the UI is debranded as "Code index" (no repowise logo/name, feedback, upgrade or repowise.dev prompts, no Ask chat — `agents/indexer/debrand.sh`, every edit checked). Needs the indexer rootfs rebuilt.
+- Code index (indexer): the dashboard works again — repowise's API answered 403 "reachable from the network" because uvicorn trusted the UI proxy's X-Forwarded-For (`FORWARDED_ALLOW_IPS` now trusts no proxy); the UI is debranded as "Code index" (no repowise logo/name — sidebar reads "Code index", logo files are a transparent pixel — feedback, upgrade or repowise.dev prompts, no Ask chat — `agents/indexer/debrand.sh`, every edit checked). Needs the indexer rootfs rebuilt.
 - Squads: requirements before the plan — a kickoff starts `requirements: drafting`; the architect interviews the operator one question at a time and keeps `REQUIREMENTS.md` in its workspace (shown on the board, read with O_NOFOLLOW); `squad_propose` is refused until the operator clicks "Requirements agreed" (admin only), then the lead plans with tickets carrying the acceptance criteria. Existing squads stay `agreed`.
 - Squads: "New squad" and a kickoff no longer show the previously selected squad's problem bar and toolchain line.
 - Squads board: the activity strip shows the last hour (was 6 h).
