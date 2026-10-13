@@ -345,6 +345,7 @@ HTML_TOP = """</head><body>
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
       <div id=sk-prob class=kb-prob role=status hidden></div>
       <div id=sk-tc class=sk-tc aria-live=polite></div>
+      <div id=sk-req aria-live=polite></div>
       <div id=sk-cards></div>
       <div id=sk-board hidden aria-label="Squad board"></div>
       <div id=sk-working aria-live=polite></div>

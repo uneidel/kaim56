@@ -52,6 +52,7 @@ from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import squadgate as _squadgate
+from mgr import squadreq as _squadreq
 from mgr import squadkick as _squadkick
 from mgr import squadnotes as _squadnotes
 from mgr import squads as _squads
@@ -346,7 +347,8 @@ def _squad_get(h, name, sub):
                         "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
                         "statuses": list(_squadgate.STATUSES), "members": _squads.members(p),
-                        "working": _squads.working(name), "activity": act, "toolchain": tc})
+                        "working": _squads.working(name), "activity": act, "toolchain": tc,
+                        "requirements": _squadreq.view(p)})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
@@ -399,6 +401,9 @@ def _squad_post(h, name, sub):
             return h._json(r) if r else h._json({"error": why}, 400)
         r, why = _squadgate.decide(name, str(b.get("id") or ""), bool(b.get("approve")), who,
                                    b.get("note"), edits or None)
+        return h._json(r) if r else h._json({"error": why}, 400)
+    if sub == "requirements":                # the operator agrees: the lead may plan now (mgr/squadreq.py)
+        r, why = _squadreq.agree(p, who)
         return h._json(r) if r else h._json({"error": why}, 400)
     if sub == "suggest":                     # {id, member}: Jev suggests that member's setup again
         r, why = _squadgate.suggest_member(name, str(b.get("id") or ""), str(b.get("member") or ""))

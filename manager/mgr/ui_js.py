@@ -1556,8 +1556,23 @@ document.getElementById('sk-list').onclick=e=>{
   if(b.dataset.n)skPick(b.dataset.n); else if(b.dataset.job)skJob(b.dataset.job); else {SK='';SK_JOB='';skNew()}
   loadSquads();
 };
-// the selected squad's problem bar and toolchain line stay behind otherwise
-function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML=''}
+// the selected squad's problem bar, toolchain line and requirements stay behind otherwise
+function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML='';
+  const r=document.getElementById('sk-req');r.innerHTML='';r.dataset.h=''}
+// requirements before the plan (mgr/squadreq.py): the lead's REQUIREMENTS.md, "agreed" lets it plan
+function skReq(q){
+  const el=document.getElementById('sk-req'); q=q||{};
+  const key=(q.state||'')+'|'+(q.text||''); if(el.dataset.h===key)return; el.dataset.h=key;
+  const doc=q.text?`<pre class=sk-reqdoc>${escT(q.text)}</pre>`:`<p class=text-muted>The architect is interviewing you in the chat; ${escT(q.file||'REQUIREMENTS.md')} appears here as it writes it.</p>`;
+  el.innerHTML=q.state==='drafting'
+    ?`<div class=card style="margin:8px 0;padding:12px"><b>Requirements</b> <span class="tag tag-accent">drafting</span>${doc}`+
+      `<button class="btn btn-primary btn-sm" onclick=skReqAgree() ${q.text?'':'disabled'}>Requirements agreed</button> <span class=text-muted style="font-size:12px">then the architect proposes the squad</span></div>`
+    :q.text?`<details style="margin:8px 0"><summary><b>Requirements</b> <span class="tag tag-neutral">agreed</span></summary>${doc}</details>`:'';
+}
+async function skReqAgree(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/requirements',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){skMsg(d.error);return} skReq(d); skLoad();
+}
 function skNew(){
   skClearSquad();
   document.getElementById('sk-title').textContent='New squad';
@@ -1644,6 +1659,7 @@ async function skLoad(){
   if(b.error)skMsg(b.error);
   SQB=b;
   try{skTcRow(b.toolchain)}catch(e){console.error('squad toolchain',e)}
+  try{skReq(b.requirements)}catch(e){console.error('squad requirements',e)}
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
   let hq=[];

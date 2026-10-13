@@ -62,6 +62,7 @@ from mgr import repoprofile as _repoprofile
 from mgr import secrets as _secrets
 from mgr import settings as _settings
 from mgr import squadgate as _squadgate
+from mgr import squadreq as _squadreq
 from mgr import squadgit as _squadgit
 from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
@@ -410,11 +411,13 @@ def step_squad(job):
     if "squad" not in job["done"]:
         proj = _projects.get(name)
         s, _why = _squads.normalize_settings({"enabled": True, "approved": False, "paused": False,
-                                              "daily_token_budget": BUDGET}, proj.get("squad"))
+                                              "daily_token_budget": BUDGET, "requirements": "drafting"},
+                                             proj.get("squad"))
         _squads.save_settings(name, s)
         _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})
         job["done"].append("squad")
-        _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — waiting for your approval of the plan.")
+        _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — the architect interviews you first; "
+                  "mark the requirements agreed on the board, then it proposes the plan.")
         added = _squadgate.squad_tools(_projects.get(name))
         if added:
             _say(job, _squadgate.tools_note(added))
@@ -431,12 +434,7 @@ def step_post(job):
     text = (f"@{arch} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
             f"{job['base']}.\n\nGoal:\n{job['goal']}\n\n" + (prof + "\n\n" if prof else "") + f"The code is the repository mounted read-only at /project/{job['name']} "
             f"(not your workspace, not the web): read it there first (list_dir /project/{job['name']}, read_file, "
-            f"bash: ls/grep/cat). Then call squad_catalog. For each member choose "
-            f"persona (or propose new_persona if none fits), skills from the catalog, model tier and template "
-            f"(openrouter or claude), and a role. Then call squad_propose with the members, tickets with their "
-            f"dependencies, and a daily token budget (default {BUDGET}). If the members need tools beyond the image "
-            f"(compilers, SDKs, libraries), describe the shared toolchain (apt packages, install script) once with "
-            f"toolchain_propose instead of every member installing it. Nothing else runs before I approve.")
+            f"bash: ls/grep/cat). Then: {_squadreq.INTERVIEW}")
     m, why = _squads.post(_projects.get(job["name"]), "user:" + job["who"], [arch], text)
     if not m:
         raise Stop("posting the goal failed: " + why)

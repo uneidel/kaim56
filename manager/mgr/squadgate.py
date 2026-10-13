@@ -75,6 +75,12 @@ KINDS = ("squad", "member", "merge", "toolchain")
 STATUSES = ("open", "doing", "review", "done", "blocked")
 COMMENT_MAX = 2000
 AUTO = "auto (trusted squad)"          # who decides a trusted squad's merge proposal
+# How a lead plans (the kickoff, and mgr/squadreq.agree after the requirements)
+PLAN = ("Call squad_catalog. For each member choose persona (or propose new_persona if none fits), skills from "
+        "the catalog, model tier and template (openrouter or claude), and a role. Then call squad_propose with the "
+        "members, tickets with their dependencies, and a daily token budget. If the members need tools beyond the "
+        "image (compilers, SDKs, libraries), describe the shared toolchain (apt packages, install script) once with "
+        "toolchain_propose instead of every member installing it. Nothing else runs before the user approves.")
 MEMBER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,160}$")
@@ -404,6 +410,9 @@ def propose(proj, by, kind, body):
     prop = {"id": uuid.uuid4().hex[:10], "project": proj["name"], "kind": kind, "status": "pending",
             "by": by, "created": int(time.time())}
     if kind == "squad":
+        if _squads.settings(proj).get("requirements") == "drafting":       # mgr/squadreq.py
+            return None, ("requirements not agreed yet — keep interviewing the user and REQUIREMENTS.md current; "
+                          "the user marks them agreed on the board, then you plan")
         f, why = validate_squad(proj, by, body)
         if not f:
             return None, why

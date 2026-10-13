@@ -49,6 +49,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "approval_tools": [], "autonomy": "trusted",
             # all tickets done: the manager pushes the base as squad/<id> to the remotes (mgr/projects.push_run)
             "push_when_done": True,
+            # a kickoff starts "drafting": the lead interviews the operator first (mgr/squadreq.py)
+            "requirements": "agreed",
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
@@ -160,6 +162,10 @@ def normalize_settings(body, old=None):
             if not lo <= v <= hi:
                 return None, f"{k} must be between {lo} and {hi}"
             s[k] = v
+    if "requirements" in body:                     # mgr/squadreq.py
+        if body["requirements"] not in ("drafting", "agreed"):
+            return None, "requirements must be drafting or agreed"
+        s["requirements"] = body["requirements"]
     if "autonomy" in body:
         if body["autonomy"] not in AUTONOMY:
             return None, "autonomy must be trusted or supervised"

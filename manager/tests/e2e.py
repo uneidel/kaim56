@@ -6313,6 +6313,44 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_requirements_before_the_plan(self):
+        """A drafting squad: the lead may not propose; REQUIREMENTS.md from the
+        lead's workspace shows on the board (never through a symlink); the
+        operator agrees only with a document, admin only; then the lead is told
+        to plan and may propose (live 2026-10-13: cfdo-2 began with "app ui,
+        not browser" after the plan)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        old_root = m._mounts.AGENT_ROOT
+        m._mounts.AGENT_ROOT = tempfile.mkdtemp(prefix="e2e-req-")
+        try:
+            m._squads.save_settings("sq", {**m._squads.settings(m._projects.get("sq")), "requirements": "drafting"})
+            st, d = self._sq("/api/squad/propose", A, self._SG_PLAN)
+            self.assertEqual(st, 400); self.assertIn("requirements not agreed", d["error"])
+            st, d = self._sq("/api/projects/sq/squad/requirements", L, {})
+            self.assertEqual(st, 400); self.assertIn("no REQUIREMENTS.md", d["error"])
+            os.makedirs(os.path.join(m._mounts.AGENT_ROOT, "a"))
+            f = os.path.join(m._mounts.AGENT_ROOT, "a", "REQUIREMENTS.md")
+            os.symlink("/etc/hostname", f)                                     # the VM planted a link
+            self.assertEqual(self._sq("/api/projects/sq/squad/board", L)[1]["requirements"]["text"], "")
+            os.remove(f)
+            with open(f, "w") as fh:
+                fh.write("# Goal\nA desktop app, not a browser UI.\n")
+            r = self._sq("/api/projects/sq/squad/board", L)[1]["requirements"]
+            self.assertEqual((r["state"], r["text"].splitlines()[1]), ("drafting", "A desktop app, not a browser UI."))
+            self.assertFalse(m._auth.user_allowed("POST", "/api/projects/sq/squad/requirements"))
+            del woke[:]
+            st, d = self._sq("/api/projects/sq/squad/requirements", L, {})
+            self.assertEqual((st, d["state"]), (200, "agreed"), d)
+            self.assertEqual(woke[-1][0], "a"); self.assertIn("squad_propose", woke[-1][1])
+            self.assertEqual(self._sq("/api/squad/propose", A, self._SG_PLAN)[0], 200)
+            self.assertEqual(self._sq("/api/projects/sq/squad/requirements", L, {})[0], 400)    # agreed already
+            self.assertIn("ONE question at a time", sys.modules["mgr.squadreq"].INTERVIEW)
+        finally:
+            m._mounts.AGENT_ROOT = old_root
+            undo()
+
     def test_squadgate_trusted_squad_merges_without_the_operator(self):
         """Trusted: a merge proposal is decided at once (auto) and a done ticket
         merges its writer; supervised: both wait for the operator (live
@@ -6508,7 +6546,7 @@ class ManagerFunctions(unittest.TestCase):
             st, r = self._sq("/api/projects/sq/squad/toolchain", L, {})           # Rebuild
             self.assertEqual((st, r["msg"]), (200, "building toolchain v2 for openrouter"), r)
             import inspect
-            self.assertIn("toolchain_propose", inspect.getsource(m._squadkick.step_post))
+            self.assertIn("toolchain_propose", m._squadgate.PLAN)
         finally:
             tc._spawn, tc.STATE_FILE = old[0], old[1]
             tc._active.clear(); tc._active.update(old[2])
@@ -7615,8 +7653,10 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((name, tpl, cfg["TRANSPORT"], cfg["ANTHROPIC_MODEL"]), ("repo-architect", "claude", "web", "opus"))
             self.assertNotIn("OPENROUTER_MODEL", cfg)
             self.assertTrue({"squad_catalog", "squad_propose"} <= set(cfg["AGENT_TOOLS"].split(",")))
-            self.assertIn("Then call squad_catalog", woke[0][1]); self.assertIn("/project/repo", woke[0][1]); self.assertIn("new_persona", woke[0][1])
-            self.assertIn("(openrouter or claude)", woke[0][1])
+            self.assertIn("ONE question at a time", woke[0][1]); self.assertIn("/project/repo", woke[0][1])
+            self.assertEqual(m._squads.settings(m._projects.get("repo"))["requirements"], "drafting")
+            for x in ("Call squad_catalog", "new_persona", "(openrouter or claude)"):     # the plan comes after agreement
+                self.assertIn(x, m._squadgate.PLAN)
         finally:
             undo()
 
