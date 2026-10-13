@@ -4926,6 +4926,11 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_dashboard_session_lasts_like_the_web_login(self):
+        """The repowise dashboard (INDEX_HOST) kept asking for a login after 12 h;
+        it lasts as long as the web session, the IdP re-check still revokes it."""
+        self.assertEqual(self.m._sessions.TTL["dash"], self.m._sessions.TTL["web"])
+
     def test_squad_queued_member_replies_expire(self):
         """A member's throttled reply is dropped once its addressee posted since
         or after QUEUE_TTL; the operator's queued message still goes out (live

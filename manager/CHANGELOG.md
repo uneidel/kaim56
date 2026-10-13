@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- Code dashboard (INDEX_HOST): its session lasts 30 days like the web login (was 12 h); the IdP re-check every 15 min still revokes it.
 - Squads: the code-goes-through-git hint names the way that works (commit in your folder → ticket review → the lead's `squad_request_merge`), not `git_push_branch` (needs a remote the squad lacks); a 400+-char base64 blob in a post/comment is refused too; the review wake tells the lead to request the merge.
 - Squads talk less, work more: a member's throttled reply expires once its addressee posted since or after 30 min; the wake frame says progress goes on the ticket; review wakes the lead; any member may comment on any ticket (only assignee/lead change it); diffs and 30+-line code blocks in posts/comments are refused with a git hint, an over-long comment errors instead of being cut. Tool texts need the Claude rootfs rebuilt.
 - Squads: `squad_post wake=false` only stores a message; the wake frame says an ack/thanks/'holding' goes that way — members acked each other in a loop until the 60 wakes/hour limit stalled the squad. Claude members need the rootfs rebuilt.

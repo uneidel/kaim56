@@ -20,7 +20,7 @@ from mgr import paths as _paths
 
 DB = os.path.join(_paths.BASE, "sessions.db")
 TTL = {"web": 30 * 86400, "device": 90 * 86400,   # sliding; the IdP re-check is what revokes
-       "dash": 12 * 3600,                          # code dashboard (INDEX_HOST): short
+       "dash": 30 * 86400,                         # code dashboard (INDEX_HOST): like web, the IdP re-check revokes
        "apps": 12 * 3600}                          # browser apps (APPS_HOST): short, the IdP re-logs in quietly
 CHECK_EVERY = 900
 _COLS = "id, sub, name, email, role, kind, device_name, refresh, created, expires, last_check, last_use"
