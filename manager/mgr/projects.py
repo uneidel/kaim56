@@ -315,9 +315,8 @@ def member_op(name, op, member):
         return {"error": str(e)}, 500
     if isinstance(r, dict) and "error" in r:
         return r, 409
-    if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it, origin too
+    if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it
         _spawn(sync_others, name, member)
-        _spawn(push_base, name)
     return r, 200
 
 
@@ -325,22 +324,24 @@ def _spawn(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True, name="projsync").start()
 
 
-def push_base(name):
-    """After a merge: the base to origin (squad setting push_after_merge), one
-    note in the channel. Members have no git credentials, so nothing reached
-    the remote before (live 2026-10-13: 20 merged commits, none pushed)."""
+def push_run(name):
+    """A finished squad run: the base, as one branch squad/<squad id>, to every
+    network remote (squad setting push_when_done); the remotes' own base is left
+    alone. One note in the channel. Members hold no git credentials, so merged
+    work never reached a remote before (live 2026-10-13)."""
     from mgr import squads as _squads                 # late: squads imports this module
     p = get(name)
-    if not p or p.get("strategy") != "worktree" or not _squads.settings(p).get("push_after_merge", True):
+    if not p or p.get("strategy") != "worktree" or not _squads.settings(p).get("push_when_done", True):
         return None
+    branch = f"squad/{_squads.squad_id(p) or name}"
     try:
-        r = _projwt.push(p)
+        r = _projwt.push(p, branch)
     except (_projwt.GitError, OSError, subprocess.SubprocessError) as e:
-        r = {"error": str(e)[-300:]}
-    if "skipped" not in r:
-        _squads.post(p, "manager", ["all"], f"pushed {p['base']} to {r['remote']}" if r.get("ok")
-                     else f"push of {p['base']} failed: {r['error']}", kind="note")
-    return r
+        r = {"pushed": [], "failed": {"?": str(e)[-300:]}}
+    if r.get("pushed") or r.get("failed"):
+        _squads.post(p, "manager", ["all"], (f"pushed {branch} to {', '.join(r['pushed'])}" if r["pushed"] else "")
+                     + "".join(f"; push to {k} failed: {v}" for k, v in r["failed"].items()), kind="note")
+    return {**r, "branch": branch}
 
 
 def sync_others(name, merged):

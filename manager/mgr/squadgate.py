@@ -1089,17 +1089,29 @@ def update_ticket(proj, who, tid, body, may, depth=1):
                               f"squad_request_merge writer={who}. Then ticket_update id={t['id']} status=done, "
                               "or status=doing with a comment for the assignee.", depth=depth)
         out["review_wake"] = (m or {}).get("blocked") or why or "woken"
-    # A trusted squad's finished ticket goes to the base by itself: the
-    # assignee's folder is merged (live 2026-10-13: a done ticket was never merged).
-    if (t["status"] == "done" and old_status != "done" and t["assignee"] in _projects.writers(proj)
-            and _squads.settings(proj).get("autonomy") == "trusted"):
-        _spawn(merge_done, proj["name"], t["assignee"], t["key"])
-        out["merge"] = "started"
     if t["status"] == "done" and old_status != "done" and _indexer.instance():
         out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
     if t["status"] == "done" and old_status != "done":
         out["summary"] = _finished(proj, mine)
+        # A trusted squad's finished ticket goes to the base by itself: the
+        # assignee's folder is merged (live 2026-10-13: a done ticket was never
+        # merged); the last one then pushes the run's branch — in that order.
+        writer = t["assignee"] if (t["assignee"] in _projects.writers(proj)
+                                   and _squads.settings(proj).get("autonomy") == "trusted") else ""
+        finished = out["summary"] not in ("", "already requested")
+        if writer or finished:
+            _spawn(after_done, proj["name"], writer, t["key"], finished)
+        if writer:
+            out["merge"] = "started"
     return out, ""
+
+
+def after_done(project, writer, key, finished):
+    """Background step of a done ticket: merge its writer, then (all done) push the run's branch."""
+    if writer:
+        merge_done(project, writer, key)
+    if finished:
+        _projects.push_run(project)
 
 
 def merge_done(project, writer, key):
@@ -1141,7 +1153,10 @@ def _finished(proj, mine):
                           f"@{ld} All {len(mine)} tickets of {proj['name']} are done. Write the user the final summary now "
                           "(answer directly, no tools needed beyond reading): what was built and why, where it is "
                           "(branches, PRs, files), how to try it, what was tested, open points and suggested next steps. "
-                          "Keep it short and concrete.")
+                          + (f"The manager pushes the result as branch squad/{_squads.squad_id(proj) or proj['name']} "
+                             "to the project's remotes — name that branch, nothing on main. "
+                             if s.get("push_when_done", True) and proj.get("strategy") == "worktree" else "")
+                          + "Keep it short and concrete.")
     return "lead asked for the summary" if m else f"summary request failed: {why}"
 
 

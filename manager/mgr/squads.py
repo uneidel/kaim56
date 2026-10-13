@@ -47,8 +47,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
             # commands only); supervised: a member's "done" is a review for the operator
             "approval_tools": [], "autonomy": "trusted",
-            # after a merge the manager pushes the base to the repo's origin (mgr/projwt.push)
-            "push_after_merge": True,
+            # all tickets done: the manager pushes the base as squad/<id> to the remotes (mgr/projects.push_run)
+            "push_when_done": True,
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
@@ -148,7 +148,7 @@ def settings(proj):
 def normalize_settings(body, old=None):
     """(settings, '') or (None, why). Missing keys keep their old value."""
     s = settings({"squad": old or {}})
-    for k in ("enabled", "approved", "paused", "cost_routing", "security_skills", "push_after_merge"):
+    for k in ("enabled", "approved", "paused", "cost_routing", "security_skills", "push_when_done"):
         if k in body:
             s[k] = bool(body[k])
     for k, (lo, hi) in LIMITS.items():

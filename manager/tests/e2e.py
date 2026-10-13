@@ -6334,6 +6334,18 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 200, t)
             self.assertEqual((t["merge"], merges), ("started", [("sq", "merge", "e")]))
             self.assertIn("merged e's work for T1", m._squads.read("sq")[-1]["text"])
+            # the last done ticket pushes the run's branch — after its merge
+            seq, old_push = [], m._projects.push_run
+            m._projects.push_run = lambda n: seq.append(("push", n))
+            try:
+                st, t2 = self._sq("/api/projects/sq/squad/ticket", "127.0.0.1", {"id": 2, "status": "done"})
+                self.assertEqual((st, seq), (200, [("push", "sq")]), t2)                # T2's f is a reader: no merge
+                del seq[:]
+                m._projects.member_op = lambda n, op, w: (seq.append((op, w)), ({"commit": "abc123"}, 200))[1]
+                g.after_done("sq", "e", "T1", True)
+                self.assertEqual(seq, [("merge", "e"), ("push", "sq")])
+            finally:
+                m._projects.push_run = old_push
             # a failed merge wakes the writer and the lead
             m._projects.member_op = lambda n, op, w: ({"error": "merge conflict", "conflicts": ["a.go"]}, 409)
             del woke[:]
@@ -6348,35 +6360,36 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
-    def test_push_base_after_merge_host_side(self):
-        """After a merge the base goes to origin as the repo owner with stored
-        credentials, never forced; no network origin = skipped; the squad
-        setting push_after_merge=false turns it off; the channel gets a note."""
+    def test_push_run_branch_to_every_network_remote(self):
+        """A finished run: the base goes out as squad/<squad id> to every network
+        remote (not to their base), as the repo owner with stored credentials,
+        never forced; a local-path remote is left out; one failure is reported
+        per remote; push_when_done=false turns it off."""
         m = self.m
         woke, tasks, undo = self._squad_env()
         wt, calls = m._projwt, []
-        old = (wt._run, wt.git)
+        old = (wt._run, wt.git, m._squads.squad_id)
         try:
             items = m._projects.load(); items[0].update(strategy="worktree", base="main"); m._projects._save(items)
             p = m._projects.get("sq")
-            url = ["https://github.com/x/y.git"]
-            wt.git = lambda repo, args, **k: url[0] if args[:2] == ["remote", "get-url"] else ""
-            wt._run = lambda repo, args, *a, **k: calls.append(args) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
-            self.assertEqual(m._projects.push_base("sq"), {"ok": True, "remote": url[0]})
-            self.assertEqual(calls[-1], ["-c", "credential.helper=store", "push", "origin",
-                                         f"refs/heads/{p['base']}:refs/heads/{p['base']}"])
-            self.assertNotIn("--force", calls[-1])
-            self.assertIn(f"pushed {p['base']}", m._squads.read("sq")[-1]["text"])
-            url[0] = "/srv/other/repo"
-            self.assertEqual(m._projects.push_base("sq"), {"skipped": "origin is no network remote"})
-            url[0] = "https://github.com/x/y.git"
-            wt._run = lambda *a, **k: type("R", (), {"returncode": 1, "stderr": "rejected (non-fast-forward)", "stdout": ""})()
-            self.assertIn("non-fast-forward", m._projects.push_base("sq")["error"])
-            self.assertIn("push of", m._squads.read("sq")[-1]["text"])
-            m._projects.set_squad("sq", m._squads.normalize_settings({"push_after_merge": False}, m._squads.settings(p))[0])
-            self.assertIsNone(m._projects.push_base("sq"))
+            m._squads.squad_id = lambda proj: "run42"
+            urls = {"origin": "https://github.com/x/y.git", "gitea": "https://git.example/x/y.git", "local": "/srv/repo"}
+            wt.git = lambda repo, args, **k: " ".join(urls) if args == ["remote"] else urls[args[2]]
+            ok = lambda *a, **k: type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+            wt._run = lambda repo, args, *a, **k: calls.append(args) or ok()
+            r = m._projects.push_run("sq")
+            self.assertEqual((r["pushed"], r["failed"], r["branch"]), (["origin", "gitea"], {}, "squad/run42"))
+            self.assertEqual(calls[0], ["-c", "credential.helper=store", "push", "origin", "refs/heads/main:refs/heads/squad/run42"])
+            self.assertFalse(any("--force" in c or "local" in c for c in calls))
+            self.assertIn("pushed squad/run42 to origin, gitea", m._squads.read("sq")[-1]["text"])
+            wt._run = lambda repo, args, *a, **k: type("R", (), {"returncode": int("gitea" in args), "stderr": "rejected", "stdout": ""})()
+            r = m._projects.push_run("sq")
+            self.assertEqual((r["pushed"], r["failed"]), (["origin"], {"gitea": "rejected"}))
+            self.assertIn("push to gitea failed: rejected", m._squads.read("sq")[-1]["text"])
+            m._projects.set_squad("sq", m._squads.normalize_settings({"push_when_done": False}, m._squads.settings(p))[0])
+            self.assertIsNone(m._projects.push_run("sq"))
         finally:
-            wt._run, wt.git = old
+            wt._run, wt.git, m._squads.squad_id = old
             undo()
 
     # ---- squad toolchain layer (mgr/toolchain.py) ----
