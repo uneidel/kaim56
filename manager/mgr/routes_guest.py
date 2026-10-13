@@ -836,7 +836,8 @@ def _rt_squad_send(h):
                               depth=_squads.turn_depth(name) + 1)
     else:
         m, why = _squads.post(p, name, b.get("to"), b.get("text"), reply_to=b.get("reply_to"),
-                              depth=_squads.turn_depth(name) + 1)
+                              depth=_squads.turn_depth(name) + 1,
+                              wake=str(b.get("wake", True)).lower() not in ("false", "0", "no"))
     _audit.audit_append(name, "squad_ask" if ask else "squad_post",
                         f"{p['name']} -> {','.join(m['to']) if m else b.get('to')}", m is not None,
                         err=why, result=(m or {}).get("blocked") or str(b.get("text") or b.get("question") or ""))

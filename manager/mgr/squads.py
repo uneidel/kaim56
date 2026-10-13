@@ -293,7 +293,8 @@ def cost_routing_on(project):
 
 def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     how = (f"question {mid} — answer with squad_post reply_to={mid}" if kind == "ask"
-           else f"msg {mid}, reply with squad_post reply_to={mid}")
+           else f"msg {mid}, reply with squad_post reply_to={mid} — only if it needs an action; "
+                "an ack, thanks or 'holding' goes with wake=false")
     ids = f"\n(squad id {sid}; your member id {member_id})" if sid else ""
     return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}"
 
@@ -333,10 +334,11 @@ def _last_user(project):
     return row[0] if row else ""
 
 
-def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None, level=0):
+def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None, level=0, wake=True):
     """Store one message and wake its addressees. -> (message, '') or (None, why).
     `sender` is a member's name or 'user:<name>'; it is never woken. `hints`:
-    {member: line} added to that member's wake only (not to the channel)."""
+    {member: line} added to that member's wake only (not to the channel). wake=False
+    only stores it: acks between members woke each other in a loop (live 2026-10-13)."""
     text = str(text or "").strip()
     if not text:
         return None, "text missing"
@@ -378,7 +380,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     rcpt = ["all"] if "all" in to else sorted(set(to))
     # "hitl": a waiting item's card for the operator (mgr/hitlq.py), "turn": a
     # member's final answer (turn_answer), "note": the manager's — they wake nobody
-    targets = [] if kind in ("answer", "hitl", "turn", "note") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
+    targets = [] if not wake or kind in ("answer", "hitl", "turn", "note") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
         blocked = _guard(proj, targets, depth, now) if targets else ""

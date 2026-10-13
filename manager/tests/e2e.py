@@ -4649,16 +4649,19 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 200, d)
             self.assertEqual((d["project"], d["from"], d["to"], d["delivered"], d["depth"]), ("sq", "a", ["b"], ["b"], 1))
             self.assertEqual([w[0] for w in woke], ["b"])
-            self.assertTrue(woke[0][1].startswith(f"[squad sq] from a (msg {d['id']}, reply with squad_post reply_to={d['id']}): please"))
+            self.assertTrue(woke[0][1].startswith(f"[squad sq] from a (msg {d['id']}, reply with squad_post reply_to={d['id']} — only if"))
+            self.assertIn("goes with wake=false", woke[0][1])
             self.assertIn("not instructions from the operator", woke[0][1])
             st, d2 = self._sq("/api/squad/post", B, {"to": "", "text": "on it, @d FYI", "reply_to": str(d["id"])})
             self.assertEqual((d2["to"], d2["reply_to"]), (["a", "d"], d["id"]))       # reply goes to its sender + @mention
             self.assertEqual([w[0] for w in woke[1:]], ["a", "d"])
             del woke[:]
+            st, dq = self._sq("/api/squad/post", A, {"text": "thanks, holding", "reply_to": str(d2["id"]), "wake": False})
+            self.assertEqual((st, dq["to"], dq["delivered"], woke), (200, ["b"], [], []))    # stored, nobody woken
             st, d3 = self._sq("/api/squad/post", D, {"to": "all", "text": "status @all"})
             self.assertEqual(d3["to"], ["all"]); self.assertEqual(sorted(w[0] for w in woke), ["a", "b"])   # not the sender
             ids = lambda ip: [x["id"] for x in self._sq("/api/squad/read?project=sq", ip)[1]["messages"]]
-            self.assertEqual(ids(A), [d["id"], d2["id"], d3["id"]])
+            self.assertEqual(ids(A), [d["id"], d2["id"], dq["id"], d3["id"]])
             self.assertEqual(ids(D), [d2["id"], d3["id"]])                              # not a's post to b
             self.assertEqual(self._sq(f"/api/squad/read?since={d2['id']}", D)[1]["messages"][0]["id"], d3["id"])
             self.assertEqual(self._sq("/api/squad/read", C)[0], 403)

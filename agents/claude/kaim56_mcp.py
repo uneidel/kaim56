@@ -93,8 +93,8 @@ def _q(**kw):
     return urllib.parse.urlencode({k: v for k, v in kw.items() if v})
 
 
-def t_squad_post(text, to="", reply_to="", project=""):
-    d = json.loads(_post("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None, "project": project}))
+def t_squad_post(text, to="", reply_to="", project="", wake=True):
+    d = json.loads(_post("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None, "project": project, "wake": wake}))
     st = ("delivered to " + ", ".join(d["delivered"])) if d.get("delivered") else \
         ("not delivered: " + d["blocked"] if d.get("blocked") else "stored")
     return f"Posted #{d['id']} in {d['project']} ({st})."
@@ -333,6 +333,7 @@ TOOLS = {
          "properties": {"text": {"type": "string"},
                         "to": {"type": "string", "description": "member name(s), comma-separated, or 'all' (empty with reply_to = its sender)"},
                         "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
+                        "wake": {"type": "boolean", "description": "false = only store it, wake nobody — for an ack, thanks or 'holding' that needs no action (default true)"},
                         "project": _PROJ},
          "required": ["text"]}),
     "squad_ask": (_squad(t_squad_ask),

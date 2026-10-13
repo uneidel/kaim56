@@ -643,10 +643,10 @@ def _squad_call(path, payload=None, timeout=60):
         return None, f"Error: {e!r}"
 
 
-def t_squad_post(to="", text="", reply_to="", project=""):
-    """Post to the project channel; the addressed members are woken."""
+def t_squad_post(to="", text="", reply_to="", project="", wake=True):
+    """Post to the project channel; the addressed members are woken (unless wake=False)."""
     d, err = _squad_call("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None,
-                                             "project": project})
+                                             "project": project, "wake": wake})
     if err:
         return err
     st = f"delivered to {', '.join(d['delivered'])}" if d.get("delivered") else \

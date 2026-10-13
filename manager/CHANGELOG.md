@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- Squads: `squad_post wake=false` only stores a message; the wake frame says an ack/thanks/'holding' goes that way — members acked each other in a loop until the 60 wakes/hour limit stalled the squad. Claude members need the rootfs rebuilt.
 - Claude template: 2048 MiB RAM instead of 1024 — Claude Code (~280 MB) plus a Go/cgo build was OOM-killed in 1 GB (no swap): turns ended with no output. Existing instances keep their value.
 
 ## 2026-10-12
