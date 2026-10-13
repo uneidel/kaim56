@@ -65,6 +65,7 @@ QUEUE_TTL = 1800                # a member's queued reply expires after this (or
 CODE_LINES = 30                 # a longer code block / any diff goes through git, not the channel
 _FENCE = re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)", re.S)
 _DIFF = re.compile(r"^(?:diff --git |@@ -\d)", re.M)
+_B64 = re.compile(r"[A-Za-z0-9+/]{400,}={0,2}")   # a patch as base64 (live 2026-10-13, hand-copied with typos)
 _MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,63})", re.I)
 _lock = threading.Lock()        # guard check + insert: the hourly wake count stays honest
 _COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome", "queued")
@@ -304,11 +305,16 @@ def code_in_text(text):
         return "a diff"
     if any(b.count("\n") >= CODE_LINES for b in _FENCE.findall(t)):
         return f"a code block of {CODE_LINES}+ lines"
+    if _B64.search(t):
+        return "a base64 blob"
     return ""
 
 
-GIT_HINT = ("code goes through git, not the channel: commit it in your folder, git_push_branch / "
-            "request_merge, and post the commit and file names")
+# The way code reaches the base in a worktree squad: git_push_branch needs a
+# git remote the squad usually lacks (live 2026-10-13), the lead's merge works.
+GIT_HINT = ("code goes through git, not the channel: commit it in your own folder, then set your ticket to "
+            "review with the commit and file names — the lead requests the merge (squad_request_merge "
+            "writer=<you>) and the operator approves it")
 WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
         "not into the channel. For someone else's ticket, comment on it instead of doing it.)")
 

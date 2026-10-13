@@ -1079,7 +1079,8 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             and _squads.settings(proj).get("autonomy") != "supervised"):
         m, why = _squads.post(proj, who, [ld], f"Ticket {t['key']} (id {t['id']}) is ready for review: {t['title']}"
                               + (f"\n{comment}" if comment else "")
-                              + f"\nCheck it (or ask a reader to), then ticket_update id={t['id']} status=done, "
+                              + f"\nCheck it (or ask a reader to); if the code is in {who}'s folder, "
+                              f"squad_request_merge writer={who}. Then ticket_update id={t['id']} status=done, "
                               "or status=doing with a comment for the assignee.", depth=depth)
         out["review_wake"] = (m or {}).get("blocked") or why or "woken"
     if t["status"] == "done" and old_status != "done" and _indexer.instance():

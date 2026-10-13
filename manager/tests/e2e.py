@@ -4968,6 +4968,11 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 400); self.assertIn("through git", d["error"])
             st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "diff --git a/x.go b/x.go\n+x"})
             self.assertEqual(st, 400); self.assertIn("a diff", d["error"])
+            self.assertIn("squad_request_merge writer=<you>", d["error"])
+            st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "PART 1/4\n" + "QUJD" * 120})
+            self.assertEqual(st, 400); self.assertIn("base64", d["error"])
+            st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "sha256 " + "ab12" * 16})
+            self.assertEqual(st, 200, d)                                                # a hash is fine
             st, d = self._sq("/api/squad/post", B, {"to": "a", "text": "fixed in `run_gui.go`:\n```go\nx := 1\n```"})
             self.assertEqual(st, 200, d)
             self.assertIn("progress goes on the ticket", woke[-1][1])
@@ -5535,7 +5540,7 @@ class ManagerFunctions(unittest.TestCase):
             st, d = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "review", "comment": "green, sha abc123"})
             self.assertEqual((st, d["review_wake"]), (200, "woken"), d)
             self.assertEqual(woke[-1][0], "a"); self.assertIn("ready for review", woke[-1][1])
-            self.assertIn("sha abc123", woke[-1][1])
+            self.assertIn("sha abc123", woke[-1][1]); self.assertIn("squad_request_merge writer=e", woke[-1][1])
         finally:
             undo()
 
