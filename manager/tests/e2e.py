@@ -5600,7 +5600,7 @@ class ManagerFunctions(unittest.TestCase):
                   "Waiting on ${wait} ticket", "turn result", "Show full answer", "Ctrl+Enter sends", "skTkSave(1)",
                   "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]",
                   # who does what: member rows with the 2 h strip, the problem line, blocked reasons
-                  "class=kb-mem", "<span>-6h</span><span>-3h</span><span>now</span>", "kb-strip", "id=sk-prob",
+                  "class=kb-mem", "<span>-1h</span><span>-30m</span><span>now</span>", "t0=now-3600", "kb-strip", "id=sk-prob",
                   "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
                   "last turn failed", "starts when", "no ticket ready", "previous turn failed: ", "esc('failed: '+x.why)"):
             self.assertIn(s, page)

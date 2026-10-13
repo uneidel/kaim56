@@ -1746,7 +1746,7 @@ function skBoardRender(d,b,hq){
     const t=(k&&ts.find(x=>x.key===k))||ts.find(x=>x.assignee===w.member&&x.status==='doing');
     if(t&&!on[t.key])on[t.key]=w;
   });
-  const act=b.activity||{}, am=act.members||{}, t0=now-21600, px=x=>Math.max(0,Math.min(100,(x-t0)/216)).toFixed(1);
+  const act=b.activity||{}, am=act.members||{}, t0=now-3600, px=x=>Math.max(0,Math.min(100,(x-t0)/36)).toFixed(1);
   const hm=ts=>ts?new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}):'';
   const key=k=>k?`<span class=kb-key>${escT(k)}</span>`:'';
   const now1=a=>{        /* the "Now" cell: what the member does, or why not (mgr/squadkick.activity) */
@@ -1760,7 +1760,7 @@ function skBoardRender(d,b,hq){
     if(a.state==='wait')return [`<span class="kb-st wait">waiting</span> ${escT(a.reason)}`,a.ticket?'on '+key(a.ticket):ltx];
     return [`<span class="kb-st idle">idle</span> ${a.ticket?'next '+key(a.ticket):'no ticket ready'}`,ltx];
   };
-  const strip=a=>`<div class=kb-strip role=img aria-label="${esc(a.name)}: ${(a.strip||[]).length} turns, ${(a.msgs||[]).length} messages in 2 h">`+
+  const strip=a=>`<div class=kb-strip role=img aria-label="${esc(a.name)}: ${(a.strip||[]).length} turns, ${(a.msgs||[]).length} messages in 1 h">`+
     (a.strip||[]).filter(x=>(x.end||now)>t0).map(x=>{const l=px(x.start), r=px(x.end||now);
       return `<i class="kb-b${x.end?'':' now'}${x.ok?'':' f'}" style="left:${l}%;width:${Math.max(.8,r-l).toFixed(1)}%"${x.why?` title="${esc('failed: '+x.why)}"`:''}></i>`}).join('')+
     (a.msgs||[]).filter(x=>x>t0).map(x=>`<i class=kb-m style="left:calc(${px(x)}% - 3px)"></i>`).join('')+'<i class=kb-nowl></i></div>';
@@ -1778,7 +1778,7 @@ function skBoardRender(d,b,hq){
   const bins=Array(12).fill(0); SKM.ev.forEach(e=>{const i=11-Math.floor((now-e.ts)/3600); if(i>=0&&i<12)bins[i]++});
   const mx=Math.max(1,...bins), sum=SKM.sum||{};
   const head=`<div class=kb-mem role=table aria-label="Who does what"><div class=kb-mh role=row><span role=columnheader>Member</span><span role=columnheader>Now</span>`+
-    `<span role=columnheader class=kb-axis><span>-6h</span><span>-3h</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
+    `<span role=columnheader class=kb-axis><span>-1h</span><span>-30m</span><span>now</span></span></div>${team}</div><div class=kb-sum>`+
     (n?`<span><b>${nd}/${n}</b> done</span><span class=kb-pbar role=img aria-label="${nd} done, ${ng} in progress, ${n-nd-ng} open"><i style="width:${pct(nd)}%;background:var(--app-live)"></i><i style="width:${pct(ng)}%;background:var(--color-accent-400)"></i></span>`
       :'<span>no tickets yet — they come with the approved plan</span>')+
     `<span class=kb-spark title="Turns per hour, last 12 h" aria-hidden=true>${bins.map((v,i)=>`<i${i===11?' class=now':''} style="height:${Math.max(1,Math.round(20*v/mx))}px"></i>`).join('')}</span>`+

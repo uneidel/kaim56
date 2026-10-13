@@ -478,7 +478,7 @@ def overview():
 
 
 # ---- who does what (the Squads board's member rows) -------------------------------------
-STRIP_S = 6 * 3600                   # the activity strip: the last 6 h
+STRIP_S = 3600                       # the activity strip: the last hour (6 h was more than anyone read)
 _TICKET = re.compile(r"Ticket (\S{1,32}) \(id \d+\) is yours")
 
 

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- Squads board: the activity strip shows the last hour (was 6 h).
 - Squads: a trusted squad merges without the operator — a done ticket merges its assignee's folder, a lead's merge request is approved at once (supervised squads still ask); when all tickets are done the manager pushes the base as branch `squad/<squad id>` to every network remote (not to their main) as the repo owner with `~/.git-credentials`, never forced (squad setting `push_when_done`, default on); the lead's summary names the branch. Members hold no git credentials, so merged work never reached the remote before.
 - Code dashboard (INDEX_HOST): its session lasts 30 days like the web login (was 12 h); the IdP re-check every 15 min still revokes it.
 - Squads: the code-goes-through-git hint names the way that works (commit in your folder → ticket review → the lead's `squad_request_merge`), not `git_push_branch` (needs a remote the squad lacks); a 400+-char base64 blob in a post/comment is refused too; the review wake tells the lead to request the merge.
