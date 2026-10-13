@@ -1641,7 +1641,8 @@ async function skLoad(){
   document.getElementById('sk-acts').innerHTML=`<button class="btn btn-ghost btn-sm" onclick=skChat() title="To the chat and the composer">Chat</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skPause(${st.paused?'false':'true'})>${st.paused?'Resume':'Pause'}</button>`+
     `<button class="btn btn-ghost btn-sm" onclick=skRestart() title="Stop + start every member (one busy with a turn: right after it) — picks up new images, tools and config">Restart members</button>`+
-    (INDEX_HOST?`<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
+    (INDEX_HOST?`<button class="btn btn-ghost btn-sm" onclick=skReindex() title="queue a code index run for this squad's project">Reindex</button>`+
+      `<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
     `<button class="btn btn-ghost btn-sm" onclick=skProject()>Project</button>`;
   const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
   if(last!==SK_LAST&&!sqaBusy(document.getElementById('sk-thread'))){
@@ -1963,6 +1964,13 @@ function skChat(){
     skMsg(d.error?'⚠️ '+d.error:t.key+' → '+col.dataset.st+(d.note?' — '+d.note:'')); SKB=''; skLoad();
   });
 })();
+async function skReindex(){
+  if(!SK)return;
+  try{
+    const d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    skMsg(d.error?'⚠️ '+d.error:'Code index: '+(d.msg||'queued'));
+  }catch(e){skMsg('⚠️ '+e)}
+}
 async function skRestart(){
   if(!SK||!confirm('Restart every member of '+SK+'? A member busy with a turn restarts right after it.'))return;
   try{

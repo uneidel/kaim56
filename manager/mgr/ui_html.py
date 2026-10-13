@@ -403,7 +403,7 @@ HTML_TOP = """</head><body>
       <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
       <div class="field span2"><label>Members</label><div id=sq-members></div></div>
-      <div class="field span2"><label>Code index (repowise)</label><div id=sq-index></div></div>
+      <div class="field span2"><label>Code index</label><div id=sq-index></div></div>
       <div class="field span2"><label>Git remote (GitHub / Gitea)</label><div id=sq-git></div></div>
     </div>
     <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
