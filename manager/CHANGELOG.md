@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- Squads: "New squad" and a kickoff no longer show the previously selected squad's problem bar and toolchain line.
 - Squads board: the activity strip shows the last hour (was 6 h).
 - Squads: a trusted squad merges without the operator — a done ticket merges its assignee's folder, a lead's merge request is approved at once (supervised squads still ask); when all tickets are done the manager pushes the base as branch `squad/<squad id>` to every network remote (not to their main) as the repo owner with `~/.git-credentials`, never forced (squad setting `push_when_done`, default on); the lead's summary names the branch. Members hold no git credentials, so merged work never reached the remote before.
 - Code dashboard (INDEX_HOST): its session lasts 30 days like the web login (was 12 h); the IdP re-check every 15 min still revokes it.

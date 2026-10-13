@@ -1556,7 +1556,10 @@ document.getElementById('sk-list').onclick=e=>{
   if(b.dataset.n)skPick(b.dataset.n); else if(b.dataset.job)skJob(b.dataset.job); else {SK='';SK_JOB='';skNew()}
   loadSquads();
 };
+// the selected squad's problem bar and toolchain line stay behind otherwise
+function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML=''}
 function skNew(){
+  skClearSquad();
   document.getElementById('sk-title').textContent='New squad';
   document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
   document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML=''; skMode(true);
@@ -1567,7 +1570,7 @@ function skNew(){
   skMsg('');
 }
 async function skJob(id){
-  SK='';SK_JOB=id; document.getElementById('sk-board').hidden=true; skMode(true);
+  SK='';SK_JOB=id; skClearSquad(); document.getElementById('sk-board').hidden=true; skMode(true);
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
