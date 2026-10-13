@@ -3550,6 +3550,26 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._tasks._run_ephemeral, m._tasks._run_named, st.TASKS_FILE = old_eph, old_named, old_file
 
+    def test_tasks_delete_all_done(self):
+        """Tasks tab "Delete all done": one-off done tasks go, recurring and
+        open/error ones stay; admin only (role user may not)."""
+        m = self.m
+        import mgr.store as st
+        old_file = st.TASKS_FILE
+        try:
+            st.TASKS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-taskdone-"), "tasks.json")
+            a, b, c, d = (st.add_task("x", s) for s in ("a", "b", "c", "d"))
+            r = st.add_task("x", "rec", "daily 08:00")
+            st.with_tasks(lambda ts: (True, [t.update(status=s) for t, s in zip(ts, ("done", "done", "error", "pending", "done"))]))
+            h = self._post_handler("/api/tasks/done/delete", "127.0.0.1", b"{}")
+            h._do_POST()
+            self.assertEqual(self._status(h), 200)
+            self.assertIn(b"2 done task(s) deleted", h.wfile.getvalue())
+            self.assertEqual(sorted(t["id"] for t in st.load_tasks()), sorted([c["id"], d["id"], r["id"]]))
+            self.assertFalse(m._auth.user_allowed("POST", "/api/tasks/done/delete"))
+        finally:
+            st.TASKS_FILE = old_file
+
     def test_task_target_resolved_and_validated(self):
         """'@orchestrator' (an agent's typo) failed daily with 'instance unknown'
         and nobody was told. Targets lose a leading '@', unknown names are

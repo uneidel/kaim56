@@ -309,6 +309,7 @@ HTML_TOP = """</head><body>
 
 <section class="screen" id=s-tasks>
   <p class=lede>One message runs on one instance — once or recurring · a stopped instance is started for it</p>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick=delDoneTasks()>Delete all done</button></div>
   <table class=table>
     <thead><tr><th style="width:20%">Instance</th><th>Job</th><th>Schedule</th><th>Status</th><th>Last result</th><th></th></tr></thead>
     <tbody id=taskrows></tbody>

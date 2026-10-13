@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- Tasks: "Delete all done" removes the finished one-off tasks (recurring and open ones stay; admin only).
 - Squads vs Projects: the squad settings (budget, autonomy, push, members with their Changes/merge, code index, git remote) moved from Projects into Squads (Settings); Projects is now "Repos" — code sources only, a squad's members read-only there with "Open in Squads →"; "+ New squad" can start on an existing repo (no clone; its lead, or a new architect, plans).
 - Squads board: a Reindex button next to Dashboard (it was only in the Projects panel).
 - Code index (indexer): the dashboard works again — repowise's API answered 403 "reachable from the network" because uvicorn trusted the UI proxy's X-Forwarded-For (`FORWARDED_ALLOW_IPS` now trusts no proxy); the UI is debranded as "Code index" (no repowise logo/name — sidebar reads "Code index", logo files are a transparent pixel — feedback, upgrade or repowise.dev prompts, no Ask chat — `agents/indexer/debrand.sh`, every edit checked). Needs the indexer rootfs rebuilt.

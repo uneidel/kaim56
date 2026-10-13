@@ -1068,6 +1068,13 @@ def _rt_tasks_admin(h):
     if len(parts) != 4:
         return "unknown"
     tid, action = parts[2], parts[3]
+    if tid == "done" and action == "delete":            # the Tasks tab's "Delete all done" (ids are hex: no clash)
+        def drop_done(ts):
+            keep = [x for x in ts if x.get("status") != "done" or x.get("schedule")]   # recurring ones stay
+            gone = len(ts) - len(keep)
+            ts[:] = keep
+            return gone > 0, gone
+        return f"{_store.with_tasks(drop_done)} done task(s) deleted"
     if action == "delete":
         _store.with_tasks(lambda ts, _tid=tid: (True, ts.__setitem__(slice(None), [x for x in ts if x["id"] != _tid])))
         return f"task {tid} deleted"

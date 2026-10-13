@@ -745,6 +745,11 @@ function saveTask(){
 }
 async function runTask(id){const r=await (await fetch('/api/tasks/'+encodeURIComponent(id)+'/run',{method:'POST'})).json();if(!/queued/.test(r.msg||''))alert(r.msg||'?');loadTasks();}
 async function delTask(id){if(confirm('Delete task?')){await fetch('/api/tasks/'+encodeURIComponent(id)+'/delete',{method:'POST'});loadTasks();}}
+async function delDoneTasks(){
+  const n=TASKS.filter(t=>t.status==='done'&&!t.schedule).length;
+  if(!n){alert('No done tasks.');return}
+  if(confirm('Delete all '+n+' done tasks? Recurring tasks stay.')){await fetch('/api/tasks/done/delete',{method:'POST'});loadTasks();}
+}
 
 /* — Usage: the same numbers as server-side, just fetched afterwards — */
 function fmtTok(n){n=n||0;
