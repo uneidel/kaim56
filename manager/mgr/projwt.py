@@ -332,6 +332,23 @@ def merge(proj, member):
         return {"ok": True, "commit": new}
 
 
+def push(proj):
+    """The base branch to the repo's origin, as the repo owner with the owner's
+    stored git credentials (~/.git-credentials) — the host side, never a VM,
+    never forced -> {'ok', 'remote'} | {'skipped': why} | {'error': why}."""
+    repo, base = proj["source"]["path"], proj["base"]
+    url = git(repo, ["remote", "get-url", "origin"], check=False).strip()
+    if not url:
+        return {"skipped": "no origin remote"}
+    if not url.startswith(("https://", "ssh://", "git@")):
+        return {"skipped": "origin is no network remote"}
+    with _lock:
+        r = _run(repo, ["-c", "credential.helper=store", "push", "origin", f"refs/heads/{base}:refs/heads/{base}"])
+    if r.returncode != 0:
+        return {"error": (r.stderr or r.stdout).strip()[-300:]}
+    return {"ok": True, "remote": url}
+
+
 def sync(proj, member):
     """Merge the base INTO the writer's branch (its work committed first) and
     refill its folder in place -> {'ok', 'commit', 'note'} or {'error', 'conflicts'}.

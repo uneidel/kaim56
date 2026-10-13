@@ -6313,6 +6313,72 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squadgate_trusted_squad_merges_without_the_operator(self):
+        """Trusted: a merge proposal is decided at once (auto) and a done ticket
+        merges its writer; supervised: both wait for the operator (live
+        2026-10-13: a done ticket's work never reached main)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        g, A, E = m._squadgate, "172.30.3.2", "172.30.11.2"
+        g._spawn = lambda fn, *a: fn(*a)                  # run the background step inline
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            self.assertEqual(g.decide("sq", pid, True, "admin")[0]["status"], "approved")
+            items = m._projects.load(); items[0]["strategy"] = "worktree"; m._projects._save(items)
+            del merges[:]
+            st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "feature done"})
+            self.assertEqual((st, merges), (200, [("sq", "merge", "b")]), d)
+            self.assertEqual(g._get("sq", d["id"])["decided_by"], g.AUTO)
+            del merges[:]
+            st, t = self._sq("/api/squad/ticket-update", E, {"id": 1, "status": "done"})
+            self.assertEqual(st, 200, t)
+            self.assertEqual((t["merge"], merges), ("started", [("sq", "merge", "e")]))
+            self.assertIn("merged e's work for T1", m._squads.read("sq")[-1]["text"])
+            # a failed merge wakes the writer and the lead
+            m._projects.member_op = lambda n, op, w: ({"error": "merge conflict", "conflicts": ["a.go"]}, 409)
+            del woke[:]
+            g.merge_done("sq", "e", "T1")
+            self.assertEqual(sorted(w[0] for w in woke), ["a", "e"]); self.assertIn("a.go", woke[0][1])
+            # supervised: the operator decides
+            m._projects.member_op = lambda n, op, w: (merges.append((n, op, w)), ({"commit": "abc123"}, 200))[1]
+            self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", {"autonomy": "supervised"})[0], 200)
+            del merges[:]
+            st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "again"})
+            self.assertEqual((st, d["status"], merges), (200, "pending", []))
+        finally:
+            undo()
+
+    def test_push_base_after_merge_host_side(self):
+        """After a merge the base goes to origin as the repo owner with stored
+        credentials, never forced; no network origin = skipped; the squad
+        setting push_after_merge=false turns it off; the channel gets a note."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        wt, calls = m._projwt, []
+        old = (wt._run, wt.git)
+        try:
+            items = m._projects.load(); items[0].update(strategy="worktree", base="main"); m._projects._save(items)
+            p = m._projects.get("sq")
+            url = ["https://github.com/x/y.git"]
+            wt.git = lambda repo, args, **k: url[0] if args[:2] == ["remote", "get-url"] else ""
+            wt._run = lambda repo, args, *a, **k: calls.append(args) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+            self.assertEqual(m._projects.push_base("sq"), {"ok": True, "remote": url[0]})
+            self.assertEqual(calls[-1], ["-c", "credential.helper=store", "push", "origin",
+                                         f"refs/heads/{p['base']}:refs/heads/{p['base']}"])
+            self.assertNotIn("--force", calls[-1])
+            self.assertIn(f"pushed {p['base']}", m._squads.read("sq")[-1]["text"])
+            url[0] = "/srv/other/repo"
+            self.assertEqual(m._projects.push_base("sq"), {"skipped": "origin is no network remote"})
+            url[0] = "https://github.com/x/y.git"
+            wt._run = lambda *a, **k: type("R", (), {"returncode": 1, "stderr": "rejected (non-fast-forward)", "stdout": ""})()
+            self.assertIn("non-fast-forward", m._projects.push_base("sq")["error"])
+            self.assertIn("push of", m._squads.read("sq")[-1]["text"])
+            m._projects.set_squad("sq", m._squads.normalize_settings({"push_after_merge": False}, m._squads.settings(p))[0])
+            self.assertIsNone(m._projects.push_base("sq"))
+        finally:
+            wt._run, wt.git = old
+            undo()
+
     # ---- squad toolchain layer (mgr/toolchain.py) ----
     def test_toolchain_spec_validation_and_version(self):
         """Package names, script size, env names/values are checked; a changed

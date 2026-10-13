@@ -74,6 +74,7 @@ GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
 KINDS = ("squad", "member", "merge", "toolchain")
 STATUSES = ("open", "doing", "review", "done", "blocked")
 COMMENT_MAX = 2000
+AUTO = "auto (trusted squad)"          # who decides a trusted squad's merge proposal
 MEMBER_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,160}$")
@@ -453,6 +454,11 @@ def propose(proj, by, kind, body):
                     versions=((same.get("versions") or []) + [_snapshot(same)])[-MAX_VERSIONS:],
                     changes=diff(same, prop))
     _put(prop)
+    # A trusted squad merges without the operator (only supervised ones ask);
+    # the merge runs in the background, the lead hears the outcome as usual.
+    if kind == "merge" and _squads.settings(proj).get("autonomy") == "trusted":
+        _spawn(decide, proj["name"], prop["id"], True, AUTO)
+        return prop, ""
     if kind in ("squad", "member") and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
@@ -1083,11 +1089,33 @@ def update_ticket(proj, who, tid, body, may, depth=1):
                               f"squad_request_merge writer={who}. Then ticket_update id={t['id']} status=done, "
                               "or status=doing with a comment for the assignee.", depth=depth)
         out["review_wake"] = (m or {}).get("blocked") or why or "woken"
+    # A trusted squad's finished ticket goes to the base by itself: the
+    # assignee's folder is merged (live 2026-10-13: a done ticket was never merged).
+    if (t["status"] == "done" and old_status != "done" and t["assignee"] in _projects.writers(proj)
+            and _squads.settings(proj).get("autonomy") == "trusted"):
+        _spawn(merge_done, proj["name"], t["assignee"], t["key"])
+        out["merge"] = "started"
     if t["status"] == "done" and old_status != "done" and _indexer.instance():
         out["reindex"] = _indexer.reindex(proj["name"], f"ticket {t['key']} done")
     if t["status"] == "done" and old_status != "done":
         out["summary"] = _finished(proj, mine)
     return out, ""
+
+
+def merge_done(project, writer, key):
+    """Merge a done ticket's writer into the base; a note in the channel, a
+    conflict wakes the writer and the lead."""
+    r, st = _projects.member_op(project, "merge", writer)
+    proj = _projects.get(project)
+    if proj is None or r.get("note"):
+        return r
+    if st == 200:
+        _squads.post(proj, "manager", ["all"], f"merged {writer}'s work for {key} ({str(r.get('commit'))[:10]})", kind="note")
+    else:
+        why = r.get("error", "") + (f" — conflicts: {', '.join(r['conflicts'])}" if r.get("conflicts") else "")
+        _squads.post(proj, "manager", [writer, *([lead(proj)] if lead(proj) else [])],
+                     f"{key} is done but the merge of {writer} failed: {why} — fix it and set the ticket done again")
+    return r
 
 
 def _finished(proj, mine):

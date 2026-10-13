@@ -315,13 +315,32 @@ def member_op(name, op, member):
         return {"error": str(e)}, 500
     if isinstance(r, dict) and "error" in r:
         return r, 409
-    if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it
+    if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it, origin too
         _spawn(sync_others, name, member)
+        _spawn(push_base, name)
     return r, 200
 
 
 def _spawn(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True, name="projsync").start()
+
+
+def push_base(name):
+    """After a merge: the base to origin (squad setting push_after_merge), one
+    note in the channel. Members have no git credentials, so nothing reached
+    the remote before (live 2026-10-13: 20 merged commits, none pushed)."""
+    from mgr import squads as _squads                 # late: squads imports this module
+    p = get(name)
+    if not p or p.get("strategy") != "worktree" or not _squads.settings(p).get("push_after_merge", True):
+        return None
+    try:
+        r = _projwt.push(p)
+    except (_projwt.GitError, OSError, subprocess.SubprocessError) as e:
+        r = {"error": str(e)[-300:]}
+    if "skipped" not in r:
+        _squads.post(p, "manager", ["all"], f"pushed {p['base']} to {r['remote']}" if r.get("ok")
+                     else f"push of {p['base']} failed: {r['error']}", kind="note")
+    return r
 
 
 def sync_others(name, merged):
