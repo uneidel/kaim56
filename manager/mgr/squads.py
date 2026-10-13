@@ -51,9 +51,21 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "push_when_done": True,
             # a kickoff starts "drafting": the lead interviews the operator first (mgr/squadreq.py)
             "requirements": "agreed",
+            # the roles the lead staffs the squad with (New squad's Team box; "" = the lead decides)
+            "team": "",
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
+TEAM_MAX = 3000
+TEAM_DEFAULT = (
+    "- project-designer: owns the high-level business logic and domain model; writes the design document.\n"
+    "- architect (you, the lead): tech lead — technical decisions, reviews, merges; you write no code.\n"
+    "- devops: tooling, version control, CI, third-party integrations.\n"
+    "- agent-ops: the squad's prompts and coordination rules; proposes member and persona changes (HR).\n"
+    "- code-planner: turns the designer's work product into milestones, and milestones into coding tasks.\n"
+    "- asset-planner: like the code-planner, for non-code work (docs, content, assets, data) — a wider dispatch field.\n"
+    "- coder (1-2): implement the coding tasks; the only members who write product code.\n"
+    "The planners write the milestones and tasks; you turn them into tickets and assign them.")
 AUTONOMY = ("trusted", "supervised")
 TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 ACCOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
@@ -166,6 +178,11 @@ def normalize_settings(body, old=None):
         if body["requirements"] not in ("drafting", "agreed"):
             return None, "requirements must be drafting or agreed"
         s["requirements"] = body["requirements"]
+    if "team" in body:
+        t = str(body["team"] or "").strip()
+        if len(t) > TEAM_MAX:
+            return None, f"team: at most {TEAM_MAX} characters"
+        s["team"] = t
     if "autonomy" in body:
         if body["autonomy"] not in AUTONOMY:
             return None, "autonomy must be trusted or supervised"

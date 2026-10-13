@@ -6345,7 +6345,8 @@ class ManagerFunctions(unittest.TestCase):
         old_root = m._mounts.AGENT_ROOT
         m._mounts.AGENT_ROOT = tempfile.mkdtemp(prefix="e2e-req-")
         try:
-            m._squads.save_settings("sq", {**m._squads.settings(m._projects.get("sq")), "requirements": "drafting"})
+            m._squads.save_settings("sq", {**m._squads.settings(m._projects.get("sq")), "requirements": "drafting",
+                                           "team": "- devops: git and CI"})
             st, d = self._sq("/api/squad/propose", A, self._SG_PLAN)
             self.assertEqual(st, 400); self.assertIn("requirements not agreed", d["error"])
             st, d = self._sq("/api/projects/sq/squad/requirements", L, {})
@@ -6364,6 +6365,7 @@ class ManagerFunctions(unittest.TestCase):
             st, d = self._sq("/api/projects/sq/squad/requirements", L, {})
             self.assertEqual((st, d["state"]), (200, "agreed"), d)
             self.assertEqual(woke[-1][0], "a"); self.assertIn("squad_propose", woke[-1][1])
+            self.assertIn("exactly these roles", woke[-1][1]); self.assertIn("- devops: git and CI", woke[-1][1])
             self.assertEqual(self._sq("/api/squad/propose", A, self._SG_PLAN)[0], 200)
             self.assertEqual(self._sq("/api/projects/sq/squad/requirements", L, {})[0], 400)    # agreed already
             self.assertIn("ONE question at a time", sys.modules["mgr.squadreq"].INTERVIEW)
@@ -7679,11 +7681,16 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(woke[-1][0], "a"); self.assertIn("add tests", woke[-1][1])
             # without a lead: an architect instance joins as the lead
             items = m._projects.load(); items[0]["members"].pop("a"); items[0]["squad"] = {}; m._projects._save(items)
-            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests"})
+            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests", "team": " - coder: x "})
             self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
             self.assertEqual(created[0][0], "sq-architect")
             s = m._squads.settings(m._projects.get("sq"))
             self.assertEqual((s["enabled"], s["requirements"]), (True, "drafting"))
+            self.assertEqual(s["team"], "- coder: x")                                         # the form's Team box
+            self.assertEqual(k._team(None), m._squads.TEAM_DEFAULT)                            # API without it: the default roles
+            for r in ("project-designer", "architect", "devops", "agent-ops", "code-planner", "asset-planner", "coder"):
+                self.assertIn("- " + r, m._squads.TEAM_DEFAULT)
+            self.assertIn("code-planner", sys.modules["mgr.ui_html"].HTML_TOP.split("id=sk-team rows")[1][:2000])
             self.assertEqual(m._projects.get("sq")["members"]["sq-architect"]["role"], "lead")
             self.assertEqual(woke[-1][0], "sq-architect"); self.assertIn("add tests", woke[-1][1])
         finally:

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-13
+- New squad: a Team box (default: project-designer, architect as non-coding tech lead, devops, agent-ops, code-planner, asset-planner, 1-2 coders); the lead staffs the squad by it after the requirements are agreed.
 - Tasks: "Delete all done" removes the finished one-off tasks (recurring and open ones stay; admin only).
 - Squads vs Projects: the squad settings (budget, autonomy, push, members with their Changes/merge, code index, git remote) moved from Projects into Squads (Settings); Projects is now "Repos" — code sources only, a squad's members read-only there with "Open in Squads →"; "+ New squad" can start on an existing repo (no clone; its lead, or a new architect, plans).
 - Squads board: a Reindex button next to Dashboard (it was only in the Projects panel).

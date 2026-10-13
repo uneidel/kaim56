@@ -71,7 +71,10 @@ def agree(proj, who):
         return None, f"no {FILE} yet — the lead writes it while it interviews you"
     _squads.save_settings(proj["name"], {**_squads.settings(proj), "requirements": "agreed"})
     p = _projects.get(proj["name"])
+    team = _squads.settings(p).get("team")
     _squads.post(p, "user:" + who, [_squadgate.lead(p)],
                  f"Requirements agreed ({FILE} as it is now). Plan the squad now: {_squadgate.PLAN} "
-                 "Every ticket carries the acceptance criteria it covers.")
+                 "Every ticket carries the acceptance criteria it covers."
+                 + (f"\nStaff the squad with exactly these roles (one member each unless a count is given; "
+                    f"put the role in each member's purpose):\n{team}" if team else ""))
     return view(p), ""

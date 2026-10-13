@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Manager web UI — page markup. ARCH_SVG separate: the update cycle edits it."""
+import html
+
+from mgr import squads as _squads
 
 HTML_TOP = """</head><body>
 <div class=shell>
@@ -358,6 +361,8 @@ HTML_TOP = """</head><body>
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)">
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
+      <details id=sk-teambox style="margin-top:6px"><summary>Team — the roles the architect staffs the squad with (empty = it decides)</summary>
+        <textarea class=input id=sk-team rows=9 aria-label=Team style="width:100%;margin-top:6px;font-size:12.5px">__TEAM_DEFAULT__</textarea></details>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
       <details id=sk-chatbox ontoggle="if(this.open){const t=document.getElementById('sk-thread');t.scrollTop=t.scrollHeight}">
         <summary id=sk-chatsum onclick="skChatPref(!this.parentNode.open)">Chat</summary>
@@ -1240,3 +1245,5 @@ HTML_BOTTOM = """
 </div>
 
 """
+
+HTML_TOP = HTML_TOP.replace("__TEAM_DEFAULT__", html.escape(_squads.TEAM_DEFAULT))   # New squad's Team box

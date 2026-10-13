@@ -53,9 +53,9 @@ def _rt_kick_post(h):
     b = h._body() or {}
     who = _who(h)
     if not rest and b.get("project"):        # a squad on an existing repo (no clone)
-        j, why = _squadkick.start_repo(b.get("project"), b.get("text"), who, b.get("architect_template"))
+        j, why = _squadkick.start_repo(b.get("project"), b.get("text"), who, b.get("architect_template"), b.get("team"))
     elif not rest:
-        j, why = _squadkick.start(b.get("text"), who, b.get("architect_template"))
+        j, why = _squadkick.start(b.get("text"), who, b.get("architect_template"), b.get("team"))
     elif rest.endswith("/retry"):
         j, why = _squadkick.retry(rest[:-len("/retry")])
     else:

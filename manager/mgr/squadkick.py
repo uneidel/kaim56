@@ -173,7 +173,12 @@ def get(jid):
     return view(j) if j else None
 
 
-def start(text, who, architect_template=""):
+def _team(team):
+    """The New squad form's Team box; None (an API caller without it) = the default roles."""
+    return _squads.TEAM_DEFAULT if team is None else str(team).strip()[:_squads.TEAM_MAX]
+
+
+def start(text, who, architect_template="", team=None):
     """A new kickoff -> (job view, '') or (None, why). The steps run in a thread."""
     tpl = str(architect_template or "openrouter").strip()
     if tpl not in _squadgate.MEMBER_TEMPLATES:
@@ -186,7 +191,8 @@ def start(text, who, architect_template=""):
         if not name:
             return None, f"no free squad name for {f['repo']}"
         job = {**f, "id": uuid.uuid4().hex[:10], "name": name, "arch": name + ARCH_SUFFIX, "who": who,
-               "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(), "base": ""}
+               "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(), "base": "",
+               "team": _team(team)}
         _jobs[job["id"]] = job
         for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
             _jobs.pop(old["id"], None)
@@ -195,7 +201,7 @@ def start(text, who, architect_template=""):
     return view(job), ""
 
 
-def start_repo(project, goal, who, architect_template=""):
+def start_repo(project, goal, who, architect_template="", team=None):
     """A squad on an existing repo (the Repos tab): no clone, no new project —
     the architect, the squad, the goal (STEPS_REPO) -> (job view, '') or (None, why)."""
     tpl = str(architect_template or "openrouter").strip()
@@ -217,7 +223,7 @@ def start_repo(project, goal, who, architect_template=""):
         job = {"id": uuid.uuid4().hex[:10], "name": p["name"], "arch": lead or p["name"] + ARCH_SUFFIX, "who": who,
                "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(),
                "base": p.get("base") or "", "url": path, "repo": p["name"], "provider": "local", "goal": goal,
-               "path": path, "steps": "lead" if lead else "repo"}       # the repo's lead plans
+               "path": path, "steps": "lead" if lead else "repo", "team": _team(team)}    # the repo's lead plans
         _jobs[job["id"]] = job
         for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
             _jobs.pop(old["id"], None)
@@ -442,7 +448,8 @@ def step_squad(job):
     if "squad" not in job["done"]:
         proj = _projects.get(name)
         s, _why = _squads.normalize_settings({"enabled": True, "approved": False, "paused": False,
-                                              "daily_token_budget": BUDGET, "requirements": "drafting"},
+                                              "daily_token_budget": BUDGET, "requirements": "drafting",
+                                              "team": job.get("team", "")},
                                              proj.get("squad"))
         _squads.save_settings(name, s)
         _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})
