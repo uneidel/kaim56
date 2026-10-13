@@ -12163,6 +12163,8 @@ class IndexerService(unittest.TestCase):
             for env in (api[2], ui[2]):
                 self.assertEqual((env["DO_NOT_TRACK"], env["REPOWISE_TELEMETRY_DISABLED"]), ("1", "1"))
             self.assertEqual(ui[2]["NEXT_TELEMETRY_DISABLED"], "1"); self.assertEqual(api[2]["REPOWISE_EMBEDDER"], "mock")
+            # the UI's proxy sets X-Forwarded-For: uvicorn must not trust it, or repowise answers 403
+            self.assertNotIn(api[2].get("FORWARDED_ALLOW_IPS", "127.0.0.1"), ("127.0.0.1", "*", "127.0.0.1,::1"))
 
             d = s.Dashboard(popen=P, ready=lambda port: up["ok"], wait=0.2)
             self.assertEqual(d.start("a"), {"ok": True, "project": "a", "port": s.DASH_PORT})

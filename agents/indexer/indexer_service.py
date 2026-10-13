@@ -345,8 +345,12 @@ def dashboard_cmds(project):
     The API stays on loopback (no key needed, nothing else reaches it); the
     UI's middleware forwards /indexer/ui/api/* to it."""
     wc = os.path.join(DATA, project)
+    # FORWARDED_ALLOW_IPS: uvicorn trusts X-Forwarded-For from loopback by default, and
+    # the UI's proxy sets it to the outer address — repowise then sees a network
+    # client and refuses keyless access (403 "reachable from the network").
     api = (wc, ["repowise", "serve", "--no-ui", "--host", "127.0.0.1", "--port", str(DASH_API_PORT)],
-           {**ENV, "REPOWISE_EMBEDDER": "mock"})                     # no embedder prompt, no key
+           {**ENV, "REPOWISE_EMBEDDER": "mock",                       # no embedder prompt, no key
+            "FORWARDED_ALLOW_IPS": "192.0.2.1"})                      # trust no proxy header
     ui = (DASH_WEB, ["node", os.path.join(DASH_WEB, "server.js")],
           {**ENV, "NEXT_TELEMETRY_DISABLED": "1", "HOSTNAME": "0.0.0.0", "PORT": str(DASH_PORT),
            "REPOWISE_API_URL": f"http://127.0.0.1:{DASH_API_PORT}"})

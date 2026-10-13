@@ -13,7 +13,9 @@ ADD --checksum=sha256:fd062d695764025763e21979b16f59cec0b2ea644cbb7de80cddddbed8
     https://github.com/repowise-dev/repowise/archive/refs/tags/v0.55.0.tar.gz /src.tgz
 WORKDIR /src
 ENV NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_REPOWISE_API_URL=/indexer/ui
-RUN tar -xzf /src.tgz --strip-components=1 && cd packages/web \
+# kAIm56's "Code index": no repowise branding, no Ask chat (debrand.sh checks every edit)
+COPY debrand.sh /debrand.sh
+RUN tar -xzf /src.tgz --strip-components=1 && cd packages/web && sh /debrand.sh \
     && sed -i 's|output: "standalone",|output: "standalone", basePath: "/indexer/ui",|' next.config.ts \
     && sed -i 's|pathname.match(/^\\/repos|pathname.match(/\\/repos|' src/components/layout/context-drawer-provider.tsx \
     && sed -i 's|location.href = `/repos/|location.href = `/indexer/ui/repos/|' src/components/docs/docs-viewer.tsx \
