@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-13
+- Claude template: 2048 MiB RAM instead of 1024 — Claude Code (~280 MB) plus a Go/cgo build was OOM-killed in 1 GB (no swap): turns ended with no output. Existing instances keep their value.
+
 ## 2026-10-12
 - Claude members: a turn may run as long as the task worker waits — the manager passes `WEB_TIMEOUT` = `TASK_TIMEOUT` (1800 s) to the guest; the bridge's 600 s default cut long squad turns off ("Zeitlimit (600s) erreicht"). Applies at the next VM start.
 - Squads: an idle member sleeps — after `SQUAD_IDLE_STOP` s (default 900, 0 = off) without a turn (no running/queued task, no open turn, not just started) the task worker stops its VM to free the RAM; only members with a persistent write layer (`persist_disk`), which stays; the next wake starts it again.

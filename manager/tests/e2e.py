@@ -12004,6 +12004,11 @@ class IndexerService(unittest.TestCase):
 # HTTP: against the running manager
 # ===========================================================================
 class ClaudeGuest(unittest.TestCase):
+    def test_claude_template_has_room_for_a_build(self):
+        """1 GB without swap OOM-killed Claude Code (~280 MB) next to a Go/cgo build."""
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "claude.json")) as f:
+            self.assertGreaterEqual(json.load(f)["mem_mib"], 2048)
+
     def test_claude_mcp_relays_catalog_mcps_through_the_hub(self):
         """The claude guest's kaim56 MCP server also exposes the instance's
         MCP_SERVERS (names from /api/mcp-config, calls via /api/mcp) as
