@@ -47,10 +47,12 @@ SETTINGS_SCHEMA = [
         {"value": "", "label": "Jev (OpenJev, JEV_URL) — default"},
         {"value": "decision1-openrouter", "label": "Microsoft-Decision-1 via OpenRouter (OPENROUTER_API_KEY, host-side)"},
         {"value": "decision1-azure", "label": "Microsoft-Decision-1 on Azure AI Foundry (endpoint + key below)"},
-        {"value": "local-llm", "label": "Local LLM (LLAMA_ENDPOINT, e.g. the Jetson) — stays in the LAN"}]},
+        {"value": "local-llm", "label": "Local LLM (LLAMA_ENDPOINT, e.g. the Jetson) — stays in the LAN"},
+        {"value": "subq", "label": "SubQ Decisions API (api.subq.ai, SUBQ_API_KEY below)"}]},
     {"key": "DECISION_MODEL", "label": "Decision-1 model id (blank = microsoft/decision-1 on OpenRouter, Microsoft-Decision-1 on Azure)"},
     {"key": "AZURE_DECISION_ENDPOINT", "label": "Decision-1 Azure Foundry endpoint (https, OpenAI-compatible chat completions URL of the deployment)"},
     {"key": "AZURE_DECISION_KEY", "label": "Decision-1 Azure Foundry key (stays on the host)"},
+    {"key": "SUBQ_API_KEY", "label": "SubQ API key — decision backend subq, also per squad (New squad → Suggestions); console.subq.ai, stays on the host"},
     {"key": "DECISION_LOCAL_MODEL", "label": "Decision backend local-llm: model name at LLAMA_ENDPOINT (blank = local-model)"},
     {"key": "DECISION_ROUTER", "label": "Model router uses the decision backend too (privacy: with Decision-1 EVERY user message of a routed instance goes to Microsoft/OpenRouter)", "options": [
         {"value": "", "label": "— off: the router asks Jev —"},
@@ -146,7 +148,7 @@ def settings_for_ui():
     return d
 
 
-DECISION_BACKENDS = ("jev", "decision1-openrouter", "decision1-azure", "local-llm")   # mgr/decision.py
+DECISION_BACKENDS = ("jev", "decision1-openrouter", "decision1-azure", "local-llm", "subq")   # mgr/decision.py
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@+-]{0,160}$")
 
 

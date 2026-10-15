@@ -14,6 +14,8 @@ Setting DECISION_BACKEND:
 - "local-llm": the llama.cpp endpoint the platform already uses
   (LLAMA_ENDPOINT/LLAMA_API_KEY, model DECISION_LOCAL_MODEL) — nothing leaves
   the LAN; slower, so a longer timeout.
+- "subq": SubQ's native Decisions API (api.subq.ai/v1/systemone, SUBQ_API_KEY;
+  `_ask_subq`). A squad may pick its own backend (squad setting "decision").
 
 Decision-1's native structured API is not public (2026-10-09), so every
 non-Jev backend gets the same OpenAI-compatible chat-completions call with a
@@ -49,6 +51,9 @@ TIMEOUT, LOCAL_TIMEOUT = 30, 60              # seconds; no retries
 REQ_MAX = 120_000                            # bytes of the request body
 RESP_MAX = 256 * 1024
 DESC_MAX = 300                               # characters per catalog description
+SUBQ_URL = "https://api.subq.ai/v1/systemone"            # SubQ Decisions API (docs.subq.ai), Bearer SUBQ_API_KEY
+SUBQ_MODEL = "subq-snap-preview"
+SUBQ_BATCH = 16                                          # its limit of questions per request
 SYSTEM = (
     "You are a decision-scoring model. You read a state and typed questions and answer ONLY with one JSON "
     'object, no prose, no code fence: {"answers": {"<question key>": {"<option name>": <score>, ...}, ...}}. '
@@ -69,9 +74,9 @@ def router_on():
     return backend() != "jev" and (st.get("DECISION_ROUTER") or "") == "1"
 
 
-def ready():
-    """Is any classifier configured (Jev, or a non-Jev backend)?"""
-    return bool(_router.jev_url()) or backend() != "jev"
+def ready(be=None):
+    """Is any classifier configured (Jev, or a non-Jev backend)? `be`: a squad's own."""
+    return bool(_router.jev_url()) or (be or backend()) != "jev"
 
 
 def _endpoint(be, st):
@@ -132,6 +137,8 @@ def ask(task, be=None):
     today; Decision-1's native structured API later). Raises on failure."""
     st = _settings.load_settings()
     be = be or backend()
+    if be == "subq":
+        return _ask_subq(task, st)
     url, headers, model, timeout = _endpoint(be, st)
     body = {"model": model, "temperature": 0, "max_tokens": 2000,
             "messages": [{"role": "system", "content": SYSTEM},
@@ -164,6 +171,61 @@ def ask(task, be=None):
         if q.get("type") == "multi":
             scores = dict(sorted(scores.items(), key=lambda t: -t[1])[:int(q.get("max") or len(scores))])
         out[key] = scores
+    return out, int((time.time() - t0) * 1000)
+
+
+def _subq_call(key, state, qs):
+    """One POST /v1/systemone (at most SUBQ_BATCH questions) -> answers."""
+    data = json.dumps({"model": SUBQ_MODEL, "state": state, "questions": qs}).encode()
+    if len(data) > REQ_MAX:
+        raise ValueError(f"request too large ({len(data)} bytes)")
+    req = urllib.request.Request(SUBQ_URL, data=data, method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        raw = r.read(RESP_MAX + 1)
+    if len(raw) > RESP_MAX:
+        raise ValueError("answer too large")
+    answers = json.loads(raw).get("answers")
+    if not isinstance(answers, dict):
+        raise ValueError("answer without 'answers'")
+    return answers
+
+
+def _ask_subq(task, st):
+    """ask() on SubQ's native Decisions API: "choice" stays a choice (one
+    option: a yes/no "noul"); "multi" — which SubQ lacks — is one noul per
+    option. At most SUBQ_BATCH questions per request, sent one after the other."""
+    key = (st.get("SUBQ_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("SUBQ_API_KEY not configured")
+    wire = {}                                    # wire key -> (question key, option or None, wire question)
+    for k, q in task["questions"].items():
+        crit = {o: (d or None) for o, d in q["criteria"].items()}
+        if q.get("type") == "multi" or len(crit) < 2:
+            for i, (o, d) in enumerate(crit.items()):
+                wire[f"{k}.{i}"] = (k, o, {"type": "noul", "instructions": f"{q['instructions']} Option {o}: {d or o}"[:2000]})
+        else:
+            wire[k] = (k, None, {"type": "choice", "instructions": q["instructions"], "criteria": crit})
+    t0, got, keys = time.time(), {}, list(wire)
+    for i in range(0, len(keys), SUBQ_BATCH):
+        got.update(_subq_call(key, task["state"], {w: wire[w][2] for w in keys[i:i + SUBQ_BATCH]}))
+    out = {k: {} for k in task["questions"]}
+    for w, (k, opt, _q) in wire.items():
+        a = got.get(w) if isinstance(got.get(w), dict) else {}
+        if opt is not None:
+            scores = {opt: a.get("noul")}
+        else:
+            probs = a.get("probabilities")
+            scores = probs if isinstance(probs, dict) else dict(zip(task["questions"][k]["criteria"], probs or []))
+        for o, sc in scores.items():
+            if o in task["questions"][k]["criteria"]:                # unknown names dropped
+                try:
+                    out[k][o] = round(min(1.0, max(0.0, float(sc))), 3)
+                except (TypeError, ValueError):
+                    pass
+    for k, q in task["questions"].items():
+        if q.get("type") == "multi":
+            out[k] = dict(sorted(out[k].items(), key=lambda t: -t[1])[:int(q.get("max") or len(out[k]))])
     return out, int((time.time() - t0) * 1000)
 
 

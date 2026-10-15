@@ -7160,7 +7160,7 @@ class ManagerFunctions(unittest.TestCase):
                 "classes": {}, "ms": 12, "note": "n"}
         asked = []
         old = (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: asked.append((purpose, context)) or json.loads(json.dumps(sugg))
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False, be=None: asked.append((purpose, context)) or json.loads(json.dumps(sugg))
         m._router.jev_url = lambda: "http://jev"
         g._spawn = lambda fn, *a: fn(*a)                                       # synchronous here
         try:
@@ -7200,7 +7200,7 @@ class ManagerFunctions(unittest.TestCase):
         sugg = {"persona": {"name": "code-architect", "score": 0.96}, "skills": [], "tier": None, "model": "",
                 "model_key": "", "classes": {}, "ms": 1, "note": "n"}
         old = (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: json.loads(json.dumps(sugg))
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False, be=None: json.loads(json.dumps(sugg))
         m._router.jev_url = lambda: "http://jev"
         g._spawn = lambda fn, *a: fn(*a)
         try:
@@ -7415,6 +7415,67 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo(); stop()
 
+    def test_decision_subq_native_api(self):
+        """subq: SubQ's /v1/systemone with the Bearer key; a choice stays a
+        choice (probabilities as a map or a list), a multi becomes one noul per
+        option, at most 16 questions per request; a squad's own backend wins
+        over Settings (New squad -> Suggestions); no key -> Jev, noted."""
+        m = self.m
+        calls, real = [], urllib.request.urlopen
+
+        class Resp(io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake(req, timeout=None):
+            b = json.loads(req.data)
+            calls.append((req.full_url, req.get_header("Authorization"), b))
+            ans = {}
+            for k, q in b["questions"].items():
+                if q["type"] == "noul":
+                    ans[k] = {"type": "noul", "noul": 0.9 - int(k.split(".")[1]) * 0.05}
+                elif k == "tier":
+                    ans[k] = {"type": "choice", "choice": "code", "probabilities": [0.8, 0.2][:len(q["criteria"])]}
+                else:
+                    ans[k] = {"type": "choice", "choice": "coder", "probabilities": {"coder": 0.9, "assistant": 0.1, "ghost": 1}}
+            return Resp(json.dumps({"model": b["model"], "answers": ans}).encode())
+        st, undo = self._dec_env("", {"DECISION_BACKEND": "jev", "SUBQ_API_KEY": "subq-SECRETKEY4"}, "http://127.0.0.1:9")
+        urllib.request.urlopen = fake
+        try:
+            s = m._jevsetup.suggest("write and fix the backend code", "goal: ship", be="subq")
+            self.assertEqual(s["backend"], "subq", s.get("note"))
+            self.assertTrue(len(calls) >= 1 and all(len(c[2]["questions"]) <= 16 for c in calls))
+            url, auth, b = calls[0]
+            self.assertEqual((url, auth, b["model"]), ("https://api.subq.ai/v1/systemone", "Bearer subq-SECRETKEY4", "subq-snap-preview"))
+            self.assertEqual(b["questions"]["persona"]["type"], "choice")
+            self.assertIn("write and fix the backend code", b["state"])
+            self.assertTrue(all(q["type"] == "noul" for k, q in b["questions"].items() if k.startswith("skills.")))
+            self.assertEqual(s["persona"], {"name": "coder", "score": 0.9})                     # ghost dropped
+            self.assertEqual([x["name"] for x in s["skills"]], [f"sk{i}" for i in range(6)])   # the best 6
+            self.assertEqual(s["tier"]["score"], 0.8)
+            # 1 option -> noul; 20 multi options -> 2 requests
+            calls.clear()
+            ans, _ = m._decision.ask({"state": "x", "questions": {
+                "one": {"type": "choice", "instructions": "i", "criteria": {"only": ""}},
+                "many": {"type": "multi", "instructions": "i", "max": 3, "criteria": {f"o{i}": "" for i in range(20)}}}}, "subq")
+            self.assertEqual(len(calls), 2); self.assertEqual(calls[0][2]["questions"]["one.0"]["type"], "noul")
+            self.assertEqual((ans["one"], list(ans["many"])), ({"only": 0.9}, ["o0", "o1", "o2"]))
+            # the global setting stays Jev; no key -> Jev's (empty) suggestion with a note, no key leaked
+            st.pop("SUBQ_API_KEY")
+            s = m._jevsetup.suggest("write code", be="subq")
+            self.assertIn("SUBQ_API_KEY not configured", s["note"]); self.assertEqual(s["backend"], "jev")
+            # the squad's switch
+            self.assertEqual(m._squads.normalize_settings({"decision": "subq"})[0]["decision"], "subq")
+            self.assertIn("decision must be", m._squads.normalize_settings({"decision": "gpt"})[1])
+            self.assertIsNone(m._squadgate.decision_of({"name": "x", "squad": {}}))
+            self.assertEqual(m._squadgate.decision_of({"name": "x", "squad": {"decision": "subq"}}), "subq")
+            self.assertTrue(m._decision.ready("subq"))
+            self.assertIn("SUBQ_API_KEY", {x["key"] for x in m._settings.SETTINGS_SCHEMA})
+            self.assertTrue(m._settings.is_secret_setting("SUBQ_API_KEY"))
+        finally:
+            urllib.request.urlopen = real
+            undo()
+
     def test_decision_failure_falls_back_to_jev_without_leaking_keys(self):
         """HTTP error, garbage and timeout -> Jev's suggestion, noted; no key
         in the note, the log line or the /api/decision/test answer; the route
@@ -7517,7 +7578,7 @@ class ManagerFunctions(unittest.TestCase):
         src = m._projects.get("sq")["source"]["path"]
         self._rp_node(src)
         asked, old = [], (m._jevsetup.suggest, m._router.jev_url)
-        m._jevsetup.suggest = lambda purpose, context="", allow_security=False: asked.append(context) or m._jevsetup.empty("x")
+        m._jevsetup.suggest = lambda purpose, context="", allow_security=False, be=None: asked.append(context) or m._jevsetup.empty("x")
         m._router.jev_url = lambda: "http://jev"
         m._squadgate._spawn = lambda fn, *a: fn(*a)
         try:
@@ -7681,12 +7742,14 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(woke[-1][0], "a"); self.assertIn("add tests", woke[-1][1])
             # without a lead: an architect instance joins as the lead
             items = m._projects.load(); items[0]["members"].pop("a"); items[0]["squad"] = {}; m._projects._save(items)
-            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests", "team": " - coder: x "})
+            st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests", "team": " - coder: x ", "decision": "subq"})
             self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
             self.assertEqual(created[0][0], "sq-architect")
             s = m._squads.settings(m._projects.get("sq"))
             self.assertEqual((s["enabled"], s["requirements"]), (True, "drafting"))
             self.assertEqual(s["team"], "- coder: x")                                         # the form's Team box
+            self.assertEqual(s["decision"], "subq")                                           # the Suggestions switch
+            self.assertIn("decision must be", self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "x", "decision": "gpt"})[1]["error"])
             self.assertEqual(k._team(None), m._squads.TEAM_DEFAULT)                            # API without it: the default roles
             for r in ("project-designer", "architect", "devops", "agent-ops", "code-planner", "asset-planner", "coder"):
                 self.assertIn("- " + r, m._squads.TEAM_DEFAULT)

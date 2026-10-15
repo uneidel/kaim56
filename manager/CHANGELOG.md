@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-15
+- Decision backend SubQ (native Decisions API, SUBQ_API_KEY in Settings); New squad gets a Suggestions switch (Settings / OpenJev / SubQ), stored per squad.
 - Task answers in the chat link the workspace files they name (📎, download in the web chat).
 
 ## 2026-10-13

@@ -355,6 +355,8 @@ HTML_TOP = """</head><body>
       <div id=sk-working aria-live=polite></div>
       <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
+        <select class=input id=sk-dec aria-label=Suggestions title="Who suggests persona, skills and model tier for the members: OpenJev (JEV_URL) or SubQ (SUBQ_API_KEY in Settings)" style="width:auto">
+          <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select>
         <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select>
         <span style="flex:1;min-width:0;position:relative;display:flex"><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message autocomplete=off

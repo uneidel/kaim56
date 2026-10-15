@@ -349,6 +349,11 @@ def security_on(proj):
     return bool(proj) and bool(_squads.settings(proj).get("security_skills"))
 
 
+def decision_of(proj):
+    """The squad's own suggestion backend (New squad → Suggestions); None = Settings' DECISION_BACKEND."""
+    return (_squads.settings(proj).get("decision") or None) if proj else None
+
+
 def catalog(proj=None, goal=""):
     """Personas, the skills that fit the repo profile and the goal (standard
     flagged, at most CATALOG_SKILLS), model tiers, the member templates and the
@@ -468,7 +473,7 @@ def propose(proj, by, kind, body):
     if kind == "merge" and _squads.settings(proj).get("autonomy") == "trusted":
         _spawn(decide, proj["name"], prop["id"], True, AUTO)
         return prop, ""
-    if kind in ("squad", "member") and _decision.ready() and any(_wants_suggestion(m) for m in prop["members"]):
+    if kind in ("squad", "member") and _decision.ready(decision_of(proj)) and any(_wants_suggestion(m) for m in prop["members"]):
         _spawn(fill_suggestions, prop["project"], prop["id"])     # ~20 s per member: not in the lead's call
     try:
         _notify.notify_add(by, f"Squad {proj['name']}: proposal waiting for approval"
@@ -652,7 +657,7 @@ def fill_suggestions(project, pid, only="", force=False):
         if (only and m["name"] != only) or m["existing"] or not (force or _wants_suggestion(m)):
             continue
         s = _jevsetup.suggest(m["purpose"] or prop.get("goal", ""), jev_context(prop),
-                              allow_security=security_on(_projects.get(project)))
+                              allow_security=security_on(_projects.get(project)), be=decision_of(_projects.get(project)))
         mark, by, hint = {"note": s["note"], "ms": s["ms"]}, m.setdefault("by", {}), {}
         if s["persona"] and (force or not m["persona"]) and not m.get("new_persona"):   # never over a proposed one
             lead_only = s["persona"]["name"] in LEAD_PERSONAS and m["role"] != "lead"
@@ -698,7 +703,7 @@ def suggest_member(project, pid, member):
     m = next((x for x in prop.get("members") or [] if x["name"] == member), None)
     if m is None or m["existing"]:
         return None, f"{member!r} is no new member of this proposal"
-    if not _decision.ready():
+    if not _decision.ready(decision_of(_projects.get(project))):
         return None, "Jev is not configured (JEV_URL in Settings)"
     p = fill_suggestions(project, pid, member, force=True)
     return (p, "") if p else (None, "the proposal was decided meanwhile")

@@ -157,7 +157,7 @@ def llm_suggest(purpose, context, be, allow_security=False):
             "note": f"{be}: {len(pers)} personas, {len(sks)} skills, {len(tiers)} tiers in one request"}
 
 
-def suggest(purpose, context="", allow_security=False):
+def suggest(purpose, context="", allow_security=False, be=None):
     """{persona, skills, tier, model, model_key, classes, ms, note, backend}
     for a purpose. `context` (the squad goal, the repo profile's keywords —
     mgr/repoprofile.py) goes into the premise after the purpose, within the
@@ -168,7 +168,7 @@ def suggest(purpose, context="", allow_security=False):
     if not purpose:
         return empty("no purpose given")
     context = re.sub(r"\s+", " ", str(context or "")).strip()
-    be, fell = _decision.backend(), ""
+    be, fell = be or _decision.backend(), ""      # be: a squad's own backend (squad setting "decision")
     if be != "jev":
         try:
             return llm_suggest(purpose, context[:4000], be, allow_security)

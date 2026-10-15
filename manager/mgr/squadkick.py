@@ -178,11 +178,14 @@ def _team(team):
     return _squads.TEAM_DEFAULT if team is None else str(team).strip()[:_squads.TEAM_MAX]
 
 
-def start(text, who, architect_template="", team=None):
+def start(text, who, architect_template="", team=None, decision=""):
     """A new kickoff -> (job view, '') or (None, why). The steps run in a thread."""
     tpl = str(architect_template or "openrouter").strip()
     if tpl not in _squadgate.MEMBER_TEMPLATES:
         return None, f"architect_template must be {' or '.join(_squadgate.MEMBER_TEMPLATES)}"
+    ok, why = _squads.normalize_settings({"decision": decision})       # the Suggestions switch
+    if ok is None:
+        return None, why
     f, why = parse(text)
     if not f:
         return None, why
@@ -192,7 +195,7 @@ def start(text, who, architect_template="", team=None):
             return None, f"no free squad name for {f['repo']}"
         job = {**f, "id": uuid.uuid4().hex[:10], "name": name, "arch": name + ARCH_SUFFIX, "who": who,
                "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(), "base": "",
-               "team": _team(team)}
+               "team": _team(team), "decision": str(decision or "").strip()}
         _jobs[job["id"]] = job
         for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
             _jobs.pop(old["id"], None)
@@ -201,12 +204,15 @@ def start(text, who, architect_template="", team=None):
     return view(job), ""
 
 
-def start_repo(project, goal, who, architect_template="", team=None):
+def start_repo(project, goal, who, architect_template="", team=None, decision=""):
     """A squad on an existing repo (the Repos tab): no clone, no new project —
     the architect, the squad, the goal (STEPS_REPO) -> (job view, '') or (None, why)."""
     tpl = str(architect_template or "openrouter").strip()
     if tpl not in _squadgate.MEMBER_TEMPLATES:
         return None, f"architect_template must be {' or '.join(_squadgate.MEMBER_TEMPLATES)}"
+    ok, why = _squads.normalize_settings({"decision": decision})       # the Suggestions switch
+    if ok is None:
+        return None, why
     goal = str(goal or "").strip()
     if not goal:
         return None, "say what the squad should do"
@@ -223,7 +229,8 @@ def start_repo(project, goal, who, architect_template="", team=None):
         job = {"id": uuid.uuid4().hex[:10], "name": p["name"], "arch": lead or p["name"] + ARCH_SUFFIX, "who": who,
                "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(),
                "base": p.get("base") or "", "url": path, "repo": p["name"], "provider": "local", "goal": goal,
-               "path": path, "steps": "lead" if lead else "repo", "team": _team(team)}    # the repo's lead plans
+               "path": path, "steps": "lead" if lead else "repo", "team": _team(team),
+               "decision": str(decision or "").strip()}    # the repo's lead plans
         _jobs[job["id"]] = job
         for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
             _jobs.pop(old["id"], None)
@@ -449,7 +456,7 @@ def step_squad(job):
         proj = _projects.get(name)
         s, _why = _squads.normalize_settings({"enabled": True, "approved": False, "paused": False,
                                               "daily_token_budget": BUDGET, "requirements": "drafting",
-                                              "team": job.get("team", "")},
+                                              "team": job.get("team", ""), "decision": job.get("decision", "")},
                                              proj.get("squad"))
         _squads.save_settings(name, s)
         _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})

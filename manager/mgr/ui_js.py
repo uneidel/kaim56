@@ -1606,7 +1606,7 @@ function skNew(){
     'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea). '+
     'Or pick a repo you already have in the <b>Repo</b> list and just say what to do — no clone.</div>';
   document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
-  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;
+  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;document.getElementById('sk-dec').hidden=false;
   skMsg('');
 }
 async function skJob(id){
@@ -1614,7 +1614,7 @@ async function skJob(id){
   let j={}; try{j=await (await fetch('/api/squads/kickoff/'+encodeURIComponent(id))).json()}catch(e){return}
   if(j.error){skMsg(j.error);return}
   document.getElementById('sk-title').textContent='Kickoff · '+j.name;
-  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;
+  document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;document.getElementById('sk-dec').hidden=false;
   document.getElementById('sk-status').innerHTML=`<span class="tag ${SK_TAG[j.status]||'tag-neutral'}">${escT(j.status)}</span>`;
   document.getElementById('sk-acts').innerHTML=j.status==='failed'?'<button class="btn btn-secondary btn-sm" onclick=skRetry()>Retry</button>'
     :j.status==='done'?`<button class="btn btn-primary btn-sm" data-open="${esc(j.name)}" onclick="skPick(this.dataset.open);loadSquads()">Open squad</button>`:'';
@@ -1635,7 +1635,7 @@ function skPick(name){
   if(document.getElementById('sq-panel').style.display!=='none')sqLoad();   /* the open Settings follow the squad */
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
-  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-teambox').hidden=true;
+  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;
   document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
 }
 /* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */
@@ -2016,7 +2016,7 @@ async function skSend(){
     d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
        :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
          body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value,
-           team:document.getElementById('sk-team').value})})).json();
+           team:document.getElementById('sk-team').value,decision:document.getElementById('sk-dec').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;

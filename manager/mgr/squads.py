@@ -37,6 +37,7 @@ from mgr import llmproxy as _llmproxy
 from mgr import paths as _paths
 from mgr import projects as _projects
 from mgr import squadmetrics as _squadmetrics
+from mgr import settings as _settings
 from mgr import squadrec as _squadrec
 from mgr import store as _store
 
@@ -53,6 +54,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "requirements": "agreed",
             # the roles the lead staffs the squad with (New squad's Team box; "" = the lead decides)
             "team": "",
+            # who scores the members' persona/skills/tier suggestions (mgr/decision.py); "" = Settings' DECISION_BACKEND
+            "decision": "",
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
@@ -183,6 +186,11 @@ def normalize_settings(body, old=None):
         if len(t) > TEAM_MAX:
             return None, f"team: at most {TEAM_MAX} characters"
         s["team"] = t
+    if "decision" in body:
+        d = str(body["decision"] or "").strip()
+        if d and d not in _settings.DECISION_BACKENDS:
+            return None, "decision must be empty or one of " + ", ".join(_settings.DECISION_BACKENDS)
+        s["decision"] = d
     if "autonomy" in body:
         if body["autonomy"] not in AUTONOMY:
             return None, "autonomy must be trusted or supervised"
