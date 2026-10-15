@@ -7318,7 +7318,7 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             stop(); undo()
 
-    # ---- decision backend (mgr/decision.py): Decision-1 / local LLM, Jev fallback ----
+    # ---- decision backend (mgr/decision.py): local LLM / SubQ, Jev fallback ----
     def _fake_llm(self, answers, delay=0, status=200):
         """An OpenAI-compatible chat-completions server: answers with
         {"answers": answers} as the message content (in a code fence, after a
@@ -7357,9 +7357,8 @@ class ManagerFunctions(unittest.TestCase):
         Azure https check pointed at the local fake."""
         m = self.m
         undo1 = self._jev_env(jev)
-        st = {"JEV_URL": jev, "OPENROUTER_API_KEY": "sk-or-SECRETKEY1", "AZURE_DECISION_KEY": "az-SECRETKEY2",
-              "LLAMA_API_KEY": "llama-SECRETKEY3", "LLAMA_ENDPOINT": base + "/v1",
-              "AZURE_DECISION_ENDPOINT": base + "/models", **extra}
+        st = {"JEV_URL": jev, "OPENROUTER_API_KEY": "sk-or-SECRETKEY1",
+              "LLAMA_API_KEY": "llama-SECRETKEY3", "LLAMA_ENDPOINT": base + "/v1", **extra}
         old = (dict(m._llmproxy.LLM_PROXY_UPSTREAMS), m._settings.validate_decision)
         m._settings.load_settings = lambda: dict(st)
         m._llmproxy.LLM_PROXY_UPSTREAMS["openrouter"] = (base + "/api/v1/chat/completions", "OPENROUTER_API_KEY")
@@ -7372,14 +7371,13 @@ class ManagerFunctions(unittest.TestCase):
         return st, undo
 
     def test_decision_backends_suggest_with_full_catalogs(self):
-        """openrouter / azure / local-llm: ONE request with every persona and
+        """local-llm: ONE request with every persona and
         every non-standard skill (no pre-filter), the tiers, purpose and
         context; the key in the header (each backend its own); unknown names
         dropped, scores clamped, at most 6 skills; same shape as Jev's."""
         m = self.m
         base, calls, stop = self._fake_llm(self._DEC_ANSWERS)
-        want = {"decision1-openrouter": ("/api/v1/chat/completions", "Authorization", "Bearer sk-or-SECRETKEY1", "microsoft/decision-1"),
-                "decision1-azure": ("/models/chat/completions", "api-key", "az-SECRETKEY2", "Microsoft-Decision-1"),
+        want = {
                 "local-llm": ("/v1/chat/completions", "Authorization", "Bearer llama-SECRETKEY3", "qwen-local")}
         try:
             for be, (path, hdr, val, model) in want.items():
@@ -7408,7 +7406,7 @@ class ManagerFunctions(unittest.TestCase):
             stop()
         # choose(): a generic choice, unknown option dropped
         base, calls, stop = self._fake_llm({"q": {"code": 0.8, "strong": 0.2, "huge": 1}})
-        st, undo = self._dec_env("", {"DECISION_BACKEND": "decision1-openrouter"}, base)
+        st, undo = self._dec_env("", {"DECISION_BACKEND": "local-llm"}, base)
         try:
             r = m._decision.choose("Which tier?", {"code": "code model", "strong": "big"}, "fix a bug")
             self.assertEqual(r, [{"option": "code", "score": 0.8}, {"option": "strong", "score": 0.2}])
@@ -7485,14 +7483,14 @@ class ManagerFunctions(unittest.TestCase):
         m = self.m
         jev, _, stopj = self._fake_jev()
         dec = m._decision
-        old_t, old_ip = dec.TIMEOUT, m._guests.instance_by_ip
+        old_t, old_ip = (dec.TIMEOUT, dec.LOCAL_TIMEOUT), m._guests.instance_by_ip
         m._guests.instance_by_ip = lambda ip: {"name": "g", "index": 9, "config": {}} if ip == "172.30.9.2" else None
         try:
             for kind, srv in (("http", self._fake_llm({}, status=500)), ("garbage", self._fake_llm("nope")),
                               ("timeout", self._fake_llm(self._DEC_ANSWERS, delay=1.5))):
                 base, calls, stop = srv
-                dec.TIMEOUT = 0.5
-                st, undo = self._dec_env(jev, {"DECISION_BACKEND": "decision1-openrouter"}, base)
+                dec.TIMEOUT = dec.LOCAL_TIMEOUT = 0.5
+                st, undo = self._dec_env(jev, {"DECISION_BACKEND": "local-llm"}, base)
                 err = io.StringIO()
                 try:
                     with contextlib.redirect_stderr(err):
@@ -7503,9 +7501,9 @@ class ManagerFunctions(unittest.TestCase):
                 finally:
                     undo(); stop()
                 self.assertEqual((s["backend"], s["persona"]["name"]), ("jev", "coder"), kind)
-                self.assertTrue(s["note"].startswith("decision1-openrouter failed"), s["note"])
+                self.assertTrue(s["note"].startswith("local-llm failed"), s["note"])
                 d = json.loads(out.split(b"\r\n\r\n", 1)[1])
-                self.assertEqual((self._status(h), d["backend"], d["used"]), (200, "decision1-openrouter", "jev"))
+                self.assertEqual((self._status(h), d["backend"], d["used"]), (200, "local-llm", "jev"))
                 self.assertIn("Jev used", err.getvalue())
                 for blob in (s["note"], err.getvalue(), out.decode()):
                     self.assertFalse(any(k in blob for k in ("SECRETKEY1", "SECRETKEY2", "SECRETKEY3")), kind)
@@ -7514,7 +7512,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(dec.safe_err(ValueError("bad sk-or-SECRETKEY1"), {"OPENROUTER_API_KEY": "sk-or-SECRETKEY1"}),
                              "ValueError: bad ***")
         finally:
-            dec.TIMEOUT, m._guests.instance_by_ip = old_t, old_ip
+            (dec.TIMEOUT, dec.LOCAL_TIMEOUT), m._guests.instance_by_ip = old_t, old_ip
             stopj()
 
     def test_decision_router_only_when_switched_on(self):
@@ -7529,7 +7527,7 @@ class ManagerFunctions(unittest.TestCase):
             {"task": {"code": 0.9, "chat": 0.1}, "difficulty": {"hard": 0.7}}, 12)
         rt.jev_classify = lambda pol, text: jevd.append(text) or ({"task": ("chat", 0.6)}, 3)
         try:
-            for st in ({"DECISION_BACKEND": "decision1-openrouter"}, {"DECISION_BACKEND": "jev", "DECISION_ROUTER": "1"},
+            for st in ({"DECISION_BACKEND": "local-llm"}, {"DECISION_BACKEND": "jev", "DECISION_ROUTER": "1"},
                        {"DECISION_ROUTER": "1"}):
                 m._settings.load_settings = lambda st=st: st
                 self.assertEqual(rt.classify(rt.DEFAULT_POLICY, "fix it"), ({"task": ("chat", 0.6)}, 3))
@@ -7552,20 +7550,19 @@ class ManagerFunctions(unittest.TestCase):
         old = m._paths.SETTINGS_FILE
         m._paths.SETTINGS_FILE = os.path.join(tmp, "settings.json")
         try:
-            for bad in ({"DECISION_BACKEND": "gpt"}, {"DECISION_ROUTER": "yes"}, {"DECISION_MODEL": "a b"},
-                        {"AZURE_DECISION_ENDPOINT": "http://x.azure.com/v1"},
-                        {"AZURE_DECISION_ENDPOINT": "https://u:p@x.azure.com/"}):
+            for bad in ({"DECISION_BACKEND": "gpt"}, {"DECISION_ROUTER": "yes"}, {"DECISION_LOCAL_MODEL": "a b"},
+                        {"DECISION_BACKEND": "decision1-azure"}, {"DECISION_BACKEND": "decision1-openrouter"}):   # removed 2026-10-15
                 self.assertTrue(m._settings.save_settings(bad).startswith("error: "), bad)
             self.assertFalse(os.path.exists(m._paths.SETTINGS_FILE))
-            ok = {"DECISION_BACKEND": "decision1-azure", "DECISION_ROUTER": "", "DECISION_MODEL": "microsoft/decision-1",
-                  "AZURE_DECISION_ENDPOINT": "https://x.services.ai.azure.com/models", "AZURE_DECISION_KEY": "az-SECRETKEY2"}
+            ok = {"DECISION_BACKEND": "subq", "DECISION_ROUTER": "", "DECISION_LOCAL_MODEL": "qwen-local",
+                  "SUBQ_API_KEY": "subq-SECRETKEY4"}
             self.assertEqual(m._settings.save_settings(ok), "saved")
-            self.assertEqual(m._settings.settings_for_ui()["AZURE_DECISION_KEY"], m._settings.SETTINGS_KEEP)
-            self.assertNotIn("AZURE_DECISION_KEY", m._settings.SECRET_PARAMS)     # never released to a VM
-            self.assertEqual(m._decision.backend(), "decision1-azure")
+            self.assertEqual(m._settings.settings_for_ui()["SUBQ_API_KEY"], m._settings.SETTINGS_KEEP)
+            self.assertNotIn("SUBQ_API_KEY", m._settings.SECRET_PARAMS)     # never released to a VM
+            self.assertEqual(m._decision.backend(), "subq")
             keys = {s["key"] for s in m._settings.SETTINGS_SCHEMA}
-            self.assertTrue({"DECISION_BACKEND", "DECISION_MODEL", "AZURE_DECISION_ENDPOINT", "AZURE_DECISION_KEY",
-                             "DECISION_LOCAL_MODEL", "DECISION_ROUTER"} <= keys)
+            self.assertTrue({"DECISION_BACKEND", "SUBQ_API_KEY", "DECISION_LOCAL_MODEL", "DECISION_ROUTER"} <= keys)
+            self.assertFalse(keys & {"DECISION_MODEL", "AZURE_DECISION_ENDPOINT", "AZURE_DECISION_KEY"})     # Decision-1 removed
         finally:
             m._paths.SETTINGS_FILE = old
 

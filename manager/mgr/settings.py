@@ -11,7 +11,6 @@ one place.
 import json
 import os
 import re
-import urllib.parse
 import urllib.request
 
 from mgr import paths as _paths
@@ -45,16 +44,11 @@ SETTINGS_SCHEMA = [
     {"key": "JEV_URL", "label": "Jev model router — classifier service (OpenJev) the key proxy asks for instances with a router policy; blank = off, e.g. http://127.0.0.1:8891"},
     {"key": "DECISION_BACKEND", "label": "Decision backend — who scores the setup suggestion (persona, skills, tier) and, if allowed below, the model router", "options": [
         {"value": "", "label": "Jev (OpenJev, JEV_URL) — default"},
-        {"value": "decision1-openrouter", "label": "Microsoft-Decision-1 via OpenRouter (OPENROUTER_API_KEY, host-side)"},
-        {"value": "decision1-azure", "label": "Microsoft-Decision-1 on Azure AI Foundry (endpoint + key below)"},
         {"value": "local-llm", "label": "Local LLM (LLAMA_ENDPOINT, e.g. the Jetson) — stays in the LAN"},
         {"value": "subq", "label": "SubQ Decisions API (api.subq.ai, SUBQ_API_KEY below)"}]},
-    {"key": "DECISION_MODEL", "label": "Decision-1 model id (blank = microsoft/decision-1 on OpenRouter, Microsoft-Decision-1 on Azure)"},
-    {"key": "AZURE_DECISION_ENDPOINT", "label": "Decision-1 Azure Foundry endpoint (https, OpenAI-compatible chat completions URL of the deployment)"},
-    {"key": "AZURE_DECISION_KEY", "label": "Decision-1 Azure Foundry key (stays on the host)"},
     {"key": "SUBQ_API_KEY", "label": "SubQ API key — decision backend subq, also per squad (New squad → Suggestions); console.subq.ai, stays on the host"},
     {"key": "DECISION_LOCAL_MODEL", "label": "Decision backend local-llm: model name at LLAMA_ENDPOINT (blank = local-model)"},
-    {"key": "DECISION_ROUTER", "label": "Model router uses the decision backend too (privacy: with Decision-1 EVERY user message of a routed instance goes to Microsoft/OpenRouter)", "options": [
+    {"key": "DECISION_ROUTER", "label": "Model router uses the decision backend too (privacy: with SubQ EVERY user message of a routed instance goes to api.subq.ai)", "options": [
         {"value": "", "label": "— off: the router asks Jev —"},
         {"value": "1", "label": "on — router classifies via the decision backend"}]},
     {"key": "HINDSIGHT_URL", "label": "Hindsight memory server — optional second memory (facts from every turn, recall + reflect); blank = off, e.g. http://127.0.0.1:8888"},
@@ -148,7 +142,7 @@ def settings_for_ui():
     return d
 
 
-DECISION_BACKENDS = ("jev", "decision1-openrouter", "decision1-azure", "local-llm", "subq")   # mgr/decision.py
+DECISION_BACKENDS = ("jev", "local-llm", "subq")   # mgr/decision.py
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@+-]{0,160}$")
 
 
@@ -173,16 +167,10 @@ def validate_decision(d):
         return "DECISION_BACKEND must be one of " + ", ".join(DECISION_BACKENDS)
     if (d.get("DECISION_ROUTER") or "") not in ("", "1"):
         return "DECISION_ROUTER must be empty or 1"
-    for k in ("DECISION_MODEL", "DECISION_LOCAL_MODEL"):
-        if not _MODEL_RE.match(str(d.get(k) or "")):
-            return k + ": a model id ([A-Za-z0-9._:/@+-], at most 160)"
+    if not _MODEL_RE.match(str(d.get("DECISION_LOCAL_MODEL") or "")):
+        return "DECISION_LOCAL_MODEL: a model id ([A-Za-z0-9._:/@+-], at most 160)"
     if max_tokens_error(d.get("LLM_MAX_TOKENS")):
         return max_tokens_error(d.get("LLM_MAX_TOKENS"))
-    u = str(d.get("AZURE_DECISION_ENDPOINT") or "").strip()
-    if u:
-        p = urllib.parse.urlsplit(u)
-        if p.scheme != "https" or not p.hostname or p.username or p.password:
-            return "AZURE_DECISION_ENDPOINT must be an https URL without credentials"
     return ""
 
 

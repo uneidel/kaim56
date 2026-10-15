@@ -7,19 +7,14 @@ setup suggestion's persona/skills/tier, optionally the per-turn router).
 
 Setting DECISION_BACKEND:
 - "jev" (default): OpenJev NLI (mgr/jevsetup.py, mgr/router.py) as before.
-- "decision1-openrouter": Microsoft-Decision-1 through OpenRouter — URL and
-  key are the key proxy's (mgr/llmproxy.py), used host-side only.
-- "decision1-azure": Decision-1 on a Microsoft Foundry serverless endpoint
-  (AZURE_DECISION_ENDPOINT + AZURE_DECISION_KEY, host-side only).
 - "local-llm": the llama.cpp endpoint the platform already uses
   (LLAMA_ENDPOINT/LLAMA_API_KEY, model DECISION_LOCAL_MODEL) — nothing leaves
   the LAN; slower, so a longer timeout.
 - "subq": SubQ's native Decisions API (api.subq.ai/v1/systemone, SUBQ_API_KEY;
   `_ask_subq`). A squad may pick its own backend (squad setting "decision").
 
-Decision-1's native structured API is not public (2026-10-09), so every
-non-Jev backend gets the same OpenAI-compatible chat-completions call with a
-strict-JSON prompt. The whole wire format lives in `ask()` — a typed task
+local-llm gets an OpenAI-compatible chat-completions call with a
+strict-JSON prompt, subq its native API. The whole wire format lives in `ask()` — a typed task
 ({state, questions: {key: {type, instructions, criteria, max}}} -> {key:
 {option: score}}) shaped like the decide/evaluate APIs, so a native call can
 replace that one function. Unknown options are dropped, scores clamped to
@@ -37,7 +32,6 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 from mgr import jevsetup as _jevsetup
@@ -46,7 +40,6 @@ from mgr import router as _router
 from mgr import settings as _settings
 
 BACKENDS = _settings.DECISION_BACKENDS
-DEFAULT_MODEL = "microsoft/decision-1"       # OpenRouter id not published yet: DECISION_MODEL overrides
 TIMEOUT, LOCAL_TIMEOUT = 30, 60              # seconds; no retries
 REQ_MAX = 120_000                            # bytes of the request body
 RESP_MAX = 256 * 1024
@@ -82,22 +75,6 @@ def ready(be=None):
 def _endpoint(be, st):
     """(url, headers, model, timeout) for a non-Jev backend; raises when it
     is not configured. The keys come from the settings, host-side."""
-    if be == "decision1-openrouter":
-        url, key = _llmproxy._routed_upstream({"backend": "openrouter"}, st)
-        if not url:
-            raise RuntimeError("OPENROUTER_API_KEY not configured")
-        return (url, {"Authorization": f"Bearer {key}", "HTTP-Referer": f"https://{_settings.PUBLIC_HOST}",
-                      "X-Title": "kat56-decision"},
-                (st.get("DECISION_MODEL") or "").strip() or DEFAULT_MODEL, TIMEOUT)
-    if be == "decision1-azure":
-        u, key = (st.get("AZURE_DECISION_ENDPOINT") or "").strip(), (st.get("AZURE_DECISION_KEY") or "").strip()
-        if not u or not key or _settings.validate_decision({"AZURE_DECISION_ENDPOINT": u}):
-            raise RuntimeError("AZURE_DECISION_ENDPOINT / AZURE_DECISION_KEY not configured")
-        p = urllib.parse.urlsplit(u)
-        if not p.path.rstrip("/").endswith("/chat/completions"):
-            p = p._replace(path=p.path.rstrip("/") + "/chat/completions")
-        return (urllib.parse.urlunsplit(p), {"Authorization": f"Bearer {key}", "api-key": key},
-                (st.get("DECISION_MODEL") or "").strip() or "Microsoft-Decision-1", TIMEOUT)
     if be == "local-llm":
         url, _ = _llmproxy._routed_upstream({"backend": "llama"}, st)
         if not url:
@@ -134,7 +111,7 @@ def ask(task, be=None):
     task = {"state": str, "questions": {key: {"type": "choice"|"multi",
     "instructions": str, "criteria": {option: description}, "max": n}}}.
     The ONE place that knows the wire format (chat completions + strict JSON
-    today; Decision-1's native structured API later). Raises on failure."""
+    for local-llm; subq goes to _ask_subq). Raises on failure."""
     st = _settings.load_settings()
     be = be or backend()
     if be == "subq":

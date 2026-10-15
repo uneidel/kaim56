@@ -988,8 +988,8 @@ HTML_BOTTOM = """
   pre-filter, max 16 hypotheses per call) and the same task/difficulty questions &#8212; persona, skills (config <code>SKILLS</code>, listed to the agent like
   standard skills) and tier + model pre-filled in New instance; in a squad proposal (repo keywords + goal as context) only persona and tier from 0.8,
   never skills &#8212; the rest are hints, "Suggest again" fills all three; nothing applies without Create / Approve.
-  <b>Decision backend</b> (<code>mgr/decision.py</code>, Settings <code>DECISION_BACKEND</code>): Jev, Microsoft-Decision-1 (OpenRouter or Azure Foundry,
-  keys host-side) or the local LLM &#8212; one strict-JSON chat-completions request with the full catalogs, names checked, scores clamped; any failure
+  <b>Decision backend</b> (<code>mgr/decision.py</code>, Settings <code>DECISION_BACKEND</code>): Jev, SubQ (native Decisions API, key host-side)
+  or the local LLM &#8212; one strict-JSON chat-completions request with the full catalogs, names checked, scores clamped; any failure
   falls back to Jev (noted). The router uses it only with <code>DECISION_ROUTER=1</code>. Settings &#8594; Test runs one sample.</p></div>
 
   <div class="card blueprint"><span class=card-title>Skills: learned, measured, priced</span>
