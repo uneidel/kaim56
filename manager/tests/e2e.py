@@ -7893,6 +7893,35 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._mounts.AGENT_ROOT, m._instances.load_instances, m._guests.instance_by_ip = old
 
+    def test_task_answer_links_the_files_it_names(self):
+        """A task's chat answer gets download links for the workspace files it
+        names (relative or under .../workspace/), never for missing files,
+        dotfiles or symlinks out; the web chat renders them as downloads
+        (live 2026-10-15: the job run named its .xlsx and .json, no way to get them)."""
+        m = self.m
+        tmp = tempfile.mkdtemp(prefix="e2e-wsl-")
+        ws = os.path.join(tmp, "agent", "jr"); os.makedirs(os.path.join(ws, "runs"))
+        for f in ("runs/2026-10-15.json", "jobs-2026-10-15.xlsx", ".env"):
+            open(os.path.join(ws, f), "w").write("x")
+        open(os.path.join(tmp, "outside.txt"), "w").write("host")
+        os.symlink(os.path.join(tmp, "outside.txt"), os.path.join(ws, "out.txt"))
+        old = m._mounts.AGENT_ROOT, m._instances.load_instances
+        try:
+            m._mounts.AGENT_ROOT = os.path.join(tmp, "agent")
+            m._instances.load_instances = lambda: [{"name": "jr", "index": 2}]
+            text = ("Ergebnis: runs/2026-10-15.json (92 Einträge) und /home/node/workspace/jobs-2026-10-15.xlsx. "
+                    "Nicht: nope.csv, .env, out.txt, ../outside.txt, example.com")
+            self.assertEqual(m._wsfiles.mentioned("jr", text), ["runs/2026-10-15.json", "jobs-2026-10-15.xlsx"])
+            self.assertEqual(m._wsfiles.links("jr", text),
+                             "\n\n📎 [2026-10-15.json](/api/workspace/jr/runs/2026-10-15.json)"
+                             " · [jobs-2026-10-15.xlsx](/api/workspace/jr/jobs-2026-10-15.xlsx)")
+            self.assertEqual(m._wsfiles.links("jr", "nothing here"), "")
+            self.assertEqual(m._wsfiles.links("ghost", text), "")
+            src = open(os.path.join(os.path.dirname(m.__file__), "chatui.py")).read()
+            self.assertIn("(\\/api\\/workspace\\/[^)\\s\"'<>&]+)\\)/g,'<a href=\"$2\" download>", src)
+        finally:
+            m._mounts.AGENT_ROOT, m._instances.load_instances = old
+
     def test_apps_hosted_on_celld_with_the_manager_as_fallback(self):
         """CELLD_URL set: /apps/<name>/ comes from celld (behind the same login
         and path checks); its 404 is a 404; celld down or unset: the manager's

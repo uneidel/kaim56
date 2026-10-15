@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-15
+- Task answers in the chat link the workspace files they name (📎, download in the web chat).
+
 ## 2026-10-13
 - New squad: a Team box (default: project-designer, architect as non-coding tech lead, devops, agent-ops, code-planner, asset-planner, 1-2 coders); the lead staffs the squad by it after the requirements are agreed.
 - Tasks: "Delete all done" removes the finished one-off tasks (recurring and open ones stay; admin only).

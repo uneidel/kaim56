@@ -513,7 +513,8 @@ function md(src){
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/(^|[^*\w])\*([^\s*][^*\n]*?)\*(?![\w*])/g,'$1<i>$2</i>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"'<>&]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"'<>&]+)\)/g,'<a href="$2" target=_blank rel=noopener>$1</a>')
+    .replace(/\[([^\]]+)\]\((\/api\/workspace\/[^)\s"'<>&]+)\)/g,'<a href="$2" download>$1</a>');   /* a task's files (mgr/wsfiles.links) */
   let i=0;
   while(i<lines.length){
     const l=lines[i];

@@ -39,6 +39,7 @@ from mgr import store as _store
 from mgr import toolchain as _toolchain
 from mgr import util as _util
 from mgr import vm as _vm
+from mgr import wsfiles as _wsfiles
 
 
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", "1800"))    # worker-run tasks: 30 min
@@ -583,8 +584,9 @@ def _execute(t):
             except Exception as e:
                 _util._wlog(f"{t['id']}: squad turn_answer: {e!r}")
         try:
+            files = _wsfiles.links(t.get("instance", ""), res) if ok else ""     # the files it names, to download
             _chats.chat_log_append(t.get("instance", "task"), "task",
-                            t.get("message", ""), res, kind="task")
+                            t.get("message", ""), str(res) + files, kind="task")
         except Exception as e:
             _util._wlog(f"{t['id']}: chat_log_append: {e!r}")
         try:

@@ -16,6 +16,7 @@ one place.
 import mimetypes
 import os
 import re
+import urllib.parse
 
 from mgr import instances as _instances
 from mgr import mounts as _mounts
@@ -25,6 +26,9 @@ from mgr import mounts as _mounts
 _SEG = re.compile(r"^[^\x00-\x1f\x7f/\\]+$")
 MAX_FILE = 16 * 1024 * 1024
 LIST_MAX = 500
+# a file name in an agent's answer: runs/2026-10-15.json, /home/node/workspace/jobs.xlsx
+_MENTION = re.compile(r"(?<![\w./-])((?:/[\w.-]+)*/workspace/)?([\w-][\w.-]*(?:/[\w-][\w.-]*)*\.[A-Za-z0-9]{1,8})(?![\w/-])")
+MENTION_MAX = 10
 
 
 def _root(inst_name):
@@ -67,3 +71,33 @@ def read(inst_name, rel):
         ct += "; charset=utf-8"
     with open(p, "rb") as fh:
         return "file", fh.read(), ct
+
+
+def mentioned(inst_name, text):
+    """The workspace files an answer names (relative, or under .../workspace/)
+    that exist as regular files read() would serve -> [rel], at most MENTION_MAX."""
+    root = _root(inst_name)
+    if not root or not os.path.isdir(root):
+        return []
+    out = []
+    for m in _MENTION.finditer(str(text or "")):
+        rel = m.group(2)
+        segs = rel.split("/")
+        if rel in out or any(s.startswith(".") for s in segs):
+            continue
+        p = os.path.join(root, *segs)
+        if os.path.islink(p) or not os.path.isfile(p) or not os.path.realpath(p).startswith(root + os.sep):
+            continue
+        if os.path.getsize(p) <= MAX_FILE:
+            out.append(rel)
+            if len(out) >= MENTION_MAX:
+                break
+    return out
+
+
+def links(inst_name, text):
+    """Download links for the files an answer names, as a Markdown line for the
+    chat ('' when none): the web chat renders /api/workspace/ links as downloads."""
+    files = mentioned(inst_name, text)
+    base = "/api/workspace/" + urllib.parse.quote(inst_name, safe="") + "/"
+    return ("\n\n📎 " + " · ".join(f"[{os.path.basename(f)}]({base}{urllib.parse.quote(f)})" for f in files)) if files else ""
