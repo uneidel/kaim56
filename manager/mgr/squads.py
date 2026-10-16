@@ -52,6 +52,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "push_when_done": True,
             # a kickoff starts "drafting": the lead interviews the operator first (mgr/squadreq.py)
             "requirements": "agreed",
+            # the ephemeral requirements engineer's instance while drafting ("" = the lead interviews)
+            "engineer": "",
             # the roles the lead staffs the squad with (New squad's Team box; "" = the lead decides)
             "team": "",
             # who scores the members' persona/skills/tier suggestions (mgr/decision.py); "" = Settings' DECISION_BACKEND
@@ -370,7 +372,8 @@ def _guard(proj, targets, depth, now):
     if s["paused"]:
         return "squad paused"
     if not s["approved"]:
-        others = [t for t in targets if ((proj.get("members") or {}).get(t) or {}).get("role") != "lead"]
+        others = [t for t in targets if ((proj.get("members") or {}).get(t) or {}).get("role") != "lead"
+                  and t != s.get("engineer")]           # the requirements engineer works before the plan
         if others:
             return f"waiting for approval: only the lead may be woken before the squad plan is approved (not {', '.join(others)})"
     if depth > s["max_depth"]:
@@ -435,7 +438,8 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     # The operator without an addressee talks to the lead (live 2026-10-09: a
     # plain "a simple app ui" in the Squads chat was refused).
     if kind == "post" and str(sender).startswith("user:") and not to:
-        to = [n for n, m in (proj.get("members") or {}).items() if m.get("role") == "lead"][:1]
+        eng = settings(proj).get("engineer")          # while drafting: the requirements engineer (mgr/squadreq.py)
+        to = [eng] if eng in names else [n for n, m in (proj.get("members") or {}).items() if m.get("role") == "lead"][:1]
     bad = [x for x in to if x not in names and x != "all" and not x.startswith("user:")]
     if bad:
         return None, f"not a member of {proj['name']}: {', '.join(sorted(set(bad)))}"

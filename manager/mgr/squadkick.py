@@ -305,6 +305,8 @@ def _cleanup(job):
         try:
             if what == "instance":
                 _instances.delete_instance(job["arch"])
+            elif what == "engineer":
+                _instances.delete_instance(job["name"] + _squadreq.SUFFIX)
             elif what == "project":
                 _projects.delete(job["name"])
                 _squads.purge(job["name"])
@@ -493,8 +495,8 @@ def step_squad(job):
         _squads.save_settings(name, s)
         _squadrec.ensure(_projects.get(name), {job["arch"]: ARCH_PERSONA})
         job["done"].append("squad")
-        _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — the architect interviews you first; "
-                  "mark the requirements agreed on the board, then it proposes the plan.")
+        _say(job, f"Squad enabled, budget {BUDGET:,} tokens/day — a requirements engineer interviews you first; "
+                  "mark the requirements agreed on the board, then the architect proposes the plan.")
         added = _squadgate.squad_tools(_projects.get(name))
         if added:
             _say(job, _squadgate.tools_note(added))
@@ -504,27 +506,58 @@ def step_squad(job):
             _say(job, "Code index: " + _indexer.reindex(name, "squad kickoff"))
 
 
+def step_engineer(job):
+    """The architect's ephemeral requirements engineer <squad>-req: a reader member that
+    interviews the operator until the requirements are agreed (mgr/squadreq.py retires it)."""
+    name = job["name"]
+    eng = name + _squadreq.SUFFIX
+    proj = _projects.get(name)
+    if (any(i["name"] == eng for i in _instances.load_instances()) and "engineer" not in job["made"]
+            and eng not in (proj.get("members") or {})):            # this squad's own one (a retry, a new goal) is reused
+        raise Stop(f"an instance {eng} exists and is not this kickoff's")
+    m = {"name": eng, "purpose": f"requirements engineer of squad {name} — interviews the operator until the request "
+                                 f"is fully defined, then hands REQUIREMENTS.md to the architect {job['arch']}",
+         "persona": "", "skills": [], "model_tier": ARCH_TIER, "model": "", "template": job["arch_template"],
+         "role": "reader", "existing": False}
+    steps = []
+    if not _squadgate._create(proj, m, steps):
+        raise Stop(f"creating {eng} failed: " + next((x["detail"] for x in steps if x["step"].startswith("create")), "?"))
+    if "engineer" not in job["made"]:
+        job["made"].append("engineer")
+    members = {n: x.get("role") for n, x in (proj.get("members") or {}).items()}
+    if members.get(eng) != "reader":
+        r = _projects.upsert({**proj, "members": {**members, eng: "reader"}})
+        if "error" in r:
+            raise Stop(f"adding {eng}: " + r["error"])
+    _squads.save_settings(name, {**_squads.settings(_projects.get(name)), "engineer": eng})
+    _squadgate.squad_tools(_projects.get(name))
+    _say(job, f"Requirements engineer {eng} started for the architect — it interviews you in the chat.")
+
+
 def step_post(job):
     if "post" in job["done"]:
         return
     arch, prof = job["arch"], _repoprofile.text(_profile(job))
-    text = (f"@{arch} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
+    eng = _squadreq.engineer(_projects.get(job["name"]))
+    to = eng or arch
+    text = (f"@{to} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
             f"{job['base']}.\n\nGoal:\n{job['goal']}\n\n" + (prof + "\n\n" if prof else "") + f"The code is the repository mounted read-only at /project/{job['name']} "
             f"(not your workspace, not the web): read it there first (list_dir /project/{job['name']}, read_file, "
-            f"bash: ls/grep/cat). Then: {_squadreq.INTERVIEW}")
-    m, why = _squads.post(_projects.get(job["name"]), "user:" + job["who"], [arch], text)
+            f"bash: ls/grep/cat). Then: {_squadreq.INTERVIEW}"
+            + (" " + _squadreq.ENGINEER.format(arch=arch, file=_squadreq.FILE) if eng else ""))
+    m, why = _squads.post(_projects.get(job["name"]), "user:" + job["who"], [to], text)
     if not m:
         raise Stop("posting the goal failed: " + why)
     job["done"].append("post")
     if m.get("blocked"):
         _say(job, f"Goal posted, not delivered: {m['blocked']}", ok=False)
     else:
-        _say(job, f"Goal posted to @{arch}.")
+        _say(job, f"Goal posted to @{to}.")
 
 
-STEPS = (step_token, step_clone, step_project, step_remote, step_architect, step_squad, step_post)
-STEPS_REPO = (step_architect, step_squad, step_post)          # an existing repo: no clone, no new project
-STEPS_LEAD = (step_squad, step_post)                          # … whose lead becomes the architect
+STEPS = (step_token, step_clone, step_project, step_remote, step_architect, step_squad, step_engineer, step_post)
+STEPS_REPO = (step_architect, step_squad, step_engineer, step_post)   # an existing repo: no clone, no new project
+STEPS_LEAD = (step_squad, step_engineer, step_post)                   # … whose lead becomes the architect
 
 
 # ---- the Squads page's list ---------------------------------------------------------

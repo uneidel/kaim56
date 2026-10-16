@@ -1577,10 +1577,10 @@ function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true
 function skReq(q){
   const el=document.getElementById('sk-req'); q=q||{};
   const key=(q.state||'')+'|'+(q.text||''); if(el.dataset.h===key)return; el.dataset.h=key;
-  const doc=q.text?`<pre class=sk-reqdoc>${escT(q.text)}</pre>`:`<p class=text-muted>The architect is interviewing you in the chat; ${escT(q.file||'REQUIREMENTS.md')} appears here as it writes it.</p>`;
+  const doc=q.text?`<pre class=sk-reqdoc>${escT(q.text)}</pre>`:`<p class=text-muted>${q.engineer?'The requirements engineer <b>'+escT(q.engineer)+'</b>':'The architect'} is interviewing you in the chat (your messages go to it); ${escT(q.file||'REQUIREMENTS.md')} appears here as it writes it.</p>`;
   el.innerHTML=q.state==='drafting'
     ?`<div class=card style="margin:8px 0;padding:12px"><b>Requirements</b> <span class="tag tag-accent">drafting</span>${doc}`+
-      `<button class="btn btn-primary btn-sm" onclick=skReqAgree() ${q.text?'':'disabled'}>Requirements agreed</button> <span class=text-muted style="font-size:12px">then the architect proposes the squad</span></div>`
+      `<button class="btn btn-primary btn-sm" onclick=skReqAgree() ${q.text?'':'disabled'}>Requirements agreed</button> <span class=text-muted style="font-size:12px">then the architect gets it and proposes the squad${q.engineer?' — '+escT(q.engineer)+' is shut down':''}</span></div>`
     :q.text?`<details style="margin:8px 0"><summary><b>Requirements</b> <span class="tag tag-neutral">agreed</span></summary>${doc}</details>`:'';
 }
 async function skReqAgree(){

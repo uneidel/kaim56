@@ -7756,6 +7756,47 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_requirements_engineer_hands_over_and_retires(self):
+        """While drafting, the ephemeral engineer may be woken before approval and
+        gets the operator's unaddressed messages; the board shows its
+        REQUIREMENTS.md; on agree the lead gets the plan and the document in its
+        workspace (never through a planted link), the engineer leaves the squad
+        and its instance is deleted."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        L = "127.0.0.1"
+        old_root, old_del = m._mounts.AGENT_ROOT, m._instances.delete_instance
+        m._mounts.AGENT_ROOT = tempfile.mkdtemp(prefix="e2e-eng-")
+        gone = []
+        m._instances.delete_instance = lambda n: gone.append(n) or f"instance '{n}' deleted"
+        try:
+            m._squads.save_settings("sq", {**m._squads.settings(m._projects.get("sq")), "requirements": "drafting", "engineer": "d"})
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "a desktop app"})
+            self.assertEqual((st, d["to"], woke[-1][0]), (200, ["d"], "d"), d)          # not approved, yet d is woken
+            for w in ("a", "d"):
+                os.makedirs(os.path.join(m._mounts.AGENT_ROOT, w))
+            with open(os.path.join(m._mounts.AGENT_ROOT, "d", "REQUIREMENTS.md"), "w") as fh:
+                fh.write("# Goal\nA desktop app.\n")
+            os.symlink("/etc/hostname", os.path.join(m._mounts.AGENT_ROOT, "a", "REQUIREMENTS.md"))   # the lead planted a link
+            r = self._sq("/api/projects/sq/squad/board", L)[1]["requirements"]
+            self.assertEqual((r["engineer"], r["text"].splitlines()[1]), ("d", "A desktop app."))
+            st, d = self._sq("/api/projects/sq/squad/requirements", L, {})
+            self.assertEqual((st, d["state"], d["engineer"]), (200, "agreed", ""), d)
+            self.assertEqual(woke[-1][0], "a"); self.assertIn("squad_propose", woke[-1][1])
+            self.assertNotIn("at the top of your workspace", woke[-1][1])               # the link was not followed
+            self.assertEqual(open("/etc/hostname").read() != "# Goal\nA desktop app.\n\n", True)
+            p = m._projects.get("sq")
+            self.assertNotIn("d", p["members"]); self.assertEqual(gone, ["d"])
+            self.assertEqual(m._squads.settings(p)["engineer"], "")
+            # without a planted link the document lands in the lead's workspace
+            os.remove(os.path.join(m._mounts.AGENT_ROOT, "a", "REQUIREMENTS.md"))
+            self.assertTrue(sys.modules["mgr.squadreq"]._hand_over(p, "# Goal\nX"))
+            with open(os.path.join(m._mounts.AGENT_ROOT, "a", "REQUIREMENTS.md")) as fh:
+                self.assertEqual(fh.read(), "# Goal\nX\n")
+        finally:
+            m._mounts.AGENT_ROOT, m._instances.delete_instance = old_root, old_del
+            undo()
+
     def test_squadkick_on_an_existing_repo(self):
         """"+ New squad" on a repo from the Repos tab: no clone, no new project —
         the architect joins as lead, the squad is enabled in the requirements
@@ -7777,13 +7818,13 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
             self.assertEqual([x["name"] for x in m._projects.load()], before)                  # no new project
             self.assertFalse(any("clone" in a for a, _env in calls))                           # no clone
-            self.assertEqual(created, [])                                                      # its lead a plans
-            self.assertEqual(woke[-1][0], "a"); self.assertIn("add tests", woke[-1][1])
+            self.assertEqual([c[0] for c in created], ["sq-req"])                             # its lead a plans; an engineer asks
+            self.assertEqual(woke[-1][0], "sq-req"); self.assertIn("add tests", woke[-1][1])
             # without a lead: an architect instance joins as the lead
             items = m._projects.load(); items[0]["members"].pop("a"); items[0]["squad"] = {}; m._projects._save(items)
             st, j = self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "add tests", "team": " - coder: x ", "decision": "subq"})
             self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
-            self.assertEqual(created[0][0], "sq-architect")
+            self.assertEqual([c[0] for c in created], ["sq-req", "sq-architect"])           # the engineer is reused
             s = m._squads.settings(m._projects.get("sq"))
             self.assertEqual((s["enabled"], s["requirements"]), (True, "drafting"))
             self.assertEqual(s["team"], "- coder: x")                                         # the form's Team box
@@ -7794,7 +7835,7 @@ class ManagerFunctions(unittest.TestCase):
                 self.assertIn("- " + r, m._squads.TEAM_DEFAULT)
             self.assertIn("code-planner", sys.modules["mgr.ui_html"].HTML_TOP.split("id=sk-team rows")[1][:2000])
             self.assertEqual(m._projects.get("sq")["members"]["sq-architect"]["role"], "lead")
-            self.assertEqual(woke[-1][0], "sq-architect"); self.assertIn("add tests", woke[-1][1])
+            self.assertEqual(woke[-1][0], "sq-req"); self.assertIn("add tests", woke[-1][1])
         finally:
             undo()
 
@@ -11802,7 +11843,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(dest, os.path.join(tmp, "squads", rec["id"] + "__repo", "projects", "repo", "repo"))
             self.assertEqual([(x["name"], x["repo"]) for x in rec["projects"]], [("repo", dest)])
             self.assertEqual([(x["instance"], x["role"], x["persona"]) for x in rec["members"]],
-                             [("repo-architect", "lead", "code-architect")])
+                             [("repo-architect", "lead", "code-architect"), ("repo-req", "reader", "")])
             self.assertTrue(os.path.isfile(os.path.join(m._squadrec.folder(rec), "squad.json")))
             self.assertTrue(os.path.isfile(os.path.join(dest, "top.txt")))
             self.assertEqual(os.stat(os.path.join(tmp, "squads")).st_mode & 0o777, 0o750)
@@ -11812,15 +11853,17 @@ class ManagerFunctions(unittest.TestCase):
             r = m._squadgit.settings(p)
             self.assertEqual((r["provider"], r["url"], r["token_secret"], r["base"]),
                              ("github", "https://github.com/own/repo", "SQUAD_GIT_TOKEN_GITHUB", "main"))
-            self.assertEqual([c[0] for c in created], ["repo-architect"])
+            self.assertEqual([c[0] for c in created], ["repo-architect", "repo-req"])     # + the requirements engineer
             cfg = created[0][2]
             self.assertEqual(cfg["OPENROUTER_MODEL"], "acme/big")
             self.assertTrue(cfg["AGENT_SYSTEM"].startswith("You design."))
             self.assertTrue({"squad_propose", "ticket_create", "squad_post"} <= set(cfg["AGENT_TOOLS"].split(",")))
             s = m._squads.settings(p)
             self.assertEqual((s["enabled"], s["approved"], s["daily_token_budget"]), (True, False, 2_000_000))
-            self.assertEqual([w[0] for w in woke], ["repo-architect"])
+            self.assertEqual([w[0] for w in woke], ["repo-req"])                         # the engineer interviews
             self.assertIn("add dark mode", woke[0][1]); self.assertIn("squad_propose", woke[0][1])
+            self.assertIn("the architect repo-architect gets REQUIREMENTS.md", woke[0][1])
+            self.assertEqual((s["engineer"], p["members"]["repo-req"]["role"]), ("repo-req", "reader"))
             self.assertIn("Repo profile:\n- main dirs: apps (1)", woke[0][1])          # computed after the clone
             self.assertTrue(any(x["text"].startswith("Repo profile: ") for x in j["log"]), j["log"])
             self.assertEqual(m._squads.read("repo")[0]["from"], "user:admin")
@@ -11842,7 +11885,7 @@ class ManagerFunctions(unittest.TestCase):
                             self.assertNotIn(self.SK_TOK.encode(), fh.read(), fp)
             # again: every step skips what is done
             k.run(j["id"])
-            self.assertEqual((len(created), len(woke), k.get(j["id"])["status"]), (1, 1, "done"))
+            self.assertEqual((len(created), len(woke), k.get(j["id"])["status"]), (2, 1, "done"))     # architect + engineer, nothing new
             self.assertEqual(self._sq(f"/api/squads/kickoff/{j['id']}/retry", L, {})[0], 400)
             # the next kickoff of the same repo is a new squad
             st, j2 = self._sq("/api/squads/kickoff", L, {"text": "https://github.com/own/repo second team"})
