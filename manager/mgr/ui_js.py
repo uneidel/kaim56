@@ -1597,15 +1597,17 @@ async function skRepos(){
 }
 function skRepoPick(){
   const r=document.getElementById('sk-repo').value;
-  document.getElementById('sk-text').placeholder=r?'what should the squad do in '+r+'?':'https://github.com/owner/repo — the goal';
+  document.getElementById('sk-text').placeholder=r?'What should the squad do in '+r+'? Describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.'
+    :'https://github.com/owner/repo (an empty repo is fine)\\n\\nThen describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.';
+  const b=document.getElementById('sk-send'); if(b)b.textContent=SK?'Send':'Start squad';
 }
 function skNew(){
   skClearSquad(); skRepos();
   document.getElementById('sk-title').textContent='New squad';
   document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
   document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML=''; skMode(true);
-  document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Repo URL (an empty one is fine) or a repo from the list, then describe the goal. <b>Ctrl+Enter</b> sends.</div>';
-  document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
+  document.getElementById('sk-thread').innerHTML='';
+  skRepoPick();
   document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;document.getElementById('sk-dec').hidden=false;
   skMsg('');
 }
@@ -1635,7 +1637,7 @@ function skPick(name){
   if(document.getElementById('sq-panel').style.display!=='none')sqLoad();   /* the open Settings follow the squad */
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
-  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;
+  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;document.getElementById('sk-send').textContent='Send';
   document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
 }
 /* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */

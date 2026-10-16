@@ -419,7 +419,16 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 #sk-cards{max-height:55vh;overflow:auto}   /* waiting cards above the board, never pushing it off screen */
 .sk-kick>#sk-working,.sk-kick>.sk-comp,.sk-kick>#sk-msg{order:2}
 .sk-kick .sk-thread{min-height:0}                                   /* new squad: a short hint, the input is the big part */
-.sk-kick>.sk-comp{flex-wrap:wrap}.sk-kick .sk-inwrap{flex-basis:100%;order:-1}.sk-kick #sk-text{min-height:12em}
+/* new squad as a form: repo · architect · suggestions / the description / team · start */
+.sk-kick>.sk-comp{display:grid;grid-template-columns:auto auto auto 1fr;gap:8px;align-items:center;margin-top:4px}
+.sk-kick>.sk-comp>select{width:auto;max-width:100%}.sk-kick #sk-repo{order:-1}
+.sk-kick .sk-inwrap{grid-column:1/-1;grid-row:2}.sk-kick #sk-text{min-height:14em;line-height:1.5}
+.sk-kick #sk-send{grid-column:4;grid-row:3;justify-self:end;align-self:start;padding-inline:20px}
+.sk-kick #sk-teambox{grid-column:1/4;grid-row:3;align-self:start;padding-top:6px}.sk-kick #sk-teambox>summary{cursor:pointer;font-size:13px;color:var(--color-neutral-600)}
+.sk-kick #sk-chatbox:not(:has(.sk-bub)){display:none}
+@media (max-width:640px){.sk-kick>.sk-comp{grid-template-columns:1fr}
+  .sk-kick .sk-inwrap,.sk-kick #sk-send,.sk-kick #sk-teambox{grid-column:1;grid-row:auto}
+  .sk-kick .sk-inwrap{order:1}.sk-kick #sk-teambox{order:2}.sk-kick #sk-send{order:3;justify-self:stretch}}
 .sk-at{position:absolute;left:0;bottom:calc(100% + 4px);min-width:220px;max-height:240px;overflow:auto;z-index:30;padding:4px;
   background:var(--app-card);border:1px solid var(--app-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
 .sk-at div{padding:6px 10px;border-radius:var(--radius-md);cursor:pointer;font-size:13px;display:flex;justify-content:space-between;gap:12px}
