@@ -371,32 +371,42 @@ HTML_TOP = """</head><body>
         <div class=sk-thread id=sk-thread aria-live=polite></div></details>
     </div>
   </div>
-  <div class="panel blueprint" id=sq-panel style="display:none;margin-top:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h4 style="margin:0" id=sq-head>Squad</h4>
-      <span><button class="btn btn-ghost btn-sm" onclick=sqLoad()>Refresh</button><button class="btn btn-ghost btn-sm" onclick=sqClose()>✕</button></span></div>
-    <p class=text-muted style="font-size:12.5px;margin:0 0 12px">The members talk in one channel; a message wakes the members it names (<code>@name</code>, <code>@all</code>) as a new turn. Blocked messages are kept with the reason.</p>
-    <div class=grid2>
-      <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-enabled> Squad enabled</label></div>
-      <div class=field><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-paused> Paused (store, wake nobody)</label></div>
-      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-approved> Plan approved (before: only the lead may be woken; approving a squad proposal sets it)</label></div>
-      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-security_skills> Security skills (members may see and load skills of category security &#8212; off: hidden, refused)</label></div>
-      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-cost_routing> Cost routing (wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude)</label></div>
-      <div class=field><label>Autonomy</label><select class=input id=sq-autonomy>
-        <option value=trusted>trusted — only merges, PRs, new members and the approval tools need you</option>
-        <option value=supervised>supervised — also every ticket a member sets done is a review for you</option></select></div>
-      <div class=field><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false>
-        <span class=text-muted style="font-size:12px">comma-separated; <code>bash</code> = network, install, delete and push commands only. Shown in <a href="#waiting">Waiting for you</a>.</span></div>
-      <div class=field><label>Claude account of new Claude members</label><input class="input mono" id=sq-claude_account placeholder="empty = host login" spellcheck=false></div>
-      <div class=field><label>Max wakes per hour</label><input class=input type=number min=0 id=sq-max_wakes_per_hour></div>
-      <div class=field><label>Max reply depth</label><input class=input type=number min=1 id=sq-max_depth></div>
-      <div class="field span2"><label>Daily token budget (all members together)</label><input class=input type=number min=0 id=sq-daily_token_budget>
-        <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
-      <div class="field span2"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type=checkbox id=sq-push_when_done> Push when done (all tickets done: the result goes out as branch <code>squad/&#8249;id&#8250;</code> to the repo&#8217;s remotes)</label></div>
-      <div class="field span2"><label>Members · Changes per writer</label><div id=sq-members></div></div>
-      <div class="field span2"><label>Code index</label><div id=sq-index></div></div>
-      <div class="field span2"><label>Git remote (GitHub / Gitea)</label><div id=sq-git></div></div>
+  <div class="panel blueprint sq-set" id=sq-panel style="display:none;margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h4 style="margin:0" id=sq-head>Squad</h4>
+      <span><button class="btn btn-ghost btn-sm" onclick=sqLoad() title=Refresh>&#8635;</button><button class="btn btn-ghost btn-sm" onclick=sqClose() aria-label=Close>✕</button></span></div>
+    <h5>Status</h5>
+    <div class=sq-chks>
+      <label title="Off: no member is woken, the squad is stopped"><input type=checkbox id=sq-enabled> Enabled</label>
+      <label title="Messages are stored, nobody is woken"><input type=checkbox id=sq-paused> Paused</label>
+      <label title="Before approval only the lead may be woken; approving a squad proposal sets it"><input type=checkbox id=sq-approved> Plan approved</label>
     </div>
-    <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save squad settings</button></div>
+    <h5>Work</h5>
+    <div class=grid2>
+      <div class=field><label>Autonomy</label><select class=input id=sq-autonomy>
+        <option value=trusted title="Only merges, PRs, new members and the approval tools need you">trusted</option>
+        <option value=supervised title="Also every ticket a member sets done is a review for you">supervised — you review every done ticket</option></select></div>
+      <div class=field><label>Daily token budget</label><input class=input type=number min=0 id=sq-daily_token_budget>
+        <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
+      <div class="field span2 sq-chks"><label title="All tickets done: the result goes out as branch squad/&#8249;id&#8250; to the repo&#8217;s remotes"><input type=checkbox id=sq-push_when_done> Push to <code>squad/&#8249;id&#8250;</code> when all tickets are done</label></div>
+    </div>
+    <h5>Members</h5>
+    <div id=sq-members></div>
+    <details class=sq-more><summary>Code index</summary><div id=sq-index></div></details>
+    <details class=sq-more><summary>Git remote (GitHub / Gitea)</summary><div id=sq-git></div></details>
+    <details class=sq-more><summary>Advanced</summary>
+      <div class=sq-chks>
+        <label title="Members may see and load skills of category security; off: hidden, refused"><input type=checkbox id=sq-security_skills> Security skills</label>
+        <label title="Wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude"><input type=checkbox id=sq-cost_routing> Cost routing</label>
+      </div>
+      <div class=grid2>
+        <div class="field span2"><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false
+          title="Comma-separated; bash = network, install, delete and push commands only. Shown in Waiting for you."></div>
+        <div class=field><label>Claude account (new members)</label><input class="input mono" id=sq-claude_account placeholder="empty = host login" spellcheck=false></div>
+        <div class=field><label>Max wakes / hour · reply depth</label><span style="display:flex;gap:6px">
+          <input class=input type=number min=0 id=sq-max_wakes_per_hour aria-label="Max wakes per hour"><input class=input type=number min=1 id=sq-max_depth aria-label="Max reply depth"></span></div>
+      </div>
+    </details>
+    <div class=panel-foot><span id=sqmsg class=msg></span><button class="btn btn-primary" onclick=sqSave()>Save</button></div>
   </div>
   <aside id=sk-tkd class=kb-pane role=dialog aria-labelledby=sk-tkd-t hidden><div id=sk-tkd-box></div>
     <div class=kb-pfoot><textarea class=input id=sk-tk-c rows=2 placeholder="Comment on this ticket …" aria-label=Comment

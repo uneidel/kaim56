@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-16
+- Squads → Settings regrouped: Status, Work, Members; code index, git remote and the advanced options fold away, explanations as tooltips.
 - Squads: "Dismiss" next to "Retry failed turns" drops the failed turns (no retry, the warning goes).
 - New squad: a large description field (Ctrl+Enter sends), a one-line hint; Squads → Delete removes a squad (members' VMs, tickets, chat), the repo stays.
 - New squad from an empty repo: the clone gets an empty first commit on main instead of stopping.

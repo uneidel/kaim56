@@ -410,6 +410,10 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 .sq-turn summary{cursor:pointer;white-space:pre-wrap;word-break:break-word;margin:4px 0}
 .sq-work{font-size:12.5px;margin:2px 0}
 .sk-comp{display:flex;gap:6px}
+.sq-set h5{margin:16px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-600)}
+.sq-chks{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:4px}.sq-chks label{display:flex;gap:6px;align-items:center;text-transform:none;font-size:13.5px}
+.sq-more{margin-top:12px;border-top:1px solid var(--app-line);padding-top:10px}.sq-more>summary{cursor:pointer;font-size:13px;color:var(--color-neutral-600)}
+.sq-more[open]>summary{margin-bottom:10px}
 #sk-chatbox>summary{cursor:pointer;font-size:13px;margin-top:12px;color:var(--color-neutral-600)}
 .sk-kick>#sk-chatbox{order:1}.sk-kick>#sk-chatbox>summary{display:none}   /* new squad / kickoff: the chat is the main view */
 #sk-cards{max-height:55vh;overflow:auto}   /* waiting cards above the board, never pushing it off screen */
