@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-16
+- New squad from an empty repo: the clone gets an empty first commit on main instead of stopping.
+
 ## 2026-10-15
 - Decision backend Microsoft-Decision-1 removed (OpenRouter and Azure; DECISION_MODEL, AZURE_DECISION_*); left: Jev, local LLM, SubQ.
 - Decision backend SubQ (native Decisions API, SUBQ_API_KEY in Settings); New squad gets a Suggestions switch (Settings / OpenJev / SubQ), stored per squad.

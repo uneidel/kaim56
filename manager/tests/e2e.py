@@ -11904,6 +11904,28 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squadkick_empty_repo_gets_a_first_commit(self):
+        """An empty GitHub repo: the clone gets an empty first commit on main,
+        the kickoff goes on with base main (live 2026-10-16: "the repository
+        is empty" stopped it)."""
+        import subprocess as sp
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k = m._squadkick
+        try:
+            empty = os.path.join(tmp, "empty.git")
+            sp.run(["git", "init", "-q", "--bare", empty], check=True)
+            k.clone_url = lambda job: empty
+            st, j = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "https://github.com/own/repo build it"})
+            j = k.get(j["id"])
+            self.assertEqual(j["status"], "done", j["log"])
+            self.assertTrue(any("empty first commit on main" in x["text"] for x in j["log"]), j["log"])
+            self.assertEqual(m._projects.get("repo")["base"], "main")
+            dest = self._kick_dest()
+            self.assertEqual(m._projwt.git(dest, ["log", "--format=%s", "main"]).strip(), "Initial commit")
+        finally:
+            undo()
+
     # ---- squad records: stable IDs, the archive of every conversation (mgr/squadrec.py) -----
     SR_TOK = "ghp_ArChIvEtOkEn0123456789abcdefXYZ"
 

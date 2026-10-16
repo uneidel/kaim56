@@ -75,6 +75,7 @@ ARCH_SUFFIX, ARCH_PERSONA, ARCH_TIER = "-architect", "code-architect", "strong"
 BUDGET = 2_000_000
 CLONE_TIMEOUT = int(_settings.SITE.get("SQUAD_CLONE_TIMEOUT") or 900)
 MAX_BYTES = int(_settings.SITE.get("SQUAD_MAX_BYTES") or 2 * 1024 ** 3)
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"      # git's empty tree: an empty repo's first commit
 KEEP_JOBS = 50
 _AUTH = re.compile(r"authentication failed|could not read username|terminal prompts disabled|"
                    r"\b40[13]\b|not found|invalid username or password|access denied", re.I)
@@ -371,9 +372,15 @@ def step_clone(job):
     size = _du(dest)
     if size > MAX_BYTES:
         raise Stop(f"Clone aborted: the repository is larger than {MAX_BYTES // 2**20} MB (SQUAD_MAX_BYTES)")
+    if not _projwt.git_ok(dest, ["rev-parse", "--verify", "-q", "HEAD"]):      # an empty repo: an empty first commit on main
+        _projwt.git(dest, ["symbolic-ref", "HEAD", "refs/heads/main"])
+        sha = _projwt.git(dest, ["-c", "user.name=kAIm56", "-c", "user.email=kaim56@localhost",
+                                 "commit-tree", EMPTY_TREE, "-m", "Initial commit"]).strip()
+        _projwt.git(dest, ["update-ref", "refs/heads/main", sha])
+        _say(job, "The repository is empty: an empty first commit on main.")
     job["base"] = _projwt.current_branch(dest)
     if not job["base"]:
-        raise Stop("the repository is empty: no default branch to work on")
+        raise Stop("the clone has no branch checked out (a detached HEAD)")
     _say(job, f"Cloned ({size / 2**20:.1f} MB), default branch {job['base']}.")
     prof = _profile(job)
     if prof:
