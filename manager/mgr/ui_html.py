@@ -359,8 +359,8 @@ HTML_TOP = """</head><body>
           <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select>
         <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select>
-        <span style="flex:1;min-width:0;position:relative;display:flex"><input class=input id=sk-text style="flex:1;min-width:0" aria-label=Message autocomplete=off
-          role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)">
+        <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
+          role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button></div>
       <details id=sk-teambox style="margin-top:6px"><summary>Team — the roles the architect staffs the squad with (empty = it decides)</summary>

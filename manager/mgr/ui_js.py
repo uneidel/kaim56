@@ -1542,7 +1542,9 @@ function skAtKey(e){
   if(open&&(e.key==='ArrowDown'||e.key==='ArrowUp')){e.preventDefault();SK_AT=(SK_AT+(e.key==='ArrowDown'?1:items.length-1))%items.length;skAt();return}
   if(open&&(e.key==='Enter'||e.key==='Tab')&&items[SK_AT]){e.preventDefault();skAtPick(items[SK_AT].dataset.n);return}
   if(open&&e.key==='Escape'){e.preventDefault();skAtClose();return}
-  if(e.key==='Enter')skSend();
+  /* squad chat: Enter sends; new squad (a long description): Enter is a new line, Ctrl+Enter sends */
+  const kick=document.querySelector('#s-squads .sk-chat').classList.contains('sk-kick');
+  if(e.key==='Enter'&&!e.shiftKey&&(e.ctrlKey||e.metaKey||!kick)){e.preventDefault();skSend()}
 }
 const SK_SEEN=(()=>{try{return JSON.parse(localStorage.getItem('sk-seen')||'{}')}catch(e){return {}}})();
 function skSeen(n,id){SK_SEEN[n]=id;try{localStorage.setItem('sk-seen',JSON.stringify(SK_SEEN))}catch(e){}}
@@ -1602,9 +1604,7 @@ function skNew(){
   document.getElementById('sk-title').textContent='New squad';
   document.getElementById('sk-status').innerHTML=''; document.getElementById('sk-acts').innerHTML='';
   document.getElementById('sk-board').hidden=true; document.getElementById('sk-cards').innerHTML=''; skMode(true);
-  document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Paste the repository URL and say what the squad should do, e.g. <code>https://github.com/owner/repo add a dark mode with tests</code>. '+
-    'The repo is cloned on the host, a project and an architect are set up, and the architect proposes the squad here for your approval. Private repos need the host secret <code>SQUAD_GIT_TOKEN_GITHUB</code> (or <code>SQUAD_GIT_TOKEN_&lt;HOST&gt;</code> for Gitea). '+
-    'Or pick a repo you already have in the <b>Repo</b> list and just say what to do — no clone.</div>';
+  document.getElementById('sk-thread').innerHTML='<div class=sk-bub>Repo URL (an empty one is fine) or a repo from the list, then describe the goal. <b>Ctrl+Enter</b> sends.</div>';
   document.getElementById('sk-text').placeholder='https://github.com/owner/repo — the goal';
   document.getElementById('sk-arch').hidden=false;document.getElementById('sk-repo').hidden=false;document.getElementById('sk-teambox').hidden=false;document.getElementById('sk-dec').hidden=false;
   skMsg('');
@@ -1669,7 +1669,8 @@ async function skLoad(){
     `<button class="btn btn-ghost btn-sm" onclick=skRestart() title="Stop + start every member (one busy with a turn: right after it) — picks up new images, tools and config">Restart members</button>`+
     (INDEX_HOST?`<button class="btn btn-ghost btn-sm" onclick=skReindex() title="queue a code index run for this squad's project">Reindex</button>`+
       `<a class="btn btn-ghost btn-sm" href="https://${INDEX_HOST}/indexer/open/${encodeURIComponent(name)}" target=_blank rel="noopener noreferrer">Dashboard</a>`:'')+
-    `<button class="btn btn-ghost btn-sm" onclick="sqOpen(SK)" title="Budget, autonomy, members and their changes, code index, git remote">Settings</button>`;
+    `<button class="btn btn-ghost btn-sm" onclick="sqOpen(SK)" title="Budget, autonomy, members and their changes, code index, git remote">Settings</button>`+
+    `<button class="btn btn-ghost btn-sm" onclick=skDelete() title="Delete the squad: its members' VMs, tickets and chat — the repo and its code stay in Repos">Delete</button>`;
   const msgs=d.messages||[], last=msgs.length?msgs[msgs.length-1].id:0;
   if(last!==SK_LAST&&!sqaBusy(document.getElementById('sk-thread'))){
     SK_LAST=last; skSeen(name,last);
@@ -1990,6 +1991,12 @@ function skChat(){
     skMsg(d.error?'⚠️ '+d.error:t.key+' → '+col.dataset.st+(d.note?' — '+d.note:'')); SKB=''; skLoad();
   });
 })();
+async function skDelete(){
+  if(!SK||!confirm('Delete squad '+SK+'? Its members&#39; VMs, tickets and chat are deleted. The repo and its code (branches) stay in Repos.'.replace('&#39;',String.fromCharCode(39))))return;
+  let d={}; try{d=await (await fetch('/api/squads/delete/'+encodeURIComponent(SK),{method:'POST'})).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){skMsg('⚠️ '+d.error);return}
+  skNew(); loadSquads(); skMsg('Squad '+d.project+' deleted'+(d.deleted.length?' — VMs: '+d.deleted.join(', '):'')+(d.kept.length?' — kept (other repos): '+d.kept.join(', '):''));
+}
 async function skReindex(){
   if(!SK)return;
   try{

@@ -5298,6 +5298,37 @@ class ManagerFunctions(unittest.TestCase):
             undo()
         return woke, created, notes, merges, undo2
 
+    def test_squad_delete_keeps_the_repo(self):
+        """Delete a squad (Squads tab): its members' instances go unless another
+        repo has them, tickets/proposals/channel/settings go, the repo stays in
+        Repos; admin only; a repo without a squad -> 404."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        gone, old = [], m._instances.delete_instance
+        m._instances.delete_instance = lambda n: gone.append(n) or f"instance '{n}' deleted"
+        try:
+            other = os.path.join(os.path.dirname(m._projects.PROJECTS_FILE), "other"); os.makedirs(other)
+            self.assertTrue(m._projects.upsert({"name": "other", "source": {"type": "host", "path": other},
+                                                "members": {"b": "writer"}}).get("ok"))
+            self.assertEqual(self._sq("/api/squad/propose", A, self._SG_PLAN)[0], 200)
+            m._squads.post(m._projects.get("sq"), "a", [], "hello")
+            self.assertFalse(m._auth.user_allowed("POST", "/api/squads/delete/sq"))
+            st, d = self._sq("/api/squads/delete/sq", L, {})
+            self.assertEqual(st, 200, d)
+            self.assertEqual((d["project"], d["deleted"], d["kept"]), ("sq", ["a", "d"], ["b"]))
+            self.assertEqual(gone, ["a", "d"])
+            p = m._projects.get("sq")
+            self.assertIsNotNone(p)                                             # the repo stays
+            self.assertEqual((p.get("members"), m._squads.settings(p)["enabled"]), ({}, False))
+            self.assertEqual([x for x in m._squadgate._load()["proposals"] if x.get("project") == "sq"], [])
+            self.assertEqual(self._sq("/api/squads/delete/sq", L, {})[0], 404)   # no squad any more
+            self.assertEqual(self._sq("/api/squads/delete/nope", L, {})[0], 404)
+            self.assertIn("other", [x["name"] for x in m._projects.load()])
+        finally:
+            m._instances.delete_instance = old
+            undo()
+
     def test_squadgate_propose_lead_only_validated_one_pending(self):
         """Only the lead proposes; names, roles, tiers, tickets are checked,
         unknown persona/skills flagged; one pending plan; the user is notified;

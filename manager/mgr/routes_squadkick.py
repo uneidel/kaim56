@@ -18,6 +18,8 @@ Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import urllib.parse
+
 from mgr import audit as _audit
 from mgr import routes as _routes
 from mgr import settings as _settings
@@ -64,6 +66,17 @@ def _rt_kick_post(h):
         return h._json({"error": why}, 400)
     _audit.audit_append(j["arch"], "squad_kickoff", f"{j['url']} by {who}"[:400], True, result=j["status"])
     return h._json(j)
+
+
+@_routes.ROUTER.post("/api/squads/delete/", prefix=True, admin=True)
+def _rt_squad_delete(h):
+    # POST /api/squads/delete/<project>: the squad goes, the repo stays (mgr/squadkick.remove)
+    name = urllib.parse.unquote(h.path.split("?", 1)[0][len("/api/squads/delete/"):].strip("/"))
+    r, why = _squadkick.remove(name)
+    if not r:
+        return h._json({"error": why}, 404)
+    _audit.audit_append(name, "squad_delete", f"by {_who(h)}; deleted {', '.join(r['deleted']) or '-'}"[:400], True)
+    return h._json(r)
 
 
 @_routes.ROUTER.get("/api/squads/", prefix=True, admin=True)

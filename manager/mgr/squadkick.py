@@ -67,6 +67,7 @@ from mgr import squadgit as _squadgit
 from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
+from mgr import toolchain as _toolchain
 
 URL_IN_TEXT = re.compile(r"https://[^\s<>\"'`]+")
 GOAL_MAX = 4000
@@ -238,6 +239,30 @@ def start_repo(project, goal, who, architect_template="", team=None, decision=""
     _say(job, f"Squad on the existing repo {p['name']} ({path})")
     _spawn(run, job["id"])
     return view(job), ""
+
+
+def remove(project):
+    """Delete a squad (the Squads tab) -> (summary, '') or (None, why): its
+    members' instances (unless another project has them), tickets, proposals,
+    channel and settings. The repo stays in Repos with its code and branches;
+    the squad's archive stays (the record is closed)."""
+    p = _projects.get(str(project or "").strip())
+    if p is None or not _squads.settings(p).get("enabled"):
+        return None, "no squad on that repo"
+    name, members = p["name"], sorted(p.get("members") or {})
+    elsewhere = {n for x in _projects.load() if x["name"] != name for n in (x.get("members") or {})}
+    try:
+        _toolchain.purge(p)                       # its layers (by squad id: before the record detaches)
+    except Exception as e:
+        print(f"[quiet] toolchain purge {name}: {e!r}", flush=True)
+    r = _projects.upsert({**p, "members": {}})    # unmounts, removes the writers' folders (branches stay)
+    if "error" in r:
+        return None, r["error"]
+    _projects.set_squad(name, None)
+    _squads.purge(name)
+    _squadgate.purge(name)
+    gone = [n for n in members if n not in elsewhere and _instances.delete_instance(n) != "unknown"]
+    return {"project": name, "deleted": gone, "kept": [n for n in members if n in elsewhere]}, ""
 
 
 def retry(jid):
