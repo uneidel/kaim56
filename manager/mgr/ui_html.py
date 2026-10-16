@@ -360,7 +360,7 @@ HTML_TOP = """</head><body>
         <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select>
         <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
-          role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput=skAt() onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
+          role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput="skAt();skGrow(this)" onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button>
       <details id=sk-teambox ><summary>Team — the roles the architect staffs the squad with (empty = it decides)</summary>

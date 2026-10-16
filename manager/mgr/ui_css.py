@@ -384,6 +384,9 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-item[data-new]{border-style:dashed}
 .sk-item small{font-size:11px;color:var(--color-neutral-600)}
 .sk-chat{display:flex;flex-direction:column;min-width:0}
+.sk-chat>#sk-chatbox{order:1}.sk-chat>#sk-working,.sk-chat>.sk-comp,.sk-chat>#sk-msg{order:2}   /* the chat, then what you type */
+.sk-chat:not(.sk-kick) #sk-text{min-height:2.6em;max-height:12em;overflow-y:auto;resize:none}
+.sk-chat:not(.sk-kick) .sk-comp{align-items:flex-end}
 .sk-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
 .sk-tc{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:4px 0}
 .sk-reqdoc{white-space:pre-wrap;font-size:12.5px;max-height:320px;overflow:auto;margin:8px 0;padding:8px;border-radius:6px;background:var(--color-bg-subtle,rgba(127,127,127,.08))}

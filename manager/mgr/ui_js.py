@@ -1524,6 +1524,10 @@ let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false, SK_MEMB
 /* @-mentions in the composer: typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes. */
 function skAtWord(){const i=document.getElementById('sk-text'), pre=i.value.slice(0,i.selectionStart), m=pre.match(/(^|\s)@([\w.-]*)$/);return m?m[2]:null}
 function skAtClose(){const a=document.getElementById('sk-at');if(a){a.hidden=true;document.getElementById('sk-text').setAttribute('aria-expanded','false')}}
+function skGrow(t){        /* the squad chat's input grows with its text (CSS caps it); new squad has its own size */
+  if(document.querySelector('#s-squads .sk-chat').classList.contains('sk-kick')){t.style.height='';return}
+  t.style.height='auto'; t.style.height=t.scrollHeight+2+'px';
+}
 function skAt(){
   const a=document.getElementById('sk-at'), w=skAtWord();
   if(w===null||!SK){skAtClose();return}
@@ -1646,6 +1650,7 @@ function skMode(kick){
   document.querySelector('#s-squads .sk-chat').classList.toggle('sk-kick',kick);
   let on=kick; if(!kick)try{on=localStorage.getItem('sk-chat-open')==='1'}catch(e){}
   document.getElementById('sk-chatbox').open=on;
+  document.getElementById('sk-text').style.height='';
 }
 async function skLoad(){
   if(!SK)return;
@@ -2034,7 +2039,7 @@ async function skSend(){
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;
-  el.value='';
+  el.value=''; el.style.height='';
   if(SK)skLoad(); else {skJob(d.id);loadSquads()}
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5000);
