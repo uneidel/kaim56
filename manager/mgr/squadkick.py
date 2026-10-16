@@ -70,7 +70,8 @@ from mgr import squads as _squads
 from mgr import toolchain as _toolchain
 
 URL_IN_TEXT = re.compile(r"https://[^\s<>\"'`]+")
-GOAL_MAX = 4000
+GOAL_MAX = 50000
+GOAL_INLINE = 2500           # a longer goal goes as GOAL.md into the workspace (a message holds 8000)
 NAME_MAX = 20                        # + "-architect" stays within an instance name's 32
 ARCH_SUFFIX, ARCH_PERSONA, ARCH_TIER = "-architect", "code-architect", "strong"
 BUDGET = 2_000_000
@@ -218,6 +219,8 @@ def start_repo(project, goal, who, architect_template="", team=None, decision=""
     goal = str(goal or "").strip()
     if not goal:
         return None, "say what the squad should do"
+    if len(goal) > GOAL_MAX:
+        return None, f"the goal is longer than {GOAL_MAX} characters"
     p = _projects.get(str(project or "").strip())
     if p is None:
         return None, "unknown repo"
@@ -540,8 +543,14 @@ def step_post(job):
     arch, prof = job["arch"], _repoprofile.text(_profile(job))
     eng = _squadreq.engineer(_projects.get(job["name"]))
     to = eng or arch
+    goal = job["goal"]
+    if len(goal) > GOAL_INLINE:                   # the whole goal as GOAL.md, its start in the message
+        if not _squadreq.write_doc(to, "GOAL.md", goal):
+            raise Stop(f"writing GOAL.md into {to}'s workspace failed")
+        goal = (goal[:1500].rstrip() + f"\n\n[… {len(job['goal']):,} characters in all — read GOAL.md at the top "
+                "of your workspace first, it is the full goal]")
     text = (f"@{to} Kickoff by {job['who']}. Repository {job['url']} — at /project/{job['name']}, base branch "
-            f"{job['base']}.\n\nGoal:\n{job['goal']}\n\n" + (prof + "\n\n" if prof else "") + f"The code is the repository mounted read-only at /project/{job['name']} "
+            f"{job['base']}.\n\nGoal:\n{goal}\n\n" + (prof + "\n\n" if prof else "") + f"The code is the repository mounted read-only at /project/{job['name']} "
             f"(not your workspace, not the web): read it there first (list_dir /project/{job['name']}, read_file, "
             f"bash: ls/grep/cat). Then: {_squadreq.INTERVIEW}"
             + (" " + _squadreq.ENGINEER.format(arch=arch, file=_squadreq.FILE) if eng else ""))

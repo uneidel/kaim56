@@ -80,25 +80,34 @@ def view(proj):
             "engineer": engineer(proj)}
 
 
-def _hand_over(proj, doc):
-    """The agreed document into the lead's workspace (never through a link the VM planted) -> ok."""
-    ld = _squadgate.lead(proj)
-    if not ld:
-        return False
+def write_doc(inst, fname, text):
+    """A document into an instance's workspace top (the agreed requirements, a long kickoff
+    goal) — never through a link or into a non-directory the VM planted -> ok."""
+    d = os.path.join(_mounts.AGENT_ROOT, inst)
     try:
-        fd = os.open(os.path.join(_mounts.AGENT_ROOT, ld, FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o664)
+        if not os.path.lexists(d):
+            _mounts.own_guest_dir(d)
+        if not stat.S_ISDIR(os.lstat(d).st_mode):
+            return False
+        fd = os.open(os.path.join(d, fname), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o664)
     except OSError as e:
-        print(f"[quiet] {FILE} to {ld}: {e!r}", flush=True)
+        print(f"[quiet] {fname} to {inst}: {e!r}", flush=True)
         return False
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return False
-        os.write(fd, doc.encode() + b"\n")
+        os.write(fd, text.encode() + b"\n")
         if os.geteuid() == 0:
             os.fchown(fd, _mounts.GUEST_UID, _host.ADMIN_GID)
         return True
     finally:
         os.close(fd)
+
+
+def _hand_over(proj, doc):
+    """The agreed document into the lead's workspace -> ok."""
+    ld = _squadgate.lead(proj)
+    return bool(ld) and write_doc(ld, FILE, doc)
 
 
 def retire(proj):

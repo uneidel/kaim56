@@ -11989,6 +11989,28 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squadkick_long_goal_goes_as_goal_md(self):
+        """A goal over GOAL_INLINE: the whole text as GOAL.md in the engineer's
+        workspace, its start and a pointer in the message (a message holds 8000);
+        over GOAL_MAX refused (live 2026-10-16: 'longer than 4000 characters')."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k = m._squadkick
+        try:
+            goal = "Build the tool. " + "Requirement line with details. " * 400            # ~12k characters
+            st, j = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "https://github.com/own/repo " + goal})
+            self.assertEqual(st, 200, j)
+            self.assertEqual(k.get(j["id"])["status"], "done", k.get(j["id"])["log"])
+            with open(os.path.join(m._mounts.AGENT_ROOT, "repo-req", "GOAL.md")) as fh:
+                self.assertEqual(fh.read(), goal.strip() + "\n")
+            self.assertEqual(woke[-1][0], "repo-req")
+            self.assertIn("read GOAL.md at the top of your workspace", woke[-1][1])
+            self.assertLess(len(m._squads.read("repo")[0]["text"]), m._squads.TEXT_MAX)
+            st, d = self._sq("/api/squads/kickoff", "127.0.0.1", {"text": "https://github.com/own/other " + "x" * 50001})
+            self.assertIn("longer than 50000", d["error"])
+        finally:
+            undo()
+
     def test_squadkick_empty_repo_gets_a_first_commit(self):
         """An empty GitHub repo: the clone gets an empty first commit on main,
         the kickoff goes on with base main (live 2026-10-16: "the repository
