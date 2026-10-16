@@ -1771,6 +1771,10 @@ async function skRetryTurns(member){   /* re-deliver the wakes of failed turns (
   skMsg(d.error?'⚠️ '+d.error:'Retry: '+[...Object.keys(d.retried||{}).map(n=>n+' — re-delivered'),...Object.entries(d.refused||{}).map(([n,v])=>n+' — '+v)].join(' · '));
   SKB=''; skLoad();
 }
+async function skDismissTurns(){
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  skMsg(d.error?'⚠️ '+d.error:'Dismissed: '+d.dismissed.join(', ')); SKB=''; skLoad();
+}
 async function skNudge(){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/nudge',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
   skMsg(d.error?'⚠️ '+d.error:'Status check sent to the lead'); skLoad();
@@ -1818,7 +1822,8 @@ function skBoardRender(d,b,hq){
       `<div class=kb-now role=cell><span class=kb-l1>${l1}</span><span class=kb-l2>${l2}</span></div><div role=cell>${strip(a)}</div></div>`}).join('');
   const nf=+act.failed_members||0, nb=ts.filter(t=>t.status==='blocked').length, nq=hq.length, stall=act.stalled_min!=null&&act.stalled_min!==undefined;
   const prob=nf||nb||nq||stall?`<span class=kb-ptx>⚠ ${[stall?`<b>stalled ${+act.stalled_min} min</b>`:'',nf?`${nf} failed turn${nf>1?'s':''}`:'',nb?`${nb} blocked`:'',nq?`${nq} waiting for you`:''].filter(Boolean).join(' · ')}</span>`+
-    (nf?`<button class="btn btn-ghost btn-sm" onclick="skRetryTurns('')">Retry failed turns (${nf})</button>`:'')+
+    (nf?`<button class="btn btn-ghost btn-sm" onclick="skRetryTurns('')">Retry failed turns (${nf})</button>`+
+      `<button class="btn btn-ghost btn-sm" onclick=skDismissTurns() title="Drop the failed turns: no retry, the warning goes">Dismiss</button>`:'')+
     (stall?`<button class="btn btn-ghost btn-sm" onclick=skNudge() title="Asks the lead to review the board and wake who can continue">Nudge lead</button>`:''):'';
   const pe=document.getElementById('sk-prob'); if(pe.dataset.h!==prob){pe.dataset.h=prob;pe.innerHTML=prob;pe.hidden=!prob}
   const n=ts.length, nd=ts.filter(t=>t.status==='done').length, ng=ts.filter(t=>t.status==='doing').length, pct=x=>n?(100*x/n).toFixed(1):0;

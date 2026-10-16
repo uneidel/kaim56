@@ -587,6 +587,7 @@ def activity(proj, now=None):
     sid = (_squadrec.of_project(name) or {}).get("id", "")
     ev = _squadmetrics.events(sid, now - STRIP_S, "", _squadmetrics.EVENTS_MAX) if sid else []
     last = _squadmetrics.last_turns(sid) if sid else {}
+    gone = _squads.settings(proj).get("dismissed") or {}
     ws, tix = _squads.working(name), _squadgate.tickets(name)
     st = {t["key"]: t["status"] for t in tix}
     hq = [x for x in _hitlq.items("open") if x.get("project") == name]
@@ -609,7 +610,7 @@ def activity(proj, now=None):
                      ticket=k.group(1) if k else next((t["key"] for t in mine if t["status"] == "doing"), a["ticket"]))
             if w["state"] == "working":
                 a["tool"] = _tool(n, w["since"])
-        elif lt and lt["outcome"] != "ok":
+        elif lt and lt["outcome"] != "ok" and lt["ts"] > gone.get(n, 0):      # not dismissed (Squads → Dismiss)
             a.update(state="err", reason=_why(n, lt["msg"], lt["outcome"]), since=lt["ts"], ticket=lt["ticket"] or a["ticket"])
         elif q:
             a.update(state="ask", reason=str(q.get("title") or "")[:120], since=int(q.get("created") or 0),

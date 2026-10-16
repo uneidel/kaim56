@@ -5652,7 +5652,7 @@ class ManagerFunctions(unittest.TestCase):
                   "hourCycle:'h23'", "#s-squads.kb-open", "function kbPrev", "skTkEditSave()", "t.versions||[]",
                   # who does what: member rows with the 2 h strip, the problem line, blocked reasons
                   "class=kb-mem", "<span>-1h</span><span>-30m</span><span>now</span>", "t0=now-3600", "skClearSquad(); skRepos();\n  document.getElementById('sk-title').textContent='New squad'", "onclick=skReindex()", "onclick=\"sqOpen(SK)\"", "id=sk-repo", "Open in Squads →", "pjSquadLock(!!(p.squad||{}).enabled)", "/squad/reindex',{method:'POST'", "kb-strip", "id=sk-prob",
-                  "Retry failed turns (${nf})", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
+                  "Retry failed turns (${nf})", "onclick=skDismissTurns()", "onclick=skNudge()", "/squad/retry", "/squad/nudge", "function kbWhy",
                   "last turn failed", "starts when", "no ticket ready", "previous turn failed: ", "esc('failed: '+x.why)"):
             self.assertIn(s, page)
         for s in ("skBoard()", "kb-dlg", "gestern", "Schließen", "kb-who"):
@@ -5733,6 +5733,17 @@ class ManagerFunctions(unittest.TestCase):
             self._sq("/api/projects/sq/squad/restart", L, {})
             self._sq("/api/projects/sq/squad/restart", L, {})
             self.assertEqual([w[0] for w in woke], ["b"])
+            # dismiss: the failed turn is no failure any more, no retry; a newer failure counts again
+            sm.record(sid, "turn_end", "task:tb4", now, member="b", outcome="api_error", detail={"msg": msg["id"]})
+            self.assertEqual(self._sq("/api/projects/sq/squad/dismiss", "172.30.3.2", {})[0], 403)
+            st, d = self._sq("/api/projects/sq/squad/dismiss", L, {})
+            self.assertEqual((st, d["dismissed"]), (200, ["b"]))
+            act = self._sq("/api/projects/sq/squad/board", L)[1]["activity"]
+            self.assertEqual((act["failed_members"], act["members"]["b"]["state"]), (0, "idle"))
+            self.assertEqual(self._sq("/api/projects/sq/squad/retry", L, {})[0], 400)
+            self.assertEqual(self._sq("/api/projects/sq/squad/dismiss", L, {})[0], 400)
+            sm.record(sid, "turn_end", "task:tb5", now + 5, member="b", outcome="api_error", detail={"msg": msg["id"]})
+            self.assertEqual(self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["failed_members"], 1)
         finally:
             m._instances.is_running = old[0]
             m._tasks._auto_retried.clear(); m._tasks._auto_retried.update(old[1])

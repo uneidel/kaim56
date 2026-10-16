@@ -56,6 +56,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "team": "",
             # who scores the members' persona/skills/tier suggestions (mgr/decision.py); "" = Settings' DECISION_BACKEND
             "decision": "",
+            # {member: ts of its failed turn the operator dismissed} (Squads → Dismiss): no longer "failed"
+            "dismissed": {},
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
@@ -557,12 +559,27 @@ def last_turns(proj):
     return _squadmetrics.last_turns(sid) if sid else {}
 
 
+def failed_turns(proj):
+    """{member: its latest turn} for each member whose latest turn failed and was not dismissed."""
+    gone = settings(proj).get("dismissed") or {}
+    return {m: lt for m, lt in last_turns(proj).items() if lt["outcome"] != "ok" and lt["ts"] > gone.get(m, 0)}
+
+
+def dismiss_failed(proj):
+    """The operator drops the failed turns (no retry) -> the members dismissed."""
+    f = failed_turns(proj)
+    if f:
+        s = settings(proj)
+        save_settings(proj["name"], {**s, "dismissed": {**(s.get("dismissed") or {}), **{m: lt["ts"] for m, lt in f.items()}}})
+    return sorted(f)
+
+
 def retry_failed(proj, only=None):
     """Re-deliver the wake of each member (or of `only`) whose latest turn
     failed: the message that woke it, depth 0, through the guards (paused,
     rate, budget …) -> {"retried": {member: task id}, "refused": {member: why}}."""
     names = set(proj.get("members") or {}) - {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
-    last, out = last_turns(proj), {"retried": {}, "refused": {}}
+    last, out = failed_turns(proj), {"retried": {}, "refused": {}}       # dismissed ones are not retried
     busy = {w["member"] for w in working(proj["name"])}
     for m in sorted(names & set(only) if only else names):
         lt = last.get(m)
