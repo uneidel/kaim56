@@ -8623,6 +8623,85 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps = old
 
+    def test_apps_publish_from_workspace(self):
+        """An agent with MANAGE_APPS=write publishes a workspace folder as a
+        static app: no symlink or dotfile is copied, app.json gets its
+        publisher, the app is served sandboxed (CSP), an operator's app or
+        another instance's is never replaced, its own update goes to .trash."""
+        m = self.m
+        apps, ws = tempfile.mkdtemp(prefix="e2e-pub-apps-"), tempfile.mkdtemp(prefix="e2e-pub-ws-")
+        os.makedirs(os.path.join(apps, "corewar")); _wtext(os.path.join(apps, "corewar", "app.json"), "{}")
+        _wtext(os.path.join(apps, "corewar", "index.html"), "op")
+        src = os.path.join(ws, "dist"); os.makedirs(os.path.join(src, "js"))
+        _wtext(os.path.join(src, "index.html"), "<h1>todo</h1>")
+        _wtext(os.path.join(src, "app.json"), '{"title": "Todo", "server": true}')
+        _wtext(os.path.join(src, "js", "a.js"), "1"); _wtext(os.path.join(src, ".env"), "SECRET")
+        _wtext(os.path.join(ws, "secret.txt"), "SECRET")
+        os.symlink(os.path.join(ws, "secret.txt"), os.path.join(src, "leak.txt"))
+        os.symlink(ws, os.path.join(src, "up"))
+        inst = lambda n, lv: {"name": n, "config": {"MANAGE_APPS": lv}}
+        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, m._guests.instance_by_ip, m._mounts.workspace_dir,
+               m._audit.audit_append)
+        try:
+            m._audit.audit_append = lambda *a, **k: None
+            m._settings.SITE["APPS_DIR"] = apps
+            m._settings.load_settings = lambda: {}
+            m._mounts.workspace_dir = lambda i: ws
+            def pub(name, who="dev", lv="write", rel="dist"):
+                m._guests.instance_by_ip = lambda ip: inst(who, lv)
+                h = self._post_handler(f"/api/apps/{name}/publish", "172.30.9.2", json.dumps({"src": rel}).encode()); h._do_POST()
+                return self._status(h), h.wfile.getvalue()
+            self.assertEqual(pub("todo", lv="read")[0], 403)                          # read may not publish
+            st, body = pub("todo")
+            self.assertEqual(st, 200, body)
+            got = sorted(os.path.relpath(os.path.join(d, f), os.path.join(apps, "todo"))
+                         for d, _, fs in os.walk(os.path.join(apps, "todo")) for f in fs)
+            self.assertEqual(got, ["app.json", "index.html", "js/a.js"])              # no .env, no symlink, nothing above
+            with open(os.path.join(apps, "todo", "app.json")) as fh:
+                man = json.load(fh)
+            self.assertEqual((man["publisher"], man["title"], "server" in man), ("dev", "Todo", False))
+            self.assertIn("todo", [a["name"] for a in m._apps.load_apps()])
+            m._guests.instance_by_ip = lambda ip: None
+            h = self._handler("/apps/todo/index.html", "10.0.0.9"); h._do_GET()
+            out = h.wfile.getvalue()
+            self.assertIn(b"Content-Security-Policy: sandbox allow-scripts", out); self.assertIn(b"<h1>todo</h1>", out)
+            h = self._handler("/apps/corewar/index.html", "10.0.0.9"); h._do_GET()
+            self.assertNotIn(b"Content-Security-Policy: sandbox", h.wfile.getvalue())   # the operator's own app: as before
+            self.assertEqual(pub("corewar")[0], 400)                                  # an operator's app is never replaced
+            self.assertEqual(pub("todo", who="other")[0], 400)                        # nor another instance's
+            for bad in ("../", "up", "dist/.env", "nope"):
+                self.assertEqual(pub("x" + str(len(bad)), rel=bad)[0], 400, bad)
+            _wtext(os.path.join(src, "index.html"), "v2")
+            st, body = pub("todo")
+            self.assertEqual(st, 200); self.assertIn(b'"replaced": true', body)
+            with open(os.path.join(apps, "todo", "index.html")) as fh:
+                self.assertEqual(fh.read(), "v2")
+            self.assertEqual(len(os.listdir(os.path.join(apps, ".trash"))), 1)        # v1 kept, recoverable
+        finally:
+            (m._settings.SITE["APPS_DIR"], m._settings.load_settings, m._guests.instance_by_ip, m._mounts.workspace_dir,
+             m._audit.audit_append) = old
+
+    def test_squad_devops_member_may_publish_apps(self):
+        """A squad member named or meant for devops gets MANAGE_APPS=write (and
+        the apps tool in a fixed tool list); the others get nothing."""
+        m = self.m
+        made = {}
+        old = (m._instances.load_instances, m._instances.create_instance, m._personas.load_personas)
+        try:
+            m._instances.load_instances = lambda: []
+            m._instances.create_instance = lambda n, t, cfg, persist=False: made.__setitem__(n, cfg) or "created"
+            m._personas.load_personas = lambda: [{"name": "p", "tools": ["shell"]}]
+            proj = {"name": "pp", "members": {}}
+            base = {"template": "openrouter", "role": "member", "skills": [], "persona": "", "purpose": "", "model": "", "model_tier": ""}
+            m._squadgate._create(proj, {**base, "name": "pp-devops"}, [])
+            m._squadgate._create(proj, {**base, "name": "pp-ops", "persona": "p", "purpose": "DevOps: CI"}, [])
+            m._squadgate._create(proj, {**base, "name": "pp-coder"}, [])
+            self.assertEqual(made["pp-devops"].get("MANAGE_APPS"), "write")
+            self.assertEqual(made["pp-ops"].get("MANAGE_APPS"), "write"); self.assertIn("apps", made["pp-ops"]["AGENT_TOOLS"].split(","))
+            self.assertNotIn("MANAGE_APPS", made["pp-coder"])
+        finally:
+            m._instances.load_instances, m._instances.create_instance, m._personas.load_personas = old
+
     def test_plugin_tools_are_in_the_tool_list(self):
         """Plugins appear in the policy's tool list (DESC read with ast, the code
         never runs in the manager) and a saved tool subset may contain them —

@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-17
+- Apps: agents publish a static app from a workspace folder (tool apps, action publish, MANAGE_APPS=write), served sandboxed; a squad's devops member gets that grant.
+
 ## 2026-10-16
 - Squad chat: the messages first, the input below them; the input is two lines and grows with the text.
 - New squad goal up to 50,000 characters (was 4,000); a long one goes as GOAL.md into the engineer's workspace, its start in the message.

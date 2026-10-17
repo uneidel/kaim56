@@ -33,6 +33,7 @@ from mgr import chats as _chats
 from mgr import claudeaccts as _claudeaccts
 from mgr import gateway as _gateway
 from mgr import guestchat as _guestchat
+from mgr import guests as _guests
 from mgr import guestproxy as _guestproxy
 from mgr import hitlq as _hitlq
 from mgr import indexer as _indexer
@@ -565,7 +566,10 @@ def _rt_apps_cloudflare(h):
 def _rt_app_cloud(h):
     # POST /api/apps/<name>/upload | /restore — to Cloudflare and back (mgr/cloud.py), in the background
     # POST /api/apps/<name>/delete | /rename {"to": new} — right away
+    # POST /api/apps/<name>/publish {"src": workspace folder[, "instance"]} — an agent's static app
     name, _, op = h.path.split("?", 1)[0][len("/api/apps/"):].strip("/").partition("/")
+    if op == "publish":
+        return _app_publish(h, name)
     if op in ("delete", "rename"):
         try:
             res = _cloud.remove(name) if op == "delete" else _cloud.rename(name, str((h._body() or {}).get("to") or "").strip())
@@ -574,6 +578,24 @@ def _rt_app_cloud(h):
         return h._json({"ok": True, **res})
     ok, job = _cloud.start(name, op)
     return h._json({"ok": ok, **job}, 200 if ok else 400)
+
+
+def _app_publish(h, name):
+    # the caller's own workspace (a guest with MANAGE_APPS=write); the operator names the instance
+    b = h._body() or {}
+    inst = _guests.instance_by_ip(h.client_address[0]) or next(
+        (i for i in _instances.load_instances() if i["name"] == str(b.get("instance") or "")), None)
+    if inst is None:
+        return h._json({"ok": False, "error": "unknown instance"}, 400)
+    if _cloud.where(name)[0] == "cloud":
+        return h._json({"ok": False, "error": f"{name} runs on Cloudflare — restore it first"}, 409)
+    try:
+        res = _apps.publish(name, os.path.realpath(_mounts.workspace_dir(inst)), str(b.get("src") or ""), inst["name"])
+    except (ValueError, OSError) as e:
+        return h._json({"ok": False, "error": str(e)[:400]}, 400)
+    _audit.audit_append(inst["name"], "app_publish", f"{name} <- {str(b.get('src') or '')[:200]}", True,
+                        result=f"{res['files']} files")
+    return h._json({"ok": True, "url": f"/apps/{name}/", **res})
 
 
 @_routes.ROUTER.post("/api/cfworkers/", prefix=True, admin=True)
@@ -624,6 +646,14 @@ def _rt_app_file(h):
     data, ct = got
     if data is None:
         return h._json({"error": ct}, 404)
+    if _apps.publisher(name):                   # an agent's app: sandboxed, never the operator's session
+        h.send_response(200)
+        h.send_header("Content-Type", ct)
+        h.send_header("Content-Security-Policy", _apps.SANDBOX_CSP)
+        h.send_header("Content-Length", str(len(data)))
+        h.end_headers()
+        h.wfile.write(data)
+        return None
     return data, ct
 
 

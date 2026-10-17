@@ -97,6 +97,7 @@ MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticke
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment",   # git: only with a project remote, role-checked
                 "toolchain_status")                              # read-only: what the shared toolchain layer holds
+DEVOPS_RE = re.compile(r"devops", re.I)
 LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
               "project_status", "project_diff", "toolchain_propose")   # a lead created here (the kickoff's architect)
 # The templates a squad member may use, with what the architect is told.
@@ -786,6 +787,10 @@ def _create(proj, m, steps):
         cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(pers["tools"]) + list(extra)))
     if pers and pers.get("model") and m["template"] != "claude":   # a persona's model is an API model
         cfg["OPENROUTER_MODEL"] = pers["model"]
+    if DEVOPS_RE.search(f"{m['name']} {m['purpose']}"):  # devops publishes the squad's browser apps (tool apps)
+        cfg["MANAGE_APPS"] = "write"
+        if "AGENT_TOOLS" in cfg:
+            cfg["AGENT_TOOLS"] += ",apps"
     cfg.update(_model_cfg(m, steps))
     lines = [(pers or {}).get("prompt") or "",
              f"You are {m['name']}, {m['role']} in the squad of project {proj['name']}."

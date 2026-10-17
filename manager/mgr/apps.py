@@ -29,6 +29,7 @@ import json
 import mimetypes
 import os
 import re
+import stat
 import time
 import urllib.error
 import urllib.request
@@ -100,6 +101,103 @@ def rename_dir(old, new):
     if os.path.exists(dst):
         raise ValueError(f"{new!r} exists already")
     os.rename(src, dst)
+
+
+PUBLISHER = "publisher"     # app.json key the manager sets: the instance that published the app
+# An agent's app never runs with the operator's session: its own opaque origin (no allow-same-origin)
+SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+PUB_MAX_FILES = 300
+PUB_MAX_BYTES = 40 * 1024 * 1024
+
+
+def publisher(name):
+    """The instance that published this app ('' = the operator's own)."""
+    try:
+        with open(os.path.join(apps_dir(), name, "app.json"), encoding="utf-8") as fh:
+            m = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    return str(m.get(PUBLISHER) or "") if isinstance(m, dict) else ""
+
+
+def _collect(dfd, prefix, out, size):
+    """Regular files under the open folder dfd -> out {rel: bytes}; no
+    symlinks are followed anywhere (O_NOFOLLOW per step), dotfiles skipped."""
+    for e in os.scandir(dfd):
+        n = e.name
+        if n.startswith(".") or not _SEG.match(n):
+            continue
+        if e.is_dir(follow_symlinks=False):
+            sub = os.open(n, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dfd)
+            try:
+                size = _collect(sub, prefix + n + "/", out, size)
+            finally:
+                os.close(sub)
+        elif e.is_file(follow_symlinks=False):
+            fd = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+            with os.fdopen(fd, "rb") as fh:
+                if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    continue
+                out[prefix + n] = fh.read(PUB_MAX_BYTES + 1 - size)
+            size += len(out[prefix + n])
+        if len(out) > PUB_MAX_FILES or size > PUB_MAX_BYTES:
+            raise ValueError(f"too big: at most {PUB_MAX_FILES} files and {PUB_MAX_BYTES >> 20} MB")
+    return size
+
+
+def publish(name, root, rel, inst):
+    """Copy the folder <root>/<rel> (an instance's workspace) to <APPS_DIR>/<name>/
+    -> {name, files, bytes, replaced}. It needs index.html and app.json; app.json
+    gets publisher=inst (such an app is served sandboxed, SANDBOX_CSP). An app of
+    the operator or of another instance is never replaced; a replaced one of
+    the same instance goes to .trash first."""
+    ad = apps_dir()
+    if not ad or not os.path.isdir(ad):
+        raise ValueError("no apps folder on this manager")
+    if not _NAME.match(name or ""):
+        raise ValueError("a name is a-z, 0-9, - and _, starting with a letter or digit, at most 41 characters")
+    dst = os.path.join(ad, name)
+    replaced = os.path.lexists(dst)
+    if replaced and publisher(name) != inst:
+        raise ValueError(f"app {name!r} exists and was not published by {inst} — pick another name")
+    segs = [s for s in (rel or "").strip("/").split("/") if s]
+    if any(not _SEG.match(s) or s.startswith(".") for s in segs):
+        raise ValueError("bad folder path")
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for s in segs:
+            nxt = os.open(s, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        files = {}
+        size = _collect(fd, "", files, 0)
+    except FileNotFoundError:
+        raise ValueError(f"no folder {rel!r} in the workspace") from None
+    except NotADirectoryError:
+        raise ValueError(f"{rel!r} is not a folder (or is a symlink)") from None
+    finally:
+        os.close(fd)
+    if "index.html" not in files or "app.json" not in files:
+        raise ValueError("the folder needs index.html and app.json ({\"title\", \"description\", \"icon\"})")
+    try:
+        m = json.loads(files["app.json"])
+    except ValueError as e:
+        raise ValueError(f"app.json: {e}") from None
+    if not isinstance(m, dict):
+        raise ValueError("app.json must be a JSON object")
+    m[PUBLISHER] = inst
+    m.pop("server", None)                       # static only: a server side (celld/do/) is the operator's
+    files["app.json"] = json.dumps(m, ensure_ascii=False, indent=2).encode()
+    tmp = os.path.join(ad, f".pub-{name}-{time.strftime('%Y%m%d-%H%M%S')}")
+    for r, data in files.items():
+        p = os.path.join(tmp, *r.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as fh:
+            fh.write(data)
+    if replaced:
+        trash(name)
+    os.rename(tmp, dst)
+    return {"name": name, "files": len(files), "bytes": size, "replaced": replaced}
 
 
 CELLD_TIMEOUT = 5

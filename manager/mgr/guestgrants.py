@@ -9,7 +9,8 @@ side, for the agent tools `apps` and `cloudflare`.
 Per instance, config key MANAGE_APPS (empty = nothing, the default):
   read   list apps and Cloudflare workers, read an app's server-side state,
          download a cfdo worker's Durable Objects
-  write  + upload to / restore from Cloudflare, rename, write app state
+  write  + publish a static app from its workspace, upload to / restore from
+         Cloudflare, rename, write app state
   full   + delete an app or a Cloudflare worker
 
 The one question asked from mgr/httpd.py — for admin-only routes and for the
@@ -28,7 +29,7 @@ _GRANTS = [
     ("read", "GET", r"/api/apps/cloudflare"),
     ("read", "GET", rf"/apps/{_NAME}/_api(/.*)?"),
     ("read", "POST", rf"/api/cfworkers/{_NAME}/export"),
-    ("write", "POST", rf"/api/apps/{_NAME}/(upload|restore|rename)"),
+    ("write", "POST", rf"/api/apps/{_NAME}/(upload|restore|rename|publish)"),
     ("write", "POST", rf"/apps/{_NAME}/_api(/.*)?"),
     ("full", "POST", rf"/api/apps/{_NAME}/delete"),
     ("full", "POST", rf"/api/cfworkers/{_NAME}/delete"),
