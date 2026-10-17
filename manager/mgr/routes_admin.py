@@ -662,10 +662,11 @@ def _rt_app_file(h):
     data, ct = got
     if data is None:
         return h._json({"error": ct}, 404)
-    if _apps.publisher(name):                   # an agent's app: sandboxed, never the operator's session
+    if _apps.publisher(name):                   # an agent's app: locked down, never the operator's session
         h.send_response(200)
         h.send_header("Content-Type", ct)
-        h.send_header("Content-Security-Policy", _apps.SANDBOX_CSP)
+        for k, v in _apps.agent_headers(name, h.headers.get("Host", "")).items():
+            h.send_header(k, v)
         h.send_header("Content-Length", str(len(data)))
         h.end_headers()
         h.wfile.write(data)

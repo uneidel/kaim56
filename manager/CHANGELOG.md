@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-17
+- Apps: an agent's app is locked down by CSP (requests only to its own folder, no frames/forms/workers) and COOP instead of a sandbox, which broke every module script.
 - Squads: "stalled" says why, per open ticket (failed turn, asks you, waits for a ticket, review, nobody assigned, ended its turn).
 - Squads: a person's message is not held back by the hourly wake limit, also not when queued behind members' wakes.
 - .gitignore: apps published by agents stay out of the repo; a new repo app needs its own `!apps/<name>/` line.

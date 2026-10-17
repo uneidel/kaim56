@@ -69,7 +69,7 @@ TEAM_DEFAULT = (
     "- architect (you, the lead): tech lead — technical decisions, reviews, merges; you write no code.\n"
     "- devops: tooling, version control, CI, third-party integrations; publishes browser apps on celld "
     "(tool apps, action publish: a folder with index.html + app.json, from the merged and pushed base branch; "
-    "static, sandboxed).\n"
+    "static: it may request only its own files; commit the build output, e.g. app/).\n"
     "- agent-ops: the squad's prompts and coordination rules; proposes member and persona changes (HR).\n"
     "- code-planner: turns the designer's work product into milestones, and milestones into coding tasks.\n"
     "- asset-planner: like the code-planner, for non-code work (docs, content, assets, data) — a wider dispatch field.\n"

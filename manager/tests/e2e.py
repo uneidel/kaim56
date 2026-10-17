@@ -8633,7 +8633,8 @@ class ManagerFunctions(unittest.TestCase):
         """An agent with MANAGE_APPS=write publishes a folder of its project's
         git repo, read from the base branch (not the work tree, not another
         branch): no symlink or dotfile is copied, app.json gets publisher and
-        source, the app is served sandboxed (CSP), an operator's app or another
+        source, the app is served locked down (CSP: requests only to its own
+        folder, no frames/forms/workers; COOP), an operator's app or another
         instance's is never replaced, its own update goes to .trash."""
         import subprocess as sp
         m = self.m
@@ -8677,11 +8678,17 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(man["source"].startswith("pp@"), man)
             self.assertIn("todo", [a["name"] for a in m._apps.load_apps()])
             m._guests.instance_by_ip = lambda ip: None
-            h = self._handler("/apps/todo/index.html", "10.0.0.9"); h._do_GET()
+            h = self._handler("/apps/todo/index.html", "10.0.0.9"); h.headers["Host"] = "localhost:8700"; h._do_GET()
             out = h.wfile.getvalue()
-            self.assertIn(b"Content-Security-Policy: sandbox allow-scripts", out); self.assertIn(b"<h1>todo</h1>", out)
+            self.assertIn(b"<h1>todo</h1>", out)
+            csp = next(l for l in out.decode().split("\r\n") if l.startswith("Content-Security-Policy: "))
+            self.assertIn("connect-src localhost:8700/apps/todo/;", csp)                 # its own folder, not /api
+            for d in ("script-src 'self'", "frame-src 'none'", "form-action 'none'", "worker-src 'none'"):
+                self.assertIn(d, csp)
+            self.assertIn(b"Cross-Origin-Opener-Policy: same-origin", out)
+            self.assertEqual(m._apps.agent_headers("todo", "evil host;")["Content-Security-Policy"].count("connect-src 'none'"), 1)
             h = self._handler("/apps/corewar/index.html", "10.0.0.9"); h._do_GET()
-            self.assertNotIn(b"Content-Security-Policy: sandbox", h.wfile.getvalue())   # the operator's own app: as before
+            self.assertNotIn(b"Content-Security-Policy", h.wfile.getvalue())             # the operator's own app: as before
             self.assertEqual(pub("corewar")[0], 400)                                  # an operator's app is never replaced
             self.assertEqual(pub("todo", who="other")[0], 400)                        # nor another instance's
             for bad in ("../x", "dist/.env", "nope", "dist/leak.txt"):

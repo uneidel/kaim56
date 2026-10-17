@@ -107,8 +107,21 @@ def rename_dir(old, new):
 
 
 PUBLISHER = "publisher"     # app.json key the manager sets: the instance that published the app
-# An agent's app never runs with the operator's session: its own opaque origin (no allow-same-origin)
-SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+_HOST = re.compile(r"^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$")
+
+
+def agent_headers(name, host):
+    """Headers of an agent's app: it runs on the manager's origin (module
+    scripts and its own storage work) but may not use the operator's session —
+    requests only to its own folder (connect-src), no frames, no forms, no
+    workers, and COOP cuts it off from any manager page it opens. (A sandbox
+    with an opaque origin broke every module script: no login on CORS loads.)"""
+    own = f"{host}/apps/{name}/" if _HOST.match(host or "") else "'none'"
+    csp = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
+           "img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; "
+           f"connect-src {own}; worker-src 'none'; frame-src 'none'; object-src 'none'; "
+           "form-action 'none'; base-uri 'none'; frame-ancestors 'none'")
+    return {"Content-Security-Policy": csp, "Cross-Origin-Opener-Policy": "same-origin"}
 PUB_MAX_FILES = 300
 PUB_MAX_BYTES = 40 * 1024 * 1024
 
@@ -127,7 +140,7 @@ def publish(name, files, inst, origin=""):
     """Write `files` {rel: bytes} (a project's git tree, mgr/projwt.tree_files)
     to <APPS_DIR>/<name>/ -> {name, files, bytes, replaced}. It needs index.html
     and app.json; app.json gets publisher=inst and source=origin (such an app
-    is served sandboxed, SANDBOX_CSP). An app of the operator or of another
+    is served locked down, agent_headers). An app of the operator or of another
     instance is never replaced; a replaced one of the same instance goes to
     .trash first."""
     ad = apps_dir()

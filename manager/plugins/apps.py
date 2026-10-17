@@ -9,7 +9,7 @@ import urllib.request
 DESC = ("Control the kAIm56 browser apps (hosted on celld, optionally moved to Cloudflare). "
         "action: list (all apps, where they run, server-side summary) | publish (a folder of your project's "
         "git repo with index.html + app.json {title, description, icon}, read from the base branch — merge and push "
-        "first — becomes the app /apps/<app>/; again = update; static only, served sandboxed: no manager API, "
+        "first — becomes the app /apps/<app>/; again = update; static only: it may request only its own files, never the manager API, "
         "no _api state) | get (an app's server-side "
         "state: path under its _api, e.g. 'changes' or 'export') | post (write to its _api: path + body) | "
         "upload (move app + state to Cloudflare) | restore (back to celld) | rename (to) | delete. "
