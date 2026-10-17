@@ -22,7 +22,8 @@
 #                      ~5 GB image + ~4.4 GB model; container on 127.0.0.1:8891;
 #                      switch it on with JEV_URL=http://127.0.0.1:8891 in Settings)
 #   --with-celld       also run celld (self-hosted Workers/Durable Objects) as the apps'
-#                      host: dev mode, loopback 127.0.0.1:9876, behind the manager login;
+#                      host: an S3 bucket on SeaweedFS (kaim56-s3), loopback 127.0.0.1:9876,
+#                      behind the manager login; the manager deploys the apps to it;
 #                      switch it on with CELLD_URL=http://127.0.0.1:9876 in Settings)
 #   --release          update the clone to the newest release tag first (what the
 #                      Update button in the web UI runs, via kaim56-update.service)
@@ -192,13 +193,10 @@ if [ "$NO_BUILD" = "0" ]; then
     echo "  Jev on 127.0.0.1:8891 — enable it in Settings: JEV_URL=http://127.0.0.1:8891, then a router policy per instance (Policy tab)"
   fi
   if [ "$WITH_CELLD" = "1" ]; then
-    # The apps' host (optional, loopback only): the celld/ project with the
-    # apps mounted as its static assets; the manager forwards /apps/ to it.
-    ( cd "$BASE/celld" && docker build -q -t kaim56-celld . && docker rm -f kaim56-celld 2>/dev/null; \
-      docker run -d --restart unless-stopped --name kaim56-celld -p 127.0.0.1:9876:9876 \
-        -v "$BASE/celld":/project -v "$BASE/apps":/project/public/apps:ro -v celld-dev:/project/.celld \
-        -w /project kaim56-celld dev /project --host 0.0.0.0 )
-    echo "  celld on 127.0.0.1:9876 — enable it in Settings: CELLD_URL=http://127.0.0.1:9876"
+    # The apps' host (optional, loopback only): celld with an S3 bucket on
+    # SeaweedFS; the manager deploys the apps to it and forwards /apps/ there.
+    bash "$BASE/celld/setup-bucket.sh" "$FC_DIR" "$BASE/celld"
+    echo "  enable it in Settings: CELLD_URL=http://127.0.0.1:9876"
   fi
 else
   say "[5/7] Builds skipped (--no-build)"

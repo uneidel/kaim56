@@ -8629,6 +8629,66 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps = old
 
+    def test_celld_bucket_deploy(self):
+        """celld with a bucket (mgr/celldeploy): nothing without ENV_FILE; with
+        it, a change deploys the Worker files plus every app (no dotfiles, no
+        .trash) through `celld deploy` in a container, once; the bucket is made
+        first with a SigV4 PUT (409 = there already); a failed deploy is retried."""
+        import http.server
+        import subprocess
+        m = self.m
+        cd = m._celldeploy
+        tmp = tempfile.mkdtemp(prefix="e2e-celld-")
+        apps, proj = os.path.join(tmp, "apps"), os.path.join(tmp, "celld")
+        os.makedirs(os.path.join(apps, "todo")); os.makedirs(os.path.join(apps, ".trash", "old"))
+        _wtext(os.path.join(apps, "todo", "index.html"), "x"); _wtext(os.path.join(apps, "todo", ".env"), "S")
+        _wtext(os.path.join(apps, ".trash", "old", "index.html"), "gone")
+        os.makedirs(os.path.join(proj, "do")); _wtext(os.path.join(proj, "do", "a.js"), "//")
+        _wtext(os.path.join(proj, "worker.js"), "//"); _wtext(os.path.join(proj, "wrangler.json"), "{}")
+        puts = []
+        class S3(http.server.BaseHTTPRequestHandler):
+            def do_PUT(self):
+                puts.append((self.path, self.headers.get("Authorization", "")))
+                self.send_response(200 if len(puts) == 1 else 409); self.end_headers()
+            def log_message(self, *a): pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), S3)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        env = os.path.join(tmp, "celld.env")
+        runs = []
+        def fake_run(cmd, **kw):
+            staged = cmd[cmd.index("-v") + 1].split(":")[0]
+            runs.append((cmd, sorted(os.path.relpath(p, staged) for p in cd._walk(staged, skip_dot=False))))
+            ok = len(runs) != 2
+            return subprocess.CompletedProcess(cmd, 0 if ok else 1, "Current Version ID: v%d\n" % len(runs), "" if ok else "boom")
+        old = (m._settings.SITE.get("APPS_DIR"), cd.ENV_FILE, cd.subprocess.run, cd.MIN_INTERVAL, dict(cd._state), m._paths.BASE)
+        try:
+            m._settings.SITE["APPS_DIR"] = apps
+            m._paths.BASE = tmp
+            cd.ENV_FILE, cd.subprocess.run, cd.MIN_INTERVAL = env, fake_run, 0
+            cd._state.update(fingerprint="", checked=0.0)
+            self.assertIsNone(cd.sync()); self.assertEqual(cd.status()["mode"], "dev")      # dev mode: nothing
+            _wtext(env, f"AWS_ACCESS_KEY_ID=k\nAWS_SECRET_ACCESS_KEY=s\nCELLD_BUCKET=s3://celld\n"
+                        f"S3_HOST_ENDPOINT=http://127.0.0.1:{srv.server_port}\n")
+            r = cd.sync()
+            self.assertEqual((r["ok"], r["version"]), (True, "v1"))
+            cmd, files = runs[0]
+            self.assertEqual(cmd[-3:], [cd.IMAGE, "deploy", "/project"]); self.assertIn("--env-file", cmd)
+            self.assertEqual(files, ["do/a.js", "public/apps/todo/index.html", "worker.js", "wrangler.json"])
+            self.assertEqual(puts[0][0], "/celld"); self.assertTrue(puts[0][1].startswith("AWS4-HMAC-SHA256 Credential=k/"))
+            self.assertIsNone(cd.sync())                                                    # nothing changed
+            _wtext(os.path.join(apps, "todo", "index.html"), "changed")
+            os.utime(os.path.join(apps, "todo", "index.html"), ns=(1, 1))
+            r = cd.sync()
+            self.assertEqual((r["ok"], r["error"]), (False, "Current Version ID: v2\nboom"))  # 409 on the bucket is fine
+            self.assertEqual((cd.status()["mode"], cd.status()["last"]["ok"]), ("bucket", False))
+            self.assertEqual(cd.sync()["version"], "v3")                                     # failed: tried again
+            self.assertEqual(len(runs), 3)
+            self.assertEqual(os.listdir(os.path.join(tmp, "run")), [])                      # staging cleaned up
+        finally:
+            srv.shutdown(); srv.server_close()
+            (m._settings.SITE["APPS_DIR"], cd.ENV_FILE, cd.subprocess.run, cd.MIN_INTERVAL, st, m._paths.BASE) = old
+            cd._state.clear(); cd._state.update(st)
+
     def test_apps_publish_from_project_git(self):
         """An agent with MANAGE_APPS=write publishes a folder of its project's
         git repo, read from the base branch (not the work tree, not another

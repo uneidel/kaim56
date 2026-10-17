@@ -32,6 +32,7 @@ else lives in mgr/, one concern per module:
     hitlq         human in the loop: approvals, questions, reviews that wait for the operator
     router        model router: per-turn model choice via Jev (opt-in per instance)
     jevsetup      Jev suggests persona, skills and model tier for a new instance (only a suggestion)
+    celldeploy    celld with a bucket: deploys the apps and the Worker to S3
     cloud         apps to Cloudflare and back, the app tokens
     cfapi         the Cloudflare Workers API (cfdo's upload path in Python)
     routes_guest  every HTTP route a VM may call
@@ -74,6 +75,7 @@ from mgr import checkout as _checkout        # noqa: F401
 from mgr import cfapi as _cfapi              # noqa: F401
 from mgr import chats as _chats              # noqa: F401
 from mgr import claudeaccts as _claudeaccts  # noqa: F401
+from mgr import celldeploy as _celldeploy    # noqa: F401
 from mgr import cloud as _cloud              # noqa: F401
 from mgr import decision as _decision        # noqa: F401
 from mgr import gateway as _gateway

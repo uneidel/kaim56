@@ -23,6 +23,7 @@ from mgr import about as _about
 from mgr import aicheck as _aicheck
 from mgr import apps as _apps
 from mgr import cfapi as _cfapi
+from mgr import celldeploy as _celldeploy
 from mgr import cloud as _cloud
 from mgr import wsfiles as _wsfiles
 from mgr import audit as _audit
@@ -552,7 +553,8 @@ def _rt_apps(h):
         _cloud.creds(); cf_ready = True
     except ValueError:
         cf_ready = False
-    return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager", "celld": st,
+    return h._json({"apps": apps, "hosting": "celld" if st["configured"] else "manager",
+                    "celld": {**st, "deploy": _celldeploy.status()},
                     "cloudflare": {"configured": cf_ready}})
 
 
@@ -576,6 +578,7 @@ def _rt_app_cloud(h):
             res = _cloud.remove(name) if op == "delete" else _cloud.rename(name, str((h._body() or {}).get("to") or "").strip())
         except (ValueError, OSError, _cfapi.CFError) as e:
             return h._json({"ok": False, "error": str(e)[:400]}, 400)
+        _celldeploy.sync_bg()                   # celld with a bucket: the apps change there too
         return h._json({"ok": True, **res})
     ok, job = _cloud.start(name, op)
     return h._json({"ok": ok, **job}, 200 if ok else 400)
@@ -609,6 +612,7 @@ def _app_publish(h, name):
         return h._json({"ok": False, "error": f"{base}:{path or '.'} — {e}"[:400]}, 400)
     except (ValueError, OSError) as e:
         return h._json({"ok": False, "error": str(e)[:400]}, 400)
+    _celldeploy.sync_bg()
     _audit.audit_append(inst["name"], "app_publish", f"{name} <- {proj['name']}@{sha[:12]}:{src or '.'}", True,
                         result=f"{res['files']} files")
     return h._json({"ok": True, "url": f"/apps/{name}/", "commit": sha, "branch": base, **res})

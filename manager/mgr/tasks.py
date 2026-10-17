@@ -19,6 +19,7 @@ import uuid
 
 from mgr import auth as _auth
 from mgr import chats as _chats
+from mgr import celldeploy as _celldeploy
 from mgr import claudeaccts as _claudeaccts
 from mgr import decision as _decision
 from mgr import guestchat as _guestchat
@@ -735,6 +736,10 @@ def _task_worker():
             except Exception as e:
                 _util._wlog(f"toolchain-sweep failed: {e!r}")
             _claudeaccts.poll_usage_bg()   # usage gauges, every 5 min, in a thread (never raises)
+            try:
+                _celldeploy.sync()         # celld with a bucket: deploy the apps when they changed
+            except Exception as e:
+                _util._wlog(f"celld-deploy failed: {e!r}")
             try:
                 _squads.deliver_queued()   # rate/budget-held squad wakes, once there is room
             except Exception as e:
