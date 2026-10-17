@@ -1828,7 +1828,7 @@ function skBoardRender(d,b,hq){
       `<span class=kb-nm><b>${escT(m.name)}</b><small>${escT([m.role,a.template].filter(Boolean).join(' · '))}</small></span></div>`+
       `<div class=kb-now role=cell><span class=kb-l1>${l1}</span><span class=kb-l2>${l2}</span></div><div role=cell>${strip(a)}</div></div>`}).join('');
   const nf=+act.failed_members||0, nb=ts.filter(t=>t.status==='blocked').length, nq=hq.length, stall=act.stalled_min!=null&&act.stalled_min!==undefined;
-  const prob=nf||nb||nq||stall?`<span class=kb-ptx>⚠ ${[stall?`<b>stalled ${+act.stalled_min} min</b>`:'',nf?`${nf} failed turn${nf>1?'s':''}`:'',nb?`${nb} blocked`:'',nq?`${nq} waiting for you`:''].filter(Boolean).join(' · ')}</span>`+
+  const prob=nf||nb||nq||stall?`<span class=kb-ptx>⚠ ${[stall?`<b>stalled ${+act.stalled_min} min</b>`+(act.stalled_why?` — ${esc(act.stalled_why)}`:''):'',nf?`${nf} failed turn${nf>1?'s':''}`:'',nb?`${nb} blocked`:'',nq?`${nq} waiting for you`:''].filter(Boolean).join(' · ')}</span>`+
     (nf?`<button class="btn btn-ghost btn-sm" onclick="skRetryTurns('')">Retry failed turns (${nf})</button>`+
       `<button class="btn btn-ghost btn-sm" onclick=skDismissTurns() title="Drop the failed turns: no retry, the warning goes">Dismiss</button>`:'')+
     (stall?`<button class="btn btn-ghost btn-sm" onclick=skNudge() title="Asks the lead to review the board and wake who can continue">Nudge lead</button>`:''):'';

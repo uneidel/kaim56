@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-17
+- Squads: "stalled" says why, per open ticket (failed turn, asks you, waits for a ticket, review, nobody assigned, ended its turn).
 - Squads: a person's message is not held back by the hourly wake limit, also not when queued behind members' wakes.
 - .gitignore: apps published by agents stay out of the repo; a new repo app needs its own `!apps/<name>/` line.
 - Apps: agents publish a static app from their project's git repo, base branch (tool apps, action publish, MANAGE_APPS=write), served sandboxed; a squad's devops member gets that grant.

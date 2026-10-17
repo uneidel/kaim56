@@ -5712,7 +5712,10 @@ class ManagerFunctions(unittest.TestCase):
             b = self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["members"]["b"]
             self.assertEqual((b["state"], b["last_turn"]["error"]), ("work", "Not logged in · Please run /login"))
             m._store.load_tasks = lambda: []
-            self.assertEqual(self._sq("/api/projects/sq/squad/board", L)[1]["activity"]["stalled_min"], 10)
+            act = self._sq("/api/projects/sq/squad/board", L)[1]["activity"]
+            self.assertEqual(act["stalled_min"], 10)
+            self.assertEqual(act["stalled_why"], "#1 T1 (open): e ended its turn without finishing it; "
+                                                 "#2 T2 (open): waits for T1 (open)")              # why, per open ticket
             # retry: paused -> refused; running -> re-delivered at depth 0; then nothing left
             self._sq("/api/projects/sq/squad", L, {"paused": True})
             st, d = self._sq("/api/projects/sq/squad/retry", L, {})

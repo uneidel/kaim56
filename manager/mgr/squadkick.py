@@ -673,5 +673,38 @@ def activity(proj, now=None):
     s = _squads.settings(proj)
     idle = s["approved"] and not s["paused"] and not ws and not queued and any(t["status"] != "done" for t in tix)
     ended = max((x["ts"] for x in last.values()), default=0)
+    stalled = idle and ended
     return {"members": out, "failed_members": sum(1 for a in out.values() if a["state"] == "err"),
-            "stalled_min": max(0, (now - ended) // 60) if idle and ended else None, "queued": queued}
+            "stalled_min": max(0, (now - ended) // 60) if stalled else None,
+            "stalled_why": _stall_why(tix, out, st) if stalled else "", "queued": queued}
+
+
+STALL_TICKETS = 3
+
+
+def _stall_why(tix, out, st):
+    """Why nobody works although tickets are open: the holdup of each open ticket (a few)."""
+    left = [t for t in tix if t["status"] != "done"]
+    why = []
+    for t in left[:STALL_TICKETS]:
+        who = t.get("assignee") or ""
+        a = out.get(who)
+        dep = next((d for d in t.get("depends_on") or [] if st.get(d) != "done"), "")
+        if t["status"] == "blocked":
+            r = "blocked"
+        elif t["status"] == "review":
+            r = "waits for the lead's review"
+        elif not who:
+            r = "nobody assigned"
+        elif a is None:
+            r = f"{who} is not a member"
+        elif dep:
+            r = f"waits for {dep} ({st.get(dep, 'missing')})"
+        elif a["state"] == "err":
+            r = f"{who}'s last turn failed: {a['reason']}"
+        elif a["state"] == "ask":
+            r = f"{who} asks you: {a['reason']}"
+        else:
+            r = f"{who} ended its turn without finishing it"
+        why.append(f"#{t['id']} {t['key']} ({t['status']}): {r}")
+    return "; ".join(why) + (f"; +{len(left) - STALL_TICKETS} more" if len(left) > STALL_TICKETS else "")
