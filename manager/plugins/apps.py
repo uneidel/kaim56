@@ -7,9 +7,10 @@ import urllib.error
 import urllib.request
 
 DESC = ("Control the kAIm56 browser apps (hosted on celld, optionally moved to Cloudflare). "
-        "action: list (all apps, where they run, server-side summary) | publish (a folder in your workspace "
-        "with index.html + app.json {title, description, icon} becomes the app /apps/<app>/; again = update; "
-        "static only, served sandboxed: no manager API, no _api state) | get (an app's server-side "
+        "action: list (all apps, where they run, server-side summary) | publish (a folder of your project's "
+        "git repo with index.html + app.json {title, description, icon}, read from the base branch — merge and push "
+        "first — becomes the app /apps/<app>/; again = update; static only, served sandboxed: no manager API, "
+        "no _api state) | get (an app's server-side "
         "state: path under its _api, e.g. 'changes' or 'export') | post (write to its _api: path + body) | "
         "upload (move app + state to Cloudflare) | restore (back to celld) | rename (to) | delete. "
         "Needs MANAGE_APPS on this instance: read (list/get), write (+publish/post/upload/restore/rename), full (+delete).")
@@ -21,7 +22,8 @@ PARAMS = {
     "path": {"type": "string", "description": "get/post: path under the app's _api, e.g. 'changes'"},
     "body": {"type": "object", "description": "post: JSON body"},
     "to": {"type": "string", "description": "rename: the new name"},
-    "src": {"type": "string", "description": "publish: the app's folder in your workspace, e.g. 'dist' or 'apps/todo'"},
+    "src": {"type": "string", "description": "publish: the app's folder in the project repo, e.g. 'dist' or 'apps/todo'"},
+    "project": {"type": "string", "description": "publish: the project, when you are in more than one"},
 }
 REQUIRED = ["action"]
 
@@ -58,7 +60,7 @@ def _call(method, path, body=None, timeout=60):
         return raw, ""
 
 
-def run(action, app="", path="", body=None, to="", src="", **_):
+def run(action, app="", path="", body=None, to="", src="", project="", **_):
     if action != "list" and not app:
         return "error: 'app' is required"
     if action == "list":
@@ -76,13 +78,12 @@ def run(action, app="", path="", body=None, to="", src="", **_):
             lines.append(f"- {a['name']} ({a.get('title', '')}): {where}{run_} {url}" + (f" — {side}" if side else ""))
         return "\n".join(lines) or "no apps"
     if action == "publish":
-        rel = src.split("/workspace/", 1)[-1].strip("/") if "/workspace/" in src else src.strip("/")
-        d, err = _call("POST", f"/api/apps/{app}/publish", {"src": rel})
+        d, err = _call("POST", f"/api/apps/{app}/publish", {"src": src.strip("/"), "project": project})
         if err:
             return "error: " + err
         if isinstance(d, dict) and d.get("ok") is False:
             return "error: " + str(d.get("error", d))
-        return (f"published {app}: {d.get('files')} files at {d.get('url')}"
+        return (f"published {app} from {d.get('branch')} {str(d.get('commit'))[:12]}: {d.get('files')} files at {d.get('url')}"
                 + (" (replaced the previous version)" if d.get("replaced") else ""))
     if action in ("get", "post"):
         p = "/apps/" + app + "/_api/" + path.lstrip("/")

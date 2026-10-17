@@ -9,7 +9,7 @@ side, for the agent tools `apps` and `cloudflare`.
 Per instance, config key MANAGE_APPS (empty = nothing, the default):
   read   list apps and Cloudflare workers, read an app's server-side state,
          download a cfdo worker's Durable Objects
-  write  + publish a static app from its workspace, upload to / restore from
+  write  + publish a static app from its project's git repo, upload to / restore from
          Cloudflare, rename, write app state
   full   + delete an app or a Cloudflare worker
 

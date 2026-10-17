@@ -165,6 +165,26 @@ def _sha(repo, ref):
     return git(repo, ["rev-parse", "--verify", "-q", f"{ref}^{{commit}}"]).strip()
 
 
+def tree_files(repo, rev, path, max_files, max_bytes):
+    """{rel: bytes} of the regular files under rev:path, read from git objects
+    (never a checkout): no symlinks, no submodules, no dot segments."""
+    out = _git_bytes(repo, ["ls-tree", "-r", "-l", "-z", f"{rev}:{path}" if path else rev])
+    shas, total = {}, 0
+    for ent in out.split(b"\0"):
+        meta, _, rel = ent.partition(b"\t")
+        if not rel:
+            continue
+        mode, typ, sha, size = meta.split()
+        rel = rel.decode("utf-8", "replace")
+        if typ != b"blob" or mode not in (b"100644", b"100755") or any(x.startswith(".") for x in rel.split("/")):
+            continue
+        total += int(size)
+        if len(shas) >= max_files or total > max_bytes:
+            raise GitError(f"too big: at most {max_files} files and {max_bytes >> 20} MB")
+        shas[rel] = sha.decode()
+    return {rel: _git_bytes(repo, ["cat-file", "blob", sha]) for rel, sha in shas.items()}
+
+
 # ---- a writer's folder -----------------------------------------------------
 def _fill(repo, rev, subdir, dst):
     """Extract rev[:subdir] into dst as the guest."""

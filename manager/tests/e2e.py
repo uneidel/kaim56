@@ -8623,43 +8623,52 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             m._guests.instance_by_ip, m._apps.celld_status, m._apps.load_apps = old
 
-    def test_apps_publish_from_workspace(self):
-        """An agent with MANAGE_APPS=write publishes a workspace folder as a
-        static app: no symlink or dotfile is copied, app.json gets its
-        publisher, the app is served sandboxed (CSP), an operator's app or
-        another instance's is never replaced, its own update goes to .trash."""
+    def test_apps_publish_from_project_git(self):
+        """An agent with MANAGE_APPS=write publishes a folder of its project's
+        git repo, read from the base branch (not the work tree, not another
+        branch): no symlink or dotfile is copied, app.json gets publisher and
+        source, the app is served sandboxed (CSP), an operator's app or another
+        instance's is never replaced, its own update goes to .trash."""
+        import subprocess as sp
         m = self.m
-        apps, ws = tempfile.mkdtemp(prefix="e2e-pub-apps-"), tempfile.mkdtemp(prefix="e2e-pub-ws-")
+        tmp = tempfile.mkdtemp(prefix="e2e-pub-")
+        apps, repo = os.path.join(tmp, "apps"), os.path.join(tmp, "repo")
         os.makedirs(os.path.join(apps, "corewar")); _wtext(os.path.join(apps, "corewar", "app.json"), "{}")
         _wtext(os.path.join(apps, "corewar", "index.html"), "op")
-        src = os.path.join(ws, "dist"); os.makedirs(os.path.join(src, "js"))
+        g = lambda *a: sp.run(["git", "-C", repo, *a], check=True, capture_output=True, text=True).stdout
+        src = os.path.join(repo, "dist"); os.makedirs(os.path.join(src, "js"))
+        g("init", "-q", "-b", "main"); g("config", "user.name", "op"); g("config", "user.email", "op@example.com")
         _wtext(os.path.join(src, "index.html"), "<h1>todo</h1>")
         _wtext(os.path.join(src, "app.json"), '{"title": "Todo", "server": true}')
         _wtext(os.path.join(src, "js", "a.js"), "1"); _wtext(os.path.join(src, ".env"), "SECRET")
-        _wtext(os.path.join(ws, "secret.txt"), "SECRET")
-        os.symlink(os.path.join(ws, "secret.txt"), os.path.join(src, "leak.txt"))
-        os.symlink(ws, os.path.join(src, "up"))
+        _wtext(os.path.join(repo, "secret.txt"), "SECRET")
+        os.symlink("../secret.txt", os.path.join(src, "leak.txt"))
+        g("add", "-A"); g("commit", "-q", "-m", "app")
+        _wtext(os.path.join(src, "index.html"), "uncommitted")                       # the work tree is not published
+        proj = {"name": "pp", "base": "main", "source": {"type": "host", "path": repo}, "members": {}}
         inst = lambda n, lv: {"name": n, "config": {"MANAGE_APPS": lv}}
-        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, m._guests.instance_by_ip, m._mounts.workspace_dir,
-               m._audit.audit_append)
+        old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, m._guests.instance_by_ip,
+               m._projects.memberships, m._audit.audit_append)
         try:
             m._audit.audit_append = lambda *a, **k: None
             m._settings.SITE["APPS_DIR"] = apps
             m._settings.load_settings = lambda: {}
-            m._mounts.workspace_dir = lambda i: ws
+            m._projects.memberships = lambda n: [(proj, {"role": "writer"})] if n != "loner" else []
             def pub(name, who="dev", lv="write", rel="dist"):
                 m._guests.instance_by_ip = lambda ip: inst(who, lv)
                 h = self._post_handler(f"/api/apps/{name}/publish", "172.30.9.2", json.dumps({"src": rel}).encode()); h._do_POST()
                 return self._status(h), h.wfile.getvalue()
             self.assertEqual(pub("todo", lv="read")[0], 403)                          # read may not publish
+            self.assertEqual(pub("todo", who="loner")[0], 400)                        # no project, no publish
             st, body = pub("todo")
             self.assertEqual(st, 200, body)
             got = sorted(os.path.relpath(os.path.join(d, f), os.path.join(apps, "todo"))
                          for d, _, fs in os.walk(os.path.join(apps, "todo")) for f in fs)
-            self.assertEqual(got, ["app.json", "index.html", "js/a.js"])              # no .env, no symlink, nothing above
+            self.assertEqual(got, ["app.json", "index.html", "js/a.js"])              # no .env, no symlink
             with open(os.path.join(apps, "todo", "app.json")) as fh:
                 man = json.load(fh)
             self.assertEqual((man["publisher"], man["title"], "server" in man), ("dev", "Todo", False))
+            self.assertTrue(man["source"].startswith("pp@"), man)
             self.assertIn("todo", [a["name"] for a in m._apps.load_apps()])
             m._guests.instance_by_ip = lambda ip: None
             h = self._handler("/apps/todo/index.html", "10.0.0.9"); h._do_GET()
@@ -8669,17 +8678,21 @@ class ManagerFunctions(unittest.TestCase):
             self.assertNotIn(b"Content-Security-Policy: sandbox", h.wfile.getvalue())   # the operator's own app: as before
             self.assertEqual(pub("corewar")[0], 400)                                  # an operator's app is never replaced
             self.assertEqual(pub("todo", who="other")[0], 400)                        # nor another instance's
-            for bad in ("../", "up", "dist/.env", "nope"):
+            for bad in ("../x", "dist/.env", "nope", "dist/leak.txt"):
                 self.assertEqual(pub("x" + str(len(bad)), rel=bad)[0], 400, bad)
-            _wtext(os.path.join(src, "index.html"), "v2")
+            g("checkout", "-q", "-b", "feature"); g("commit", "-q", "-am", "on a branch")
+            self.assertEqual(pub("todo")[0], 200)
+            with open(os.path.join(apps, "todo", "index.html")) as fh:
+                self.assertEqual(fh.read(), "<h1>todo</h1>")                          # only the base branch counts
+            g("checkout", "-q", "main"); g("merge", "-q", "feature")
             st, body = pub("todo")
             self.assertEqual(st, 200); self.assertIn(b'"replaced": true', body)
             with open(os.path.join(apps, "todo", "index.html")) as fh:
-                self.assertEqual(fh.read(), "v2")
-            self.assertEqual(len(os.listdir(os.path.join(apps, ".trash"))), 1)        # v1 kept, recoverable
+                self.assertEqual(fh.read(), "uncommitted")
+            self.assertEqual(len(os.listdir(os.path.join(apps, ".trash"))), 2)        # old versions kept, recoverable
         finally:
-            (m._settings.SITE["APPS_DIR"], m._settings.load_settings, m._guests.instance_by_ip, m._mounts.workspace_dir,
-             m._audit.audit_append) = old
+            (m._settings.SITE["APPS_DIR"], m._settings.load_settings, m._guests.instance_by_ip,
+             m._projects.memberships, m._audit.audit_append) = old
 
     def test_squad_devops_member_may_publish_apps(self):
         """A squad member named or meant for devops gets MANAGE_APPS=write (and

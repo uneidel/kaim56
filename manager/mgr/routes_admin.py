@@ -52,6 +52,7 @@ from mgr import personas as _personas
 from mgr import plugins as _plugins
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import projwt as _projwt
 from mgr import squadgate as _squadgate
 from mgr import squadreq as _squadreq
 from mgr import squadkick as _squadkick
@@ -566,7 +567,7 @@ def _rt_apps_cloudflare(h):
 def _rt_app_cloud(h):
     # POST /api/apps/<name>/upload | /restore — to Cloudflare and back (mgr/cloud.py), in the background
     # POST /api/apps/<name>/delete | /rename {"to": new} — right away
-    # POST /api/apps/<name>/publish {"src": workspace folder[, "instance"]} — an agent's static app
+    # POST /api/apps/<name>/publish {"src": folder in the project repo[, "project", "instance"]} — an agent's static app
     name, _, op = h.path.split("?", 1)[0][len("/api/apps/"):].strip("/").partition("/")
     if op == "publish":
         return _app_publish(h, name)
@@ -581,21 +582,36 @@ def _rt_app_cloud(h):
 
 
 def _app_publish(h, name):
-    # the caller's own workspace (a guest with MANAGE_APPS=write); the operator names the instance
+    # from the base branch of the caller's project repo (what was merged and pushed) —
+    # the caller a guest with MANAGE_APPS=write; the operator names the instance
     b = h._body() or {}
     inst = _guests.instance_by_ip(h.client_address[0]) or next(
         (i for i in _instances.load_instances() if i["name"] == str(b.get("instance") or "")), None)
     if inst is None:
         return h._json({"ok": False, "error": "unknown instance"}, 400)
+    projs = [p for p, _ in _projects.memberships(inst["name"]) if (p.get("source") or {}).get("type") == "host"
+             and p["name"] == str(b.get("project") or p["name"])]
+    if len(projs) != 1:
+        return h._json({"ok": False, "error": f"{inst['name']} is in {len(projs)} git projects — name one (project)"}, 400)
+    proj = projs[0]
+    src = str(b.get("src") or "").strip("/")
+    if any(not x or x.startswith(".") for x in src.split("/")) and src:
+        return h._json({"ok": False, "error": "bad folder path"}, 400)
     if _cloud.where(name)[0] == "cloud":
         return h._json({"ok": False, "error": f"{name} runs on Cloudflare — restore it first"}, 409)
+    repo, base = proj["source"]["path"], proj.get("base") or "main"
+    path = "/".join(x for x in (proj["source"].get("subdir", "").strip("/"), src) if x)
     try:
-        res = _apps.publish(name, os.path.realpath(_mounts.workspace_dir(inst)), str(b.get("src") or ""), inst["name"])
+        sha = _projwt.git(repo, ["rev-parse", "--verify", "-q", f"refs/heads/{base}^{{commit}}"]).strip()
+        files = _projwt.tree_files(repo, sha, path, _apps.PUB_MAX_FILES, _apps.PUB_MAX_BYTES)
+        res = _apps.publish(name, files, inst["name"], f"{proj['name']}@{sha[:12]}:{src or '.'}")
+    except _projwt.GitError as e:
+        return h._json({"ok": False, "error": f"{base}:{path or '.'} — {e}"[:400]}, 400)
     except (ValueError, OSError) as e:
         return h._json({"ok": False, "error": str(e)[:400]}, 400)
-    _audit.audit_append(inst["name"], "app_publish", f"{name} <- {str(b.get('src') or '')[:200]}", True,
+    _audit.audit_append(inst["name"], "app_publish", f"{name} <- {proj['name']}@{sha[:12]}:{src or '.'}", True,
                         result=f"{res['files']} files")
-    return h._json({"ok": True, "url": f"/apps/{name}/", **res})
+    return h._json({"ok": True, "url": f"/apps/{name}/", "commit": sha, "branch": base, **res})
 
 
 @_routes.ROUTER.post("/api/cfworkers/", prefix=True, admin=True)
