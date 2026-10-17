@@ -4914,11 +4914,14 @@ class ManagerFunctions(unittest.TestCase):
         p = lambda: m._projects.get("sq")
         try:
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 1})
-            a, _ = sq.post(p(), "user:ulrich", ["b"], "one")
-            b, _ = sq.post(p(), "user:ulrich", ["b"], "two")
-            c, _ = sq.post(p(), "user:ulrich", ["d"], "three")
+            a, _ = sq.post(p(), "a", ["b"], "one")
+            b, _ = sq.post(p(), "a", ["b"], "two")
+            c, _ = sq.post(p(), "a", ["d"], "three")
             self.assertEqual((a["queued"], b["queued"], c["queued"]), (False, True, True))
             self.assertTrue(b["blocked"].startswith("rate:"))
+            n0 = len(woke)
+            op, _ = sq.post(p(), "user:ulrich", ["d"], "now")                    # a person is not held by the rate
+            self.assertEqual((op["queued"], op["blocked"], [w[0] for w in woke[n0:]]), (False, "", ["d"]))
             self.assertEqual(sq.queue_info("sq")["count"], 2)
             self.assertEqual(sq.deliver_queued(), 0)                              # still full
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10})
@@ -4930,7 +4933,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(sq.queue_info("sq")["count"], 0)
             # another reason ends the wait
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 0})
-            d, _ = sq.post(p(), "user:ulrich", ["b"], "four")
+            d, _ = sq.post(p(), "a", ["b"], "four")
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10, "enabled": False})
             self.assertEqual(sq.deliver_queued(), 0)
             self.assertEqual({x["id"]: x for x in sq.read("sq")}[d["id"]]["blocked"], "squad disabled")
@@ -4953,7 +4956,7 @@ class ManagerFunctions(unittest.TestCase):
 
     def test_squad_queued_member_replies_expire(self):
         """A member's throttled reply is dropped once its addressee posted since
-        or after QUEUE_TTL; the operator's queued message still goes out (live
+        or after QUEUE_TTL; a queued message to someone else still goes out (live
         2026-10-13: late acks woke members and fed an ack loop)."""
         woke, tasks, undo = self._squad_env()
         m = self.m
@@ -4963,7 +4966,7 @@ class ManagerFunctions(unittest.TestCase):
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 1})
             x, _ = sq.post(p(), "a", ["b"], "go")
             r1, _ = sq.post(p(), "b", [], "ok, holding", reply_to=x["id"])
-            op, _ = sq.post(p(), "user:ulrich", ["d"], "please look")
+            op, _ = sq.post(p(), "a", ["d"], "please look")
             self.assertEqual((r1["to"], r1["queued"], op["queued"]), (["a"], True, True))
             sq.post(p(), "a", ["user"], "status: waiting")                     # a posted since r1
             m._projects.set_squad("sq", {**sq.settings(p()), "max_wakes_per_hour": 10})

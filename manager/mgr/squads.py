@@ -366,7 +366,10 @@ def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}\n{WORK}"
 
 
-def _guard(proj, targets, depth, now):
+def _guard(proj, targets, depth, now, operator=False):
+    """'' or why the targets may not be woken. `operator`: a person wrote it —
+    the hourly wake limit (against members waking each other in a loop) does
+    not hold them back; pause, approval, depth and the token budget do."""
     s = settings(proj)
     n = len(targets)
     if not s["enabled"]:
@@ -383,7 +386,7 @@ def _guard(proj, targets, depth, now):
     with _db() as c:
         rows = c.execute("SELECT woke FROM squad_msg WHERE project=? AND ts>?", (proj["name"], now - 3600)).fetchall()
     done = sum(len(json.loads(r[0] or "{}")) for r in rows)
-    if done + n > s["max_wakes_per_hour"]:
+    if done + n > s["max_wakes_per_hour"] and not operator:
         return f"rate: {done} wakes in the last hour, max {s['max_wakes_per_hour']}"
     used = tokens_today(proj)
     if used >= s["daily_token_budget"]:
@@ -455,7 +458,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     targets = [] if not wake or kind in ("answer", "hitl", "turn", "note") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
-        blocked = _guard(proj, targets, depth, now) if targets else ""
+        blocked = _guard(proj, targets, depth, now, str(sender).startswith("user:")) if targets else ""
         with _db() as c:
             mid = c.execute("INSERT INTO squad_msg(ts,project,sender,rcpt,text,reply_to,kind,depth,woke,blocked) "
                             "VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -508,7 +511,7 @@ def deliver_queued(now=None):
     done, stuck = 0, set()
     for row in rows:
         r = dict(zip(_COLS, row))
-        if r["project"] in stuck:
+        if r["project"] in stuck and not str(r["sender"]).startswith("user:"):   # a person's message never waits behind members'
             continue
         proj, q = _projects.get(r["project"]), json.loads(r["queued"] or "{}")
         targets = _unexpired(r, q.get("targets") or [], now)
@@ -518,7 +521,8 @@ def deliver_queued(now=None):
                           ("expired: a queued reply its addressees no longer need", r["id"]))
             continue
         with _lock:
-            why = _guard(proj, targets, r["depth"], now) if proj and targets else "project gone"
+            why = (_guard(proj, targets, r["depth"], now, str(r["sender"]).startswith("user:"))
+                   if proj and targets else "project gone")
             if why.startswith(_WAIT_REASONS):
                 with _db() as c:
                     c.execute("UPDATE squad_msg SET blocked=? WHERE id=?", (why, r["id"]))
