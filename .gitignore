@@ -102,3 +102,9 @@ agents/claude/rootfs.ext4
 
 # wake-word sidecar build (wake/build.sh, named Docker volume)
 wake/target/
+# apps agents published (apps tool, action publish) stay on the host; the repo's own apps are listed here
+apps/*
+!apps/agents/
+!apps/codeflow/
+!apps/corewar/
+!apps/jobboard/
