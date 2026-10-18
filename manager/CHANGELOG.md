@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-18
+- Squads board: columns end at 1000px and scroll (Done, newest first), the column header stays visible.
+
 ## 2026-10-17
 - celld runs with an S3 bucket on SeaweedFS (kaim56-s3, loopback); the manager deploys the Worker and the apps to it when they change (mgr/celldeploy.py, celld/setup-bucket.sh).
 - Apps: an agent's app is locked down by CSP (requests only to its own folder, no frames/forms/workers) and COOP instead of a sandbox, which broke every module script.
