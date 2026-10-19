@@ -323,7 +323,8 @@ main>.screen{margin-bottom:var(--space-8)}
 .obanner[hidden]{display:none}
 .obanner span{font-size:14px;flex:1;min-width:200px}
 .obanner b{color:#fff}
-.fleet{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:var(--space-4)}
+.fleet{display:flex;align-items:flex-start;gap:var(--space-4)}
+.fcol{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-4)}
 .icard{background:var(--app-card);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .icard:hover{background:var(--app-card-hover)}
 .icard[hidden]{display:none}
@@ -592,7 +593,6 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
   .navopen .navshade{display:block;position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55)}
   .npanel{left:16px;right:16px;width:auto}
   .phead h1{font-size:30px}
-  .fleet{grid-template-columns:minmax(0,1fr)}
   .kpi{padding:var(--space-4)}
   .kval{font-size:36px}
   .ic-body{padding:var(--space-4) var(--space-4) var(--space-3)}

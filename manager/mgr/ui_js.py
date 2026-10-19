@@ -989,6 +989,7 @@ document.addEventListener('keydown',e=>{
 },true);
 function fleetInit(){
   icRestore();
+  const fg=document.getElementById('fleet');if(fg&&window.ResizeObserver)new ResizeObserver(()=>fleetLayout()).observe(fg);
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
   const run=n('run')+n('old'), off=n('off'), old=n('old'), on=cards.filter(c=>c.dataset.state!=='off');
   const circ=2*Math.PI*34;
@@ -1016,6 +1017,19 @@ function fleetFilter(f){
   document.querySelectorAll('#ffilt button').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
   document.querySelectorAll('.icard').forEach(c=>{const st=c.dataset.state;
     c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'))||(!!q&&!c.textContent.toLowerCase().includes(q));});
+  fleetLayout(true);
+}
+/* Masonry: visible cards dealt left to right into fixed columns, so opening a
+   card only moves the cards below it in its own column. */
+let FLEET_CARDS=null, FLEET_N=0;
+function fleetLayout(force){
+  const g=document.getElementById('fleet');if(!g||!g.offsetWidth)return;
+  FLEET_CARDS=FLEET_CARDS||[...g.querySelectorAll('.icard')];if(!FLEET_CARDS.length)return;
+  const n=Math.max(1,Math.floor((g.offsetWidth+16)/396));
+  if(n===FLEET_N&&!force)return;FLEET_N=n;
+  const cols=[...Array(n)].map(()=>{const d=document.createElement('div');d.className='fcol';return d});
+  let i=0;FLEET_CARDS.forEach(c=>cols[c.hidden?n-1:i++%n].appendChild(c));
+  g.replaceChildren(...cols);
 }
 async function restartAll(){
   for(const c of document.querySelectorAll('.icard[data-state=old]'))

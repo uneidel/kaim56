@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-20
+- Fleet: cards in masonry columns, so opening a card no longer stretches its neighbour.
+
 ## 2026-10-19
 - Fleet: search box; New instance and an instance's Policy open as modals (shield on the card); the Policy tab is gone.
 - Decision backend (subq/local-llm) also picks a squad member's tools and model; model notes in the Models tab; router policy "pick" lets it choose the model per turn.
