@@ -122,8 +122,15 @@ document.addEventListener('DOMContentLoaded',()=>{
   const pc=document.getElementById('policycards');
   if(pc)pc.addEventListener('change',e=>{const ds=e.target&&e.target.dataset;const pt=ds&&(ds.pt||ds.pm);if(pt)POL_DIRTY.add(pt);});
 });
+/* one instance's policy in a modal (Fleet row → shield) */
+let POL_ONE='';
+function polOpen(name){POL_ONE=name; POL_DIRTY.clear(); document.getElementById('policycards').innerHTML='<span class=text-muted>…</span>';
+  document.getElementById('poldlg').style.display='grid'; loadPolicy();}
+function polClose(){
+  if(POL_DIRTY.size&&!confirm('Discard the unsaved tool / MCP changes?'))return;
+  POL_ONE=''; POL_DIRTY.clear(); document.getElementById('poldlg').style.display='none';}
 async function loadPolicy(auto){
-  if(auto&&POL_DIRTY.size)return;   // do not overwrite unsaved checkboxes
+  if(!POL_ONE||(auto&&POL_DIRTY.size))return;   // closed, or unsaved checkboxes
   let pol={instances:[]};
   try{
     pol=await (await fetch('/api/policy')).json();
@@ -131,7 +138,7 @@ async function loadPolicy(auto){
     if(!MCPS.length){try{MCPS=await (await fetch('/api/mcps')).json();}catch(e){}}
   }catch(e){document.getElementById('policycards').innerHTML='<span class=text-muted>not reachable</span>';return;}
   const tag=(on,y,n)=>`<span class="tag ${on?'tag-accent':'tag-neutral'}">${on?y:n}</span>`;
-  document.getElementById('policycards').innerHTML=(pol.instances||[]).map(p=>{
+  document.getElementById('policycards').innerHTML=(pol.instances||[]).filter(p=>p.name===POL_ONE).map(p=>{
     const toolset=new Set(p.tools||[]);
     const tools=POL_TOOLS.map(t=>
       `<label class=radio style="font-size:12.5px"><input type=checkbox data-pt="${esc(p.name)}" value="${esc(t.name)}" ${p.tools_all||toolset.has(t.name)?'checked':''}>`+
@@ -1004,10 +1011,11 @@ function fleetInit(){
   document.getElementById('obanner').hidden=!old;
 }
 function fleetFilter(f){
-  FLEET_F=f;
+  f=FLEET_F=f||FLEET_F;
+  const q=(document.getElementById('fsearch').value||'').trim().toLowerCase();
   document.querySelectorAll('#ffilt button').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
   document.querySelectorAll('.icard').forEach(c=>{const st=c.dataset.state;
-    c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'));});
+    c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'))||(!!q&&!c.textContent.toLowerCase().includes(q));});
 }
 async function restartAll(){
   for(const c of document.querySelectorAll('.icard[data-state=old]'))
@@ -1015,9 +1023,13 @@ async function restartAll(){
   location.reload();
 }
 function newInstance(){
-  document.getElementById('newform').scrollIntoView({behavior:'smooth',block:'start'});
-  document.getElementById('nm').focus({preventScroll:true});
+  document.getElementById('newdlg').style.display='grid';
+  document.getElementById('nm').focus();
 }
+function newClose(){document.getElementById('newdlg').style.display='none'}
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
+  if(document.getElementById('poldlg').style.display==='grid')polClose();
+  else if(document.getElementById('newdlg').style.display==='grid')newClose();});
 
 /* — token throughput: /api/usage-series, one area for the selection — */
 let SERIES=null, SERIES_RANGE='24h', CHART_SEL=[];
@@ -1086,7 +1098,7 @@ function showTab(t){
 /* below 860px the sidebar is a drawer */
 function navToggle(on){document.body.classList.toggle('navopen',!!on)}
 /* several pages hold an element whose id equals the hash: start a page at its top, not there */
-window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);scrollTo(0,0);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='squads'){sqClose();loadSquads()}if(t==='models'||t==='policy')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
+window.addEventListener('hashchange',()=>{const t=location.hash.slice(1);showTab(t);scrollTo(0,0);if(t==='missions')loadMissions();if(t==='projects')loadProjects();if(t==='squads'){sqClose();loadSquads()}if(t==='models')loadRouter();if(t==='apps')loadAppsPanel();if(t==='sharing'){loadKatfs();loadIroh();}});
 document.getElementById('crange').onclick=e=>{const b=e.target.closest('[data-r]');if(b)loadSeries(b.dataset.r)};
 document.getElementById('cchips').onclick=e=>{const b=e.target.closest('[data-n]');if(b)chartPick(b.dataset.n)};
 document.getElementById('ffilt').onclick=e=>{const b=e.target.closest('[data-f]');if(b)fleetFilter(b.dataset.f)};
@@ -3000,9 +3012,8 @@ window.onload=()=>{
     if(t==='tasks'&&!TK_EDIT)loadTasks();
     else if(t==='missions')loadMissions();
     else if(t==='projects'&&!PJ_EDIT)loadProjects();
-    else if(t==='policy')loadPolicy(true);
     else if(t==='resources')loadResources();
-    else if(t==='instances'){refreshUsage();loadSeries();}
+    else if(t==='instances'){refreshUsage();loadSeries();loadPolicy(true);}   /* loadPolicy: only with the modal open */
   },15000);
   document.getElementById('actdlg').onclick=e=>{if(e.target.id==='actdlg')actClose()};
   // Remember ticks without rebuilding the whole table on every click.

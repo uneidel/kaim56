@@ -19,7 +19,6 @@ HTML_TOP = """</head><body>
   <nav class=nav id=nav aria-label=Pages>
     <div class=navgrp><div class=navlbl>Agents</div>
       <a href="#instances"><span>Instances</span> <span class=navcnt id=navcnt></span></a>
-      <a href="#policy"><span>Policy</span></a>
       <a href="#resources"><span>Resources</span></a>
     </div>
     <div class=navgrp><div class=navlbl>Knowledge</div>
@@ -102,6 +101,7 @@ HTML_TOP = """</head><body>
     </div>
   </section>
   <div class=fhead><h3>Fleet</h3>
+    <input class="input fsearch" id=fsearch type=search placeholder="Search name, model, template…" aria-label="Search the fleet" oninput=fleetFilter()>
     <div class=seg id=ffilt><button data-f=all class=on>All <span></span></button><button data-f=run>Running <span></span></button>
       <button data-f=off>Stopped <span></span></button><button data-f=old>Outdated <span></span></button></div></div>
   <div class=obanner id=obanner hidden><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4M12 17h.01"></path></svg>
@@ -109,10 +109,11 @@ HTML_TOP = """</head><body>
     <button class="btn btn-primary" onclick=restartAll()>Restart all</button></div>
   <div class=fleet id=fleet>__ROWS__</div>
 
-  <div style="margin-top:44px" id=newform>
-    <h6 style="color:var(--color-accent);margin:0 0 2px">Provision</h6>
-    <h3 style="margin:0 0 18px">New instance from template</h3>
-    <div class="panel blueprint">
+  <div id=newdlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)newClose()">
+  <div class="dialog blueprint" id=newform role=dialog aria-modal=true aria-labelledby=newtitle style="width:min(960px,100%)">
+    <div style="display:flex;align-items:center;gap:10px"><div class=dialog-title id=newtitle>New instance from template</div>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=newClose() aria-label=Close>✕</button></div>
+    <div>
       
       <div class=grid2>
         <div class=field><label>Template</label><select class=input id=tpl onchange=renderParams()>__TPLS__</select></div>
@@ -151,8 +152,9 @@ HTML_TOP = """</head><body>
           <div id=toolpick style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px"></div>
         </div>
       </div>
-      <div class=panel-foot><button class="btn btn-primary" onclick=create()>Create instance</button></div>
+      <div class=panel-foot><button class="btn btn-secondary" onclick=newClose()>Cancel</button><button class="btn btn-primary" onclick=create()>Create instance</button></div>
     </div>
+  </div>
   </div>
 </section>
 
@@ -292,7 +294,7 @@ HTML_TOP = """</head><body>
   <div class="panel blueprint" style="margin-top:32px">
     <h4 style="margin:0 0 6px">Model router</h4>
     <p class=text-muted style="font-size:12.5px;margin:0 0 12px;max-width:80ch">Jev (OpenJev, a small NLI classifier) reads the first message of a turn and the key proxy
-      runs that turn on another model — only for instances where you switch a router policy on (Policy tab), only among the models your
+      runs that turn on another model — only for instances where you switch a router policy on (Policy: the shield on its Fleet card), only among the models your
       <b>running</b> instances use, and only those you give a tier here. Jev slow or down: the instance's own model, as always.</p>
     <div id=rtjev class=text-muted style="font-size:12.5px;margin-bottom:10px">…</div>
     <p class=text-muted style="font-size:12.5px;margin:0 0 12px;max-width:80ch">Policy <b>cheapest</b>: each turn gets a level (1 small talk · 2 simple question/edit · 3 code change · 4 multi-file/architecture · 5 hard reasoning)
@@ -305,10 +307,6 @@ HTML_TOP = """</head><body>
   </div>
 </section>
 
-<section class="screen" id=s-policy>
-  <p class=lede>Network, tools, secrets and MCP in one place · per instance the tools and URLs called most recently</p>
-  <div id=policycards style="display:flex;flex-direction:column;gap:18px"></div>
-</section>
 
 <section class="screen" id=s-tasks>
   <p class=lede>One message runs on one instance — once or recurring · a stopped instance is started for it</p>
@@ -1008,7 +1006,7 @@ HTML_BOTTOM = """
   is told the catalog and the proposals the operator <b>discarded</b> (with the reason), and the manager refuses a discarded name for 30 days &#8212; turned-down
   ideas are not redrawn (RRSI: condition on the edit history). Every <code>load_skill</code> is recorded with its turn (<code>skill_use</code>); the Skills tab shows per skill
   loads, how the loading turns ended and the tokens per load, and judges only from 5 loads on (<i>working</i> / <i>failing</i> / <i>unused</i> after 30 days).
-  The <b>cost rule</b>: the agent reports the fixed context at turn start (system prompt, tool schemas, playbooks, MEMORY.md, recall); the Policy tab shows it per call
+  The <b>cost rule</b>: the agent reports the fixed context at turn start (system prompt, tool schemas, playbooks, MEMORY.md, recall); the instance's Policy (Fleet card, shield) shows it per call
   and &#215; calls per day, so a block that rides along on every call has to earn its tokens.</p></div>
 
   <div class="card blueprint"><span class=card-title>Missions &#8212; multi-step autonomy</span>
@@ -1230,6 +1228,15 @@ HTML_BOTTOM = """
       <button class="btn btn-secondary" onclick=modelDlgClose()>Cancel</button>
       <button class="btn btn-primary" onclick=saveModel()>Save</button>
     </div>
+  </div>
+</div>
+
+<div id=poldlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)polClose()">
+  <div class="dialog blueprint" role=dialog aria-modal=true aria-label="Policy" style="width:min(960px,100%)">
+    <div style="display:flex;align-items:center;gap:10px"><div class=dialog-title>Policy</div>
+      <span class=text-muted style="font-size:12px">network, tools, secrets, MCP, limits</span>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=polClose() aria-label=Close>✕</button></div>
+    <div id=policycards></div>
   </div>
 </div>
 

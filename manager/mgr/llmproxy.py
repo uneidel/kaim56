@@ -96,7 +96,7 @@ def _guard_check(inst):
                     _notify.notify_add("guardrail", f"Budget reached: {name}",
                                f"{used:,} tokens today (limit {budget:,}). LLM calls "
                                f"pause until midnight — or raise the budget in the "
-                               f"Policy tab (applies at once).", link="policy")
+                               f"Policy (shield on its Fleet card; applies at once).", link="instances")
                 except Exception:
                     pass
             return False, f"budget: {used:,}/{budget:,} tokens used today"

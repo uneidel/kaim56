@@ -1796,6 +1796,8 @@ class ManagerFunctions(unittest.TestCase):
         # nor the live human-in-the-loop queue, nor its notifications (mgr/hitlq.py)
         cls.m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
         cls.m._notify.NOTIF_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-notif-"), "notifications.json")
+        # nor a real celld deploy from the live tree (publish/rename/delete fire one when celld.env exists)
+        cls.m._celldeploy.ENV_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-nocelld-"), "celld.env")
 
     def test_open_manager_warns_at_start(self):
         """Without MANAGER_PASS every request is an admin: the start says so in

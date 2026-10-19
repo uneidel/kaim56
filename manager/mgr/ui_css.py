@@ -316,6 +316,7 @@ main>.screen{margin-bottom:var(--space-8)}
 .cxl span:first-child{transform:none}.cxl span:last-child{transform:translateX(-100%)}
 .fhead{display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)}
 .fhead h3{margin:0}
+.fsearch{flex:1;min-width:160px;max-width:300px;margin-right:auto;font-size:13px;padding:6px 10px}
 .fhead .seg{background:var(--app-card)}
 .obanner{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4);
   border-radius:var(--radius-lg);background:var(--color-accent-100);color:var(--color-accent-800);flex-wrap:wrap}

@@ -55,6 +55,7 @@ IC_FILES = _SVG % (16, 16, '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2
                    'A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>')
 IC_CFG = _SVG % (16, 16, '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path>'
                  '<circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle>')
+IC_POL = _SVG % (16, 16, '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>')
 IC_DEL = _SVG % (16, 16, '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>')
 
 
@@ -115,6 +116,7 @@ def _card(inst):
              f"onclick=\"act('{name}','{'stop' if run else 'start'}')\">{'Stop' if run else 'Start'}</button>")
     acts += (f"<div class=ic-icons>"
              f"<button class='btn btn-icon' title=Activity aria-label=Activity onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>"
+             f"<button class='btn btn-icon' title=Policy aria-label=Policy onclick=\"polOpen('{name}')\">{IC_POL}</button>"
              f"<button class='btn btn-icon' title=Config aria-label=Config onclick=\"editConfig('{name}')\">{IC_CFG}</button>"
              f"<button class='btn btn-icon' title=Folders aria-label=Folders onclick=\"editMounts('{name}')\">{IC_FILES}</button>"
              f"<button class='btn btn-icon' title=Delete aria-label=Delete onclick=\"del('{name}')\">{IC_DEL}</button></div>")
@@ -139,7 +141,7 @@ def render():
     rows = "".join(_card(i) for i in _instances.load_instances())
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
-    empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — create one below</p>"
+    empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — New instance, top right</p>"
     return (PAGE.replace("__ROWS__", rows or empty)
                 .replace("__HOSTMEM__", str(_host.mem_total_mib()))
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
