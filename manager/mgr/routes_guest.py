@@ -65,13 +65,12 @@ def _rt_skills(h):
     items = _skills.load_skills()
     guest = h._guest()
     if guest is not None:                                # security skills only on opt-in (mgr/skills.py)
-        items = _skills.visible(items, _skills.security_allowed(guest))
+        items = [x for x in _skills.visible(items, _skills.security_allowed(guest)) if _skills.allowed(guest, x)]
     cat = q.get("category", [""])[0]
     if cat:
         items = [x for x in items if _skills.category(x) == cat]
-    if q.get("default", ["0"])[0] == "1":                # the standard skills (agents, each turn)
-        mine = set(_skills.of_instance(h._guest()))      # + the instance's own (config SKILLS)
-        items = [x for x in items if x.get("default") or x.get("name") in mine]
+    if q.get("default", ["0"])[0] == "1":                # the standard skills (agents, each turn); SKILLS only allows
+        items = [x for x in items if x.get("default")]
     if q.get("meta", ["0"])[0] == "1" or q.get("default", ["0"])[0] == "1":
         items = _skills.meta(items)
     return json.dumps(items, ensure_ascii=False).encode(), "application/json"
@@ -87,6 +86,8 @@ def _rt_skill(h):
     if sk and inst is not None and _skills.category(sk) == "security" and not _skills.security_allowed(inst):
         return h._json({"error": f"skill '{nm}' is a security skill — not enabled for this instance "
                                  "(operator: SECURITY_SKILLS=1 or the squad's 'Security skills')"}, 403)
+    if sk and inst is not None and not _skills.allowed(inst, sk):
+        return h._json({"error": f"skill '{nm}' is not allowed for this instance (its SKILLS) — list_skills shows the allowed ones"}, 403)
     if sk and inst is not None:
         _store.skill_use_add(inst["name"], nm, _routes._qs(h).get("turn", [""])[0])
     return ((sk.get("content", "") if sk else f"Skill '{nm}' not found").encode(),

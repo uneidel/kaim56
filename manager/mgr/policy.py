@@ -169,6 +169,8 @@ def sandbox_config(caller, sandbox):
             return {}, True, f"skill '{skill}' unknown"
         if _skills.category(sk) == "security" and not _skills.security_allowed(caller):
             return {}, True, f"skill '{skill}' is a security skill — not enabled for {caller.get('name', 'this instance') if caller else 'this instance'}"
+        if caller and not _skills.allowed(caller, sk):
+            return {}, True, f"skill '{skill}' is not in the caller's allowed skills (SKILLS)"
         body = sk.get("content", "")
         cfg["AGENT_SYSTEM"] = f"{base}\n\n[Skill: {skill}] Follow this skill for the task:\n{str(body)[:20000]}"
     elif pobj:

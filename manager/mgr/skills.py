@@ -213,6 +213,15 @@ def of_instance(inst):
     return [x.strip() for x in str(cfg.get("SKILLS") or cfg.get("SQUAD_SKILLS") or "").split(",") if x.strip()]
 
 
+def allowed(inst, sk):
+    """May this guest load `sk`? Its SKILLS is an allowlist next to the
+    standard skills; an empty SKILLS allows the whole catalog. The allowed
+    skills stay out of the prompt (only the standard ones are named each
+    turn) — the agent finds them with list_skills."""
+    mine = of_instance(inst)
+    return not mine or bool((sk or {}).get("default")) or (sk or {}).get("name") in mine
+
+
 def delete_skill(name):
     save_skills([s for s in load_skills() if s.get("name") != name])
     return f"skill '{name}' deleted"

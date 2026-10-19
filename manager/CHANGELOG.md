@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-19
+- Instance skills (SKILLS) are an allowlist (list, load, subagent) instead of being named in every turn; the prompt names the standard skills only.
+
 ## 2026-10-18
 - Squads board: columns end at 1000px and scroll (Done, newest first), the column header stays visible.
 

@@ -7153,8 +7153,9 @@ class ManagerFunctions(unittest.TestCase):
     def test_setup_suggest_route_admin_only_and_create_stores_skills(self):
         """/api/setup/suggest and /squad/suggest: admin only (no guest, no
         role user). /api/create and the config setter take only catalog
-        skills into SKILLS; a guest's /api/skills?default=1 lists its own
-        SKILLS (SQUAD_SKILLS as the fallback) next to the standard skills."""
+        skills into SKILLS. SKILLS (SQUAD_SKILLS as the fallback) is a guest's
+        allowlist next to the standard skills (list, load, subagent); ?default=1,
+        what the prompt names each turn, stays the standard skills."""
         m = self.m
         url, calls, stop = self._fake_jev()
         undo = self._jev_env(url)
@@ -7183,11 +7184,22 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(m._instances._set_config_key("g", "SKILLS", "sk1,bad").startswith("error: unknown skill(s): bad"))
             self.assertEqual(saved, [])
             self.assertTrue(m._instances._set_config_key("g", "SKILLS", "sk1, sk2").startswith("SKILLS = "))
-            for cfg, want in (({"SKILLS": "sk3"}, ["std", "sk3"]), ({"SQUAD_SKILLS": "sk4"}, ["std", "sk4"]), ({}, ["std"])):
+            all_ = ["std"] + [f"sk{i}" for i in range(12)]
+            for cfg, want in (({"SKILLS": "sk3"}, ["std", "sk3"]), ({"SQUAD_SKILLS": "sk4"}, ["std", "sk4"]), ({}, all_)):
                 g["config"] = cfg
-                for ip, names in (("172.30.9.2", want), ("127.0.0.1", ["std"])):
-                    h = self._handler("/api/skills?default=1", ip); h._do_GET()
+                for ip, q, names in (("172.30.9.2", "default=1", ["std"]), ("127.0.0.1", "default=1", ["std"]),
+                                     ("172.30.9.2", "meta=1", want), ("127.0.0.1", "meta=1", all_)):
+                    h = self._handler(f"/api/skills?{q}", ip); h._do_GET()      # SKILLS allows, the prompt names std only
                     self.assertEqual([x["name"] for x in json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])], names)
+            g["config"] = {"SKILLS": "sk3"}
+            m._store.skill_use_add, old_use = (lambda *a: None), m._store.skill_use_add
+            try:
+                for nm, code in (("sk3", 200), ("std", 200), ("sk5", 403)):
+                    h = self._handler(f"/api/skills/{nm}", "172.30.9.2"); h._do_GET()
+                    self.assertEqual(self._status(h), code, nm)
+            finally:
+                m._store.skill_use_add = old_use
+            self.assertIn("not in the caller's allowed skills", m._policy.sandbox_config(g, {"skill": "sk5"})[2])
         finally:
             (m._guests.instance_by_ip, m._instances.create_instance, m._instances.load_instances,
              m._instances.save_instance) = old
