@@ -495,7 +495,8 @@ def _rt_router(h):
             health = {"ok": False, "error": repr(e)[:200]}
     conf = _router.load()
     return h._json({"jev": health, "url": _router.jev_url(), "tiers": conf["tiers"], "tier_names": list(_router.TIERS),
-                    "levels": conf["levels"], "tier_level": _router.TIER_LEVEL, "ladder": _router.ladder(conf, True),
+                    "levels": conf["levels"], "notes": conf["notes"], "tier_level": _router.TIER_LEVEL,
+                    "ladder": _router.ladder(conf, True),
                     "policies": sorted(conf["policies"]), "candidates": _router.candidates(),
                     "recent": _store.routes_read(limit=int((_routes._qs(h).get("limit", ["30"])[0]) or 30))})
 
@@ -525,6 +526,12 @@ def _rt_router_tiers(h):
 def _rt_router_levels(h):
     # {"levels": {"backend/model": 1..5}} — replaces the ladder levels (cost router).
     return h._json({"ok": True, "levels": _router.save_levels((h._body() or {}).get("levels") or {})})
+
+
+@_routes.ROUTER.post("/api/router/notes", admin=True)
+def _rt_router_notes(h):
+    # {"notes": {"backend/model": text}} — replaces the model notes the decision backend reads (mode pick, setup).
+    return h._json({"ok": True, "notes": _router.save_notes((h._body() or {}).get("notes") or {})})
 
 
 @_routes.ROUTER.get("/api/router/savings", admin=True)

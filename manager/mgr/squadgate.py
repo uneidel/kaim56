@@ -115,7 +115,7 @@ MEMBER_RULES = ("You have root in your VM via sudo: install the tools and toolch
                 "squad's shared toolchain may have them already (the lead extends it with toolchain_propose). "
                 "Ask the human only when a decision is unclear, not for setup.")
 JEV_AUTO_MIN = 0.8              # Jev fills a squad member's persona / tier by itself only from this score
-PROV_FIELDS = ("persona", "new_persona", "skills", "model_tier", "model", "template")
+PROV_FIELDS = ("persona", "new_persona", "skills", "tools", "model_tier", "model", "template")
 _lock = threading.Lock()        # the file
 _decide = threading.Lock()      # one approval at a time
 
@@ -228,7 +228,12 @@ def _member(raw, proj, by, warn, strict=True):
     if sec and not security_on(proj):
         sk = [x for x in sk if x not in sec]
         warn.append(f"{name}: security skill(s) {', '.join(sec)} dropped — the squad's 'Security skills' is off")
-    out = {"name": name, "purpose": _txt(raw.get("purpose"), 500), "persona": persona, "skills": sk,
+    tools = raw.get("tools") or []
+    tools = list(dict.fromkeys(x.strip() for x in (tools.split(",") if isinstance(tools, str) else tools) if str(x).strip()))
+    if [x for x in tools if x not in _policy.tool_names()]:
+        warn.append(f"{name}: unknown tool(s) {', '.join(x for x in tools if x not in _policy.tool_names())} dropped")
+        tools = [x for x in tools if x in _policy.tool_names()]
+    out = {"name": name, "purpose": _txt(raw.get("purpose"), 500), "persona": persona, "skills": sk, "tools": tools,
            "model_tier": tier, "model": model, "template": tpl, "role": role, "existing": existing}
     if newp:
         out["new_persona"] = newp
@@ -673,7 +678,16 @@ def fill_suggestions(project, pid, only="", force=False):
                 by["skills"] = f"jev ({max(x['score'] for x in s['skills']):.2f})"
             else:
                 hint["skills"] = {x["name"]: x["score"] for x in s["skills"]}
-        if s["tier"] and (force or not (m["model_tier"] or m["model"])):
+        if s.get("tools") and (force or not m.get("tools")):     # an LLM backend's pick; the user approves it
+            m["tools"], mark["tools"] = [x["name"] for x in s["tools"]], {x["name"]: x["score"] for x in s["tools"]}
+            by["tools"] = s.get("backend", "jev")
+        mp = s.get("model_pick")
+        if mp and (m["template"] != "claude" or mp["name"].startswith("anthropic/")) \
+                and (force or (not (m["model_tier"] or m["model"]) and mp["score"] >= JEV_AUTO_MIN)):
+            m["model"], m["model_tier"], mark["model"] = mp["name"], "", mp["score"]
+            by["model"] = f"{s.get('backend', 'jev')} ({mp['score']:.2f})"
+            by.pop("model_tier", None)
+        elif s["tier"] and (force or not (m["model_tier"] or m["model"])):
             if force or s["tier"]["score"] >= JEV_AUTO_MIN:
                 m["model_tier"], mark["tier"] = s["tier"]["name"], s["tier"]["score"]
                 by["model_tier"] = f"jev ({s['tier']['score']:.2f})"
@@ -782,9 +796,10 @@ def _create(proj, m, steps):
     pers = next((p for p in _personas.load_personas() if p.get("name") == m["persona"]), None) if m["persona"] else None
     if m["persona"] and not pers:
         steps.append({"step": f"persona {m['name']}", "ok": False, "detail": f"persona {m['persona']!r} not found — none set"})
-    if pers and pers.get("tools"):                # a tool subset still needs the squad's own tools
+    own = m.get("tools") or (pers or {}).get("tools")  # the member's tools (decision backend / user), else the persona's
+    if own:                                          # a tool subset still needs the squad's own tools
         extra = MEMBER_TOOLS + (LEAD_TOOLS if m["role"] == "lead" else ())
-        cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(pers["tools"]) + list(extra)))
+        cfg["AGENT_TOOLS"] = ",".join(dict.fromkeys(list(own) + list(extra)))
     if pers and pers.get("model") and m["template"] != "claude":   # a persona's model is an API model
         cfg["OPENROUTER_MODEL"] = pers["model"]
     if DEVOPS_RE.search(f"{m['name']} {m['purpose']}"):  # devops publishes the squad's browser apps (tool apps)

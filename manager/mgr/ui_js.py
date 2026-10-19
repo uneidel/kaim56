@@ -55,11 +55,13 @@ async function jevSuggest(){
   btn.disabled=false;
   const f=v=>(+v).toFixed(2), said=[], sel=document.getElementById('persona');
   if(d.persona&&[...sel.options].some(o=>o.value===d.persona.name)){sel.value=d.persona.name;said.push('persona '+d.persona.name+' '+f(d.persona.score))}
-  if(d.tier)said.push('tier '+d.tier.name+' '+f(d.tier.score)+': '+(!d.model?'no model has this tier (Router)':
-    setParam(d.model_key,d.model)?d.model:d.model+' — not set, this template has no '+d.model_key));
+  if(d.tier)said.push('tier '+d.tier.name+' '+f(d.tier.score)+(d.model_pick?'':': '+(!d.model?'no model has this tier (Router)':
+    setParam(d.model_key,d.model)?d.model:d.model+' — not set, this template has no '+d.model_key)));
   SK_SCORE={}; (d.skills||[]).forEach(s=>SK_SCORE[s.name]=s.score);
   renderSkillPick();
   if((d.skills||[]).length)said.push(d.skills.length+' skill(s), ticked below');
+  if(d.model_pick)said.push('model '+d.model_pick.name+' '+f(d.model_pick.score)+(setParam(d.model_key,d.model)?'':' — not set, this template has no '+d.model_key));
+  if((d.tools||[]).length){const t=new Set(d.tools.map(x=>x.name)); document.querySelectorAll('.toolcb').forEach(c=>c.checked=t.has(c.value)); said.push(d.tools.length+' tool(s), ticked')}
   msg.textContent=(said.length?'Jev suggests: '+said.join(' · '):'No suggestion. '+(d.note||''))+(d.ms?' ('+(d.ms/1000).toFixed(1)+' s)':'');
 }
 
@@ -391,13 +393,13 @@ async function loadRouter(){
     ?`Jev ready · <code>${escT(j.model||'')}</code> · ${j.calls||0} classifications · <code>${escT(d.url)}</code>`
     :`Jev not available — ${escT(j.error||'loading')} ${d.url?'':'(set JEV_URL in Settings)'}`;
   const tiers=d.tiers||{}, names=d.tier_names||[];
-  RT_LVL={...(d.levels||{})}; RT_TL=d.tier_level||{};
+  RT_LVL={...(d.levels||{})}; RT_TL=d.tier_level||{}; RT_NOTE={...(d.notes||{})};
   const lad=Object.fromEntries((d.ladder||[]).map(e=>[e.key,e]));
   document.getElementById('rtcands').innerHTML=(d.candidates||[]).map(c=>
     `<tr><td class=mono style="font-size:12.5px">${escT(c.key)}</td><td style="font-size:12.5px">${escT(c.instances.join(', '))}</td>`+
     `<td><select class=input data-tier="${esc(c.key)}" style="font-size:12.5px"><option value="">— not a target —</option>`+
     names.map(t=>`<option${tiers[c.key]===t?' selected':''}>${t}</option>`).join('')+`</select></td>`+
-    `<td>${lvlSel(c.key,RT_TL[tiers[c.key]]||'')}</td><td style="font-size:12px;white-space:nowrap">${lad[c.key]?rtPrice(lad[c.key]):'—'}</td></tr>`).join('')
+    `<td>${lvlSel(c.key,RT_TL[tiers[c.key]]||'')}${noteIn(c.key)}</td><td style="font-size:12px;white-space:nowrap">${lad[c.key]?rtPrice(lad[c.key]):'—'}</td></tr>`).join('')
     ||'<tr><td colspan=5 class=text-muted>No running instance with an OpenAI-style model.</td></tr>';
   if(CATALOG.length)renderModels();
   const rec=d.recent||[];
@@ -413,7 +415,15 @@ async function loadRouter(){
     :'No routed turns yet.';
 }
 /* — cost router: a level per model (the ladder); catalog rows and running models share RT_LVL — */
-let RT_LVL={}, RT_TL={};
+let RT_LVL={}, RT_TL={}, RT_NOTE={};
+/* the operator's note on a model ("strong at code, weak at German"): the decision backend reads it (policy pick, setup) */
+function noteIn(key){return `<input class=input data-note="${esc(key)}" maxlength=200 placeholder="note: good at … / weak at …" value="${esc(RT_NOTE[key]||'')}" style="font-size:11.5px;padding:2px 6px;margin-top:4px;width:100%;min-width:160px" onchange="setNote(this)">`}
+async function setNote(el){
+  const k=el.dataset.note, v=el.value.trim(); if(v)RT_NOTE[k]=v; else delete RT_NOTE[k];
+  let d={}; try{d=await (await fetch('/api/router/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:RT_NOTE})})).json()}catch(e){d={error:'manager not reachable'}}
+  const m=d.ok?'note saved ✓':'⚠️ '+(d.error||'failed');
+  ['rtmsg','mdlmsg'].forEach(i=>{const x=document.getElementById(i);if(x)x.textContent=m});
+}
 function rtPrice(e){return e.price==null?'price ?':'$'+(+e.price).toFixed(2)+'/1M'+(e.note?' · '+escT(e.note):'')+(e.vision?' · vision':'')}
 function lvlSel(key,dflt){
   return `<select class=input data-lvl="${esc(key)}" style="font-size:12px;padding:2px 4px" onchange="setLvl(this)"><option value="">${dflt?'tier: '+dflt:'—'}</option>`+
@@ -1382,6 +1392,8 @@ function sqMem(p,m){
       `onkeydown="if(event.key==='Enter'){event.preventDefault();sqSkill(this,this.value)}"></div>`+
       (hk.length?`<div class=sq-hint><span class=text-muted>Hints:</span>${hk.map(([n,v])=>ghost(n,n+' '+f(v),'sqSkill(this,this.dataset.v)')).join('')}</div>`:''),
       sqBadge(b.skills,!(m.skills||[]).length))+
+    sqRow('Tools',fid+'x',`<input class="input mono" id="${fid}x" data-k=tools value="${esc((m.tools||[]).join(', '))}" placeholder="empty = the persona's tools, else all" style="font-size:12px">`,
+      sqBadge(b.tools,!(m.tools||[]).length))+
     sqRow('Model',fid+'m',`<select class=input id="${fid}m" data-k=model>${sqModelOpts(tpl,cur,m.model)}</select>`+
       (h.tier?`<div class=sq-hint><span class=text-muted>Hint:</span>${ghost(h.tier.name+'|',sqCap(h.tier.name)+' '+f(h.tier.score),'sqPick(this)')}</div>`:''),
       sqBadge(b.model||b.model_tier,!m.model_tier&&!m.model))+
@@ -1473,7 +1485,7 @@ function sqCollect(p,c){
     if(b.existing)return {...b};
     const [tier,model]=(v(r,'model')||'|').split('|'), t=r.querySelector('[data-k=template]:checked');
     const o={...b,role:v(r,'role'),persona:v(r,'persona'),skills:[...r.querySelectorAll('.sq-chip')].map(x=>x.dataset.s),
-      model_tier:tier,model:model||'',template:t?t.value:b.template};
+      tools:list(v(r,'tools')),model_tier:tier,model:model||'',template:t?t.value:b.template};
     delete o.new_persona;               /* kept only while the persona select still names it */
     if(b.new_persona&&r.querySelector('[data-k=np_name]')&&o.persona===b.new_persona.name){
       o.new_persona={name:v(r,'np_name').trim(),description:v(r,'np_desc'),prompt:v(r,'np_prompt'),tools:list(v(r,'np_tools'))};
@@ -2666,7 +2678,7 @@ function renderModels(){
     `<td style="white-space:nowrap;font-variant-numeric:tabular-nums">${escT(m.price||'')}</td>`+
     `<td style="white-space:nowrap;font-variant-numeric:tabular-nums" class=text-muted>${m.ctx?(m.ctx/1000).toFixed(0)+'k':''}</td>`+
     `<td>${m.tools?'<span class="tag tag-accent">tools</span>':'<span class="tag tag-neutral">no tools</span>'}</td>`+
-    `<td title="Ladder level for the cost router (policy cheapest with catalog: true)">${lvlSel('openrouter/'+m.id,'')}</td></tr>`)
+    `<td title="Ladder level for the cost router (policy cheapest with catalog: true)">${lvlSel('openrouter/'+m.id,'')}${noteIn('openrouter/'+m.id)}</td></tr>`)
     .join('')||'<tr><td class=text-muted style="padding:14px">nothing matches</td></tr>';
 }
 function saveModels(){

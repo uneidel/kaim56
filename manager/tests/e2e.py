@@ -5288,7 +5288,7 @@ class ManagerFunctions(unittest.TestCase):
         m._instances.load_templates = lambda: [{"template": "openrouter"}]
         m._personas.load_personas = lambda: [{"name": "coder", "prompt": "You code.", "tools": ["bash"]}]
         m._skills.load_skills = lambda: [{"name": "tdd"}]
-        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "llama/qwen": "local"}, "policies": {}}
+        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "llama/qwen": "local"}, "levels": {}, "notes": {}, "policies": {}}
         m._notify.notify_add = lambda *a, **k: notes.append(a) or ("n1", "ok")
         m._projects.member_op = lambda n, op, w: (merges.append((n, op, w)), ({"commit": "abc123"}, 200))[1]
         m._util.rate_ok = lambda *a: True
@@ -7111,7 +7111,7 @@ class ManagerFunctions(unittest.TestCase):
                                              {"name": "code-architect", "prompt": "## Process\n- study the code"}]
         m._skills.load_skills = lambda: ([{"name": "std", "description": "standard", "default": True}]
                                          + [{"name": f"sk{i}", "description": f"skill {i}"} for i in range(12)])
-        m._router.load = lambda: {"tiers": {"openrouter/qwen/coder": "code", "orcarouter/tencent/hy3": "strong"},
+        m._router.load = lambda: {"tiers": {"openrouter/qwen/coder": "code", "orcarouter/tencent/hy3": "strong"}, "levels": {}, "notes": {},
                                   "policies": {"default": m._router.DEFAULT_POLICY}}
 
         def undo():
@@ -7666,7 +7666,7 @@ class ManagerFunctions(unittest.TestCase):
         m._instances.load_templates = lambda: [{"template": "openrouter"}, {"template": "claude"}, {"template": "orcarouter"}]
         m._personas.load_personas = lambda: pers
         m._skills.load_skills = lambda: [{"name": "tdd", "description": "test first"}, {"name": "std", "description": "s", "default": True}]
-        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "openrouter/acme/big": "strong"}, "policies": {}}
+        m._router.load = lambda: {"tiers": {"openrouter/acme/fast": "cheap", "openrouter/acme/big": "strong"}, "levels": {}, "notes": {}, "policies": {}}
 
         def upsert(name, prompt, tools=None, model=None, description=None):
             ups.append((name, prompt, tools, description))
@@ -8797,6 +8797,10 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(made["pp-devops"].get("MANAGE_APPS"), "write")
             self.assertEqual(made["pp-ops"].get("MANAGE_APPS"), "write"); self.assertIn("apps", made["pp-ops"]["AGENT_TOOLS"].split(","))
             self.assertNotIn("MANAGE_APPS", made["pp-coder"])
+            # the member's own tools (decision backend / user) beat the persona's; the squad tools still come along
+            m._squadgate._create(proj, {**base, "name": "pp-t", "persona": "p", "tools": ["bash", "web_search"]}, [])
+            t = made["pp-t"]["AGENT_TOOLS"].split(",")
+            self.assertEqual(t[:2], ["bash", "web_search"]); self.assertIn("squad_post", t); self.assertNotIn("shell", t)
         finally:
             m._instances.load_instances, m._instances.create_instance, m._personas.load_personas = old
 
@@ -10099,6 +10103,60 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn("cheapest", rt.policy_names())
         finally:
             undo()
+
+    def test_router_pick_mode_reads_model_notes(self):
+        """Policy pick: the decision backend chooses among the fitting ladder
+        models, reading level, price, features and the operator's note; no
+        pick -> the cheapest path. llm_suggest asks for tools and a model."""
+        m = self.m
+        rt, st = m._router, m._store
+        insts, undo = self._cost_env()
+        old_choose = m._decision.choose
+        try:
+            rt.save_tiers({"llama/local-model": "local", "openrouter/google/gemini-2.5-flash": "cheap",
+                           "orcarouter/tencent/hy3": "strong"})
+            self.assertEqual(rt.save_notes({"orcarouter/tencent/hy3": "  strong at   German ", "x": "no slash", "llama/local-model": ""}),
+                             {"orcarouter/tencent/hy3": "strong at German"})
+            lad = {e["key"]: e for e in rt.ladder()}
+            self.assertEqual(rt.describe(lad["orcarouter/tencent/hy3"]), "level 5/5, $6.00/1M tokens, 200k context, tools — strong at German")
+            seen = []
+            m._decision.choose = lambda q, opts, ctx="": seen.append((q, opts, ctx)) or [{"option": "openrouter/google/gemini-2.5-flash", "score": 0.7}]
+            big = next(i for i in insts if i["name"] == "big")
+            big["config"]["MODEL_ROUTER"] = "pick"
+            m._decision.judge = lambda *a, **k: self.fail("judge although the backend picked")
+            payload = {"messages": [{"role": "user", "content": "Schreib einen Brief"}], "tools": [{"type": "function"}]}
+            self.assertEqual(rt.route(big, payload, "p1")["key"], "openrouter/google/gemini-2.5-flash")   # big runs on hy3
+            self.assertEqual(sorted(seen[0][1]), sorted(lad))
+            self.assertIn("strong at German", seen[0][1]["orcarouter/tencent/hy3"])
+            r = st.routes_read("big", turn="p1")[0]
+            self.assertIn("picked openrouter/google/gemini-2.5-flash", r["why"])
+            m._decision.choose = lambda *a, **k: []                                              # no pick -> cheapest
+            m._decision.judge = lambda text, context="": {"level": 1, "needs": {"vision": False}, "score": 0.9, "ms": 7}
+            self.assertEqual(rt.route(big, payload, "p2")["key"], "llama/local-model")
+            self.assertIn("pick", rt.policy_names())
+            with open(rt.ROUTER_FILE) as fh:
+                self.assertNotIn("pick", json.load(fh).get("policies", {}))                     # built-in, never stored
+        finally:
+            m._decision.choose = old_choose
+            undo()
+        # llm_suggest: one request also asks for the tools (no squad tools offered) and a model from the ladder
+        asked = []
+        old = (m._decision.ask, m._router.ladder, m._router.load)
+        m._decision.ask = lambda task, be=None: (asked.append(task), ({"tools": {"bash": 0.9, "web_search": 0.6},
+                                                                         "model": {"openrouter/acme/m": 0.8}}, 5))[1]
+        m._router.ladder = lambda conf=None, catalog=False: [{"key": "openrouter/acme/m", "level": 3, "price": 1.0, "note": "",
+                                                              "ctx": 0, "vision": False, "tools": True}]
+        m._router.load = lambda: {"tiers": {}, "levels": {}, "notes": {"openrouter/acme/m": "good at Go"}, "policies": {}}
+        try:
+            s = m._jevsetup.llm_suggest("write Go services", "", "local-llm")
+        finally:
+            m._decision.ask, m._router.ladder, m._router.load = old
+        qs = asked[0]["questions"]
+        self.assertIn("bash", qs["tools"]["criteria"])
+        self.assertFalse([t for t in qs["tools"]["criteria"] if t.startswith(("squad_", "ticket_", "mission"))])
+        self.assertIn("good at Go", qs["model"]["criteria"]["openrouter/acme/m"])
+        self.assertEqual(([x["name"] for x in s["tools"]], s["model"], s["model_key"], s["model_pick"]),
+                         (["bash", "web_search"], "acme/m", "OPENROUTER_MODEL", {"name": "openrouter/acme/m", "score": 0.8}))
 
     def test_cost_escalation_runs_once_and_records_both(self):
         m = self.m
@@ -11938,7 +11996,7 @@ class ManagerFunctions(unittest.TestCase):
         m._mounts.AGENT_ROOT, m._projwt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
         m._indexer.instance = lambda: None
         m._instances.delete_instance = lambda n: self._sq_insts.remove(next(i for i in self._sq_insts if i["name"] == n))
-        m._router.load = lambda: {"tiers": {"openrouter/acme/big": "strong"}, "policies": {}}
+        m._router.load = lambda: {"tiers": {"openrouter/acme/big": "strong"}, "levels": {}, "notes": {}, "policies": {}}
         m._personas.load_personas = lambda: [{"name": "code-architect", "prompt": "You design.", "tools": ["bash"]}]
         calls, real = [], sp.Popen
 

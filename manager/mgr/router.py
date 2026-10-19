@@ -26,6 +26,10 @@ never changes inside a tool loop.
   models the operator ladder-tagged in the Models tab. A failed turn is run
   again one level up, once: tasks and squad wakes by the manager (tasks.py),
   a chat turn by moving the instance's NEXT turn up (outcome()).
+- Mode "pick" (built-in policy 'pick'): the decision backend picks the model
+  from the ladder itself, reading each one's level, price, features and the
+  operator's note (Models tab, describe()); no pick, a planned or an escalated
+  turn -> the cheapest path.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -70,6 +74,13 @@ DEFAULT_POLICY = {
     "floor": 0.55,
 }
 CHEAPEST = {"mode": "cheapest", "catalog": False, "check": False, "escalate": True}
+# mode pick: the decision backend picks the model itself from the ladder entries'
+# descriptions (describe(): level, price, features, the operator's note); no pick
+# -> the cheapest path. Escalation and manager-planned turns stay on the ladder.
+PICK = {"mode": "pick", "catalog": False, "escalate": True}
+NOTE_MAX = 200
+PICK_QUESTION = ("Which model should answer this request? The cheapest one that will do it well; "
+                 "follow the notes on what a model is good or bad at.")
 TIER_LEVEL = {"local": 2, "cheap": 2, "code": 4, "strong": 5}    # a model's level when the operator set none
 LONG_CTX = 100_000                # tokens a model needs for a long-context turn
 FAIL_OUTCOMES = ("max_steps", "error")
@@ -90,15 +101,16 @@ def load():
         d = {}
     tiers = {k: v for k, v in (d.get("tiers") or {}).items() if v in TIERS}
     levels = {k: int(v) for k, v in (d.get("levels") or {}).items() if v in (1, 2, 3, 4, 5)}
-    policies = {"default": DEFAULT_POLICY, "cheapest": CHEAPEST, **(d.get("policies") or {})}
-    return {"tiers": tiers, "levels": levels, "policies": policies}
+    notes = {k: str(v)[:NOTE_MAX] for k, v in (d.get("notes") or {}).items() if str(v or "").strip()}
+    policies = {"default": DEFAULT_POLICY, "cheapest": CHEAPEST, "pick": PICK, **(d.get("policies") or {})}
+    return {"tiers": tiers, "levels": levels, "notes": notes, "policies": policies}
 
 
 def _store_conf(**part):
     d = load()
     d.update(part)
-    out = {"tiers": d["tiers"], "levels": d["levels"],
-           "policies": {k: v for k, v in d["policies"].items() if v is not DEFAULT_POLICY and v is not CHEAPEST}}
+    out = {"tiers": d["tiers"], "levels": d["levels"], "notes": d["notes"],
+           "policies": {k: v for k, v in d["policies"].items() if v not in (DEFAULT_POLICY, CHEAPEST, PICK)}}
     tmp = ROUTER_FILE + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(out, fh, indent=2)
@@ -124,6 +136,25 @@ def save_levels(levels):
             clean[str(k)[:160]] = v
     _store_conf(levels=clean)
     return clean
+
+
+def save_notes(notes):
+    """Replace the model notes ({"backend/model": "strong at code, weak at German"}):
+    the operator's word on a model, shown to the decision backend (describe())."""
+    clean = {str(k)[:160]: " ".join(str(v).split())[:NOTE_MAX] for k, v in (notes or {}).items()
+             if "/" in str(k) and str(v or "").strip()}
+    _store_conf(notes=clean)
+    return clean
+
+
+def describe(e, notes=None):
+    """One ladder entry as the decision backend reads it: level, price,
+    context, features and the operator's note."""
+    bits = [f"level {e['level']}/5",
+            "price unknown" if e["price"] is None else f"${e['price']:.2f}/1M tokens" + (f" ({e['note']})" if e["note"] else ""),
+            f"{e['ctx'] // 1000}k context" if e["ctx"] else "", "vision" if e["vision"] else "", "tools" if e["tools"] else ""]
+    note = (notes if notes is not None else load()["notes"]).get(e["key"], "")
+    return ", ".join(b for b in bits if b) + (f" — {note}" if note else "")
 
 
 def policy_names():
@@ -260,13 +291,16 @@ def ladder(conf=None, catalog=False):
 def choose(lad, level, needs=None):
     """The cheapest entry with level >= `level` and every needed feature;
     equal price -> the higher level; unknown price last. None if none fits."""
-    needs = needs or {}
-    ok = [e for e in lad if e["level"] >= level
-          and (not needs.get("vision") or e["vision"])
-          and (not needs.get("tools") or e["tools"])
-          and (not needs.get("long_context") or e["ctx"] >= LONG_CTX)]
+    ok = [e for e in lad if e["level"] >= level and fits(e, needs)]
     ok.sort(key=lambda e: (e["price"] is None, e["price"] or 0, -e["level"], e["key"]))
     return ok[0] if ok else None
+
+
+def fits(e, needs):
+    """Has the ladder entry every feature the request needs?"""
+    needs = needs or {}
+    return ((not needs.get("vision") or e["vision"]) and (not needs.get("tools") or e["tools"])
+            and (not needs.get("long_context") or e["ctx"] >= LONG_CTX))
 
 
 def needs_of(payload):
@@ -298,7 +332,7 @@ def cost_routing(inst, squad_on=False):
     if not inst or not model_of(inst):
         return None
     pol = load()["policies"].get((inst.get("config") or {}).get("MODEL_ROUTER", "").strip())
-    if pol and pol.get("mode") == "cheapest":
+    if pol and pol.get("mode") in ("cheapest", "pick"):
         return pol
     return CHEAPEST if squad_on else None
 
@@ -328,7 +362,7 @@ def outcome(instance, turn, result):
     Manager-run turns book and re-run themselves (tasks.py)."""
     with _lock:
         d = _cache.get((instance, turn))
-    if not d or d.get("mode") != "cheapest" or d.get("planned"):
+    if not d or d.get("mode") not in ("cheapest", "pick") or d.get("planned"):
         return
     book(instance, turn, result)
     if result in FAIL_OUTCOMES and not d.get("escalated") and d.get("escalate", True):
@@ -407,6 +441,8 @@ def _cheapest(inst, policy, payload, conf, own_key, decision, plan_):
         level = plan_["level"]
         decision["escalated"] = plan_["escalated"]
         note = "set by the manager"
+    elif policy.get("mode") == "pick" and _pick(inst, text, needs, conf, policy, own_key, decision):
+        return
     else:
         j = _decision.judge(text)
         level, note = j["level"], j.get("note") or j.get("backend", "")
@@ -433,6 +469,30 @@ def _cheapest(inst, policy, payload, conf, own_key, decision, plan_):
                               "upstream": cand["upstream"], "key": cand["key"]}
 
 
+def _pick(inst, text, needs, conf, policy, own_key, decision):
+    """Mode pick: the decision backend names the model -> True when it did
+    (the decision is filled in); False -> the cheapest path decides. A turn
+    moved up after a failure stays on the ladder."""
+    with _lock:
+        if inst["name"] in _bump:
+            return False
+    fit = {e["key"]: e for e in ladder(conf, policy.get("catalog")) if fits(e, needs)}
+    if not fit or not text:
+        return False
+    t0 = time.time()
+    best = _decision.choose(PICK_QUESTION, {k: describe(e, conf["notes"]) for k, e in fit.items()}, text[-PREMISE_MAX:])
+    cand = fit.get(best[0]["option"]) if best else None
+    if cand is None:
+        return False
+    decision.update(mode="pick", level=cand["level"], chosen_level=cand["level"], price=cand["price"],
+                    classes={"model": [cand["key"], best[0]["score"]]}, ms=int((time.time() - t0) * 1000))
+    decision["why"] = f"picked {cand['key']} ({best[0]['score']:.2f}): {describe(cand, conf['notes'])}"[:200]
+    if cand["key"] != own_key:
+        decision["target"] = {"backend": cand["backend"], "model": cand["model"],
+                              "upstream": cand["upstream"], "key": cand["key"]}
+    return True
+
+
 def route(inst, payload, turn):
     """The decision for this call: {"backend", "model", "upstream", ...} to use
     instead of the instance's own model, or None (= its own model). Cached per
@@ -453,8 +513,8 @@ def route(inst, payload, turn):
         return hit["target"]
     conf = load()
     policy = conf["policies"].get(name_)
-    cheapest = bool(plan_) or (policy or {}).get("mode") == "cheapest"
-    if plan_ and (policy or {}).get("mode") != "cheapest":
+    cheapest = bool(plan_) or (policy or {}).get("mode") in ("cheapest", "pick")
+    if plan_ and (policy or {}).get("mode") not in ("cheapest", "pick"):
         policy = CHEAPEST
     if not cheapest and not (jev_url() or _decision.router_on()):
         return None

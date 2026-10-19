@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-19
+- Decision backend (subq/local-llm) also picks a squad member's tools and model; model notes in the Models tab; router policy "pick" lets it choose the model per turn.
 - Instance skills (SKILLS) are an allowlist (list, load, subagent) instead of being named in every turn; the prompt names the standard skills only.
 
 ## 2026-10-18

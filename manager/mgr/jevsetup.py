@@ -32,6 +32,7 @@ import urllib.request
 from mgr import decision as _decision
 from mgr import instances as _instances
 from mgr import personas as _personas
+from mgr import policy as _policy
 from mgr import router as _router
 from mgr import skills as _skills
 
@@ -92,7 +93,11 @@ def _entail(purpose, hyps, deadline):
 def model_for(tier):
     """(config key, model) of the first concrete model the Router tiers give
     this tier, else ("", "")."""
-    key = next((k for k, t in sorted(_router.load()["tiers"].items()) if t == tier), "")
+    return cfg_of(next((k for k, t in sorted(_router.load()["tiers"].items()) if t == tier), ""))
+
+
+def cfg_of(key):
+    """(config key, model) of a "backend/model" key, else ("", "")."""
     backend, _, rest = key.partition("/")
     if backend in _instances.PROVIDER_MODEL_KEY and rest:
         return _instances.PROVIDER_MODEL_KEY[backend], rest
@@ -115,7 +120,7 @@ def tier_of(policy, classes):
 
 
 def empty(note):
-    return {"persona": None, "skills": [], "tier": None, "model": "", "model_key": "",
+    return {"persona": None, "skills": [], "tools": [], "tier": None, "model": "", "model_key": "", "model_pick": None,
             "classes": {}, "ms": 0, "note": note, "backend": "jev"}
 
 
@@ -124,6 +129,10 @@ TIER_TEXT = {"cheap": "cheap, fast model for simple, routine work",
              "code": "model specialised in writing and fixing code",
              "local": "local model on the LAN, private, slower and weaker"}
 MAX_LLM_SKILLS = 6
+MAX_LLM_TOOLS = 20
+# the squad adds its own tools to every member (squadgate MEMBER_TOOLS/LEAD_TOOLS);
+# the orchestrator's mission tools are no member's
+_TOOL_SKIP = re.compile(r"^(squad_|ticket_|toolchain_|mission|ask_human$)")
 
 
 def _desc(text):
@@ -140,21 +149,32 @@ def llm_suggest(purpose, context, be, allow_security=False):
            if s.get("name") and not s.get("default") and (allow_security or _skills.category(s) != "security")}
     have = set(_router.load()["tiers"].values())
     tiers = {t: TIER_TEXT.get(t, t) for t in _router.TIERS if t in have or not have}
+    tools = {t["name"]: _desc(t.get("desc")) for t in _policy.tool_catalog() if not _TOOL_SKIP.match(t["name"])}
+    conf = _router.load()
+    models = {e["key"]: _router.describe(e, conf["notes"]) for e in _router.ladder(conf, True)}
     qs = {"persona": {"type": "choice", "instructions": "Which persona should this team member get?", "criteria": pers},
-          "tier": {"type": "choice", "instructions": "Which model tier fits this member's work?", "criteria": tiers}}
+          "tier": {"type": "choice", "instructions": "Which model tier fits this member's work?", "criteria": tiers},
+          "tools": {"type": "multi", "max": MAX_LLM_TOOLS, "criteria": tools,
+                    "instructions": "Which tools will this member use for its work? Every one it needs, none it will not use."}}
     if sks:
         qs["skills"] = {"type": "multi", "max": MAX_LLM_SKILLS, "criteria": sks,
                         "instructions": f"Which skills (0 to {MAX_LLM_SKILLS}) does this member need?"}
+    if models:
+        qs["model"] = {"type": "choice", "criteria": models, "instructions": _router.PICK_QUESTION.replace(
+            "answer this request", "do this member's work")}
     state = f"Team member purpose: {purpose}" + (f"\nContext: {context}" if context else "")
     ans, ms = _decision.ask({"state": state, "questions": qs}, be)
     best = lambda d: max(d.items(), key=lambda t: t[1]) if d else None
-    p, t = best(ans.get("persona") or {}), best(ans.get("tier") or {})
+    p, t, mp = best(ans.get("persona") or {}), best(ans.get("tier") or {}), best(ans.get("model") or {})
     tier = {"name": t[0], "score": t[1]} if t else None
-    key, model = model_for(tier["name"]) if tier else ("", "")
+    key, model = cfg_of(mp[0]) if mp else model_for(tier["name"]) if tier else ("", "")
     return {"persona": {"name": p[0], "score": p[1]} if p else None,
             "skills": [{"name": k, "score": v} for k, v in (ans.get("skills") or {}).items()],
+            "tools": [{"name": k, "score": v} for k, v in (ans.get("tools") or {}).items()],
             "tier": tier, "model": model, "model_key": key, "classes": {}, "ms": ms, "backend": be,
-            "note": f"{be}: {len(pers)} personas, {len(sks)} skills, {len(tiers)} tiers in one request"}
+            "model_pick": {"name": mp[0], "score": mp[1]} if mp else None,
+            "note": f"{be}: {len(pers)} personas, {len(sks)} skills, {len(tools)} tools, {len(models) or len(tiers)} "
+                    f"{'models' if models else 'tiers'} in one request"}
 
 
 def suggest(purpose, context="", allow_security=False, be=None):
@@ -212,6 +232,6 @@ def _jev_suggest(purpose, context, allow_security=False):
     tier = tier_of(policy, classes)
     key, model = model_for(tier["name"]) if tier else ("", "")
     return {"persona": {"name": best[1]["name"], "score": round(best[0], 3)} if best[1] and best[0] >= FLOOR else None,
-            "skills": skills, "tier": tier, "model": model, "model_key": key,
+            "skills": skills, "tools": [], "tier": tier, "model": model, "model_key": key, "model_pick": None,
             "classes": {q: [c, round(p, 3)] for q, (c, p) in classes.items()}, "ms": ms, "backend": "jev",
             "note": f"{len(pers)} personas, {len(sks)} skills (word pre-filter), {len(qs)} router questions"}
