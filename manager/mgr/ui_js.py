@@ -783,7 +783,8 @@ async function refreshUsage(){
   const mx=Math.max(1,...cards.map(c=>tot(c.dataset.name)));
   cards.forEach(c=>{
     const v=u[c.dataset.name]||{},d=v.today||{},t=v.total||{};
-    c.querySelector('.ic-today').textContent='Today '+fmtTok(d.in)+' / '+fmtTok(d.out);
+    c.querySelectorAll('.ic-today').forEach(e=>e.textContent=fmtTok(d.in)+' / '+fmtTok(d.out));
+    c.dataset.cost=t.cost||0;
     c.querySelector('.ic-total').textContent='Total '+fmtTok(t.in)+' / '+fmtTok(t.out);
     c.querySelector('.ic-cost').textContent=fmtCost(t.cost);
     c.querySelector('.ic-bar').style.width=Math.round(tot(c.dataset.name)/mx*100)+'%';
@@ -989,7 +990,7 @@ document.addEventListener('keydown',e=>{
 },true);
 function fleetInit(){
   icRestore();
-  const fg=document.getElementById('fleet');if(fg&&window.ResizeObserver)new ResizeObserver(()=>fleetLayout()).observe(fg);
+  document.querySelectorAll('.ftable th[data-k]').forEach(th=>th.onclick=()=>fleetSort(th));
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
   const run=n('run')+n('old'), off=n('off'), old=n('old'), on=cards.filter(c=>c.dataset.state!=='off');
   const circ=2*Math.PI*34;
@@ -1017,19 +1018,14 @@ function fleetFilter(f){
   document.querySelectorAll('#ffilt button').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
   document.querySelectorAll('.icard').forEach(c=>{const st=c.dataset.state;
     c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'))||(!!q&&!c.textContent.toLowerCase().includes(q));});
-  fleetLayout(true);
 }
-/* Masonry: visible cards dealt left to right into fixed columns, so opening a
-   card only moves the cards below it in its own column. */
-let FLEET_CARDS=null, FLEET_N=0;
-function fleetLayout(force){
-  const g=document.getElementById('fleet');if(!g||!g.offsetWidth)return;
-  FLEET_CARDS=FLEET_CARDS||[...g.querySelectorAll('.icard')];if(!FLEET_CARDS.length)return;
-  const n=Math.max(1,Math.floor((g.offsetWidth+16)/396));
-  if(n===FLEET_N&&!force)return;FLEET_N=n;
-  const cols=[...Array(n)].map(()=>{const d=document.createElement('div');d.className='fcol';return d});
-  let i=0;FLEET_CARDS.forEach(c=>cols[c.hidden?n-1:i++%n].appendChild(c));
-  g.replaceChildren(...cols);
+/* Fleet table: a header click sorts by that column, a second click reverses. */
+function fleetSort(th){
+  const k=th.dataset.k, up=th.getAttribute('aria-sort')!=='ascending', t=th.closest('table');
+  t.querySelectorAll('th[data-k]').forEach(x=>x.setAttribute('aria-sort','none'));
+  th.setAttribute('aria-sort',up?'ascending':'descending');
+  const num=k==='cost', v=c=>num?+(c.dataset[k]||0):(c.dataset[k]||'');
+  [...t.tBodies].sort((a,b)=>(num?v(a)-v(b):v(a).localeCompare(v(b)))*(up?1:-1)).forEach(b=>t.appendChild(b));
 }
 async function restartAll(){
   for(const c of document.querySelectorAll('.icard[data-state=old]'))

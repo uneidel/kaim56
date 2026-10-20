@@ -114,35 +114,44 @@ def _card(inst):
                  f"{IC_TERM}Terminal</a>")
     acts += (f"<button class='btn btn-{'secondary' if run else 'primary'}' "
              f"onclick=\"act('{name}','{'stop' if run else 'start'}')\">{'Stop' if run else 'Start'}</button>")
-    acts += (f"<div class=ic-icons>"
+    icons = (f"<div class=ic-icons>"
              f"<button class='btn btn-icon' title=Activity aria-label=Activity onclick=\"openActivity('{name}')\">{IC_AUDIT}</button>"
              f"<button class='btn btn-icon' title=Policy aria-label=Policy onclick=\"polOpen('{name}')\">{IC_POL}</button>"
              f"<button class='btn btn-icon' title=Config aria-label=Config onclick=\"editConfig('{name}')\">{IC_CFG}</button>"
              f"<button class='btn btn-icon' title=Folders aria-label=Folders onclick=\"editMounts('{name}')\">{IC_FILES}</button>"
              f"<button class='btn btn-icon' title=Delete aria-label=Delete onclick=\"del('{name}')\">{IC_DEL}</button></div>")
-    return (f"<article class=icard data-name='{h(name)}' data-state={state} "
+    tog = (f"<button class=ic-tog aria-expanded=false aria-label='Show details of {h(name)}' onclick=\"icToggle(this)\">"
+           f"<svg width=14 height=14 viewBox='0 0 24 24' fill=currentColor aria-hidden=true><path d='M8 5l10 7-10 7z'/></svg></button>")
+    # One <tbody> per instance: the row plus its details row, so filter,
+    # sort and open/close move both together.
+    return (f"<tbody class=icard data-name='{h(name)}' data-state={state} data-model='{h(model)}' "
             f"data-cpu='{int(inst.get('vcpus', 2))}' data-mem='{int(inst.get('mem_mib', 1024))}'>"
-            f"<div class=ic-body><div class=ic-head>"
-            f"<button class=ic-tog aria-expanded=false aria-label='Show details of {h(name)}' onclick=\"icToggle(this)\">"
-            f"<svg width=14 height=14 viewBox='0 0 24 24' fill=currentColor aria-hidden=true><path d='M8 5l10 7-10 7z'/></svg></button>"
-            f"<div class=ic-id><div class=ic-av>{h(name[:1].upper())}</div>"
-            f"<div style='min-width:0'><div class=ic-name>{h(name)}</div><div class=ic-desc>{h(desc)}</div></div></div>{pill}</div>"
-            f"<div class=ic-more>{model_box}"
-            f"<div class=ic-stats><div><div class=ic-k>vCPU / RAM</div><div class=ic-v>{int(inst.get('vcpus', 2))} / {int(inst.get('mem_mib', 1024))} MiB</div></div>"
-            f"<div><div class=ic-k>Guest IP</div><div class='ic-v mono'>{h(_instances.net_of(inst)['guest'])}</div></div>"
-            f"<div><div class=ic-k>Spend</div><div class='ic-v ic-cost'>—</div></div></div>"
-            f"<div class=ic-use><div class=ic-usel><span class=ic-today>Today 0</span><span class=ic-total>Total 0</span></div>"
-            f"<div class=track><i class=ic-bar></i></div></div>"
-            f"<div class=ic-chips>{chips}</div>{mounts}</div></div>"
-            f"<div class='ic-acts ic-more'>{acts}</div></article>")
+            f"<tr><td class=f-tog>{tog}</td>"
+            f"<td class=f-name><div class=ic-name>{h(name)}</div><div class=ic-desc>{h(desc)}</div></td>"
+            f"<td>{pill}</td><td class='fx f-model'>{model_box}</td>"
+            f"<td class='fx num ic-cost'>—</td>"
+            f"<td class=fx><div class=ic-chips>{chips}</div></td>"
+            f"<td><div class=ic-acts>{acts}</div></td></tr>"
+            f"<tr class=ic-more><td colspan=7><div class=f-det>"
+            f"<div class='ic-chips f-mob'>{chips}</div><div class=f-mob>{model_box}</div>"
+            f"<div class=ic-stats><div><div class=ic-k>Guest IP</div><div class='ic-v mono'>{h(_instances.net_of(inst)['guest'])}</div></div>"
+            f"<div><div class=ic-k>vCPU / RAM</div><div class=ic-v>{int(inst.get('vcpus', 2))} / {int(inst.get('mem_mib', 1024))} MiB</div></div>"
+            f"<div><div class=ic-k>Today in / out</div><div class='ic-v ic-today'>0 / 0</div></div></div>"
+            f"<div class=ic-use><div class=ic-usel><span>Tokens</span><span class=ic-total>Total 0</span></div>"
+            f"<div class=track><i class=ic-bar></i></div></div>{mounts}{icons}</div></td></tr></tbody>")
 
+FLEET_HEAD = ("<table class=ftable><thead><tr><th></th>"
+              + "".join(f"<th{' class=' + c if c else ''} data-k={k} aria-sort=none>{t}</th>"
+                        for k, t, c in (("name", "Name", ""), ("state", "Status", ""), ("model", "Model", "fx"),
+                                        ("cost", "Spend", "'fx num'")))
+              + "<th class=fx>Flags</th><th></th></tr></thead>")
 
 def render():
     rows = "".join(_card(i) for i in _instances.load_instances())
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
     empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — New instance, top right</p>"
-    return (PAGE.replace("__ROWS__", rows or empty)
+    return (PAGE.replace("__ROWS__", FLEET_HEAD + rows + "</table>" if rows else empty)
                 .replace("__HOSTMEM__", str(_host.mem_total_mib()))
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
                 .replace("__TPLJSON__", _util.js_json(_instances.load_templates()))

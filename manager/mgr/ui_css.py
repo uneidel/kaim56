@@ -323,42 +323,48 @@ main>.screen{margin-bottom:var(--space-8)}
 .obanner[hidden]{display:none}
 .obanner span{font-size:14px;flex:1;min-width:200px}
 .obanner b{color:#fff}
-.fleet{display:flex;align-items:flex-start;gap:var(--space-4)}
-.fcol{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-4)}
-.icard{background:var(--app-card);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.icard:hover{background:var(--app-card-hover)}
+.fleet{background:var(--app-card);border-radius:var(--radius-lg);overflow-x:auto}
+.ftable{width:100%;border-collapse:collapse;font-size:13.5px}
+.ftable th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+  color:var(--color-neutral-600);padding:12px 10px;border-bottom:1px solid var(--app-line)}
+.ftable th[data-k]{cursor:pointer;user-select:none}
+.ftable th[data-k]:hover{color:var(--color-text)}
+.ftable th[aria-sort=ascending]::after{content:" ▲"}.ftable th[aria-sort=descending]::after{content:" ▼"}
+.ftable td{padding:8px 10px;vertical-align:middle;border-bottom:1px solid var(--app-line)}
+.ftable .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .icard[hidden]{display:none}
+.icard>tr:first-child:hover{background:var(--app-card-hover)}
+.icard.open>tr:first-child td{border-bottom-color:transparent}
+.f-tog{width:28px;padding-right:0}
+.f-name{min-width:140px;width:30%}
+.f-model .ic-model{max-width:240px}
+.ftable tr:first-child .ic-chips{flex-wrap:nowrap}
+.f-det{contain:inline-size;display:flex;flex-direction:column;gap:var(--space-4);padding:4px 0 10px 28px;max-width:760px}
+.ftable .f-mob{display:none}
+.f-name .ic-desc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+.ftable td .ic-model{padding:4px 8px}
+.f-det .ic-icons{gap:4px}
 .cf-rows{display:flex;flex-direction:column;gap:8px;max-height:56vh;overflow:auto;margin:10px 0}
 .cf-row{display:grid;grid-template-columns:minmax(120px,220px) minmax(0,1fr) 32px;gap:8px;align-items:start}
 .cf-row .input{font-family:var(--font-mono,monospace);font-size:12.5px}
 .cf-row textarea.input{min-height:36px;resize:vertical}
 .cf-row.del{opacity:.45}.cf-row.del .input{text-decoration:line-through}
 @media (max-width:640px){.cf-row{grid-template-columns:minmax(0,1fr) 32px}.cf-row .cf-v{grid-column:1/2}}
-/* Collapsed by default: only the head line; the triangle opens the full card. */
+/* Collapsed by default: only the row; the triangle opens the details row. */
 .icard:not(.open) .ic-more{display:none}
-.icard:not(.open) .ic-body{padding-bottom:var(--space-6)}
-.ic-more{display:flex;flex-direction:column;gap:var(--space-4)}
-.ic-acts.ic-more{flex-direction:row}
-.ic-tog{flex:none;width:28px;height:28px;margin:6px -4px 0 -8px;border:0;border-radius:var(--radius-md);background:transparent;
+.ic-tog{flex:none;width:28px;height:28px;border:0;border-radius:var(--radius-md);background:transparent;
   color:var(--color-neutral-500);display:grid;place-items:center;cursor:pointer}
 .ic-tog:hover{background:var(--app-chip);color:var(--color-text)}
 .ic-tog svg{transition:transform .15s ease}
 .icard.open .ic-tog svg{transform:rotate(90deg)}
 @media (prefers-reduced-motion:reduce){.ic-tog svg{transition:none}}
-.ic-head .ic-id{flex:1}
-.ic-body{padding:var(--space-6) var(--space-6) var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
-.ic-head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-2)}
-.ic-id{display:flex;gap:12px;align-items:center;min-width:0}
-.ic-av{width:40px;height:40px;flex:none;border-radius:var(--radius-lg);display:grid;place-items:center;
-  font-family:var(--font-heading);font-weight:600;font-size:18px;background:var(--app-chip);color:var(--color-neutral-600)}
-.ic-name{font-family:var(--font-heading);font-weight:600;font-size:21px;line-height:1.1;color:#fff;overflow-wrap:anywhere}
+.ic-name{font-family:var(--font-heading);font-weight:600;font-size:16px;line-height:1.2;color:#fff;overflow-wrap:anywhere}
 .ic-desc{font-size:12px;color:var(--color-neutral-600)}
 .ipill{flex:none;display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:999px;
   color:var(--color-neutral-600);background:var(--app-chip)}
 .ipill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .icard[data-state=run] .ipill{color:var(--color-accent-600);background:var(--color-accent-100)}
 .icard[data-state=old] .ipill{color:var(--color-accent-800);background:var(--color-accent-200)}
-.icard:not([data-state=off]) .ic-av{background:var(--color-accent-200);color:var(--color-accent-800)}
 .ic-model{display:block;width:100%;text-align:left;border:0;font-family:var(--font-mono);font-size:12px;color:var(--color-accent-700);
   background:var(--app-bg);border-radius:var(--radius-md);padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 button.ic-model{cursor:pointer}
@@ -371,13 +377,13 @@ button.ic-model:hover{color:#fff}
 .ic-usel{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--color-neutral-600);font-variant-numeric:tabular-nums}
 .ic-use .track{height:5px}
 .ic-chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{font-size:11px;padding:3px 9px;border-radius:999px;border:0;background:var(--app-chip);color:var(--color-neutral-800)}
+.chip{white-space:nowrap;font-size:11px;padding:3px 9px;border-radius:999px;border:0;background:var(--app-chip);color:var(--color-neutral-800)}
 button.chip{cursor:pointer}
 button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .ic-mnt{font-size:12px;color:var(--color-neutral-600);overflow-wrap:anywhere}
-.ic-acts{display:flex;gap:6px;padding:var(--space-3) var(--space-6) var(--space-4);margin-top:auto;flex-wrap:wrap;align-items:center}
-.ic-acts>.btn{height:34px;padding:0 12px}
-.ic-icons{margin-left:auto;display:flex;gap:2px}
+.ic-acts{display:flex;gap:4px;align-items:center;justify-content:flex-end;white-space:nowrap}
+.ic-acts>.btn{height:30px;padding:0 10px}
+.ic-icons{display:flex;gap:0}
 /* Squads: a slim bar of squads on top, the chat takes the full width. */
 .sk{display:flex;flex-direction:column;gap:10px}
 .sk-list{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:thin;padding:6px}
@@ -595,8 +601,14 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
   .phead h1{font-size:30px}
   .kpi{padding:var(--space-4)}
   .kval{font-size:36px}
-  .ic-body{padding:var(--space-4) var(--space-4) var(--space-3)}
-  .ic-acts{padding:var(--space-3) var(--space-4) var(--space-4)}
+  .ftable .fx{display:none}
+  .ftable .ipill{font-size:0;padding:6px;gap:0}
+  .ftable td{padding:8px 6px}
+  .f-name .ic-desc{max-width:150px}
+  .f-name{width:auto}
+  .ftable .f-mob{display:flex}
+  .f-det{padding-left:0}
+  .ic-acts{flex-wrap:wrap;white-space:normal}
   .sec-head{flex-direction:column;align-items:flex-start}
   .sec-head .note{text-align:left}
   .table thead{display:none}

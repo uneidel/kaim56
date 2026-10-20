@@ -2627,6 +2627,8 @@ class ManagerFunctions(unittest.TestCase):
         self.assertIn("class=ic-tog aria-expanded=false", card)
         self.assertIn("ic-more", card)
         self.assertIn("editConfig('cardx')", card)
+        self.assertTrue(card.startswith("<tbody class=icard"))                   # Fleet table: one tbody per instance
+        self.assertIn(f"colspan={len(re.findall(r'<th[ >]', m._ui.FLEET_HEAD))}", card)          # details row spans every column
         self.assertIn("id=skq", m._ui.render())                                  # Skills tab: keyword filter
         self.assertNotIn("encodeURIComponent(SQ)", m._ui.render())                # squad calls: never an empty project name
         self.assertIn("aria-controls=sk-at", m._ui.render())                     # Squads composer: @-mention list

@@ -6,7 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-10-20
-- Fleet: cards in masonry columns, so opening a card no longer stretches its neighbour.
+- Fleet is a sortable table (Name, Status, Model, Spend, Flags, actions); a row opens its details below; filter and search unchanged.
 
 ## 2026-10-19
 - Fleet: search box; New instance and an instance's Policy open as modals (shield on the card); the Policy tab is gone.
