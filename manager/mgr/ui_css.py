@@ -318,6 +318,7 @@ main>.screen{margin-bottom:var(--space-8)}
 .obanner[hidden]{display:none}
 .obanner span{font-size:14px;flex:1;min-width:200px}
 .obanner b{color:#fff}
+.sk-desc{font-size:12px;color:var(--color-neutral-600);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:640px}
 .pbgrid{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px}
 @media (max-width:640px){.pbgrid{grid-template-columns:1fr}}
 .fleet,.tblwrap{background:var(--app-card);border-radius:var(--radius-lg);overflow-x:auto}

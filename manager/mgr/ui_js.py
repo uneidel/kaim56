@@ -1040,7 +1040,8 @@ function newClose(){document.getElementById('newdlg').style.display='none'}
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
   if(document.getElementById('poldlg').style.display==='grid')polClose();
   else if(document.getElementById('newdlg').style.display==='grid')newClose();
-  else if(document.getElementById('persdlg').style.display==='grid')personaClose();});
+  else if(document.getElementById('persdlg').style.display==='grid')personaClose();
+  else if(document.getElementById('skilldlg').style.display==='grid')skillClose();});
 
 /* — token throughput: /api/usage-series, one area for the selection — */
 let SERIES=null, SERIES_RANGE='24h', CHART_SEL=[];
@@ -1105,6 +1106,7 @@ function showTab(t){
   });
   document.getElementById('newinst').hidden=t!=='instances';
   document.getElementById('newpers').hidden=t!=='personas';
+  document.getElementById('newskill').hidden=t!=='skills';
   navToggle(false);
 }
 /* below 860px the sidebar is a drawer */
@@ -2266,41 +2268,50 @@ async function loadSkillStats(){
   renderSkills(true);
 }
 const SK_VERDICT={working:'tag-accent',failing:'tag-neutral',unused:'tag-neutral',few:'tag-neutral','new':'tag-neutral'};
-function skStat(n){const st=SKSTATS[n]; if(!st)return '';
-  const col=st.verdict==='failing'?' style="background:var(--color-danger,#c0392b);color:#fff"':'';
-  return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;margin-top:6px" title="${esc(st.why)}">`+
-    `<span class="tag ${SK_VERDICT[st.verdict]||'tag-neutral'}"${col}>${escT(st.verdict)}</span>`+
-    `<span class=text-muted>${st.uses} load${st.uses===1?'':'s'} · ${st.ok} ok · ${st.failed} failed`+
-    (st.last?` · last ${new Date(st.last*1000).toLocaleDateString()}`:'')+
-    ` · ~${st.load_tokens} tokens per load</span></div>`;}
+/* Skills table: search (every word), category and mode filter; a header click sorts. */
+let SK_SORT={k:'name',up:true};
+function skSort(k){SK_SORT={k,up:SK_SORT.k===k?!SK_SORT.up:k==='name'||k==='category'};renderSkills(true)}
 function renderSkills(statsOnly){
   if(!statsOnly){loadProposals();loadSkillStats();}
-  const cat=(document.getElementById('skcat')||{}).value||'';
+  const cat=(document.getElementById('skcat')||{}).value||'', mode=(document.getElementById('skmode')||{}).value||'';
   const qs=((document.getElementById('skq')||{}).value||'').toLowerCase().split(/\\s+/).filter(Boolean);   /* every word must match name or description */
-  document.getElementById('skills').innerHTML=SKILLS.filter(s=>(!cat||s.category===cat)&&
-    qs.every(w=>(s.name+' '+(s.description||'')).toLowerCase().includes(w))).map(s=>
-    `<div class="card blueprint">${CORNERS}`+
-    `<div style="display:flex;align-items:center;gap:8px">`+
-    `<span class=card-title style="font-size:15px;font-family:var(--font-mono);font-weight:500">${escT(s.name)}</span>`+
-    `<button class="tag ${s.default?'tag-accent':'tag-neutral'}" style="border:0;cursor:pointer;font-size:11px" `+
-    `title="${s.default?'Standard: every agent is told about it each turn and loads it when it applies — click for on demand':'On demand: agents find it via list_skills — click to make it standard'}" `+
-    `onclick="skDefault('${esc(s.name)}',${!s.default})">${s.default?'standard':'on demand'}</button>`+
-    `<select class=input style="width:auto;font-size:11px;padding:1px 4px;min-height:0" aria-label="Category of ${esc(s.name)}" onchange="skCategory('${esc(s.name)}',this.value)">`+
-    SK_CATS.map(c=>`<option${c===s.category?' selected':''}>${c}</option>`).join('')+`</select>`+
-    `<span style="margin-left:auto;display:flex;gap:2px">`+
-    `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px" title=Edit onclick="editSkill('${esc(s.name)}')">${I_EDIT}</button>`+
-    `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px;color:var(--color-neutral-600)" title=Delete onclick="delSkill('${esc(s.name)}')">${I_DEL}</button>`+
-    `</span></div>`+
-    `<p class=card-body style="font-size:12.5px">${escT(s.description||'')}</p>${skStat(s.name)}</div>`)
-    .join('')||'<span class=text-muted style="font-size:13px">none</span>';
+  const key={name:s=>s.name,category:s=>s.category||'',mode:s=>s.default?0:1,uses:s=>(SKSTATS[s.name]||{}).uses||0}[SK_SORT.k];
+  const rows=SKILLS.filter(s=>(!cat||s.category===cat)&&(!mode||(mode==='std')===!!s.default)&&
+    qs.every(w=>(s.name+' '+(s.description||'')).toLowerCase().includes(w)))
+    .sort((a,b)=>{const x=key(a),y=key(b);return (typeof x==='number'?x-y:x.localeCompare(y))*(SK_SORT.up?1:-1)});
+  const th=(k,t,c)=>`<th${c?' class='+c:''} data-k=${k} aria-sort=${SK_SORT.k===k?(SK_SORT.up?'ascending':'descending'):'none'} onclick="skSort('${k}')">${t}</th>`;
+  document.getElementById('skills').innerHTML=rows.length?
+    '<table class=ftable><thead><tr>'+th('name','Skill')+th('category','Category')+th('mode','Mode')+th('uses','Use','num')+'<th></th></tr></thead><tbody>'+
+    rows.map(s=>{const st=SKSTATS[s.name];
+      return `<tr><td><div class=mono style="font-size:13px;color:#fff">${escT(s.name)}</div>`+
+      `<div class=sk-desc>${escT(s.description||'')}</div></td>`+
+      `<td><select class=input style="width:auto;font-size:11px;padding:1px 4px;min-height:0" aria-label="Category of ${esc(s.name)}" onchange="skCategory('${esc(s.name)}',this.value)">`+
+      SK_CATS.map(c=>`<option${c===s.category?' selected':''}>${c}</option>`).join('')+`</select></td>`+
+      `<td><button class="tag ${s.default?'tag-accent':'tag-neutral'}" style="border:0;cursor:pointer;font-size:11px;white-space:nowrap" `+
+      `title="${s.default?'Standard: every agent is told about it each turn and loads it when it applies — click for on demand':'On demand: agents find it via list_skills — click to make it standard'}" `+
+      `onclick="skDefault('${esc(s.name)}',${!s.default})">${s.default?'standard':'on demand'}</button></td>`+
+      `<td class=num>${st?`<span title="${esc(st.why)} · ${st.ok} ok · ${st.failed} failed${st.last?' · last '+new Date(st.last*1000).toLocaleDateString():''} · ~${st.load_tokens} tokens per load">`+
+        `<span class="tag ${SK_VERDICT[st.verdict]||'tag-neutral'}"${st.verdict==='failing'?' style="background:var(--color-danger,#c0392b);color:#fff"':''}>${escT(st.verdict)}</span> ${st.uses}</span>`:''}</td>`+
+      `<td style="white-space:nowrap;text-align:right">`+
+      `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px" title=Edit onclick="editSkill('${esc(s.name)}')">${I_EDIT}</button>`+
+      `<button class="btn btn-icon btn-ghost" style="width:26px;height:26px;color:var(--color-neutral-600)" title=Delete onclick="delSkill('${esc(s.name)}')">${I_DEL}</button></td></tr>`}).join('')+
+    '</tbody></table>'
+    :`<span class=text-muted style="font-size:13px;padding:14px;display:block">${qs.length||cat||mode?'no match':'none'}</span>`;
 }
 async function editSkill(n){const s=SKILLS.find(x=>x.name===n);if(!s)return;
-  document.getElementById('skname').value=s.name;document.getElementById('skdesc').value=s.description||'';
-  const c=document.getElementById('skcontent');c.value='… lade';
+  skillOpen(s);
+  const c=document.getElementById('skcontent');c.value='… loading';
   // The page carries only name+description (the catalog is ~1 MB); the body
   // comes on demand.
-  try{c.value=await (await fetch('/api/skills/'+encodeURIComponent(n))).text()}catch(e){c.value=''}
-  document.getElementById('skname').scrollIntoView({behavior:'smooth'});}
+  try{c.value=await (await fetch('/api/skills/'+encodeURIComponent(n))).text()}catch(e){c.value=''}}
+function skillOpen(s){
+  document.getElementById('sktitle').textContent=s?'Edit skill':'New skill';
+  document.getElementById('skname').value=s?s.name:'';document.getElementById('skdesc').value=s?s.description||'':'';
+  document.getElementById('skcontent').value='';
+  document.getElementById('skilldlg').style.display='grid';
+  document.getElementById(s?'skdesc':'skname').focus({preventScroll:true});
+}
+function skillClose(){document.getElementById('skilldlg').style.display='none'}
 function saveSkill(){
   const name=document.getElementById('skname').value.trim(),description=document.getElementById('skdesc').value,
         content=document.getElementById('skcontent').value;

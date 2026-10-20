@@ -10,6 +10,7 @@ commit messages.
 - The Changelog tab is gone (with /api/changelog); its security list is now the Security tab.
 - Personas: New persona button top right, edit/create in a modal, search box.
 - Playbooks: one filterable table over all agents (search + agent filter); GET /api/playbooks without instance returns all.
+- Skills: a sortable table (search, category and mode filter), New skill button top right, create/edit in a modal.
 
 ## 2026-10-19
 - Fleet: search box; New instance and an instance's Policy open as modals (shield on the card); the Policy tab is gone.

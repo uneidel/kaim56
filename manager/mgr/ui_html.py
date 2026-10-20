@@ -66,6 +66,7 @@ HTML_TOP = """</head><body>
   <div><div class=peyebrow id=pgroup>Agents</div><h1 id=ptitle>Instances</h1></div>
   <button class="btn btn-primary" id=newinst onclick=newInstance()><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New instance</button>
   <button class="btn btn-primary" id=newpers onclick=personaOpen() hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New persona</button>
+  <button class="btn btn-primary" id=newskill onclick=skillOpen() hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New skill</button>
 </header>
 
 <section class="screen" id=s-instances>
@@ -208,21 +209,25 @@ HTML_TOP = """</head><body>
 <section class="screen" id=s-skills>
   <p class=lede>Loaded into context on demand via <code>load_skill("name")</code> · <code>list_skills</code> shows them · central, no rebuild</p>
   <div id=skprops></div>
-  <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><label for=skcat class=text-muted style="font-size:12px">Category</label>
-    <select class=input id=skcat style="width:auto" onchange=renderSkills(true)><option value="">all</option>__SKCATS__</select>
-    <input class=input id=skq type=search placeholder="Filter by keyword" aria-label="Filter skills by keyword" style="width:220px" oninput=renderSkills(true)>
-    <span class=text-muted style="font-size:12px">security skills reach an agent only with SECURITY_SKILLS=1 or its squad&#8217;s &#8220;Security skills&#8221;</span></div>
-  <div class=grid3 id=skills></div>
-  <div class="panel blueprint" style="margin-top:32px">
-    
-    <h4 style="margin:0 0 16px">New skill</h4>
+  <div class=fhead>
+    <input class="input fsearch" id=skq type=search placeholder="Search name, description…" aria-label="Filter skills by keyword" oninput=renderSkills(true)>
+    <select class=input id=skcat style="width:auto" aria-label="Category" onchange=renderSkills(true)><option value="">all categories</option>__SKCATS__</select>
+    <select class=input id=skmode style="width:auto" aria-label="Mode" onchange=renderSkills(true)><option value="">standard + on demand</option><option value=std>standard</option><option value=dem>on demand</option></select></div>
+  <div class=tblwrap id=skills></div>
+  <p class=text-muted style="font-size:12px;margin-top:8px">security skills reach an agent only with SECURITY_SKILLS=1 or its squad&#8217;s &#8220;Security skills&#8221;</p>
+  <div id=skilldlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)skillClose()">
+  <div class="dialog blueprint" role=dialog aria-modal=true aria-labelledby=sktitle style="width:min(900px,100%)">
+    <div style="display:flex;align-items:center;gap:10px"><div class=dialog-title id=sktitle>New skill</div>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=skillClose() aria-label=Close>✕</button></div>
     <div class=grid2>
       <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=skname placeholder="e.g. postgres-expert"></div>
       <div class=field><label>Short description</label><input class=input id=skdesc placeholder="When to load this skill?"></div>
-      <div class="field span2"><label>Content (Markdown)</label><textarea class=input id=skcontent style="min-height:130px"></textarea></div>
+      <div class="field span2"><label>Content (Markdown)</label><textarea class=input id=skcontent style="min-height:300px;font-family:var(--font-mono);font-size:12.5px"></textarea></div>
     </div>
-    <div class=panel-foot><span id=skmsg class=msg></span><button class="btn btn-primary" onclick=saveSkill()>Save skill</button></div>
-  </div>
+    <div class=panel-foot style="border:none;padding:0"><span id=skmsg class=msg></span>
+      <button class="btn btn-secondary" onclick=skillClose()>Cancel</button>
+      <button class="btn btn-primary" onclick=saveSkill()>Save skill</button></div>
+  </div></div>
 </section>
 
 <section class="screen" id=s-plugins>
