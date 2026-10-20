@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-20
 - Fleet is a sortable table (Name, Status, Model, Spend, Flags, actions); a row opens its details below; filter and search unchanged.
+- The Changelog tab is gone (with /api/changelog); its security list is now the Security tab.
 
 ## 2026-10-19
 - Fleet: search box; New instance and an instance's Policy open as modals (shield on the card); the Policy tab is gone.

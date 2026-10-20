@@ -42,7 +42,7 @@ HTML_TOP = """</head><body>
       <a href="#models"><span>Models</span></a>
       <a href="#secrets"><span>Secrets</span></a>
       <a href="#settings"><span>Settings</span></a>
-      <a href="#changelog"><span>Changelog</span></a>
+      <a href="#security"><span>Security</span></a>
       <a href="#architecture"><span>Architecture</span></a>
     </div>
   </nav>
@@ -579,7 +579,7 @@ HTML_TOP = """</head><body>
   <div class=panel-foot style="border:none;padding-top:0"><span id=secmsg class=msg></span><button class="btn btn-primary" onclick=saveSecrets()>Save access</button></div>
 </section>
 
-<section class="screen" id=s-changelog>
+<section class="screen" id=s-security>
   <div class=sec-head>
     <div><h6>Open items</h6><h3>Security issues</h3></div>
     <span class="note text-muted">Findings from working on the system · text and rating live in <code>security.json</code>, only the status can be toggled here</span>
@@ -591,14 +591,6 @@ HTML_TOP = """</head><body>
   <div class=panel-foot><span id=secissuemsg class=msg></span>
     <label class=radio style="margin-right:auto"><input type=checkbox id=showdone onchange=renderIssues()><span class=dot></span>show fixed ones</label>
     <button class="btn btn-primary" onclick=saveIssues()>Save status</button></div>
-
-  <div class=sec-head style="margin-top:44px">
-    <div><h6>History</h6><h3>Changelog</h3></div>
-    <span class="note text-muted">from <code>CHANGELOG.md</code></span>
-  </div>
-  <div class="panel blueprint md" id=changelog>
-    
-  </div>
 </section>
 
 
@@ -767,7 +759,7 @@ HTML_BOTTOM = """
   summarizing, offloader, hook denylist, goal, provider switch, HITL store, katfs ZIP walk);
   <b>HTTP</b> runs against the live manager (<code>/api/agents</code> backend+model,
   <code>/api/hitl</code>, katfs status); <b>LIVE</b> does a free <code>/goal</code> round-trip
-  to the orchestrator VM. Runs on every change, together with the changelog and this tab.</p></div>
+  to the orchestrator VM. Runs on every change, together with this tab.</p></div>
 
   <div class="card blueprint"><span class=card-title>Templates &amp; rootfs images</span>
   <p class=card-body><b>Install anywhere:</b> <code>install.sh</code> in the repo deploys the whole stack on a fresh KVM machine (preflight, layout, Firecracker download, builds, systemd) — verified end-to-end in a nested-KVM QEMU rig. Four templates (claude, openrouter, pi, prime), each with a Docker-built

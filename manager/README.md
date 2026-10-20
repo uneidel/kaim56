@@ -239,7 +239,6 @@ along.
 
 | Endpoint | Meaning |
 |---|---|
-| `GET /api/changelog` | `CHANGELOG.md` as text |
 | `GET /api/security` | `{issues:[…]}` |
 | `POST /api/security` | `{issues:[{id,status}]}` — the status only |
 

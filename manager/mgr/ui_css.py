@@ -271,11 +271,6 @@ main>.screen{margin-bottom:var(--space-8)}
 .issue h5{margin:0 0 3px;font-size:15px}
 .issue .meta{font-size:11.5px;font-family:var(--font-mono)}
 .issue p{margin:4px 0 0;font-size:13px}
-.md h2{font-size:22px;margin:26px 0 8px}
-.md h3{font-size:16px;margin:18px 0 6px;color:var(--color-accent-700)}
-.md ul{margin:0 0 10px;padding-left:18px}
-.md li{font-size:13.5px;margin:3px 0}
-.md p{font-size:13.5px}
 .kv b{font-family:var(--font-heading);font-weight:600;font-size:12px;letter-spacing:.06em;
   text-transform:uppercase;min-width:130px;color:color-mix(in srgb,var(--color-text) 60%,transparent)}
 /* — Instances dashboard: KPI tiles, token chart, fleet cards — */

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""What the About/Updates tab shows: installed version against the newest GitHub release, the update run, the changelog and the security checklist (security.json).
+"""What the About/Updates tab shows: installed version against the newest GitHub release, the update run and the security checklist (security.json).
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -123,19 +123,10 @@ def update_start():
     print(f"[update] started {UPDATE_UNIT}", flush=True)
     return "update started — the manager restarts when the installer is done"
 
-CHANGELOG_FILE = os.path.join(_paths.BASE, "CHANGELOG.md")
 SECURITY_FILE = os.path.join(_paths.BASE, "security.json")
 
 
 _mcp.configure(_paths.BASE, _mcp.load_instances)   # injection (mgr/mcp)
-
-def load_changelog():
-    try:
-        with open(CHANGELOG_FILE) as fh:
-            return fh.read()
-    except OSError:
-        return "# Changelog\n\n(no entries yet)"
-
 
 def load_security():
     try:

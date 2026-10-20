@@ -2606,18 +2606,13 @@ async function saveModel(){
   alert(d.msg||'ok');location.reload();
 }
 
-/* — Changelog + security: findings live in security.json, the UI only toggles
-     the status. Markdown is rendered deliberately minimally (headings, lists,
-     bold, code) — after escaping, so nothing can break out of the text. */
+/* — Security: findings live in security.json, the UI only toggles
+     the status. */
 let ISSUES=[];
 const SEVORDER={high:0,medium:1,low:2};
-async function loadChangelog(){
+async function loadSecurity(){
   try{
-    const [c,i]=await Promise.all([
-      (await fetch('/api/changelog')).json(),
-      (await fetch('/api/security')).json()]);
-    document.getElementById('changelog').innerHTML=
-      ''+md(c.text||'');
+    const i=await (await fetch('/api/security')).json();
     ISSUES=(i.issues||[]).slice().sort((a,b)=>
       (a.status===b.status?0:a.status==='open'?-1:1)||
       (SEVORDER[a.severity]??9)-(SEVORDER[b.severity]??9));
@@ -2648,25 +2643,7 @@ function saveIssues(){
   fetch('/api/security',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({issues:ISSUES.map(i=>({id:i.id,status:i.status}))})})
     .then(r=>r.json()).then(d=>{document.getElementById('secissuemsg').textContent=(d.msg||'saved')+' ✓';
-      loadChangelog();});
-}
-function md(src){
-  const esc1=escT(src);
-  const out=[];
-  let inList=false;
-  for(const raw of esc1.split('\\n')){
-    const line=raw.replace(/`([^`]+)`/g,'<code>$1</code>')
-                  .replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>');
-    const li=line.match(/^\\s*[-*] (.*)$/);
-    if(li){ if(!inList){out.push('<ul>');inList=true} out.push('<li>'+li[1]+'</li>'); continue }
-    if(inList){out.push('</ul>');inList=false}
-    if(/^### /.test(line)) out.push('<h3>'+line.slice(4)+'</h3>');
-    else if(/^## /.test(line)) out.push('<h2>'+line.slice(3)+'</h2>');
-    else if(/^# /.test(line)) out.push('');            // title is already in the tab
-    else if(line.trim()) out.push('<p>'+line+'</p>');
-  }
-  if(inList)out.push('</ul>');
-  return out.join('');
+      loadSecurity();});
 }
 
 /* — Models: the full catalog live, and from it the shortlist for the create form.
@@ -3009,7 +2986,7 @@ function saveSecrets(){
 window.onload=()=>{
   showTab(location.hash.slice(1));
   if(location.hash==='#squads')loadSquads();
-  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadChangelog();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadSecurity();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
   loadClaudeAccts();setInterval(()=>{if(!document.hidden)loadUsageGauges()},60000);
   // Tasks, policy and the usage numbers used to arrive only on page load —

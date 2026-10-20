@@ -250,7 +250,7 @@ _N = r"[A-Za-z0-9_-]{1,64}"
 _USER_ROUTES = [
     ("GET", r"/(chat|katfs|favicon\.ico|logo\.svg)"),
     ("GET", r"/api/(instances|tasks|tasks-open|chats|notifications|version|resources|usage|usage-by-model"
-            r"|changelog|models|personas|skills|agents|prompts|missions|playbooks|history|voice-health|apps"
+            r"|models|personas|skills|agents|prompts|missions|playbooks|history|voice-health|apps"
             r"|stt-recent|stt-recent/audio|auth/me)"),
     ("GET", rf"/api/(session|trace|audit|usage)/{_N}(/log)?"),
     ("GET", r"/api/katfs/(browse|file|status|zip)"),

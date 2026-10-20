@@ -899,11 +899,6 @@ def _rt_audit_read(h):
 
 
 
-@_routes.ROUTER.get("/api/changelog", admin=True)
-def _rt_changelog(h):
-    return h._json({"text": _about.load_changelog()})
-
-
 @_routes.ROUTER.get("/api/security", admin=True)
 def _rt_security(h):
     return h._json({"issues": _about.load_security()})
