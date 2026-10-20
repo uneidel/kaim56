@@ -65,6 +65,7 @@ HTML_TOP = """</head><body>
 <header class=phead>
   <div><div class=peyebrow id=pgroup>Agents</div><h1 id=ptitle>Instances</h1></div>
   <button class="btn btn-primary" id=newinst onclick=newInstance()><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New instance</button>
+  <button class="btn btn-primary" id=newpers onclick=personaOpen() hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 5v14M5 12h14"></path></svg>New persona</button>
 </header>
 
 <section class="screen" id=s-instances>
@@ -160,18 +161,19 @@ HTML_TOP = """</head><body>
 
 <section class="screen" id=s-personas>
   <p class=lede>Selectable as "Persona" when creating an instance → sets <code>AGENT_SYSTEM</code> (applied at start, no rebuild)</p>
+  <div class=fhead><h3>Personas</h3>
+    <input class="input fsearch" id=psearch type=search placeholder="Search name, prompt…" aria-label="Search the personas" oninput=renderPersonas()></div>
   <div class=grid2 id=personas></div>
-  <div class="panel blueprint" style="margin-top:32px">
-    
-    <h4 style="margin:0 0 16px">New persona</h4>
-    <div style="display:grid;grid-template-columns:280px 1fr;gap:20px" class=pgrid>
-      <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=pname placeholder="e.g. researcher"></div>
-      <div class=field style="grid-row:span 2"><label>Prompt</label><textarea class=input id=pprompt style="min-height:110px"></textarea></div>
-      <div style="align-self:end;display:flex;align-items:center;gap:12px">
-        <button class="btn btn-primary" onclick=savePersona()>Save persona</button><span id=pmsg class=msg></span>
-      </div>
-    </div>
-  </div>
+  <div id=persdlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)personaClose()">
+  <div class="dialog blueprint" role=dialog aria-modal=true aria-labelledby=perstitle style="width:min(760px,100%)">
+    <div style="display:flex;align-items:center;gap:10px"><div class=dialog-title id=perstitle>New persona</div>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick=personaClose() aria-label=Close>✕</button></div>
+    <div class=field><label>Name (a-z 0-9 _ -)</label><input class=input id=pname placeholder="e.g. researcher"></div>
+    <div class=field><label>Prompt</label><textarea class=input id=pprompt style="min-height:220px"></textarea></div>
+    <div class=panel-foot style="border:none;padding:0"><span id=pmsg class=msg></span>
+      <button class="btn btn-secondary" onclick=personaClose()>Cancel</button>
+      <button class="btn btn-primary" onclick=savePersona()>Save persona</button></div>
+  </div></div>
 
   <div class=sec-head style="margin-top:36px">
     <div><h6>Recurring jobs</h6><h3 style="font-size:22px">Prompt templates</h3></div>
@@ -190,12 +192,15 @@ HTML_TOP = """</head><body>
     <div><h6>Learned rules</h6><h3 style="font-size:22px">Playbooks</h3></div>
     <span class="note text-muted">Fixed rules per agent — apply EVERY turn. The agent learns them itself from corrections (playbook_add); view, add, remove them here.</span>
   </div>
-  <div class="panel blueprint">
-    <div class=field style="max-width:280px;margin-bottom:12px"><label>Agent</label>
-      <select class=input id=pbinst onchange=loadPlaybooks()></select></div>
-    <div id=pblist><span class=text-muted style="font-size:13px">…</span></div>
-    <div class="field span2" style="margin-top:14px"><label>New rule</label>
-      <textarea class=input id=pbtext style="min-height:56px" placeholder="Always fetch stock prices via http_fetch from query1.finance.yahoo.com …"></textarea></div>
+  <div class=fhead>
+    <input class="input fsearch" id=pbq type=search placeholder="Search rules…" aria-label="Search the playbooks" oninput=renderPlaybooks()>
+    <select class=input id=pbf style="width:auto" aria-label="Filter by agent" onchange=renderPlaybooks()><option value="">all agents</option></select></div>
+  <div class=tblwrap id=pblist><span class=text-muted style="font-size:13px;padding:14px;display:block">…</span></div>
+  <div class="panel blueprint" style="margin-top:16px">
+    <div class=pbgrid>
+      <div class=field><label>Agent</label><select class=input id=pbinst></select></div>
+      <div class=field><label>New rule</label>
+        <textarea class=input id=pbtext style="min-height:56px" placeholder="Always fetch stock prices via http_fetch from query1.finance.yahoo.com …"></textarea></div></div>
     <div class=panel-foot><span id=pbmsg class=msg></span><button class="btn btn-primary" onclick=addPlaybook()>Add rule</button></div>
   </div>
 </section>

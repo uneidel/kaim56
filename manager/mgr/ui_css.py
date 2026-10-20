@@ -318,7 +318,9 @@ main>.screen{margin-bottom:var(--space-8)}
 .obanner[hidden]{display:none}
 .obanner span{font-size:14px;flex:1;min-width:200px}
 .obanner b{color:#fff}
-.fleet{background:var(--app-card);border-radius:var(--radius-lg);overflow-x:auto}
+.pbgrid{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px}
+@media (max-width:640px){.pbgrid{grid-template-columns:1fr}}
+.fleet,.tblwrap{background:var(--app-card);border-radius:var(--radius-lg);overflow-x:auto}
 .ftable{width:100%;border-collapse:collapse;font-size:13.5px}
 .ftable th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
   color:var(--color-neutral-600);padding:12px 10px;border-bottom:1px solid var(--app-line)}

@@ -1039,7 +1039,8 @@ function newInstance(){
 function newClose(){document.getElementById('newdlg').style.display='none'}
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
   if(document.getElementById('poldlg').style.display==='grid')polClose();
-  else if(document.getElementById('newdlg').style.display==='grid')newClose();});
+  else if(document.getElementById('newdlg').style.display==='grid')newClose();
+  else if(document.getElementById('persdlg').style.display==='grid')personaClose();});
 
 /* — token throughput: /api/usage-series, one area for the selection — */
 let SERIES=null, SERIES_RANGE='24h', CHART_SEL=[];
@@ -1103,6 +1104,7 @@ function showTab(t){
     document.getElementById('pgroup').textContent=a.closest('.navgrp').firstElementChild.textContent;
   });
   document.getElementById('newinst').hidden=t!=='instances';
+  document.getElementById('newpers').hidden=t!=='personas';
   navToggle(false);
 }
 /* below 860px the sidebar is a drawer */
@@ -2127,21 +2129,34 @@ async function delProject(name){
   loadProjects();
 }
 
+/* Playbooks of every agent in one table; search and the agent select filter it. */
+let PBS={};
 async function loadPlaybooks(){
-  const sel=document.getElementById('pbinst');
+  try{PBS=(await (await fetch('/api/playbooks')).json()).by_instance||{}}catch(e){PBS={}}
+  const sel=document.getElementById('pbinst'), f=document.getElementById('pbf');
   if(!sel.options.length){
     try{const insts=await (await fetch('/api/instances')).json();
       sel.innerHTML=insts.map(i=>`<option${i.name==='orchestrator'?' selected':''}>${escT(i.name)}</option>`).join('');
     }catch(e){}
   }
-  const inst=sel.value||'orchestrator';
-  let pbs=[]; try{pbs=(await (await fetch('/api/playbooks?instance='+encodeURIComponent(inst))).json()).playbooks||[]}catch(e){}
-  document.getElementById('pblist').innerHTML=pbs.length?pbs.map(p=>
-    `<div style="display:flex;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--color-divider)">`+
-    `<span class=mono style="flex:none;font-size:11px;color:var(--color-neutral-500)">${escT(p.id||'')}</span>`+
-    `<span style="flex:1;font-size:13px">${escT(p.text||'')}</span>`+
-    `<button class="btn btn-ghost btn-sm" onclick="delPlaybook('${esc(inst)}','${esc(p.id)}')">✕</button></div>`).join('')
-    :'<span class=text-muted style="font-size:13px">No rules for this agent.</span>';
+  const cur=f.value;
+  f.innerHTML='<option value="">all agents</option>'+Object.keys(PBS).filter(k=>PBS[k].length).sort()
+    .map(k=>`<option${k===cur?' selected':''}>${escT(k)}</option>`).join('');
+  renderPlaybooks();
+}
+function renderPlaybooks(){
+  const q=document.getElementById('pbq').value.trim().toLowerCase(), f=document.getElementById('pbf').value;
+  const rows=Object.entries(PBS).filter(([k])=>!f||k===f)
+    .flatMap(([k,l])=>l.map(p=>({inst:k,...p})))
+    .filter(p=>!q||(p.inst+' '+(p.text||'')).toLowerCase().includes(q))
+    .sort((a,b)=>a.inst.localeCompare(b.inst)||(b.ts||0)-(a.ts||0));
+  document.getElementById('pblist').innerHTML=rows.length?
+    '<table class=ftable><thead><tr><th>Agent</th><th>Rule</th><th class=num>Added</th><th></th></tr></thead><tbody>'+
+    rows.map(p=>`<tr><td style="white-space:nowrap">${escT(p.inst)}</td><td>${escT(p.text||'')}</td>`+
+      `<td class=num>${p.ts?new Date(p.ts*1000).toLocaleDateString():''}</td>`+
+      `<td><button class="btn btn-ghost btn-sm" title="Remove rule" onclick="delPlaybook('${esc(p.inst)}','${esc(p.id)}')">✕</button></td></tr>`).join('')+
+    '</tbody></table>'
+    :`<span class=text-muted style="font-size:13px;padding:14px;display:block">${q||f?'no match':'No rules yet.'}</span>`;
 }
 async function addPlaybook(){
   const inst=document.getElementById('pbinst').value,text=document.getElementById('pbtext').value.trim();
@@ -2186,7 +2201,8 @@ async function delPrompt(n){
   loadPrompts();
 }
 function renderPersonas(){
-  document.getElementById('personas').innerHTML=PERSONAS.map(p=>
+  const q=(document.getElementById('psearch').value||'').trim().toLowerCase();
+  document.getElementById('personas').innerHTML=PERSONAS.filter(p=>!q||(p.name+' '+(p.prompt||'')).toLowerCase().includes(q)).map(p=>
     `<div class="card blueprint">${CORNERS}`+
     `<div style="display:flex;align-items:center;gap:10px">`+
     `<span class=card-title style="font-size:16px">${escT(p.name)}</span>`+
@@ -2195,13 +2211,18 @@ function renderPersonas(){
     `<button class="btn btn-ghost" style="font-size:12px;color:var(--color-neutral-600)" onclick="delPersona('${esc(p.name)}')">Delete</button>`+
     `</span></div>`+
     `<p class=card-body style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${escT(p.prompt||'')}</p></div>`)
-    .join('')||'<span class=text-muted style="font-size:13px">none</span>';
+    .join('')||`<span class=text-muted style="font-size:13px">${q?'no match':'none'}</span>`;
   const sel=document.getElementById('persona');
   if(sel)sel.innerHTML='<option value="">— Default —</option>'+PERSONAS.map(p=>`<option value="${esc(p.name)}">${escT(p.name)}</option>`).join('');
 }
-function editPersona(n){const p=PERSONAS.find(x=>x.name===n);if(!p)return;
-  document.getElementById('pname').value=p.name;document.getElementById('pprompt').value=p.prompt||'';
-  document.getElementById('pname').scrollIntoView({behavior:'smooth'});}
+function editPersona(n){const p=PERSONAS.find(x=>x.name===n);if(p)personaOpen(p)}
+function personaOpen(p){
+  document.getElementById('perstitle').textContent=p?'Edit persona':'New persona';
+  document.getElementById('pname').value=p?p.name:'';document.getElementById('pprompt').value=p?p.prompt||'':'';
+  document.getElementById('persdlg').style.display='grid';
+  document.getElementById(p?'pprompt':'pname').focus({preventScroll:true});
+}
+function personaClose(){document.getElementById('persdlg').style.display='none'}
 function savePersona(){
   const name=document.getElementById('pname').value.trim(),prompt=document.getElementById('pprompt').value;
   if(!name)return alert('Name?');

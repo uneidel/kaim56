@@ -304,7 +304,7 @@ def _rt_missions(h):
 def _rt_playbooks(h):
     g = h._guest()
     inst = g["name"] if g else _routes._qs(h).get("instance", [""])[0]
-    return h._json({"playbooks": _rules.pb_list(inst)})
+    return h._json({"playbooks": _rules.pb_list(inst)} if inst else {"by_instance": _rules.load_playbooks()})
 
 
 @_routes.ROUTER.get("/api/tasks-open")

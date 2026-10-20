@@ -1972,6 +1972,9 @@ class ManagerFunctions(unittest.TestCase):
             pid = rules.pb_add("inst", "a rule")         # NameError on missing import
             self.assertTrue(pid and pid != "exists")
             self.assertEqual(len(rules.pb_list("inst")), 1)
+            get = lambda p: (lambda h: (h._do_GET(), json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]))[1])(self._handler(p, "10.0.0.9"))
+            self.assertEqual([x["text"] for x in get("/api/playbooks")["by_instance"]["inst"]], ["a rule"])   # the table: all agents
+            self.assertEqual(len(get("/api/playbooks?instance=inst")["playbooks"]), 1)
         finally:
             rules.PLAYBOOKS_FILE = old
 
