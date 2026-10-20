@@ -322,7 +322,7 @@ def host_firewall_on():
 
 
 def _lan_net():
-    """The HOSTIF's own IPv4 subnet ("192.168.56.0/24"), "" if unknown."""
+    """The HOSTIF's own IPv4 subnet ("192.168.1.0/24"), "" if unknown."""
     import ipaddress
     try:
         out = _util.sh("ip", "-o", "-4", "addr", "show", "dev", _host.HOSTIF, check=False).stdout or ""

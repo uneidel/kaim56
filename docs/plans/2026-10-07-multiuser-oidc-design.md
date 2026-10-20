@@ -4,7 +4,7 @@ Date: 2026-10-07. Status: agreed (sections 1–2 reviewed; 3–4 decided at impl
 
 ## Decisions
 - Model A: shared household/team. All users see all instances; roles admin|user.
-- IdP: Rauthy, external; issuer `https://auth.kat56.de/auth/v1/` (path + trailing slash, endpoints via discovery:
+- IdP: Rauthy, external; issuer `https://auth.example.com/auth/v1/` (path + trailing slash, endpoints via discovery:
   device `/auth/v1/oidc/device`, end_session `/auth/v1/oidc/logout`).
 - Native clients (APK, CLI, voice): OIDC device flow, proxied through the manager (works over iroh).
 - Roles from Rauthy `roles` claim (a claim, not a scope): `kaim56_admin`, `kaim56_user`; neither -> login refused.

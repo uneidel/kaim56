@@ -948,7 +948,7 @@ HTML_BOTTOM = """
   The Squad panel&#8217;s <b>Dashboard</b> (admin only) opens repowise&#8217;s web UI for the project: <code>/indexer/open/&#8249;name&#8250;</code>
   starts the VM and the UI (Next.js, built into the image with basePath <code>/indexer/ui</code>; its API on loopback),
   then <code>/indexer/ui/</code> is reverse-proxied unchanged to <code>:7341</code>, without the browser&#8217;s credentials.
-  Only on its own origin (site <code>INDEX_HOST</code>, e.g. index.kat56.de; unset = no dashboard): there only these paths and the
+  Only on its own origin (site <code>INDEX_HOST</code>, e.g. index.example.com; unset = no dashboard): there only these paths and the
   OIDC login answer, with a separate admin-only <code>dash</code> session (valid on no other host, no manager session or Basic valid there),
   same-origin POSTs only, never framed; the manager refuses POSTs with that Origin.</p></div>
 
@@ -978,7 +978,7 @@ HTML_BOTTOM = """
   (export/import, counts compared) and marks the app &#8220;cloud&#8221;: <code>/apps/&#8249;name&#8250;/</code> redirects there and the local <code>_api</code> refuses writes.
   Its <code>/api</code> calls reach the manager with a per-app Bearer token &#8212; valid only while in the cloud and only for the apps&#8217; API paths, never
   settings, secrets or terminals. Restore copies the state back and revokes the token; the worker stays deployed.
-  <b>Own origin</b> (site <code>APPS_HOST</code>, e.g. apps.kat56.de; unset = apps under the manager&#8217;s host): there only <code>/apps/</code>, the same apps&#8217;
+  <b>Own origin</b> (site <code>APPS_HOST</code>, e.g. apps.example.com; unset = apps under the manager&#8217;s host): there only <code>/apps/</code>, the same apps&#8217;
   API paths and the OIDC login answer, with a separate <code>apps</code> session (admin and role user, valid on no other host; no manager session,
   Basic or Bearer there), same-origin POSTs only, no Referer; the manager redirects browser sessions there and refuses POSTs with that Origin.
   The app (Basic/Bearer, also over iroh) keeps <code>/apps/</code> on the manager&#8217;s host &#8212; it runs apps on its own virtual origin anyway.</p></div>

@@ -6,12 +6,12 @@
 becomes a squad waiting for its plan. Admin only (mgr/auth.py: default deny).
 
 The first https URL in the text is the repo, the rest the goal. Hosts:
-github.com and the Gitea hosts of the site setting SQUAD_GITEA_HOSTS (default
-git.kat56.de); others are refused. The squad's name comes from the repo
+github.com and the Gitea hosts of the site setting SQUAD_GITEA_HOSTS (comma
+list, default none); others are refused. The squad's name comes from the repo
 ([a-z0-9-], -2 … when taken). Then, as a job the UI polls:
 
 a. token: the host secret ``SQUAD_GIT_TOKEN_<HOST>`` (github.com → ``…_GITHUB``,
-   git.kat56.de → ``…_GIT_KAT56_DE``); without one the clone is tried
+   git.example.org → ``…_GIT_EXAMPLE_ORG``); without one the clone is tried
    anonymously, and an auth failure names the secret to create. These names
    are reserved: never released to a VM (mgr/squadgit.reserved_secrets).
 b. the squad record (mgr/squadrec.py: squad ID, folder SQUADS_DIR/<id>__<name>),
@@ -97,7 +97,7 @@ def squads_dir():
 
 def hosts():
     """{host: provider} the kickoff clones from."""
-    g = _settings.SITE.get("SQUAD_GITEA_HOSTS", "git.kat56.de")
+    g = _settings.SITE.get("SQUAD_GITEA_HOSTS", "")
     g = g.split(",") if isinstance(g, str) else (g or [])
     return {"github.com": "github", **{str(x).strip().lower(): "gitea" for x in g if str(x).strip()}}
 

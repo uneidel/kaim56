@@ -11,6 +11,7 @@ commit messages.
 - Personas: New persona button top right, edit/create in a modal, search box.
 - Playbooks: one filterable table over all agents (search + agent filter); GET /api/playbooks without instance returns all.
 - Skills: a sortable table (search, category and mode filter), New skill button top right, create/edit in a modal.
+- SQUAD_GITEA_HOSTS has no built-in host any more (was a site value); set it in site.json.
 
 ## 2026-10-19
 - Fleet: search box; New instance and an instance's Policy open as modals (shield on the card); the Policy tab is gone.
@@ -132,7 +133,7 @@ commit messages.
 - Squads: members (and the kickoff's architect) are created with TRANSPORT=web — the template default (signal) left them deaf to squad wakes.
 - Squads page (Work): a chat per squad (channel, inline proposal cards with Approve/Reject/edit, Board, Pause, Dashboard) and admin kickoff from one line — repo URL + goal: host-side clone into `SQUADS_DIR` (site; token secret `SQUAD_GIT_TOKEN_<HOST>`, reserved; Gitea hosts `SQUAD_GITEA_HOSTS`, size cap `SQUAD_MAX_BYTES`), worktree project, remote, `<name>-architect` (code-architect, tier strong) as lead, squad not approved, goal posted (`mgr/squadkick.py`, `/api/squads*`); personas `qa-engineer`, `ui-developer` seeded into existing installs.
 - Guest images: the rootfs is unpacked and `mkfs.ext4 -d`-ed as root in a throwaway Debian container (all four build scripts), so the ext4 has the image's owners — before, every file (`/usr`, `/etc`, `/app`, the init) belonged to uid 1000, i.e. to the agent user; the indexer UI's `.next/cache` is the service user's, Claude Code's self-update is off (`DISABLE_AUTOUPDATER=1`, root-owned npm tree).
-- Code index: the dashboard moves to its own origin (site `INDEX_HOST`, e.g. index.kat56.de; unset = no dashboard) so its JavaScript never runs with the manager's session — there only `/indexer/open|ui` and the OIDC login answer (own redirect_uri, host-only cookie, admin-only session kind `dash` valid nowhere else; no Basic, no manager session), same-origin POSTs only, `frame-ancestors 'none'`/no-referrer; the manager has no `/indexer/ui`, redirects `/indexer/open/<p>` there and refuses POSTs with that Origin.
+- Code index: the dashboard moves to its own origin (site `INDEX_HOST`, e.g. index.example.com; unset = no dashboard) so its JavaScript never runs with the manager's session — there only `/indexer/open|ui` and the OIDC login answer (own redirect_uri, host-only cookie, admin-only session kind `dash` valid nowhere else; no Basic, no manager session), same-origin POSTs only, `frame-ancestors 'none'`/no-referrer; the manager has no `/indexer/ui`, redirects `/indexer/open/<p>` there and refuses POSTs with that Origin.
 - Code index: the Squad panel's Dashboard (admin only) opens repowise's web UI for the project — `/indexer/open/<project>` starts the indexer and the UI (Next.js built into the image with basePath `/indexer/ui`, node 22), `/indexer/ui/` is reverse-proxied to the VM without the browser's credentials and counts as use for the idle stop.
 - Squad git remote: per project GitHub/Gitea remote (admin: Squad panel, `/api/squad-git/<p>`); members' tools `git_push_branch` (writer's branch -> `squad/<writer>/<name>`), `git_fetch` (-> `refs/remotes/kaim56/*`), `pr_create/list/view/comment`, `issue_create/list/comment` run host-side (`mgr/squadgit.py`, `/api/git/*`), token from the secret store reserved (never released to a VM, env header not argv), label, per-member daily limit, audited; no merge (docs/plans/2026-10-09-squad-git-design.md).
 - Code index (repowise): template `indexer` (`agents/indexer`, 4 vCPU/4 GiB, offline, persistent disk) indexes the git projects as a reader on demand — after a ticket reaches done, an approved merge or the Squad panel's Reindex — and stops after 30 min idle (`mgr/indexer.py`); members query it as MCP server `repowise` straight through the manager (project checked against their memberships).
@@ -337,7 +338,7 @@ commit messages.
 - `mgr/haalias.py` (HA WebSocket registry + REST), guest routes `/api/ha-alias` + `/api/ha-control`; "Gartenhaus" HA area created
 - Voice client: `"prompt"` config / `--prompt` prepends a `[Voice-Client] …` frame to every spoken message (default: short, speakable)
 - Voice client speaks sentence-streamed (splitter on the token stream, think/code held); `--headless` prints stage timings
-- mrmusic MCP registered (`mcp-remote` → `https://mrmusic.kat56.de/mcp`, `${MRMUSIC_TOKEN}` host-side); released for myassistant, 7 tools
+- mrmusic MCP registered (`mcp-remote` → `https://mrmusic.example.com/mcp`, `${MRMUSIC_TOKEN}` host-side); released for myassistant, 7 tools
 
 ## 2026-09-03
 - Heartbeat skip reschedule was never saved → same heartbeat re-skipped every 5 s; `worker_claim()` now has an explicit dirty contract
