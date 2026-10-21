@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-21
+
+- Cloud upload of an app without state (gtakid) no longer fails: the placeholder object answers `/_api` with 404 instead of throwing (Cloudflare 1101 → HTTP 500 until the 240 s wait ran out).
+
 ## 2026-10-20
 - Fleet is a sortable table (Name, Status, Model, Spend, Flags, actions); a row opens its details below; filter and search unchanged.
 - The Changelog tab is gone (with /api/changelog); its security list is now the Security tab.

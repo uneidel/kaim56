@@ -8433,6 +8433,9 @@ class ManagerFunctions(unittest.TestCase):
             self.assertNotIn("sk-or-test", w)
             self.assertEqual(cl.llm_bindings("codeflow"), [])
             self.assertIn("idFromName(KAIM_APP)", cl.worker_source("codeflow", "tok", "https://m.example"))
+            idle = cl.worker_source("no-such-app", "tok", "https://m.example")   # no state: /_api answers 404, not a throw
+            self.assertIn("class AppIdle extends DurableObject", idle)
+            self.assertIn("status: 404", idle)
             sent = []
             cf.request = lambda method, path, token, body=None, ctype=None, **kw: sent.append((body, ctype)) or ([] if method == "GET" else {})
             cf.upload_script("acct", "kaim56-agents", "t", module_name="worker.mjs", module_src=w, cls="AgentState",
