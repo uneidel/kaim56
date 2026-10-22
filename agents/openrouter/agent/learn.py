@@ -23,16 +23,19 @@ from . import observe as _observe
 # turn one extra model call distills the way it went into a SKILL proposal
 # and files it; nothing enters the catalog without the operator's click.
 SKILL_LEARN = os.environ.get("SKILL_LEARN", "1") not in ("0", "false", "False", "")
-SKILL_LEARN_MIN_STEPS = int(os.environ.get("SKILL_LEARN_MIN_STEPS", "5"))
+SKILL_LEARN_MIN_STEPS = int(os.environ.get("SKILL_LEARN_MIN_STEPS", "10"))
 _LEARN_SYSTEM = (
     "You just completed a multi-step task (the conversation follows). Decide whether "
-    "the approach is a REUSABLE procedure worth saving as a skill for future tasks of "
-    "the same kind. Answer exactly NONE when it was a one-off, trivial, mostly failed, "
-    "personal, or already covered by a skill you loaded. Otherwise answer with one JSON "
-    "object and nothing else: {\"name\": kebab-case, \"description\": one line, "
-    "\"content\": Markdown with sections Purpose, When to use, Steps (the exact tools "
-    "and arguments that worked, in order), Pitfalls}. No secrets, no personal data, no "
-    "full tool outputs, under 4000 characters.")
+    "the approach is a REUSABLE procedure for a KIND of task, worth saving as a skill. "
+    "Test: would the same steps help with a DIFFERENT task of that kind (another repo, "
+    "host, file, person, date)? If not, it was specific to this one task. Answer exactly "
+    "NONE when it was a one-off, specific to this task, trivial, mostly failed, personal, "
+    "or already covered by a skill you loaded. Otherwise answer with one JSON object and "
+    "nothing else: {\"name\": kebab-case naming the kind of task, \"description\": one line, "
+    "\"content\": Markdown with sections Purpose, When to use, Steps (the tools in order, "
+    "arguments as placeholders like <repo>, <path>, <host>), Pitfalls}. No concrete names, "
+    "IP addresses, paths, IDs or values from this task; no secrets, no personal data, no "
+    "tool outputs; under 4000 characters.")
 
 
 def _turn_slice(hist, user_text):

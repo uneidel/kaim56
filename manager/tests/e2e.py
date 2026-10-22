@@ -4209,6 +4209,17 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             restore()
 
+    def test_task_specific_proposal_is_refused(self):
+        """A proposal naming a concrete IP, home path or instance is the log of
+        one task, not a skill: refused with the hint to use placeholders."""
+        sk = self.m._skills
+        body = "## Purpose\n" + "step " * 30
+        vms = ["gtakid-architect", "vm"]
+        for leak, word in (("curl http://192.168.56.1/api", "192.168.56.1"), ("cd /home/ulrich/app", "/home/ulrich"),
+                           ("ask GTAKID-Architect", "GTAKID-Architect")):
+            why = sk.skill_lint("x-y", "d", body + leak, vms)
+            self.assertIn(word, why); self.assertIn("placeholders", why)
+        self.assertEqual(sk.skill_lint("x-y", "d", body + "curl http://127.0.0.1:<port> in <path>, vm-like, v1.2.3", vms), "")
     def test_skill_stats_judge_only_with_enough_loads(self):
         """What a skill did: loads recorded with their turn (the guest route
         strips ?turn= from the name), the turns' outcomes decide the verdict —

@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-22
 
+- Skill proposals were the log of one task: the distiller now asks for a procedure for a kind of task with placeholders, runs from 10 steps (was 5), and the manager refuses proposals naming an IP, home path or instance.
 - MCP hub: UniFi Network MCP (sirkirby/unifi-mcp, pinned 0.39.1) installed via uv with its own Python 3.13; catalog entry is site config.
 
 ## 2026-10-21

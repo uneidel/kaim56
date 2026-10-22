@@ -236,6 +236,9 @@ def delete_skill(name):
 SKILL_PROPOSALS_FILE = os.path.join(_paths.BASE, "skill_proposals.json")
 PROPOSALS_MAX = 50
 REDRAW_DAYS = 30
+# A skill is a procedure for a KIND of task: concrete addresses, home paths
+# and instance names mean it is the log of one task (live 2026-10-22).
+_SPECIFIC = re.compile(r"(?<![\d.])(?!127\.|0\.0\.0\.0)(?:\d{1,3}\.){3}\d{1,3}(?![\d.])|(?<![\w/])/(?:home|root)/[\w.-]+")
 _SECRETISH = re.compile(r"(sk-or-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9._-]{16,}|hf_[A-Za-z0-9]{16,})")
 
 
@@ -255,10 +258,11 @@ def save_proposals(items):
     os.replace(tmp, SKILL_PROPOSALS_FILE)
 
 
-def skill_lint(name, description, content):
+def skill_lint(name, description, content, instances=()):
     """'' when a proposal is acceptable, else why not. Advisory rules in the
     spirit of Hermes' linter: a usable name, a one-line description, a body
-    that is a procedure and not a dump, nothing that looks like a credential."""
+    that is a procedure and not a dump, nothing that looks like a credential,
+    no concrete IP, home path or instance name (`instances`)."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,47}", name or ""):
         return "name must be 2-48 chars of a-z 0-9 _ -"
     if not (description or "").strip() or len(description) > 200:
@@ -270,12 +274,19 @@ def skill_lint(name, description, content):
         return "content over 12 kB — a skill is a procedure, not a log"
     if _SECRETISH.search(body):
         return "content looks like it contains a credential"
+    names = [re.escape(n) for n in instances if len(n) >= 3]
+    hit = _SPECIFIC.search(body) or (names and re.search(rf"(?<![\w-])(?:{'|'.join(names)})(?![\w-])", body, re.I))
+    if hit:
+        return (f"content names '{hit.group(0)}' — a skill is for a kind of task: "
+                "use placeholders like <host>, <path>, <instance>")
     return ""
 
 
 def proposal_add(instance, name, description, content, turn="", note=""):
     name = re.sub(r"[^a-z0-9_-]", "", str(name or "").lower())[:48]
-    why = skill_lint(name, str(description or "").strip(), str(content or ""))
+    from mgr import instances as _instances        # instances -> skills: imported late
+    why = skill_lint(name, str(description or "").strip(), str(content or ""),
+                     [i.get("name", "") for i in _instances.load_instances()])
     if why:
         return None, why
     turned_down = discarded_recently(name)
