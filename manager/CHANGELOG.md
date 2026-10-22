@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-22
+
+- MCP hub: UniFi Network MCP (sirkirby/unifi-mcp, pinned 0.39.1) installed via uv with its own Python 3.13; catalog entry is site config.
+
 ## 2026-10-21
 
 - Cloud upload of an app without state (gtakid) no longer fails: the placeholder object answers `/_api` with 404 instead of throwing (Cloudflare 1101 → HTTP 500 until the 240 s wait ran out).

@@ -15,6 +15,11 @@ RUN pip install --no-cache-dir --break-system-packages mcp-portainer
 # JobSpy (job-board scraping: Indeed, LinkedIn, Glassdoor, …) needs pandas +
 # a TLS-fingerprinting client — hub only, never in a VM. See jobspy_mcp.py.
 RUN pip install --no-cache-dir --break-system-packages python-jobspy
+# UniFi Network (sirkirby/unifi-mcp, MIT) needs Python >= 3.13: uv installs it with its own
+# interpreter under /opt, the command lands in /usr/local/bin. Pinned; bump on purpose.
+RUN pip install --no-cache-dir --break-system-packages uv \
+    && UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+       uv tool install --python 3.13 unifi-network-mcp==0.39.1 && rm -rf /root/.cache
 # The headless browser is NOT here: it runs in its own container (mcp-browser/).
 COPY hub.py /app/hub.py
 COPY jobspy_mcp.py /app/jobspy_mcp.py
