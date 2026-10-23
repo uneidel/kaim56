@@ -100,5 +100,7 @@ class WaitingTest {
         assertEquals("waiting", WaitingClient.linkFor("x", "waiting:w1"))
         assertEquals("chat:dev1", WaitingClient.linkFor("Task done", "chat:dev1"))
         assertEquals("", WaitingClient.linkFor("Task done", ""))
+        assertEquals("waiting", WaitingClient.linkFor("Waiting for you: Run rm", "squads"))
+        assertEquals("waiting", WaitingClient.linkFor("Squad x: proposal waiting for approval", "projects"))
     }
 }

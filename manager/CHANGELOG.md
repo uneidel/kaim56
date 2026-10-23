@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-23
 
+- App 5.49: squad notifications (link squads/projects) open the Waiting screen, unknown links the Notifications list; tapping an entry in the Notifications list no longer falls back to the chat (onClose ran after the navigation).
 - Action log (mgr/actlog.py): the host records what a VM did — the tool calls the model asked for (LLM proxy), every manager API request, denied requests — append-only, hash-chained, root-only, `chattr +a`; `python3 -m mgr.actlog` checks the chain.
 
 ## 2026-10-22

@@ -130,9 +130,11 @@ class WaitingClient(private val mc: ManagerClient) {
         }
 
         /** Where a tapped notification leads: the manager's link, or the Waiting
-         *  screen for "Waiting for you: …" notifications that carry none. */
+         *  screen for "Waiting for you: …" notifications that carry none. The
+         *  manager's squad links name web tabs the app does not have: squad
+         *  decisions live on the Waiting screen here. */
         fun linkFor(title: String, link: String): String = when {
-            link.startsWith(LINK) -> LINK
+            link.startsWith(LINK) || link == "squads" || link == "projects" -> LINK
             link.isNotBlank() -> link
             title.startsWith(TITLE_PREFIX) -> LINK
             else -> ""

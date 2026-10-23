@@ -5,6 +5,16 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.49
+
+- Tapping a squad notification (approval, question, review, plan waiting for
+  approval, squad finished) now opens the **Waiting for you** screen instead
+  of leaving the app wherever it was.
+- Tapping an entry on the Notifications screen opens its target again
+  (missions, tasks, skills, waiting) — it used to fall back to the chat.
+- A notification with a target the app does not know opens the Notifications
+  list.
+
 ## 5.48
 
 - New **Waiting for you** screen (drawer, at the top): everything an agent

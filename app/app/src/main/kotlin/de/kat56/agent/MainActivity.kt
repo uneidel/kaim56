@@ -686,6 +686,7 @@ fun KatAgentApp(prefs: Prefs, gemma: LocalGemma, store: ChatStore, assistCalls: 
             link == "skills" -> screen = "skills"
             link == WaitingClient.LINK -> { screen = "waiting"; waitingRefresh++ }
             link.startsWith("chat:") -> { screen = null; session.openTaskChat(link.removePrefix("chat:")) }
+            link.isNotBlank() -> screen = "notifications"     // unknown target: at least the list, not wherever the app was
         }
     }
     LaunchedEffect(notifNavCalls) { if (notifNavCalls > 0) navTo(notifNav) }
@@ -1912,7 +1913,7 @@ private fun NotificationsScreen(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                         .background(Kat.surface)
                         .border(1.dp, if (unread) Kat.accentText else Kat.hairlineStrong, RoundedCornerShape(14.dp))
-                        .tap { WaitingClient.linkFor(n.title, n.link).takeIf { it.isNotBlank() }?.let { onOpen(it); onClose() } }
+                        .tap { WaitingClient.linkFor(n.title, n.link).takeIf { it.isNotBlank() }?.let { onClose(); onOpen(it) } }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
