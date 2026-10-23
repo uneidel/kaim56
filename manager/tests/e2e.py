@@ -4263,7 +4263,7 @@ class ManagerFunctions(unittest.TestCase):
         sk = self.m._skills
         body = "## Purpose\n" + "step " * 30
         vms = ["gtakid-architect", "vm"]
-        for leak, word in (("curl http://192.168.56.1/api", "192.168.56.1"), ("cd /home/ulrich/app", "/home/ulrich"),
+        for leak, word in (("curl http://10.20.30.40/api", "10.20.30.40"), ("cd /home/alice/app", "/home/alice"),
                            ("ask GTAKID-Architect", "GTAKID-Architect")):
             why = sk.skill_lint("x-y", "d", body + leak, vms)
             self.assertIn(word, why); self.assertIn("placeholders", why)
