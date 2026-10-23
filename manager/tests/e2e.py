@@ -5737,6 +5737,28 @@ class ManagerFunctions(unittest.TestCase):
                   "console.error('squad '+what"):
             self.assertIn(s, page)
 
+    def test_squad_wake_tells_a_worktree_writer_its_folder_has_no_git(self):
+        """A worktree writer's wake says its folder is plain files without .git by
+        design (live: a coder escalated that as a provisioning fault); the lead's
+        and a shared project's wakes do not carry it."""
+        m = self.m
+        sq, got = m._squads, {}
+        old = sq.wake, sq.record
+        try:
+            sq.wake = lambda member, msg, *a, **k: got.__setitem__(member, msg) or "t1"
+            sq.record = lambda proj: None
+            proj = {"name": "gk", "strategy": "worktree",
+                    "members": {"lead1": {"role": "lead"}, "w1": {"role": "writer"}}}
+            sq._deliver(proj, 7, "lead1", "do T1", "post", ["lead1", "w1"], 1)
+            self.assertIn("/project/gk is plain files without .git", got["w1"])
+            self.assertNotIn("without .git", got["lead1"])
+            self.assertIn("handing someone the next step wakes them", got["w1"])
+            got.clear()
+            sq._deliver({**proj, "strategy": "shared"}, 8, "lead1", "do T1", "post", ["w1"], 1)
+            self.assertNotIn("without .git", got["w1"])
+        finally:
+            sq.wake, sq.record = old
+
     def test_squad_auto_nudge_wakes_the_lead_once_per_stall(self):
         """A squad stalled for STALL_NUDGE_MIN: the lead is woken with why, once per
         stall; after STALL_NUDGE_MAX nudges that moved no ticket the operator gets

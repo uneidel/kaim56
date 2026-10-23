@@ -351,9 +351,14 @@ def code_in_text(text):
 
 # The way code reaches the base in a worktree squad: git_push_branch needs a
 # git remote the squad usually lacks (live 2026-10-13), the lead's merge works.
-GIT_HINT = ("code goes through git, not the channel: commit it in your own folder, then set your ticket to "
-            "review with the commit and file names — the lead requests the merge (squad_request_merge "
-            "writer=<you>) and the operator approves it")
+GIT_HINT = ("code goes through git, not the channel: save it in your own folder (the manager commits it onto "
+            "your branch — no git there), then set your ticket to review with the file names — the lead "
+            "requests the merge (squad_request_merge writer=<you>) and the operator approves it")
+# Live 2026-10-23: a writer took its .git-less folder for a provisioning fault and
+# escalated it to the operator twice. The folder is plain files on purpose (mgr/projwt.py).
+TREE_NOTE = ("(Your folder {path} is plain files without .git — by design, not a fault: edit and save there, "
+             "the manager commits it onto your branch. Do not run git or ask for a clone; project_sync "
+             "brings in the others' merged work; set your ticket to review with the file names.)")
 WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
         "not into the channel. For someone else's ticket, comment on it instead of doing it.)")
 
@@ -361,7 +366,7 @@ WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — 
 def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     how = (f"question {mid} — answer with squad_post reply_to={mid}" if kind == "ask"
            else f"msg {mid}, reply with squad_post reply_to={mid} — only if it needs an action; "
-                "an ack, thanks or 'holding' goes with wake=false")
+                "a pure ack or thanks goes with wake=false; handing someone the next step wakes them")
     ids = f"\n(squad id {sid}; your member id {member_id})" if sid else ""
     return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}\n{WORK}"
 
@@ -483,10 +488,13 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
 def _deliver(proj, mid, sender, text, kind, targets, depth, level=0, hints=None):
     """Wake each target with the framed message -> (woke, error)."""
     woke, err, rec = {}, "", record(proj)
+    tree = set(_projects.writers(proj)) if proj.get("strategy") == "worktree" else set()
     for m in targets:
         hint = (hints or {}).get(m)
         msg = _frame(proj["name"], sender, mid, text + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
                      _squadrec.member_id(rec, m))
+        if m in tree:
+            msg += "\n" + TREE_NOTE.format(path=_projects.guest_path(proj["name"]))
         try:
             woke[m] = wake(m, msg, proj["name"], int(depth), mid, **({"level": level} if level else {}))
         except Exception as e:           # one failed wake must not hide the others
