@@ -33,6 +33,7 @@ from mgr import projects as _projects
 from mgr import router as _router
 from mgr import settings as _settings
 from mgr import signal as _signal_mod
+from mgr import squadkick as _squadkick
 from mgr import squadmetrics as _squadmetrics
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
@@ -744,6 +745,10 @@ def _task_worker():
                 _squads.deliver_queued()   # rate/budget-held squad wakes, once there is room
             except Exception as e:
                 _util._wlog(f"squad-queue failed: {e!r}")
+            try:
+                _squadkick.auto_nudge()    # a stalled squad's lead gets a status check
+            except Exception as e:
+                _util._wlog(f"squad-nudge failed: {e!r}")
             try:
                 _indexer.idle_sweep()      # the code indexer stops after 30 min unused
             except Exception as e:

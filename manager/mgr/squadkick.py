@@ -56,6 +56,7 @@ from mgr import gateway as _gateway
 from mgr import hitlq as _hitlq
 from mgr import indexer as _indexer
 from mgr import instances as _instances
+from mgr import notify as _notify
 from mgr import projects as _projects
 from mgr import projwt as _projwt
 from mgr import repoprofile as _repoprofile
@@ -676,10 +677,63 @@ def activity(proj, now=None):
     stalled = idle and ended
     return {"members": out, "failed_members": sum(1 for a in out.values() if a["state"] == "err"),
             "stalled_min": max(0, (now - ended) // 60) if stalled else None,
-            "stalled_why": _stall_why(tix, out, st) if stalled else "", "queued": queued}
+            "stalled_why": _stall_why(tix, out, st) if stalled else "", "stalled_since": ended if stalled else 0,
+            "queued": queued}
 
 
 STALL_TICKETS = 3
+
+# ---- automatic status check: the lead of a stalled squad is woken ----------
+# Live 2026-10-23: a lead's last post of a turn went out with wake=false
+# ("Ack — holding"), nobody owned the next step and the squad slept for hours
+# until the operator pressed "Nudge lead". The idle worker does that now.
+STALL_NUDGE_MIN = 15       # nobody worked this long although tickets are open
+STALL_NUDGE_MAX = 2        # nudges in a row that moved no ticket -> the operator instead
+STALL_NUDGE_FROM = "auto (stall check)"
+STALL_NUDGE = ("Status check (automatic): nobody has worked for {min} min although tickets are open. "
+               "Holdups: {why}. Unblock what you can and wake the members who can continue — "
+               "a post that hands someone the next step must wake them (no wake=false).")
+_nudge_check = [0]
+_nudged = {}               # project -> {"since": stall start, "n": nudges in a row, "sig": ticket states}
+
+
+def auto_nudge(now=None):
+    """Idle worker: wake the lead of a squad stalled for STALL_NUDGE_MIN, with
+    why. Not while the operator holds it (an open question/approval/review or
+    proposal): that is a wait for you, not a stall. Once per stall; after
+    STALL_NUDGE_MAX nudges in a row without a ticket moving, one notification
+    instead (no token loop). -> the projects nudged."""
+    now, done = int(now or time.time()), []
+    if now - _nudge_check[0] < 60:                    # the idle loop ticks fast; once a minute is plenty
+        return done
+    _nudge_check[0] = now
+    held = {x.get("project") for x in _hitlq.items("open")}
+    for proj in _projects.load():
+        name = proj["name"]
+        if not _squads.settings(proj).get("enabled") or name in held:
+            continue
+        a = activity(proj, now)
+        if a["stalled_min"] is None or a["stalled_min"] < STALL_NUDGE_MIN:
+            continue
+        if any(p.get("status") in _squadgate.OPEN for p in _squadgate.proposals(name)):
+            continue
+        last = _nudged.get(name) or {}
+        if last.get("since") == a["stalled_since"]:
+            continue                                  # this stall had its turn
+        sig = json.dumps(sorted((t["key"], t["status"]) for t in _squadgate.tickets(name)))
+        n = last.get("n", 0) + 1 if last.get("sig") == sig else 1
+        _nudged[name] = {"since": a["stalled_since"], "n": n, "sig": sig}
+        if n > STALL_NUDGE_MAX:
+            if n == STALL_NUDGE_MAX + 1:
+                _notify.notify_add(_squadgate.lead(proj) or name, f"Squad {name}: stalled",
+                                   f"{STALL_NUDGE_MAX} automatic status checks moved no ticket. {a['stalled_why']}",
+                                   link="squads")
+            continue
+        m, why = _squadgate.operator_post(proj, STALL_NUDGE_FROM, {"text": STALL_NUDGE.format(
+            min=a["stalled_min"], why=a["stalled_why"])})
+        if m:
+            done.append(name)
+    return done
 
 
 def _stall_why(tix, out, st):

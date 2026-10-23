@@ -333,7 +333,7 @@ TOOLS = {
          "properties": {"text": {"type": "string"},
                         "to": {"type": "string", "description": "member name(s), comma-separated, or 'all' (empty with reply_to = its sender)"},
                         "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
-                        "wake": {"type": "boolean", "description": "false = only store it, wake nobody — for an ack, thanks or 'holding' that needs no action (default true)"},
+                        "wake": {"type": "boolean", "description": "false = only store it, wake nobody — ONLY for a pure ack or thanks. A post that hands the addressee the next step (a review result with work left, an instruction, 'go ahead', 'over to you') must wake them, or nobody works (default true)"},
                         "project": _PROJ},
          "required": ["text"]}),
     "squad_ask": (_squad(t_squad_ask),

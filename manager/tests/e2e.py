@@ -5737,6 +5737,50 @@ class ManagerFunctions(unittest.TestCase):
                   "console.error('squad '+what"):
             self.assertIn(s, page)
 
+    def test_squad_auto_nudge_wakes_the_lead_once_per_stall(self):
+        """A squad stalled for STALL_NUDGE_MIN: the lead is woken with why, once per
+        stall; after STALL_NUDGE_MAX nudges that moved no ticket the operator gets
+        one notification instead; an open question for the operator holds it."""
+        m = self.m
+        woke, notes, undo = self._sm_env()
+        k, sm, now = m._squadkick, m._squadmetrics, int(time.time())
+        old = m._store.load_tasks
+        try:
+            k._nudged.clear()
+            sid = m._squads.squad_id(m._projects.get("sq"))
+            m._store.load_tasks = lambda: []
+            sm.record(sid, "turn_end", "task:d1", now - 600, member="d", outcome="ok", detail={})
+            k._nudge_check[0] = 0
+            self.assertEqual(k.auto_nudge(now), [])                    # 10 min: not yet
+            sm.record(sid, "turn_end", "task:d2", now - 1200, member="d", outcome="ok", detail={})
+            k._nudge_check[0] = 0
+            self.assertEqual(k.auto_nudge(now + 600), ["sq"])          # 20 min since the last turn
+            self.assertEqual(woke[-1][0], "a")
+            self.assertIn("Status check (automatic)", woke[-1][1])
+            self.assertIn("T1 (open): e ended its turn without finishing it", woke[-1][1])
+            n = len(woke)
+            k._nudge_check[0] = 0
+            self.assertEqual(k.auto_nudge(now + 700), [])              # the same stall: once
+            self.assertEqual(len(woke), n)
+            # the lead's turn moved nothing: a second nudge, then the operator instead
+            sm.record(sid, "turn_end", "task:a1", now + 800, member="a", outcome="ok", detail={})
+            k._nudge_check[0] = 0
+            self.assertEqual(k.auto_nudge(now + 800 + 1000), ["sq"])
+            sm.record(sid, "turn_end", "task:a2", now + 2000, member="a", outcome="ok", detail={})
+            k._nudge_check[0] = 0; del notes[:]
+            self.assertEqual(k.auto_nudge(now + 2000 + 1000), [])
+            self.assertEqual(len(woke), n + 1)
+            self.assertEqual(notes[0][1], "Squad sq: stalled")
+            # a question for the operator holds the squad: no nudge, whatever the clock says
+            k._nudged.clear()
+            self.assertTrue(m._hitlq.ask("e", "Which DB?")[0])
+            k._nudge_check[0] = 0
+            self.assertEqual(k.auto_nudge(now + 9000), [])
+        finally:
+            m._store.load_tasks = old
+            k._nudged.clear()
+            undo()
+
     def test_squad_activity_rows_retry_nudge_and_auto_retry(self):
         """Per member what it does or why not (working, failed, asks, waiting, idle) with
         a 2 h strip from squad_events; /squad/retry re-delivers a failed turn's wake at

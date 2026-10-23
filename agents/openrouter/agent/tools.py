@@ -282,7 +282,7 @@ BUILTIN = {
                    {"to": {"type": "string", "description": "member name(s), comma-separated, or 'all'; 'user' or empty = the operator (the person who wrote last); empty with reply_to = that message's sender"},
                     "text": {"type": "string"},
                     "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
-                    "wake": {"type": "boolean", "description": "false = only store it, wake nobody — for an ack, thanks or 'holding' that needs no action (default true)"},
+                    "wake": {"type": "boolean", "description": "false = only store it, wake nobody — ONLY for a pure ack or thanks. A post that hands the addressee the next step (a review result with work left, an instruction, 'go ahead', 'over to you') must wake them, or nobody works (default true)"},
                     "project": {"type": "string", "description": "optional when you are in one squad"}},
                    ["text"]),
     "squad_ask": (_tools_manager.t_squad_ask,
