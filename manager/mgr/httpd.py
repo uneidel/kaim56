@@ -14,6 +14,7 @@ import hmac
 import json
 import urllib.parse
 
+from mgr import actlog as _actlog
 from mgr import audit as _audit
 from mgr import auth as _auth
 from mgr import cloud as _cloud
@@ -26,6 +27,23 @@ from mgr import oidc as _oidc
 from mgr import routes as _routes
 from mgr import ui as _ui
 from mgr import util as _util
+
+
+# Guest paths the action log leaves out: the LLM proxy records its own
+# (the tool calls the model asked for); trace/audit/usage are the agent's
+# self-report, already kept elsewhere and noise here.
+ACTLOG_SKIP = ("/api/llm/", "/api/trace", "/api/audit", "/api/usage")
+
+
+def _act_body(path, raw):
+    """A request body for the action log: parsed when JSON (actlog clips each
+    field), never on a secret path — a value set there must not land in a log."""
+    if not raw or "secret" in path:
+        return "" if not raw else "<redacted>"
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return raw[:400].decode("utf-8", "replace")
 
 
 class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHandler):
@@ -220,7 +238,10 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             return
         # No route: the admin UI for everything else (index, deep links).
         # Guests get nothing here; unknown API paths a clean 404.
-        if _guests.instance_by_ip(self.client_address[0]) is not None or _auth.side_host(self.headers):
+        g = _guests.instance_by_ip(self.client_address[0])
+        if g is not None:
+            _actlog.record(g["name"], "denied", method="GET", path=self.path)
+        if g is not None or _auth.side_host(self.headers):
             return self._forbid()
         if self.path.split("?", 1)[0].startswith("/api/"):
             return self._json({"error": "not found"}, 404)
@@ -245,6 +266,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if guest is not None and not (
                 p in _guests.GUEST_POST_PATHS or p.startswith(_guests.GUEST_POST_PREFIXES)
                 or _grants.allowed(guest, "POST", p)):             # MANAGE_APPS (mgr/guestgrants.py)
+            _actlog.record(guest["name"], "denied", method="POST", path=self.path)
             return self._forbid()
         if self._dispatch("POST"):
             return
@@ -256,8 +278,18 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         if hit is None:
             return False
         fn, admin_only = hit
-        guest = _guests.instance_by_ip(self.client_address[0]) if admin_only else None
-        if guest is not None and not _grants.allowed(guest, method, self.path):
+        guest = _guests.instance_by_ip(self.client_address[0])
+        if guest is not None and not self.path.startswith(ACTLOG_SKIP):
+            self._actbody, self._status = b"", 0
+            try:                             # the host's record of what a VM did (mgr/actlog.py)
+                return self._dispatch_route(fn, admin_only, guest, method)
+            finally:
+                _actlog.record(guest["name"], "api", method=method, path=self.path,
+                               status=getattr(self, "_status", 0), body=_act_body(self.path, self._actbody))
+        return self._dispatch_route(fn, admin_only, guest, method)
+
+    def _dispatch_route(self, fn, admin_only, guest, method):
+        if admin_only and guest is not None and not _grants.allowed(guest, method, self.path):
             self._forbid()
             return True
         p = getattr(self, "principal", None)
@@ -291,7 +323,8 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
             ln = 0
         if ln > (limit or _routes.BODY_MAX):
             raise _util.BodyTooLarge(ln)
-        return self.rfile.read(ln) if ln > 0 else b""
+        self._actbody = self.rfile.read(ln) if ln > 0 else b""
+        return self._actbody
 
     def _body(self, default=None):
         """JSON body; {} (or `default`) when empty or malformed."""

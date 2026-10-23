@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-23
+
+- Action log (mgr/actlog.py): the host records what a VM did — the tool calls the model asked for (LLM proxy), every manager API request, denied requests — append-only, hash-chained, root-only, `chattr +a`; `python3 -m mgr.actlog` checks the chain.
+
 ## 2026-10-22
 
 - Skill proposals were the log of one task: the distiller now asks for a procedure for a kind of task with placeholders, runs from 10 steps (was 5), and the manager refuses proposals naming an IP, home path or instance.

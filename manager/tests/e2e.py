@@ -62,6 +62,10 @@ MANAGER_URL = os.environ.get("MANAGER_URL", "http://127.0.0.1:8700")
 if FC_DIR not in sys.path:
     sys.path.insert(0, FC_DIR)
 
+# No test may write the live action log (mgr/actlog.py, append-only, chattr +a).
+import mgr.actlog as _actlog_mod   # noqa: E402
+_actlog_mod.ACTLOG_PATH = os.path.join(tempfile.mkdtemp(prefix="e2e-actlog-"), "actlog.jsonl")
+
 
 def _load(name, path, env=None):
     """Load a module — or a package via its __init__.py — from a file under a
@@ -3269,6 +3273,50 @@ class ManagerFunctions(unittest.TestCase):
                 m._secrets.SECRET_POLICY_FILE = oldf
         finally:
             m._guests.instance_by_ip, m._secrets.load_secret_policy, m._secrets.secret_store = old
+
+    def test_actlog_chain_and_guest_requests(self):
+        """The host's action log: hash-chained (a changed or dropped line is
+        found), fed by the guest dispatch (allowed AND denied requests, no
+        secret bodies) and by the LLM proxy's view of the tool calls."""
+        m = self.m
+        al = m._httpd._actlog
+        tmp = tempfile.mkdtemp(prefix="e2e-act-")
+        old = al.ACTLOG_PATH, m._guests.instance_by_ip
+        try:
+            al.ACTLOG_PATH = os.path.join(tmp, "a.jsonl")
+            al.record("vm1", "api", path="/x", body={"k": "v" * 1000})
+            al.record("vm1", "llm", calls=[{"name": "bash", "args": "ls"}])
+            self.assertEqual(al.verify(al.ACTLOG_PATH)[:2], (True, 2))
+            lines = open(al.ACTLOG_PATH).read().splitlines()
+            self.assertLess(len(lines[0]), 700)                   # fields clipped
+            self.assertEqual(oct(os.stat(al.ACTLOG_PATH).st_mode & 0o777), "0o600")
+            open(al.ACTLOG_PATH, "w").write(lines[0].replace("/x", "/y") + "\n" + lines[1] + "\n")
+            self.assertEqual(al.verify(al.ACTLOG_PATH)[:3], (False, 1, 1))
+            open(al.ACTLOG_PATH, "w").write(lines[1] + "\n")     # first line dropped
+            self.assertFalse(al.verify(al.ACTLOG_PATH)[0])
+            # tool calls the model asked for: plain answer and SSE deltas
+            self.assertEqual(al.tool_calls(json.dumps({"choices": [{"message": {"tool_calls": [
+                {"function": {"name": "bash", "arguments": "{\"cmd\":\"id\"}"}}]}}]})),
+                [{"name": "bash", "args": "{\"cmd\":\"id\"}"}])
+            sc = al.StreamCalls()
+            for d in ({"index": 0, "function": {"name": "read_file", "arguments": "{\"pa"}},
+                      {"index": 0, "function": {"arguments": "th\":1}"}}):
+                sc.feed(b"data: " + json.dumps({"choices": [{"delta": {"tool_calls": [d]}}]}).encode() + b"\n")
+            self.assertEqual(sc.calls(), [{"name": "read_file", "args": "{\"path\":1}"}])
+            # guest requests: allowed and denied land in the log; a secret body never
+            al.ACTLOG_PATH = os.path.join(tmp, "b.jsonl"); al._last.clear()
+            guest = {"name": "vm7", "template": "openrouter", "index": 7, "config": {}}
+            m._guests.instance_by_ip = lambda ip: guest if ip == "172.30.7.2" else None
+            self._handler("/api/secrets", "172.30.7.2")._do_GET()
+            self._post_handler("/api/not-for-guests", "172.30.7.2", b"{}")._do_POST()
+            recs = [json.loads(x) for x in open(al.ACTLOG_PATH)]
+            self.assertEqual([(r["inst"], r["kind"], r["path"]) for r in recs],
+                             [("vm7", "api", "/api/secrets"), ("vm7", "denied", "/api/not-for-guests")])
+            self.assertEqual(recs[0]["status"], 200)
+            self.assertEqual(m._httpd._act_body("/api/secret/X", b'{"value":"pw"}'), "<redacted>")
+            self.assertTrue(al.verify(al.ACTLOG_PATH)[0])
+        finally:
+            al.ACTLOG_PATH, m._guests.instance_by_ip = old
 
     # ---- Claude accounts (mgr/claudeaccts.py) ---------------------------------
     def _ca_env(self):

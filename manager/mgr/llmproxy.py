@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.request
 
+from mgr import actlog as _actlog
 from mgr import notify as _notify
 from mgr import store as _store
 from mgr import guests as _guests
@@ -247,7 +248,16 @@ def _call(call, ginst, span, timeout=600):
     with r:
         out = (r.status, r.headers.get("Content-Type", "application/json"), r.read())
     _proxy_usage(ginst, call["backend"], out[2], ms=int((time.monotonic() - t0) * 1000), **span)
+    _act_llm(ginst, call, span, _actlog.tool_calls(out[2]))
     return out
+
+
+def _act_llm(ginst, call, span, calls):
+    """The action log's line for one LLM answer: the tool calls the model
+    asked for — host truth, whatever the agent reports later."""
+    if ginst is not None:
+        _actlog.record(ginst["name"], "llm", backend=call["backend"], turn=span.get("turn", ""),
+                       step=span.get("step"), calls=calls)
 
 
 # ---- job mode: the manager holds the long connection, not the VM -------------
@@ -368,6 +378,7 @@ class LLMProxyMixin:
             # (HTTP/1.0), urllib in the guest reads until EOF.
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
+            sc = _actlog.StreamCalls()
             try:
                 while True:
                     chunk = r.readline()
@@ -375,10 +386,13 @@ class LLMProxyMixin:
                         break
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                    sc.feed(chunk)
                     if b'"usage"' in chunk:
                         _proxy_usage(ginst, call["backend"], chunk, ms=int((time.monotonic() - _t0) * 1000), **span)
             except (BrokenPipeError, ConnectionResetError):
                 pass               # client gone -> upstream closes via with
+            finally:
+                _act_llm(ginst, call, span, sc.calls())
 
     def _llm_job_get(self, _pp):
         """GET /api/llm/jobs/<id> — {"status": "running"}, or the finished
