@@ -27,7 +27,9 @@ never runs on anything a VM can write:
 - **Sync** a writer with the base (the others' merged work): snapshot, then the
   base merged INTO the writer's branch — always ``merge-tree`` + ``commit-tree``
   + ``update-ref`` (never the operator's checkout, no hooks) — and the folder
-  refilled in place like a discard. A conflict changes nothing and names the files.
+  refilled in place like a discard. A conflict is committed WITH its markers and
+  named: the writer resolves them in its folder; merge refuses while a changed
+  file still holds one.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -319,6 +321,13 @@ def diff(proj, member):
 
 
 # ---- merge and discard -----------------------------------------------------
+def markers(repo, base_sha, tip):
+    """Files the writer changed that still hold a conflict marker (from a sync)."""
+    changed = set(git(repo, ["diff", "--name-only", "--no-renames", "-z", base_sha, tip]).split("\0"))
+    r = _run(repo, ["grep", "-l", "-I", "-E", "-e", "^(<<<<<<<|>>>>>>>) ", tip])
+    return [f for f in (x.split(":", 1)[1] for x in r.stdout.splitlines() if ":" in x) if f in changed]
+
+
 def merge(proj, member):
     """Merge the writer's branch into the base -> {'ok', 'commit'} or {'error', 'conflicts'}."""
     repo, base, name = proj["source"]["path"], proj["base"], proj["name"]
@@ -328,6 +337,9 @@ def merge(proj, member):
         base_sha = _sha(repo, f"refs/heads/{base}")
         if git_ok(repo, ["merge-base", "--is-ancestor", tip, base_sha]):
             return {"ok": True, "commit": base_sha, "note": "nothing to merge"}
+        marked = markers(repo, base_sha, tip)
+        if marked:
+            return {"error": "unresolved conflict markers — nothing changed", "conflicts": marked, "markers": True}
         if current_branch(repo) == base:
             if git(repo, ["status", "--porcelain", "--untracked-files=no"], work_tree=repo).strip():
                 return {"error": f"{base} is checked out in {repo} with uncommitted changes — commit or stash them first",
@@ -384,6 +396,7 @@ def sync(proj, member):
         at = f"{base}@{base_sha[:7]}"
         if git_ok(repo, ["merge-base", "--is-ancestor", base_sha, tip]):
             return {"ok": True, "commit": tip, "note": f"up to date with {at}"}
+        conflicts = []
         if git_ok(repo, ["merge-base", "--is-ancestor", tip, base_sha]):
             new = base_sha                                   # no own work: fast-forward
         else:
@@ -391,15 +404,16 @@ def sync(proj, member):
             lines = (r or "").splitlines()
             if not lines or not re.match(r"^[0-9a-f]{40}$", lines[0]):
                 return {"error": "sync failed", "conflicts": []}
-            conflicts = [x for x in lines[1:] if x]
-            if conflicts:
-                return {"error": f"conflict with {at} — nothing changed", "conflicts": conflicts}
+            conflicts = [x for x in lines[1:] if x]       # their markers are in the tree: the writer resolves them
             new = git(repo, ["commit-tree", lines[0], "-p", tip, "-p", base_sha,
-                             "-m", f"{name}: sync {member} with {base}"]).strip()
+                             "-m", f"{name}: sync {member} with {base}" + (" (conflicts)" if conflicts else "")]).strip()
         git(repo, ["update-ref", ref, new, tip])
         d = tree_dir(name, member)
         _as_guest(["find", ".", "-mindepth", "1", "-delete"], d)
         _fill(repo, ref, subdir, d)
+        if conflicts:
+            return {"ok": True, "commit": new, "conflicts": conflicts,
+                    "note": f"synced to {at} — resolve the conflict markers in {', '.join(conflicts)}, then save"}
         return {"ok": True, "commit": new, "note": f"synced to {at}"}
 
 

@@ -1153,7 +1153,7 @@ def merge_done(project, writer, key):
     conflict wakes the writer and the lead."""
     r, st = _projects.member_op(project, "merge", writer)
     proj = _projects.get(project)
-    if proj is None or r.get("note"):
+    if proj is None or r.get("note") or r.get("handed_back"):
         return r
     if st == 200:
         _squads.post(proj, "manager", ["all"], f"merged {writer}'s work for {key} ({str(r.get('commit'))[:10]})", kind="note")

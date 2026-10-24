@@ -4510,14 +4510,21 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(code, 200, r)
             self.assertEqual(len(g("log", "-1", "--format=%P", "main").split()), 2)
             self.assertTrue(os.path.exists(os.path.join(repo, "apps", "x", "new.txt")))
-            # conflict: nothing changes
+            # conflict: main unchanged; the base goes INTO b, markers in its folder; merge refuses until resolved
             _wtext(os.path.join(d, "file.txt"), "B\n")
             _wtext(os.path.join(repo, "apps", "x", "file.txt"), "M\n")
             g("commit", "-qam", "op edits")
             head = g("rev-parse", "main").strip()
             r, code = pj.member_op("wp", "merge", "b")
             self.assertEqual((code, r.get("conflicts")), (409, ["apps/x/file.txt"]), r)
+            self.assertIn("handed back to b", r["error"])
             self.assertEqual((g("rev-parse", "main").strip(), g("status", "--porcelain")), (head, ""))
+            with open(os.path.join(d, "file.txt")) as fh:
+                self.assertRegex(fh.read(), r"(?s)^<<<<<<< .*B\n=======\nM\n>>>>>>> ")
+            g("merge-base", "--is-ancestor", "main", "proj/wp/b")                       # the base is in b now
+            r, code = pj.member_op("wp", "merge", "b")
+            self.assertEqual((code, r.get("markers"), r.get("conflicts")), (409, True, ["apps/x/file.txt"]), r)
+            _wtext(os.path.join(d, "file.txt"), "BM\n")                                 # b resolves
             # dirty checkout: refused
             _wtext(os.path.join(repo, "top.txt"), "dirty\n")
             r, code = pj.member_op("wp", "merge", "b")
@@ -4613,9 +4620,10 @@ class ManagerFunctions(unittest.TestCase):
     # ---- squads: a project's members talk, addressed members are woken ---------------
     def test_projects_sync_brings_merged_work_to_the_other_writers(self):
         """project_sync: the base merged INTO a writer's branch, its own unmerged
-        edit kept, the folder refilled in place; up to date is a no-op; a conflict
-        changes nothing and names the file. A merge syncs every OTHER writer (a
-        note each, nobody woken), a conflict wakes that writer and the lead. The
+        edit kept, the folder refilled in place; up to date is a no-op. A merge
+        syncs every OTHER writer (a note each, nobody woken); a conflict lands in
+        the writer's folder with its markers and wakes it and the lead; merge
+        refuses while a marker is left. The
         guest route serves writers of worktree projects only."""
         m = self.m
         woke, tasks, undo = self._squad_env()
@@ -4652,30 +4660,30 @@ class ManagerFunctions(unittest.TestCase):
             self.assertTrue(any(t.startswith("synced c to main@") for t in texts), texts)
             self.assertFalse(any("synced b" in t for t in texts), texts)
             self.assertEqual(woke, [])                                                    # a note wakes nobody
-            # conflict: c's folder and branch stay as they were, the file is named, c and the lead are woken
+            # conflict: the base still goes INTO c, with markers in its folder; c and the lead are woken
             _wtext(os.path.join(dc, "file.txt"), "C\n")
             _wtext(os.path.join(db, "file.txt"), "B\n")
-            ctip = wt.snapshot(pj.get("wp"), "c")
             r, st = pj.member_op("wp", "merge", "b")
             self.assertEqual(st, 200, r)
-            self.assertEqual((g("rev-parse", "proj/wp/c").strip(), rd("file.txt")), (ctip, "C\n"))
+            self.assertRegex(rd("file.txt"), r"(?s)^<<<<<<< .*C\n=======\nB\n>>>>>>> ")
+            self.assertEqual(rd("mine.txt"), "c\n")
+            g("merge-base", "--is-ancestor", "main", "proj/wp/c")
             last = sq.read("wp")[-1]
-            self.assertIn("conflict in apps/x/file.txt", last["text"])
+            self.assertIn("conflicts in apps/x/file.txt", last["text"])
             self.assertEqual(sorted(w[0] for w in woke), ["a", "c"])
-            r, st = pj.member_op("wp", "sync", "c")
-            self.assertEqual((st, r["conflicts"], g("rev-parse", "proj/wp/c").strip()), (409, ["apps/x/file.txt"], ctip))
             # the guest route: lead and reader refused, the writer syncs itself
             for ip in ("172.30.3.2", "172.30.6.2"):
                 h = self._post_handler("/api/project/sync", ip, b"{}"); h._do_POST()
                 self.assertEqual(self._status(h), 403, ip)
                 self.assertIn(b"no writer", h.wfile.getvalue())
             h = self._post_handler("/api/project/sync", "172.30.5.2", b"{}"); h._do_POST()
-            self.assertEqual(self._status(h), 409, h.wfile.getvalue())
-            self.assertIn(b"apps/x/file.txt", h.wfile.getvalue())
+            self.assertEqual(self._status(h), 200, h.wfile.getvalue())                   # up to date
+            r, st = pj.member_op("wp", "merge", "c")                                       # markers left: refused
+            self.assertEqual((st, r.get("markers")), (409, True), r)
             _wtext(os.path.join(dc, "file.txt"), "B\n")                                  # c resolves
-            h = self._post_handler("/api/project/sync", "172.30.5.2", b"{}"); h._do_POST()
-            self.assertEqual(self._status(h), 200, h.wfile.getvalue())
-            self.assertEqual((rd("file.txt"), rd("mine.txt")), ("B\n", "c\n"))
+            r, st = pj.member_op("wp", "merge", "c")
+            self.assertEqual(st, 200, r)
+            self.assertEqual(g("show", "main:apps/x/file.txt"), "B\n")
         finally:
             m._mounts.AGENT_ROOT, wt.STAGE_ROOT, pj._spawn = old
             undo()
@@ -5796,11 +5804,16 @@ class ManagerFunctions(unittest.TestCase):
             # a question for the operator holds the squad: no nudge, whatever the clock says
             k._nudged.clear()
             self.assertTrue(m._hitlq.ask("e", "Which DB?")[0])
-            k._nudge_check[0] = 0
+            k._nudge_check[0] = 0; del notes[:]
             self.assertEqual(k.auto_nudge(now + 9000), [])
+            # ... and after HITL_REMIND_MIN the operator is reminded of it, once
+            self.assertEqual([x[1] for x in notes], ["Still waiting for you (150 min): Which DB?"])
+            k._nudge_check[0] = 0
+            k.auto_nudge(now + 9900)
+            self.assertEqual(len(notes), 1)
         finally:
             m._store.load_tasks = old
-            k._nudged.clear()
+            k._nudged.clear(); k._reminded.clear()
             undo()
 
     def test_squad_activity_rows_retry_nudge_and_auto_retry(self):

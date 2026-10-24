@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-24
+
+- Squads: a merge conflict no longer dead-ends (gtakid's land needed git on the host): the base is merged into the writer with the conflict markers, the writer (cc lead) is woken to resolve them in its folder, merge refuses while a changed file still holds a marker. A squad question/approval open 60 min notifies the operator once more.
+
 ## 2026-10-23
 
 - Squads: a worktree writer's wake says its folder is plain files without .git by design (a coder had escalated it as a provisioning fault twice); the git hint no longer says "commit it in your folder", the wake frame no longer suggests wake=false for "holding".

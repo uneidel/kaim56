@@ -314,6 +314,9 @@ def member_op(name, op, member):
     except (_projwt.GitError, OSError, subprocess.SubprocessError) as e:
         return {"error": str(e)}, 500
     if isinstance(r, dict) and "error" in r:
+        if op == "merge" and r.get("conflicts") and not r.get("markers"):
+            why, told = hand_back(name, member)
+            r = {**r, "error": r["error"] + " — " + why, "handed_back": told}
         return r, 409
     if op == "merge" and not r.get("note"):            # a new commit on the base: the others get it
         _spawn(sync_others, name, member)
@@ -344,6 +347,30 @@ def push_run(name):
     return {**r, "branch": branch}
 
 
+CONFLICT_NOTE = ("{w}: the base is merged into your folder, with conflicts in {files}. Resolve each "
+                 "<<<<<<< … ======= … >>>>>>> block (keep both sides' intent), save, then set your "
+                 "ticket to review again — the merge is clean after that (it refuses while a marker is left).")
+
+
+def hand_back(name, writer):
+    """A merge that conflicts: sync the base INTO the writer (markers in its
+    folder) and wake it, cc the lead -> (what happened, writer told)."""
+    from mgr import squads as _squads                 # late: squads imports this module
+    try:
+        r = _projwt.sync(get(name), writer)
+    except (_projwt.GitError, OSError, subprocess.SubprocessError) as e:
+        return f"handing it back to {writer} failed: {e}"[:300], False
+    if not r.get("conflicts"):
+        return f"{writer} is synced to the base now — request the merge again", False
+    p = get(name)
+    lead = [n for n, m in (p.get("members") or {}).items() if m.get("role") == "lead"][:1]
+    try:
+        _squads.post(p, "manager", [writer, *lead], CONFLICT_NOTE.format(w=writer, files=", ".join(r["conflicts"])))
+    except Exception as e:                            # the markers are in its folder either way
+        return f"handed back to {writer}'s folder, but waking it failed: {e!r}"[:300], False
+    return f"handed back to {writer} to resolve in its folder", True
+
+
 def sync_others(name, merged):
     """After `merged`'s work reached the base: every other writer with a folder
     is synced; one line each in the squad channel (wakes nobody); a conflict
@@ -358,11 +385,10 @@ def sync_others(name, merged):
             continue
         try:
             r, st = member_op(name, "sync", w)
-            if st == 200:
+            if st == 200 and r.get("conflicts"):
+                _squads.post(p, "manager", [w, *lead], CONFLICT_NOTE.format(w=w, files=", ".join(r["conflicts"])))
+            elif st == 200:
                 _squads.post(p, "manager", ["all"], f"synced {w} to {r['note'].split()[-1]}", kind="note")
-            elif r.get("conflicts"):
-                _squads.post(p, "manager", [w, *lead], f"sync {w}: conflict in {', '.join(r['conflicts'])} — "
-                             "resolve and run project_sync")
             else:
                 _squads.post(p, "manager", ["all"], f"sync {w} failed: {r.get('error')}"[:500], kind="note")
         except Exception as e:                        # a background thread: one writer must not stop the others

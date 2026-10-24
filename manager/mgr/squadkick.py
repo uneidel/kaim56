@@ -693,6 +693,8 @@ STALL_NUDGE_FROM = "auto (stall check)"
 STALL_NUDGE = ("Status check (automatic): nobody has worked for {min} min although tickets are open. "
                "Holdups: {why}. Unblock what you can and wake the members who can continue — "
                "a post that hands someone the next step must wake them (no wake=false).")
+HITL_REMIND_MIN = 60          # a squad item open this long: one more notification
+_reminded = set()             # item ids reminded (process lifetime)
 _nudge_check = [0]
 _nudged = {}               # project -> {"since": stall start, "n": nudges in a row, "sig": ticket states}
 
@@ -707,7 +709,13 @@ def auto_nudge(now=None):
     if now - _nudge_check[0] < 60:                    # the idle loop ticks fast; once a minute is plenty
         return done
     _nudge_check[0] = now
-    held = {x.get("project") for x in _hitlq.items("open")}
+    held = set()
+    for x in _hitlq.items("open"):
+        held.add(x.get("project"))
+        if x.get("project") and x["id"] not in _reminded and now - x.get("created", now) >= HITL_REMIND_MIN * 60:
+            _reminded.add(x["id"])                    # the squad waits on you: say it once more
+            _notify.notify_add(x["instance"], f"Still waiting for you ({(now - x['created']) // 60} min): {x['title']}",
+                               x.get("detail", ""), link="squads")
     for proj in _projects.load():
         name = proj["name"]
         if not _squads.settings(proj).get("enabled") or name in held:
