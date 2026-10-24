@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-24
 
+- Apps: an agent's publish goes to celld even when the app runs on Cloudflare (it was refused with "restore it first" and gtakid's squad stalled asking for a Cloudflare deploy); the answer says Cloudflare keeps the old version, the operator gets a notification to upload again by hand.
 - Squads: a merge conflict no longer dead-ends (gtakid's land needed git on the host): the base is merged into the writer with the conflict markers, the writer (cc lead) is woken to resolve them in its folder, merge refuses while a changed file still holds a marker. A squad question/approval open 60 min notifies the operator once more.
 
 ## 2026-10-23

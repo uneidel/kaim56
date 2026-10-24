@@ -8876,6 +8876,7 @@ class ManagerFunctions(unittest.TestCase):
         inst = lambda n, lv: {"name": n, "config": {"MANAGE_APPS": lv}}
         old = (m._settings.SITE.get("APPS_DIR"), m._settings.load_settings, m._guests.instance_by_ip,
                m._projects.memberships, m._audit.audit_append)
+        old_where, old_notify = m._cloud.where, m._notify.notify_add
         try:
             m._audit.audit_append = lambda *a, **k: None
             m._settings.SITE["APPS_DIR"] = apps
@@ -8923,9 +8924,17 @@ class ManagerFunctions(unittest.TestCase):
             with open(os.path.join(apps, "todo", "index.html")) as fh:
                 self.assertEqual(fh.read(), "uncommitted")
             self.assertEqual(len(os.listdir(os.path.join(apps, ".trash"))), 2)        # old versions kept, recoverable
+            # the app runs on Cloudflare: still published to celld, the operator told to upload again
+            notes = []
+            m._cloud.where = lambda a: ("cloud", "https://kaim56-todo.x")
+            m._notify.notify_add = lambda *a, **k: notes.append(a)
+            st, body = pub("todo")
+            self.assertEqual(st, 200, body); self.assertIn(b"keeps the old version", body)
+            self.assertEqual(notes[0][1], "todo: new version on celld, Cloudflare is behind")
         finally:
             (m._settings.SITE["APPS_DIR"], m._settings.load_settings, m._guests.instance_by_ip,
              m._projects.memberships, m._audit.audit_append) = old
+            m._cloud.where, m._notify.notify_add = old_where, old_notify
 
     def test_squad_devops_member_may_publish_apps(self):
         """A squad member named or meant for devops gets MANAGE_APPS=write (and

@@ -607,8 +607,6 @@ def _app_publish(h, name):
     src = str(b.get("src") or "").strip("/")
     if any(not x or x.startswith(".") for x in src.split("/")) and src:
         return h._json({"ok": False, "error": "bad folder path"}, 400)
-    if _cloud.where(name)[0] == "cloud":
-        return h._json({"ok": False, "error": f"{name} runs on Cloudflare — restore it first"}, 409)
     repo, base = proj["source"]["path"], proj.get("base") or "main"
     path = "/".join(x for x in (proj["source"].get("subdir", "").strip("/"), src) if x)
     try:
@@ -622,6 +620,12 @@ def _app_publish(h, name):
     _celldeploy.sync_bg()
     _audit.audit_append(inst["name"], "app_publish", f"{name} <- {proj['name']}@{sha[:12]}:{src or '.'}", True,
                         result=f"{res['files']} files")
+    if _cloud.where(name)[0] == "cloud":       # agents publish to celld; Cloudflare is the operator's upload
+        note = (f"published to celld; {name} also runs on Cloudflare, which keeps the old version until the "
+                "operator uploads it again (by hand, in the Apps tab) — your part is done")
+        _notify.notify_add(inst["name"], f"{name}: new version on celld, Cloudflare is behind",
+                           f"{proj['name']}@{sha[:12]} — upload it again in the Apps tab to ship it there", link="")
+        res = {**res, "note": note}
     return h._json({"ok": True, "url": f"/apps/{name}/", "commit": sha, "branch": base, **res})
 
 
