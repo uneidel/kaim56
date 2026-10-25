@@ -726,9 +726,10 @@ function panelPaint(){
   const d=PANEL.data;
   if(!d||d.error){$('pbody').innerHTML='<div class=text-muted style="font-size:12px">no session data</div>';return;}
   const cell=(k,v)=>`<div><div class=k>${esc(k)}</div><div class=v>${esc(v)}</div></div>`;
-  // "Traces" opens the agent's recent turns (tr*), everything else is a plain status line
-  const plat=(d.platform||[]).map(p=>p.name==='Traces'
-    ?`<div class=link role=button tabindex=0 onclick=openTraces() onkeydown="if(event.key==='Enter')openTraces()"><span>${esc(p.name)} ›</span><span class=v>${esc(p.state)}</span></div>`
+  // each row opens what it counts: an overlay here (traces, memory) or the manager page that sets it up
+  const go={'Traces':'openTraces()','Memory':'openMemory()',"Web search":"location.href='/#settings'",'Skills':"location.href='/#skills'"};
+  const plat=(d.platform||[]).map(p=>go[p.name]
+    ?`<div class=link role=button tabindex=0 onclick="${go[p.name]}" onkeydown="if(event.key==='Enter'){${go[p.name]}}"><span>${esc(p.name)} ›</span><span class=v>${esc(p.state)}</span></div>`
     :`<div><span>${esc(p.name)}</span><span class=v>${esc(p.state)}</span></div>`).join('');
   const mcps=(d.mcps||[]);
   const need=d.need_secret||0;
@@ -767,6 +768,14 @@ async function openTraces(){
     `<span class="${t.outcome&&t.outcome!=='ok'?'bad':''}">${esc(t.ts_end?(t.outcome||'ok'):'running')}</span>`+
     `<span>${fmtMs(t.ms)} · ${t.llm_calls} LLM calls${t.llm_failed?` (${t.llm_failed} failed)`:''} · ${fmtTk(t.in)} in / ${fmtTk(t.out)} out${t.cost?` · $${t.cost.toFixed(4)}`:''}</span></div>`).join('')
     :'<div class=text-muted>No turns recorded yet.</div>';
+}
+async function openMemory(){
+  if(!agent)return;
+  trShow('Memory — '+agent,'<div class=text-muted>loading…</div>');
+  let d={};try{d=await (await fetch('/api/memory/'+encodeURIComponent(agent))).json()}catch(e){}
+  const ks=Object.keys(d||{}).sort();
+  $('trbody').innerHTML=ks.length?ks.map(k=>`<div class=trsec>${esc(k)}</div><div style="white-space:pre-wrap">${esc(typeof d[k]==='string'?d[k]:JSON.stringify(d[k]))}</div>`).join('')
+    :'<div class=text-muted>No notes stored.</div>';
 }
 async function openTurn(turn){
   let d={};try{d=await (await fetch('/api/trace/'+encodeURIComponent(agent)+'?turn='+encodeURIComponent(turn))).json()}catch(e){}

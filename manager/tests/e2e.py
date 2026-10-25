@@ -11589,7 +11589,9 @@ class ManagerFunctions(unittest.TestCase):
         page = chatui.render([{"name": "vm1", "running": True}], "vm1", "")
         for needle in ('id=panel', 'id=searchbar', 'id=searchBtn', 'id=panelBtn', "'/api/session/'",
                        'function searchApply', 'function panelLoad', '"vm1"',
-                       "convs.filter(x=>x.agent===agent)"):                    # dropdown opens that instance's chat
+                       "convs.filter(x=>x.agent===agent)",                     # dropdown opens that instance's chat
+                       "'Memory':'openMemory()'", "location.href='/#skills'", "location.href='/#settings'",
+                       "'/api/memory/'+encodeURIComponent(agent)"):           # every platform row opens what it counts
             self.assertIn(needle, page, needle)
         self.assertNotIn("cell('Commands'", page)                              # the / picker lists them
 

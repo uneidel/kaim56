@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-25
+
+- Chat panel: Memory (the agent's notes in an overlay), Web search (Settings) and Skills (Skills tab) are clickable like Traces.
+
 ## 2026-10-24
 
 - Apps: an agent's publish goes to celld even when the app runs on Cloudflare (it was refused with "restore it first" and gtakid's squad stalled asking for a Cloudflare deploy); the answer says Cloudflare keeps the old version, the operator gets a notification to upload again by hand.
