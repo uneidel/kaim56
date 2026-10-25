@@ -1,0 +1,106 @@
+# kAIm56 desktop (macOS) release pipeline. Builds desktop/ (Tauri 2, Rust) on a
+# macOS runner as one universal .dmg (Apple silicon + Intel) and publishes it:
+#
+#   * mac-v<version> tag -> GitHub release "kAIm56 for Mac <version>" with
+#                           kaim56-desktop-<version>.dmg attached
+#   * push to main       -> when desktop/src-tauri/tauri.conf.json carries a
+#                           version that has no mac-v<version> release yet, the
+#                           tag and the release are created (bumping the version
+#                           and pushing IS the release)
+#   * workflow_dispatch  -> build only (artifact), no release
+#
+# The app looks for newer mac-v* releases itself (Settings -> check for updates).
+# Release notes are mandatory: the section "## <version>" of
+# desktop/RELEASE_NOTES.md is the release body; no section = no release.
+# The .dmg is not signed/notarized: first start with right-click -> Open.
+name: mac
+
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', '.github/workflows/mac.yml']
+    tags: ['mac-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: what to build
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: |
+          v=$(python3 -c 'import json;print(json.load(open("desktop/src-tauri/tauri.conf.json"))["version"])')
+          c=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' desktop/src-tauri/Cargo.toml | head -1)
+          [ "$v" = "$c" ] || { echo "::error::tauri.conf.json says $v, Cargo.toml says $c"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF" in
+            refs/tags/mac-v*)
+              t="${GITHUB_REF#refs/tags/mac-v}"
+              [ "$t" = "$v" ] || { echo "::error::tag mac-v$t but the app says $v"; exit 1; }
+              echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            refs/heads/main)
+              if git ls-remote --tags origin "refs/tags/mac-v$v" | grep -q .; then
+                echo "mac-v$v already released — nothing to do"
+                echo "build=false" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT"
+              fi ;;
+            *)
+              echo "build=true" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          cat "$GITHUB_OUTPUT"
+
+  mac:
+    name: kaim56-desktop (macOS universal)
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: test
+        run: cd desktop/src-tauri && cargo test
+      - name: build the .dmg
+        id: build
+        run: |
+          cd desktop
+          npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin
+          v="${{ needs.plan.outputs.version }}"
+          dmg=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+          cp "$dmg" "kaim56-desktop-$v.dmg"
+          ls -la "kaim56-desktop-$v.dmg"
+          echo "file=desktop/kaim56-desktop-$v.dmg" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kaim56-desktop-${{ needs.plan.outputs.version }}
+          path: ${{ steps.build.outputs.file }}
+      - name: release notes for this version
+        if: needs.plan.outputs.release == 'true'
+        run: |
+          v="${{ needs.plan.outputs.version }}"
+          awk -v v="$v" '$0 == "## " v {on=1; next} /^## / {on=0} on' desktop/RELEASE_NOTES.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::desktop/RELEASE_NOTES.md has no section '## $v' — write the release notes, then release"; exit 1
+          fi
+          echo "--- release body ---"; cat notes.md
+      - name: mac release
+        if: needs.plan.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mac-v${{ needs.plan.outputs.version }}
+          name: kAIm56 for Mac ${{ needs.plan.outputs.version }}
+          body_path: notes.md
+          files: ${{ steps.build.outputs.file }}

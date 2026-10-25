@@ -54,6 +54,7 @@ allowlists and an audit trail sit on every instance.
 |---|---|---|---|
 | **KatAgent** | Android (`app/`) | iroh | chat, voice with barge-in (on-device echo canceller), missions, tasks; offline Gemma mode; self-updates from GitHub Releases |
 | **Web manager + chat** | browser (`manager/`) | HTTPS | instances, tasks, missions, policy, secrets, plugins, MCP, architecture |
+| **kAIm56 for Mac** | macOS (`desktop/`, Tauri/Rust) | iroh, in-process | chat (shared with phone and web), Waiting for you, notifications; `.dmg` from GitHub Releases |
 | **Desktop voice client** | Linux topbar (`voice-client/`) | iroh, tunnel embedded | energy VAD, two-stage wake word incl. a local own-voice model, sentence-streamed replies |
 | **Command line** | `kaim56` (`cli/`), Linux | iroh, tunnel embedded — or a URL | everything the web UI does, chat with streaming and recovery, `--json` for scripts |
 | **MrVoice** | ESP32-S3 device (`espclient/`) | HTTPS | push-to-talk; INMP441 mic, MAX98357A amp, one button |
@@ -104,6 +105,7 @@ On Proxmox VE: [`docs/proxmox.md`](docs/proxmox.md) (a VM with nested virtualiza
 | `manager/` | The manager: `manager.py` (routes, VM lifecycle, networking, secrets), `mgr/` (store, missions, notify, rules, mcp, katfs, gateway, routes, …), `chatui.py`, `webterm.py`, `templates/`, tests |
 | `agents/` | Guest images: build scripts and the in-VM agent for `openrouter/` and `claude/`; `skeleton/` is the minimal agent type to copy for your own (the manager lists every `agents/*/template.json` in Create instance) |
 | `app/` | KatAgent, the Android app (Kotlin/Compose, builds in Docker) |
+| `desktop/` | kAIm56 for Mac (Tauri 2 + Rust, iroh in-process) |
 | `voice-client/` | Desktop voice client (Go, one static binary) |
 | `cli/` | Command line `kaim56` (Go + Cobra, one static binary) |
 | `espclient/` | MrVoice, the ESP32-S3 client (ESP-IDF via PlatformIO) |
@@ -114,7 +116,7 @@ On Proxmox VE: [`docs/proxmox.md`](docs/proxmox.md) (a VM with nested virtualiza
 | `examples/` | Templates for the files kept out of the repo (settings, site, MCP catalog) |
 | `docs/` | Screenshots, project page |
 
-Per-client details live next to the code: `app/README.md`, `voice-client/README.md`, `cli/README.md`,
+Per-client details live next to the code: `app/README.md`, `desktop/README.md`, `voice-client/README.md`, `cli/README.md`,
 `espclient/Readme.md` (wiring) and `espclient/CLAUDE.md` (behaviour), `katfs/README.md`.
 
 ## Development

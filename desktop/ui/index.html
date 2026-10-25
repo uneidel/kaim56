@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- kAIm56 desktop — SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kAIm56</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="side">
+  <div class="brand">kAIm56 <span id="status" class="dot" title="connecting"></span></div>
+  <nav>
+    <button data-view="chat" class="act">Chats</button>
+    <button data-view="waiting">Waiting <span id="wcount" class="badge" hidden></span></button>
+    <button data-view="notifs">Notifications <span id="ncount" class="badge" hidden></span></button>
+    <button data-view="settings">Settings</button>
+  </nav>
+  <div class="label">New chat with</div>
+  <select id="agent"></select>
+  <button id="newchat" class="pri">+ New chat</button>
+  <div class="label">Chats</div>
+  <div id="chats"></div>
+</aside>
+
+<main>
+  <div id="update" hidden></div>
+
+  <section id="v-chat" class="view">
+    <header><span id="ctitle">—</span><span id="cagent" class="muted"></span>
+      <button id="cdel" class="ghost" title="Delete this chat">Delete</button></header>
+    <div id="msgs"></div>
+    <form id="composer">
+      <textarea id="input" rows="3" placeholder="Message — Enter sends, Shift+Enter for a new line"></textarea>
+      <div class="row"><button type="button" id="stop" hidden>Stop</button><button id="send" class="pri">Send</button></div>
+    </form>
+  </section>
+
+  <section id="v-waiting" class="view" hidden>
+    <header><span>Waiting for you</span><button id="wreload" class="ghost">Reload</button></header>
+    <div id="wlist" class="list"></div>
+  </section>
+
+  <section id="v-notifs" class="view" hidden>
+    <header><span>Notifications</span><button id="nread" class="ghost">Mark all read</button></header>
+    <div id="nlist" class="list"></div>
+  </section>
+
+  <section id="v-settings" class="view" hidden>
+    <header><span>Settings</span></header>
+    <form id="sform" class="card blueprint">
+      <p class="muted">The app reaches the manager only over iroh (end-to-end encrypted, no public URL).
+        Pair once: copy <b>this device's NodeId</b> into the manager's allowlist (web UI → iroh), and
+        the manager's <b>gateway NodeId</b> from there into the field below.</p>
+      <label>This device's NodeId<input id="nodeid" readonly></label>
+      <label>Gateway NodeId (manager)<input id="gateway" required autocomplete="off" spellcheck="false"></label>
+      <label>User<input id="user" required autocomplete="username"></label>
+      <label>Password<input id="pass" type="password" autocomplete="current-password" placeholder="unchanged"></label>
+      <div class="row"><span id="smsg" class="muted"></span><button class="pri">Save and connect</button></div>
+      <p class="muted">Version <span id="ver"></span> · <a href="#" id="upcheck">check for updates</a></p>
+    </form>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

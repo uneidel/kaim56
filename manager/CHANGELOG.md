@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-10-25
 
+- kAIm56 for Mac (`desktop/`, Tauri 2 + Rust): chat shared with phone/web, Waiting for you, notifications as macOS notifications, update check; reaches the manager only over iroh (in-process tunnel); `.github/workflows/mac.yml` builds a universal .dmg as release mac-v<version>.
 - VMs: Firecracker runs jailed (own uid, chroot, cgroup CPU/memory cap, tap owned by the uid; VM_JAIL=0 turns it off), rate limiters on drives and NIC, stop = Ctrl+Alt+Del with a syncing guest init then SIGKILL (was SIGTERM + 1 s, pidfile gone while alive), one start/stop per instance at a time, is_running checks the process is this instance's Firecracker (not a zombie or reused pid). Guest inits trap Ctrl+Alt+Del (kernel.ctrl-alt-del=0) and reboot by syscall (the images have no poweroff: a dead agent left the VM hanging); the claude image is now replaced atomically (cp into the live file).
 - Chat panel: Memory (the agent's notes in an overlay), Web search (Settings) and Skills (Skills tab) are clickable like Traces.
 
