@@ -70,8 +70,16 @@ export WORKDIR MANAGER_URL="http://${GW}:8700"
 # --- 4. the agent, as uid 1000 ----------------------------------------------
 echo "[init] skeleton agent instance=${FC_INSTANCE} transport=${TRANSPORT:-web} workdir=$WORKDIR manager=$MANAGER_URL"
 cd /app
-setpriv --reuid=1000 --regid=1000 --init-groups python3 -u /app/agent.py
+# Stop from the host (manager: vm.halt): Ctrl+Alt+Del = SIGINT to PID 1 -> flush
+# the disks and reboot, which ends Firecracker (reboot=k). The images carry no
+# reboot/poweroff binary: the syscall through python.
+fc_down() { sync; python3 -c 'import ctypes; ctypes.CDLL(None).reboot(0x01234567)'; }
+trap 'echo "[init] stop requested -> sync, reboot"; fc_down' INT TERM
+echo 0 > /proc/sys/kernel/ctrl-alt-del 2>/dev/null   # the kernel's default reboots at once, unsynced
+setpriv --reuid=1000 --regid=1000 --init-groups python3 -u /app/agent.py &
+MAIN=$!
+while kill -0 $MAIN 2>/dev/null; do wait $MAIN; done
 
-echo "[init] agent exited -> poweroff"
-poweroff -f 2>/dev/null
+echo "[init] agent exited -> reboot"
+fc_down
 while true; do sleep 3600; done

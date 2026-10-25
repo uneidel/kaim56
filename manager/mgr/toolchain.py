@@ -257,7 +257,8 @@ def _config_disk(name, spec, version):
 
 
 # ---- the builder VM ----------------------------------------------------------
-_popen = subprocess.Popen
+def _popen(name, index, cfg, log):
+    return _vm.popen_vm(name, index, cfg, log)
 _sleep = time.sleep
 
 
@@ -326,25 +327,21 @@ def run_builder(sid, tpl, spec, version):
     n = _instances.net_of(inst)
     boot = (f"console=ttyS0 reboot=k panic=1 pci=off ip={n['guest']}::{n['host']}:{n['mask']}::eth0:off "
             f"init=/init fc_upper=/dev/vdc fc_build=1")
-    with open(conf, "w") as fh:
-        json.dump({"boot-source": {"kernel_image_path": _paths.KERNEL, "boot_args": boot},
-                   "drives": [{"drive_id": "rootfs", "path_on_host": os.path.join(_paths.BASE, BASES[tpl]),
-                               "is_root_device": True, "is_read_only": True},
-                              {"drive_id": "config", "path_on_host": cfg, "is_root_device": False, "is_read_only": True},
-                              {"drive_id": "upper", "path_on_host": upper, "is_root_device": False, "is_read_only": False}],
-                   "network-interfaces": [{"iface_id": "eth0", "host_dev_name": n["tap"], "guest_mac": n["mac"]}],
-                   "machine-config": {"vcpu_count": BUILDER_VCPUS, "mem_size_mib": BUILDER_MEM}}, fh)
+    vmcfg = _vm.add_limits({"boot-source": {"kernel_image_path": _paths.KERNEL, "boot_args": boot},
+                            "drives": [{"drive_id": "rootfs", "path_on_host": os.path.join(_paths.BASE, BASES[tpl]),
+                                        "is_root_device": True, "is_read_only": True},
+                                       {"drive_id": "config", "path_on_host": cfg, "is_root_device": False, "is_read_only": True},
+                                       {"drive_id": "upper", "path_on_host": upper, "is_root_device": False, "is_read_only": False}],
+                            "network-interfaces": [{"iface_id": "eth0", "host_dev_name": n["tap"], "guest_mac": n["mac"]}],
+                            "machine-config": {"vcpu_count": BUILDER_VCPUS, "mem_size_mib": BUILDER_MEM}})
     _set_build(sid, tpl, index=idx)
     proc, why = None, ""
     try:
         _netfw.ensure_net_base()
-        _netfw.setup_tap(inst)
+        _netfw.setup_tap(inst, *(_vm.jail_ids(idx) if _vm.jailed() else ()))
         _host_guard(inst, True)
-        if os.path.exists(sock):
-            os.remove(sock)
         with open(logp, "wb") as log:               # a fresh console log per build
-            proc = _popen([_paths.BIN, "--api-sock", sock, "--config-file", conf],
-                          stdout=log, stderr=log, start_new_session=True)
+            proc = _popen(name, idx, vmcfg, log)
         with open(pidf, "w") as fh:
             fh.write(str(proc.pid))
         end, seen = time.time() + BUILD_TIMEOUT, 0
@@ -360,6 +357,7 @@ def run_builder(sid, tpl, spec, version):
     finally:
         if proc is not None:
             _stop(proc)
+        _vm.jail_clean(name)
         _host_guard(inst, False)
         _netfw.teardown_tap(inst)
         for p in (sock, conf, pidf, cfg):

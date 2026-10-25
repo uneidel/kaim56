@@ -6784,9 +6784,9 @@ class ManagerFunctions(unittest.TestCase):
 
         class Proc:
             pid = 4242
-            def __init__(self, args, stdout=None, stderr=None, start_new_session=False):
-                fc["args"].append(args); stdout.write(fc["log"].encode()); stdout.flush(); self.done = fc["exit"]
-                fc["conf"] = _readj(args[args.index("--config-file") + 1])
+            def __init__(self, name, index, cfg, log):                    # vm.popen_vm's signature
+                fc["args"].append((name, index)); log.write(fc["log"].encode()); log.flush(); self.done = fc["exit"]
+                fc["conf"] = cfg
             def poll(self):
                 return 0 if self.done else None
             def terminate(self):
@@ -6845,9 +6845,8 @@ class ManagerFunctions(unittest.TestCase):
             path = tc.layer_path(sid, "openrouter", 1)
             self.assertTrue(os.path.exists(path))
             self.assertEqual([f for f in os.listdir(m._paths.RUN_DIR) if f.endswith(".ext4")], [])   # upper + config gone
-            args = fc["args"][0]
-            conf = args[args.index("--config-file") + 1]
-            self.assertFalse(os.path.exists(conf))
+            self.assertEqual(fc["args"][0][1], 250)
+            self.assertFalse([f for f in os.listdir(m._paths.RUN_DIR) if f.endswith((".json", ".sock", ".pid"))])
             self.assertEqual(tc.ensure(proj), "up to date")
             self.assertTrue(any("Toolchain v1: ready for openrouter" in x["text"] for x in m._squads.read("sq")))
             # the builder's config disk: the build flag and the scripts, nothing of an instance
@@ -6859,6 +6858,7 @@ class ManagerFunctions(unittest.TestCase):
                              [("rootfs", True), ("config", True), ("upper", False)])
             self.assertTrue(vmc["boot-source"]["boot_args"].endswith("init=/init fc_upper=/dev/vdc fc_build=1"))
             self.assertEqual(vmc["network-interfaces"][0]["host_dev_name"], "fc250")
+            self.assertIn("rate_limiter", vmc["drives"][2]); self.assertIn("tx_rate_limiter", vmc["network-interfaces"][0])
             # the member VM: the layer read-only between harness and upper, fc_layer names its device
             inst = next(i for i in m._instances.load_instances() if i["name"] == "b")
             old_mk, old_h = m._vm.make_upper, m._vm.harness_image
@@ -9012,6 +9012,106 @@ class ManagerFunctions(unittest.TestCase):
             self.assertNotIn("MANAGE_APPS", inst["config"])
         finally:
             m._instances.load_instances, m._instances.save_instance, m._instances.is_running = old
+
+    _FAKE_FC = (
+        "import os, socket, sys\n"
+        "s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(4)\n"
+        "while True:\n"
+        "    c, _ = s.accept(); req = c.recv(4096)\n"
+        "    c.sendall(b'HTTP/1.1 204 No Content\\r\\n\\r\\n'); c.close()\n"
+        "    if sys.argv[2] == '1' and b'SendCtrlAltDel' in req: os._exit(0)\n")
+
+    def _fake_fc(self, sock, name, obey):
+        """A stand-in Firecracker: answers its API socket; exits on Ctrl+Alt+Del when `obey`.
+        Its command line carries `--id <name>` like a jailed one."""
+        import subprocess as sp
+        p = sp.Popen([sys.executable, "-c", self._FAKE_FC, sock, "1" if obey else "0", "--id", name])
+        for _ in range(100):
+            if os.path.exists(sock):
+                break
+            time.sleep(0.05)
+        return p
+
+    def test_vm_stop_is_graceful_then_kills_and_is_running_knows_its_process(self):
+        """stop(): Ctrl+Alt+Del over the API socket, the guest's own exit counts as
+        'shut down'; a guest that ignores it is SIGKILLed after the grace. is_running
+        only for a live process of THIS instance (not another's pid, not a dead one)."""
+        m = self.m
+        vm, tmp = m._vm, tempfile.mkdtemp(prefix="e2e-vm-")
+        old = (m._paths.RUN_DIR, vm.STOP_GRACE, m._netfw.teardown_tap, m._mounts.teardown_mounts, m._mcp.mcp_hub_kill)
+        procs = []
+        try:
+            m._paths.RUN_DIR = tmp
+            vm.STOP_GRACE = 1
+            m._netfw.teardown_tap = m._mounts.teardown_mounts = m._mcp.mcp_hub_kill = lambda *a: None
+            for name, obey, want in (("good", True, "stopped (shut down)"), ("deaf", False, "stopped (killed)")):
+                inst = {"name": name, "index": 7}
+                p = self._fake_fc(os.path.join(tmp, f"{name}.sock"), name, obey); procs.append(p)
+                _wtext(m._instances.pidfile(inst), str(p.pid))
+                self.assertTrue(m._instances.is_running(inst))
+                self.assertFalse(m._instances.is_running({"name": "other", "index": 8}))   # no pidfile
+                _wtext(os.path.join(tmp, "other.pid"), str(p.pid))
+                self.assertFalse(m._instances.is_running({"name": "other", "index": 8}))   # someone else's pid
+                t0 = time.time()
+                self.assertEqual(vm.stop(inst), want)
+                self.assertLess(time.time() - t0, 4)
+                self.assertIsNotNone(p.poll() if p.poll() is not None else p.wait(2))
+                self.assertFalse(os.path.exists(m._instances.pidfile(inst)))
+                self.assertFalse(m._instances.is_running(inst))
+            self.assertEqual(vm.stop({"name": "never", "index": 9}), "stopped")         # nothing running: no wait
+        finally:
+            for p in procs:
+                if p.poll() is None:
+                    p.kill()
+            (m._paths.RUN_DIR, vm.STOP_GRACE, m._netfw.teardown_tap, m._mounts.teardown_mounts, m._mcp.mcp_hub_kill) = old
+
+    def test_vm_jailed_start_links_its_files_into_a_chroot_with_limits(self):
+        """Jailed: kernel and drives hard-linked into <jail>/firecracker/<name>/root,
+        the config rewritten to those paths, rate limiters on every drive and the
+        NIC, the jailer called with the VM's own uid, the shared group and its
+        cgroup caps; jail_clean removes the chroot."""
+        import subprocess as sp
+        m = self.m
+        vm, tmp = m._vm, tempfile.mkdtemp(prefix="e2e-jail-")
+        old = (vm.JAIL_BASE, vm.jailed, vm._owned, sp.Popen)
+        calls = []
+        try:
+            vm.JAIL_BASE = os.path.join(tmp, "jail")
+            vm.jailed, vm._owned = (lambda: True), (lambda *a: calls.append(("own",) + a))
+            sp.Popen = lambda args, **k: calls.append(("popen", args)) or type("P", (), {"pid": 1})()
+            files = {}
+            for f in ("vmlinux", "base.ext4", "cfg.ext4", "upper.ext4"):
+                files[f] = os.path.join(tmp, f); _wtext(files[f], f)
+            cfg = vm.add_limits({"boot-source": {"kernel_image_path": files["vmlinux"], "boot_args": "x"},
+                                 "drives": [{"drive_id": "rootfs", "path_on_host": files["base.ext4"], "is_root_device": True, "is_read_only": True},
+                                            {"drive_id": "config", "path_on_host": files["cfg.ext4"], "is_root_device": False, "is_read_only": True},
+                                            {"drive_id": "upper", "path_on_host": files["upper.ext4"], "is_root_device": False, "is_read_only": False}],
+                                 "network-interfaces": [{"iface_id": "eth0", "host_dev_name": "fc7", "guest_mac": "AA"}],
+                                 "machine-config": {"vcpu_count": 2, "mem_size_mib": 1024}})
+            self.assertEqual(cfg["drives"][0]["rate_limiter"]["bandwidth"]["size"], vm.DISK_MBPS * 1024 * 1024)
+            self.assertEqual(cfg["network-interfaces"][0]["rx_rate_limiter"]["bandwidth"]["size"], int(vm.NET_MBITS / 8 * 1024 * 1024))
+            vm.popen_vm("vm7", 7, cfg, None)
+            root = os.path.join(vm.JAIL_BASE, "firecracker", "vm7", "root")
+            jc = _readj(os.path.join(root, "config.json"))
+            self.assertEqual(jc["boot-source"]["kernel_image_path"], "/vmlinux")
+            self.assertEqual([d["path_on_host"] for d in jc["drives"]], ["/rootfs.ext4", "/config.ext4", "/upper.ext4"])
+            self.assertEqual(os.stat(os.path.join(root, "upper.ext4")).st_ino, os.stat(files["upper.ext4"]).st_ino)   # a link, no copy
+            self.assertEqual(cfg["drives"][0]["path_on_host"], files["base.ext4"])          # the caller's config untouched
+            self.assertEqual([(c[1], c[4]) for c in calls if c[0] == "own"],
+                             [(files["vmlinux"], False), (files["base.ext4"], False), (files["cfg.ext4"], False), (files["upper.ext4"], True)])
+            args = next(c[1] for c in calls if c[0] == "popen")
+            self.assertEqual(args[0], vm.JAILER)
+            for a, b in (("--id", "vm7"), ("--uid", "900007"), ("--gid", "900000"), ("--chroot-base-dir", vm.JAIL_BASE),
+                         ("--config-file", "/config.json"), ("--api-sock", "/api.sock")):
+                self.assertEqual(args[args.index(a) + 1], b, a)
+            self.assertIn(f"memory.max={(1024 + vm.MEM_SLACK_MIB) * 1024 * 1024}", args)
+            self.assertIn("cpu.max=200000 100000", args)
+            self.assertEqual(vm.api_sock("vm7"), os.path.join(m._paths.RUN_DIR, "vm7.sock"))  # no socket yet: the plain path
+            vm.jail_clean("vm7")
+            self.assertFalse(os.path.exists(os.path.join(vm.JAIL_BASE, "firecracker", "vm7")))
+            self.assertTrue(os.path.exists(files["upper.ext4"]))                            # the original stays
+        finally:
+            vm.JAIL_BASE, vm.jailed, vm._owned, sp.Popen = old
 
     def test_only_approved_plugins_reach_a_vm(self):
         """approved(): pinned AND the content still matches the pin, checked on

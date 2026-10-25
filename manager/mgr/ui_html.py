@@ -736,7 +736,10 @@ HTML_BOTTOM = """
   can be switched off per instance. On every start the VM receives a fresh private copy of its
   template rootfs (sparse, ~550&#8201;MB real), deleted again on stop &#8212; VMs are stateless by design,
   durable state lives centrally. A small read-only config disk carries the non-secret instance
-  settings into the guest.</p></div>
+  settings into the guest. <b>Jailed</b> (<code>mgr/vm.py</code>, <code>VM_JAIL</code>): every VM starts through
+  Firecracker&#8217;s jailer &#8212; its own uid (900000+N), a chroot with only its kernel and drives (hard links),
+  a cgroup capping CPU (its vCPUs) and memory, the tap owned by that uid; rate limiters on every drive and the NIC.
+  <b>Stop</b> sends Ctrl+Alt+Del: the guest init syncs and reboots, SIGKILL only after 10&#8201;s.</p></div>
 
   <div class="card blueprint"><span class=card-title>Agent runtime (the <code>agent/</code> package)</span>
   <p class=card-body>One concern per module (config, mgrclient, observe, tools_local, tools_manager, tools, mcp, offload, llm, context, learn, loop; map in <code>agent/__init__.py</code>), shipped to every VM on the harness drive. Tool-calling loop against an OpenAI-compatible backend inside each VM

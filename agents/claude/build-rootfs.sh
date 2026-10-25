@@ -40,5 +40,8 @@ echo "== [3] ext4-Image bauen (export + mkfs.ext4 -d im Container) =="
 mkrootfs claude-fc-rootfs "$PWD/rootfs.ext4" "${ROOTFS_MB:-3072}" || fail "mkfs.ext4 -d (im Container)"
 
 echo "== [4] als claude-Instanz ablegen =="
-cp rootfs.ext4 "$INST" || fail "kopieren nach instances/"
+# Never cp INTO the live image: a running microVM holds it open as its base, old
+# and new blocks mix (ext4 checksum panic). Next to it, then an atomic rename.
+cp rootfs.ext4 "$INST.new" || fail "kopieren nach instances/"
+mv -f "$INST.new" "$INST" || fail "mv -> instances/"
 echo "✅ FERTIG:"; ls -lh "$INST"

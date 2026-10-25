@@ -122,10 +122,13 @@ def clear_antispoof(inst):
             _util.sh("iptables", "-D", chain, *spec, check=False)
 
 
-def setup_tap(inst):
+def setup_tap(inst, uid=None, gid=None):
+    """The VM's tap; owned by its jail uid when jailed (mgr/vm.py), so the
+    unprivileged Firecracker may attach to it."""
     n = _instances.net_of(inst)
     _util.sh("ip", "link", "del", n["tap"], check=False)
-    _util.sh("ip", "tuntap", "add", n["tap"], "mode", "tap")
+    _util.sh("ip", "tuntap", "add", n["tap"], "mode", "tap",
+             *(("user", str(uid), "group", str(gid)) if uid is not None else ()))
     _util.sh("ip", "addr", "add", f"{n['host']}/30", "dev", n["tap"])
     _util.sh("ip", "link", "set", n["tap"], "up")
     # The host has FORWARD policy DROP + Docker chains in front of it -> generic

@@ -16,6 +16,7 @@ import threading
 import json
 import shlex
 import signal
+import socket
 import subprocess
 import time
 
@@ -439,46 +440,213 @@ def gen_config(inst):
     }
 
 
-def start(inst):
-    if _instances.is_running(inst):
-        return "already running"
-    _netfw.ensure_net_base()
-    _netfw.setup_tap(inst)
-    _mounts.setup_mounts(inst)
-    make_config_disk(inst)
-    cfg = os.path.join(_paths.RUN_DIR, f"{inst['name']}.config.json")
-    json.dump(gen_config(inst), open(cfg, "w"))
-    sock = os.path.join(_paths.RUN_DIR, f"{inst['name']}.sock")
-    log = open(os.path.join(_paths.RUN_DIR, f"{inst['name']}.log"), "ab")
-    try:                                  # the operator may tail the console (root:operator, 0640)
-        os.chmod(log.name, 0o640); os.chown(log.name, 0, _host.ADMIN_GID)
+# ---- jail, limits, graceful stop ---------------------------------------------
+# Firecracker ran as root: a VM escape was root on the host. Now (VM_JAIL, on
+# by default when the manager is root) every VM starts through Firecracker's
+# jailer: its own uid (JAIL_UID + index; one shared group), a chroot that holds
+# only its kernel and drives (hard links: same filesystem), a cgroup with its
+# CPU and memory cap. The tap belongs to that uid. Writable drives go to the
+# uid (0600), shared read-only ones to the group (0640).
+JAILER = os.path.join(_paths.BASE, "bin", "jailer")
+JAIL_BASE = os.path.join(_paths.RUN_DIR, "jail")          # same filesystem as instances/ and run/
+JAIL_UID = 900000                                         # + index; JAIL_UID itself is the shared group
+CGROUP_ROOT = "/sys/fs/cgroup/firecracker"                # the jailer's default parent cgroup (v2)
+MEM_SLACK_MIB = 512                                       # the VMM itself on top of the guest's memory
+# Per drive and per direction of the NIC: one VM must not take the host's disk or line.
+DISK_MBPS = int(os.environ.get("VM_DISK_MBPS") or _settings.SITE.get("VM_DISK_MBPS") or 200)
+NET_MBITS = int(os.environ.get("VM_NET_MBITS") or _settings.SITE.get("VM_NET_MBITS") or 500)
+STOP_GRACE = 10                                           # s for the guest to sync and reboot after Ctrl+Alt+Del
+_locks, _locks_lock = {}, threading.Lock()
+
+
+def jailed():
+    """VM_JAIL=0 (site.json or env) is the way back to plain root Firecracker."""
+    on = str(os.environ.get("VM_JAIL") or _settings.SITE.get("VM_JAIL", "1")) != "0"
+    return on and os.geteuid() == 0 and os.path.exists(JAILER)
+
+
+def jail_ids(index):
+    return JAIL_UID + int(index), JAIL_UID
+
+
+def jail_dir(name):
+    return os.path.join(JAIL_BASE, os.path.basename(_paths.BIN), name)
+
+
+def api_sock(name):
+    """The VM's API socket: in its chroot when jailed, else next to the pidfile."""
+    j = os.path.join(jail_dir(name), "root", "api.sock")
+    return j if os.path.exists(j) else os.path.join(_paths.RUN_DIR, f"{name}.sock")
+
+
+def _limit(mb_per_s):
+    size = int(mb_per_s * 1024 * 1024)
+    return {"bandwidth": {"size": size, "one_time_burst": size * 4, "refill_time": 1000}}
+
+
+def add_limits(cfg):
+    """Rate limiters on every drive and both directions of the NIC (in place)."""
+    for d in cfg["drives"]:
+        d["rate_limiter"] = _limit(DISK_MBPS)
+    for n in cfg["network-interfaces"]:
+        n["rx_rate_limiter"] = n["tx_rate_limiter"] = _limit(NET_MBITS / 8)
+    return cfg
+
+
+def _owned(path, uid, gid, writable):
+    """The VM's uid reads (and, when writable, writes) the file — nobody else
+    but root; a shared read-only image is readable by the jail group."""
+    if writable:
+        os.chown(path, uid, gid); os.chmod(path, 0o600)
+    else:
+        st = os.stat(path)
+        if not st.st_mode & 0o004:                       # world-readable images stay as they are
+            os.chown(path, st.st_uid, gid); os.chmod(path, (st.st_mode & 0o7777) | 0o040)
+
+
+def jail_clean(name):
+    """Remove a VM's chroot and cgroup (after it exited; also stale ones)."""
+    d = jail_dir(name)
+    if os.path.isdir(d):
+        shutil.rmtree(d, ignore_errors=True)
+    try:
+        os.rmdir(os.path.join(CGROUP_ROOT, name))
     except OSError:
         pass
-    if os.path.exists(sock):
-        os.remove(sock)
-    p = subprocess.Popen([_paths.BIN, "--api-sock", sock, "--config-file", cfg],
-                         stdout=log, stderr=log, start_new_session=True)
-    open(_instances.pidfile(inst), "w").write(str(p.pid))
-    return f"started (pid {p.pid})"
+
+
+def popen_vm(name, index, cfg, log):
+    """Start Firecracker on `cfg` (host paths) -> Popen. Jailed: kernel and
+    drives hard-linked into the chroot, the config rewritten to those paths."""
+    if not jailed():
+        sock = os.path.join(_paths.RUN_DIR, f"{name}.sock")
+        conf = os.path.join(_paths.RUN_DIR, f"{name}.config.json")
+        if os.path.exists(sock):
+            os.remove(sock)
+        with open(conf, "w") as fh:
+            json.dump(cfg, fh)
+        return subprocess.Popen([_paths.BIN, "--api-sock", sock, "--config-file", conf],
+                                stdout=log, stderr=log, start_new_session=True)
+    uid, gid = jail_ids(index)
+    jail_clean(name)
+    root = os.path.join(jail_dir(name), "root")
+    os.makedirs(root, mode=0o755)
+    cfg = json.loads(json.dumps(cfg))
+    files = [("vmlinux", cfg["boot-source"], "kernel_image_path", False)]
+    files += [(d["drive_id"] + ".ext4", d, "path_on_host", not d["is_read_only"]) for d in cfg["drives"]]
+    for fname, obj, key, writable in files:
+        src = obj[key]
+        _owned(src, uid, gid, writable)
+        os.link(src, os.path.join(root, fname))          # EXDEV: the image is not on the jail's filesystem
+        obj[key] = "/" + fname
+    with open(os.path.join(root, "config.json"), "w") as fh:
+        json.dump(cfg, fh)
+    if os.geteuid() == 0:                                # it reads its config and creates its socket there
+        os.chown(root, uid, gid); os.chown(os.path.join(root, "config.json"), uid, gid)
+    mem, cpus = cfg["machine-config"]["mem_size_mib"], cfg["machine-config"]["vcpu_count"]
+    return subprocess.Popen([JAILER, "--id", name, "--exec-file", _paths.BIN, "--uid", str(uid), "--gid", str(gid),
+                             "--chroot-base-dir", JAIL_BASE, "--cgroup-version", "2",
+                             "--cgroup", f"memory.max={(mem + MEM_SLACK_MIB) * 1024 * 1024}",
+                             "--cgroup", f"cpu.max={cpus * 100000} 100000",
+                             "--", "--config-file", "/config.json", "--api-sock", "/api.sock"],
+                            stdout=log, stderr=log, start_new_session=True)
+
+
+def _api(sock, method, path, body):
+    """One request to Firecracker's API socket -> HTTP status (0: no answer)."""
+    data = json.dumps(body).encode()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+            c.settimeout(3)
+            c.connect(sock)
+            c.sendall(f"{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                      f"Content-Length: {len(data)}\r\n\r\n".encode() + data)
+            return int(c.recv(256).split(b" ", 2)[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:                                                   # a zombie child of ours is gone too
+        return os.waitpid(pid, os.WNOHANG)[0] == 0
+    except ChildProcessError:
+        return True
+
+
+def halt(name, pid, grace=None):
+    """Ctrl+Alt+Del (the guest's init syncs its disks and reboots, which ends
+    Firecracker), then SIGKILL after `grace` s -> how it ended."""
+    how = "killed"
+    if _api(api_sock(name), "PUT", "/actions", {"action_type": "SendCtrlAltDel"}) == 204:
+        end = time.time() + (STOP_GRACE if grace is None else grace)
+        while time.time() < end and _alive(pid):
+            time.sleep(0.2)
+        how = "shut down" if not _alive(pid) else how
+    if _alive(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        end = time.time() + 5
+        while time.time() < end and _alive(pid):
+            time.sleep(0.1)
+    return how
+
+
+def _lock(name):
+    """One start/stop of an instance at a time (a squad wake and a click in the UI)."""
+    with _locks_lock:
+        return _locks.setdefault(name, threading.Lock())
+
+
+def start(inst):
+    with _lock(inst["name"]):
+        if _instances.is_running(inst):
+            return "already running"
+        _netfw.ensure_net_base()
+        _netfw.setup_tap(inst, *(jail_ids(inst["index"]) if jailed() else ()))
+        _mounts.setup_mounts(inst)
+        make_config_disk(inst)
+        log = open(os.path.join(_paths.RUN_DIR, f"{inst['name']}.log"), "ab")
+        try:                                  # the operator may tail the console (root:operator, 0640)
+            os.chmod(log.name, 0o640); os.chown(log.name, 0, _host.ADMIN_GID)
+        except OSError:
+            pass
+        with log:
+            p = popen_vm(inst["name"], inst["index"], add_limits(gen_config(inst)), log)
+        open(_instances.pidfile(inst), "w").write(str(p.pid))
+        return f"started (pid {p.pid}{', jailed' if jailed() else ''})"
 
 
 def stop(inst):
-    pf = _instances.pidfile(inst)
-    if os.path.exists(pf):
+    with _lock(inst["name"]):
+        pf = _instances.pidfile(inst)
+        how = ""
         try:
-            os.kill(int(open(pf).read().strip()), signal.SIGTERM)
-            time.sleep(1)
-        except (ValueError, ProcessLookupError):
-            pass
-        os.remove(pf)
-    _netfw.teardown_tap(inst)
-    _mounts.teardown_mounts(inst)
-    _mcp.mcp_hub_kill(inst["name"])
-    # The private rootfs copy is worthless after stopping (the next start pulls
-    # a fresh one) — just disk space, so remove it.
-    for f in (f"{inst['name']}.rootfs.ext4", f"{inst['name']}.upper.ext4"):
+            pid = int(open(pf).read().strip())
+        except (OSError, ValueError):
+            pid = 0
+        if pid and _instances.is_running(inst):
+            how = halt(inst["name"], pid)
         try:
-            os.remove(os.path.join(_paths.RUN_DIR, f))
+            os.remove(pf)
         except OSError:
             pass
-    return "stopped"
+        _netfw.teardown_tap(inst)
+        _mounts.teardown_mounts(inst)
+        _mcp.mcp_hub_kill(inst["name"])
+        jail_clean(inst["name"])
+        # The private rootfs copy is worthless after stopping (the next start pulls
+        # a fresh one) — just disk space, so remove it.
+        for f in (f"{inst['name']}.rootfs.ext4", f"{inst['name']}.upper.ext4", f"{inst['name']}.sock"):
+            try:
+                os.remove(os.path.join(_paths.RUN_DIR, f))
+            except OSError:
+                pass
+        return f"stopped ({how})" if how else "stopped"

@@ -120,15 +120,19 @@ def pidfile(inst):
 
 
 def is_running(inst):
-    pf = pidfile(inst)
-    if not os.path.exists(pf):
-        return False
+    """Its pidfile names a live Firecracker of THIS instance — not a zombie,
+    not a reused pid (jailed: `--id <name>`; plain: its socket path)."""
     try:
-        pid = int(open(pf).read().strip())
-        os.kill(pid, 0)
-        return True
-    except (ValueError, ProcessLookupError, PermissionError):
+        with open(pidfile(inst)) as fh:
+            pid = int(fh.read().strip())
+        with open(f"/proc/{pid}/stat") as fh:
+            state = fh.read().rsplit(")", 1)[1].split()[0]
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            cmd = b"\0" + fh.read()
+    except (OSError, ValueError, IndexError):
         return False
+    name = inst["name"].encode()
+    return state != "Z" and (b"\0--id\0" + name + b"\0" in cmd or b"/" + name + b".sock\0" in cmd)
 
 
 
