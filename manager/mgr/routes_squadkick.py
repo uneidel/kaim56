@@ -54,7 +54,9 @@ def _rt_kick_post(h):
     rest = h.path.split("?", 1)[0][len(_KICK):].strip("/")
     b = h._body() or {}
     who = _who(h)
-    if not rest and b.get("project"):        # a squad on an existing repo (no clone)
+    if not rest and b.get("new"):            # a squad on a new, empty repo (first line = its name)
+        j, why = _squadkick.start_new(b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))
+    elif not rest and b.get("project"):      # a squad on an existing repo (no clone)
         j, why = _squadkick.start_repo(b.get("project"), b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))
     elif not rest:
         j, why = _squadkick.start(b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))

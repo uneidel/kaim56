@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-10-28
+
+- Squads: "Repo: new (empty)" — the first line names the project, the rest is the idea; a local git repo with an empty first commit on main, no remote; the requirements engineer (and the architect by @mention) discuss it before any member is set up.
+
 ## 2026-10-25
 
 - kAIm56 for Mac (`desktop/`, Tauri 2 + Rust): chat shared with phone/web, Waiting for you, notifications as macOS notifications, update check; reaches the manager only over iroh (in-process tunnel); `.github/workflows/mac.yml` builds a universal .dmg as release mac-v<version>.

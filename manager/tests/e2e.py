@@ -12427,6 +12427,33 @@ class ManagerFunctions(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         return srv, f"http://127.0.0.1:{srv.server_address[1]}/", seen
 
+    def test_squadkick_new_empty_repo(self):
+        """Repo: new (empty): the first line names the project, the rest is the idea — a local
+        git repo with an empty first commit on main, no remote, the engineer interviews first."""
+        m = self.m
+        tmp, bare, woke, created, calls, undo = self._kick_env()
+        k, L = m._squadkick, "127.0.0.1"
+        try:
+            for text, why in (("idea only", "describe the idea"), ("!!!\nidea", "first line is the project's name"),
+                              ("a" * 30 + "\nidea", "first line is the project's name")):
+                self.assertIn(why, self._sq("/api/squads/kickoff", L, {"new": True, "text": text})[1].get("error", ""))
+            st, j = self._sq("/api/squads/kickoff", L, {"new": True, "text": "Tank App!\nfind cheap fuel near me"})
+            self.assertEqual((st, j["name"], j["arch"]), (200, "tank-app", "tank-app-architect"), j)
+            j = k.get(j["id"])
+            self.assertEqual(j["status"], "done", j["log"])
+            p = m._projects.get("tank-app")
+            dest = p["source"]["path"]
+            self.assertEqual((p["strategy"], p["base"]), ("worktree", "main"))
+            self.assertEqual(m._projwt.git(dest, ["log", "--format=%s", "main"]).strip(), "Initial commit")
+            self.assertIsNone(m._squadgit.settings(p))                                   # no remote
+            self.assertEqual([c[0] for c in created], ["tank-app-architect", "tank-app-req"])
+            self.assertEqual([w[0] for w in woke], ["tank-app-req"])
+            self.assertIn("find cheap fuel near me", woke[0][1])
+            self.assertEqual(m._squads.settings(p)["requirements"], "drafting")
+            self.assertIn("is taken", self._sq("/api/squads/kickoff", L, {"new": True, "text": "tank-app\nagain"})[1]["error"])
+        finally:
+            undo()
+
     def test_squadkick_auth_failure_names_the_secret_then_retry(self):
         """A private repo without a token: the chat names the secret to
         create and nothing is left behind; with the secret, Retry clones over

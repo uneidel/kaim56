@@ -1633,13 +1633,14 @@ async function skReqAgree(){
 async function skRepos(){
   const sel=document.getElementById('sk-repo'); let ps=[];
   try{ps=(await (await fetch('/api/projects')).json()).projects||[]}catch(e){}
-  sel.innerHTML='<option value="">Repo: from a URL</option>'+ps.filter(p=>p.source.type==='host'&&!(p.squad||{}).enabled)
+  sel.innerHTML='<option value="">Repo: from a URL</option><option value="__new__">Repo: new (empty)</option>'+ps.filter(p=>p.source.type==='host'&&!(p.squad||{}).enabled)
     .map(p=>`<option value="${esc(p.name)}">Repo: ${escT(p.name)}</option>`).join('');
   skRepoPick();
 }
 function skRepoPick(){
   const r=document.getElementById('sk-repo').value;
-  document.getElementById('sk-text').placeholder=r?'What should the squad do in '+r+'? Describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.'
+  document.getElementById('sk-text').placeholder=r==='__new__'?'Name of the new project (first line, e.g. tankstellen-app)\\n\\nThen your idea — the requirements engineer and the architect (@mention) discuss it with you before any member is set up.\\n\\nCtrl+Enter starts the squad.'
+    :r?'What should the squad do in '+r+'? Describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.'
     :'https://github.com/owner/repo (an empty repo is fine)\\n\\nThen describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.';
   const b=document.getElementById('sk-send'); if(b)b.textContent=SK?'Send':'Start squad';
 }
@@ -2072,7 +2073,7 @@ async function skSend(){
   try{
     d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
        :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
-         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value,
+         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value==='__new__'?'':document.getElementById('sk-repo').value,new:document.getElementById('sk-repo').value==='__new__',
            team:document.getElementById('sk-team').value,decision:document.getElementById('sk-dec').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');

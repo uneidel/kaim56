@@ -208,6 +208,38 @@ def start(text, who, architect_template="", team=None, decision=""):
     return view(job), ""
 
 
+def start_new(text, who, architect_template="", team=None, decision=""):
+    """A squad on a new, empty local repo: the first line of `text` names it, the rest
+    is the idea -> (job view, '') or (None, why). The steps run in a thread (STEPS_NEW)."""
+    tpl = str(architect_template or "openrouter").strip()
+    if tpl not in _squadgate.MEMBER_TEMPLATES:
+        return None, f"architect_template must be {' or '.join(_squadgate.MEMBER_TEMPLATES)}"
+    ok, why = _squads.normalize_settings({"decision": decision})
+    if ok is None:
+        return None, why
+    first, _, goal = str(text or "").strip().partition("\n")
+    want, goal = re.sub(r"[^a-z0-9]+", "-", first.strip().lower()).strip("-"), goal.strip()
+    if not want or len(want) > NAME_MAX:
+        return None, f"the first line is the project's name: a-z 0-9 -, at most {NAME_MAX} characters"
+    if not goal:
+        return None, "describe the idea below the name"
+    if len(goal) > GOAL_MAX:
+        return None, f"the goal is longer than {GOAL_MAX} characters"
+    with _lock:
+        if _taken(want):
+            return None, f"the name {want} is taken"
+        job = {"id": uuid.uuid4().hex[:10], "name": want, "arch": want + ARCH_SUFFIX, "who": who,
+               "arch_template": tpl, "status": "running", "log": [], "made": [], "done": [], "created": time.time(),
+               "base": "", "url": "(new)", "repo": want, "provider": "local", "goal": goal, "steps": "new",
+               "team": _team(team), "decision": str(decision or "").strip()}
+        _jobs[job["id"]] = job
+        for old in sorted(_jobs.values(), key=lambda j: j["created"])[:-KEEP_JOBS]:
+            _jobs.pop(old["id"], None)
+    _say(job, f"Kickoff of squad {want} on a new, empty repo")
+    _spawn(run, job["id"])
+    return view(job), ""
+
+
 def start_repo(project, goal, who, architect_template="", team=None, decision=""):
     """A squad on an existing repo (the Repos tab): no clone, no new project —
     the architect, the squad, the goal (STEPS_REPO) -> (job view, '') or (None, why)."""
@@ -289,7 +321,7 @@ def run(jid):
     job = _jobs[jid]
     with _run_lock:
         try:
-            for step in {"repo": STEPS_REPO, "lead": STEPS_LEAD}.get(job.get("steps"), STEPS):
+            for step in {"repo": STEPS_REPO, "lead": STEPS_LEAD, "new": STEPS_NEW}.get(job.get("steps"), STEPS):
                 step(job)
             job["status"] = "done"
             _say(job, f"Squad {job['name']} is set up. {job['arch']} answers in this channel with a plan to approve.")
@@ -350,7 +382,9 @@ def _du(path):
     return total
 
 
-def step_clone(job):
+def _repo_dest(job):
+    """The squad record (made once) and its repo folder -> (dest, root, uid, gid), or
+    (None, …) when this job's repo is there already. A folder it did not make stops it."""
     root, uid, gid = _squadrec.root()
     if "squad" not in job["made"]:
         rec = _squadrec.create(job["name"], job["name"])
@@ -360,11 +394,45 @@ def step_clone(job):
     rec = next(r for r in _squadrec.records() if r["id"] == job["squad_id"])
     dest = job["path"] = _squadrec.repo_dir(rec, job["name"])
     if "clone" in job["made"] and os.path.isdir(os.path.join(dest, ".git")):
-        return _say(job, f"Clone: {dest} is there.")
+        _say(job, f"Repo: {dest} is there.")
+        return None, root, uid, gid
     if os.path.lexists(dest):
         raise Stop(f"{dest} exists and is not this kickoff's — remove it or rename the squad")
     _squadrec.mkdirs(os.path.dirname(dest))
     _squadrec.set_repo(rec, job["name"], dest)
+    return dest, root, uid, gid
+
+
+def _first_commit(job, dest):
+    """An empty repo gets an empty first commit on main (a worktree needs a base)."""
+    _projwt.git(dest, ["symbolic-ref", "HEAD", "refs/heads/main"])
+    sha = _projwt.git(dest, ["-c", "user.name=kAIm56", "-c", "user.email=kaim56@localhost",
+                             "commit-tree", EMPTY_TREE, "-m", "Initial commit"]).strip()
+    _projwt.git(dest, ["update-ref", "refs/heads/main", sha])
+
+
+def step_init(job):
+    """A new project: an empty local git repo on main, no remote (set one later in Projects → Squad)."""
+    dest, root, uid, gid = _repo_dest(job)
+    if dest is None:
+        return
+    job["made"].append("clone")
+    r = subprocess.run(["git", *_projwt.GIT_SAFE, "init", "--quiet", "--template=", "--", dest], cwd=root,
+                       env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
+                            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60, umask=0o022,
+                       **_projwt._as(uid, gid))
+    if r.returncode != 0:
+        raise Stop("git init failed: " + (r.stderr.strip()[-400:] or f"exit {r.returncode}"))
+    _first_commit(job, dest)
+    job["base"], job["url"] = "main", dest
+    _say(job, f"New empty repo {dest}, branch main (no remote).")
+
+
+def step_clone(job):
+    dest, root, uid, gid = _repo_dest(job)
+    if dest is None:
+        return
     tok = _token(job)
     try:
         home = pwd.getpwuid(uid).pw_dir
@@ -403,11 +471,8 @@ def step_clone(job):
     size = _du(dest)
     if size > MAX_BYTES:
         raise Stop(f"Clone aborted: the repository is larger than {MAX_BYTES // 2**20} MB (SQUAD_MAX_BYTES)")
-    if not _projwt.git_ok(dest, ["rev-parse", "--verify", "-q", "HEAD"]):      # an empty repo: an empty first commit on main
-        _projwt.git(dest, ["symbolic-ref", "HEAD", "refs/heads/main"])
-        sha = _projwt.git(dest, ["-c", "user.name=kAIm56", "-c", "user.email=kaim56@localhost",
-                                 "commit-tree", EMPTY_TREE, "-m", "Initial commit"]).strip()
-        _projwt.git(dest, ["update-ref", "refs/heads/main", sha])
+    if not _projwt.git_ok(dest, ["rev-parse", "--verify", "-q", "HEAD"]):      # an empty repo
+        _first_commit(job, dest)
         _say(job, "The repository is empty: an empty first commit on main.")
     job["base"] = _projwt.current_branch(dest)
     if not job["base"]:
@@ -566,6 +631,7 @@ def step_post(job):
 
 
 STEPS = (step_token, step_clone, step_project, step_remote, step_architect, step_squad, step_engineer, step_post)
+STEPS_NEW = (step_init, step_project, step_architect, step_squad, step_engineer, step_post)   # a new, empty repo
 STEPS_REPO = (step_architect, step_squad, step_engineer, step_post)   # an existing repo: no clone, no new project
 STEPS_LEAD = (step_squad, step_engineer, step_post)                   # … whose lead becomes the architect
 

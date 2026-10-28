@@ -365,7 +365,7 @@ HTML_TOP = """</head><body>
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
         <select class=input id=sk-dec aria-label=Suggestions title="Who suggests persona, skills and model tier for the members: OpenJev (JEV_URL) or SubQ (SUBQ_API_KEY in Settings)" style="width:auto">
           <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select>
-        <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
+        <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, a new empty repo, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select>
         <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput="skAt();skGrow(this)" onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
@@ -927,7 +927,8 @@ HTML_BOTTOM = """
   <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.
   <b>Squad kickoff</b> (<code>mgr/squadkick.py</code>, Squads page, admin): a repo URL + goal → host-side clone into
   <code>SQUADS_DIR/&#8249;id&#8250;__&#8249;name&#8250;/projects/&#8249;name&#8250;/repo</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
-  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made.
+  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made. <i>Repo: new (empty)</i>: the first line names it, a local
+  <code>git init</code> with an empty first commit on main instead of the clone, no remote.
   <b>Squad records</b> (<code>mgr/squadrec.py</code>): a squad ID and per-membership member IDs, assigned once, a list of projects;
   the archive folder holds <code>squad.json</code>, the channel and every wake turn as day-JSONL, proposals and ticket events
   (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.
