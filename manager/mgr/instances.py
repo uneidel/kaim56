@@ -26,6 +26,7 @@ from mgr import settings as _settings
 from mgr import skills as _skills
 from mgr import store as _store
 from mgr import vm as _vm
+from mgr import codexauth as _codexauth
 
 
 WEB_GUEST_PORT = 8080   # port of the web bridge in the microVM
@@ -286,7 +287,7 @@ def delete_instance(name):
 
 
 TEMPLATE_RUNTIME = {"openrouter": "openrouter-agent", "orcarouter": "openrouter-agent",
-                    "llama": "openrouter-agent (local model)", "claude": "claude-code",
+                    "llama": "openrouter-agent (local model)", "claude": "claude-code", "codex": "codex-cli",
                     "pi": "pi", "prime": "prime"}
 
 
@@ -317,6 +318,8 @@ def session_info(inst):
         started = 0
     if tpl == "claude":
         login = claude_login_state()
+    elif tpl == "codex":
+        login = _codexauth.state()
     elif (_settings.load_settings().get("LLM_KEY_PROXY") or "") == "1":
         login = "key proxy"
     else:

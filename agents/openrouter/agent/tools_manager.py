@@ -618,6 +618,12 @@ def t_project_merge(project, member):
 
 
 
+def t_project_deploy(project=""):
+    """Lead: the base branch to the project's service VM (the operator's spec)."""
+    d, err = _squad_call("/api/project/deploy", {"project": project}, 60)
+    return err or d.get("msg", "deploying")
+
+
 def t_project_sync():
     """Merge the project's base into this writer's folder (on the host)."""
     d, err = _squad_call("/api/project/sync", {}, 180)
@@ -743,6 +749,11 @@ def t_squad_request_member(member, reason="", project=""):
 
 def t_squad_request_merge(writer, summary, project=""):
     return _gate_out(*_squad_call("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project}))
+
+
+def t_squad_request_review(writer, files, summary, project=""):
+    return _gate_out(*_squad_call("/api/squad/request-review", {"writer": writer, "files": files, "summary": summary,
+                                                                "project": project}))
 
 
 def t_toolchain_propose(apt=None, script="", env=None, reason="", project=""):

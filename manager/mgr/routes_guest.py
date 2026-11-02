@@ -15,6 +15,7 @@ import urllib.request
 from mgr import audit as _audit
 from mgr import chats as _chats
 from mgr import claudeaccts as _claudeaccts
+from mgr import deploy as _deploy
 from mgr import gateway as _gateway
 from mgr import guests as _guests
 from mgr import haalias as _haalias
@@ -46,6 +47,7 @@ from mgr import squadgate as _squadgate
 from mgr import squads as _squads
 from mgr import toolchain as _toolchain
 from mgr import store as _store
+from mgr import codexauth as _codexauth
 from mgr import tasks as _tasks
 from mgr import ui as _ui
 from mgr import util as _util
@@ -200,6 +202,29 @@ def _rt_claude_credentials(h):
         return h._json({"claudeAiOauth": full["claudeAiOauth"]})
     except (OSError, ValueError, KeyError):
         return h._json({"error": "no host credential (run claude /login on the host)"}, 503)
+
+
+@_routes.ROUTER.get("/api/codex-credentials")
+def _rt_codex_credentials(h):
+    # The ChatGPT login of the codex template (mgr/codexauth.py): codex template guests only.
+    if not _codex_guest(h):
+        return h._json({"error": "codex template guests only"}, 403)
+    d = _codexauth.current()
+    return h._json(d) if d else h._json({"error": "no codex login (run codex login on the host)"}, 503)
+
+
+@_routes.ROUTER.post("/api/codex-credentials")
+def _rt_codex_credentials_back(h):
+    # A VM's refreshed login comes back (OpenAI rotates the refresh token); the newer one wins.
+    if not _codex_guest(h):
+        return h._json({"error": "codex template guests only"}, 403)
+    kept, why = _codexauth.store(h._body() or {})
+    return h._json({"kept": kept, "why": why}, 200 if kept or why == "not newer" else 400)
+
+
+def _codex_guest(h):
+    inst = h._guest()
+    return inst is not None and inst.get("template") == "codex"
 
 
 @_routes.ROUTER.get("/api/secret/", prefix=True)
@@ -786,6 +811,21 @@ def _rt_project_merge_guest(h):
     return h._json(r, st)
 
 
+@_routes.ROUTER.post("/api/project/deploy")
+def _rt_project_deploy_guest(h):
+    # The lead deploys the base branch to the project's service VM (mgr/deploy.py) — the
+    # spec (build, start, port) is the operator's; no spec = refused.
+    b = h._body() or {}
+    p, err = _lead_project(h, str(b.get("project") or ""))
+    if p is None:
+        return err
+    inst = h._guest()
+    if not _policy.tool_allowed(inst, "project_deploy"):
+        return h._json({"error": "project_deploy not allowed for this instance"}, 403)
+    msg, why = _deploy.deploy(p["name"], inst["name"])
+    return h._json({"msg": msg + " — the result comes as a note in the squad channel"}) if msg else h._json({"error": why}, 400)
+
+
 @_routes.ROUTER.post("/api/project/sync")
 def _rt_project_sync_guest(h):
     # A writer brings the base (the others' merged work) into its OWN folder only.
@@ -891,12 +931,14 @@ def _gate_guest(h, tool, project):
 _GATE_KIND = {"/api/squad/propose": ("squad_propose", "squad"),
               "/api/squad/request-member": ("squad_request_member", "member"),
               "/api/squad/request-merge": ("squad_request_merge", "merge"),
+              "/api/squad/request-review": ("squad_request_review", "review"),
               "/api/squad/toolchain-propose": ("toolchain_propose", "toolchain")}
 
 
 @_routes.ROUTER.post("/api/squad/propose")
 @_routes.ROUTER.post("/api/squad/request-member")
 @_routes.ROUTER.post("/api/squad/request-merge")
+@_routes.ROUTER.post("/api/squad/request-review")
 @_routes.ROUTER.post("/api/squad/toolchain-propose")
 def _rt_squad_propose(h):
     # The project's lead only; nothing happens until the user approves in the UI.

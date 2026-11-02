@@ -272,6 +272,12 @@ BUILTIN = {
                       "operator allowed it; a conflict changes nothing and names the files.",
                       {"project": {"type": "string"}, "member": {"type": "string", "description": "the writer instance"}},
                       ["project", "member"]),
+    "project_deploy": (_tools_manager.t_project_deploy,
+                       "As the LEAD of a project: deploy its base branch (merged work) as a service in its own VM, "
+                       "reachable for the user at /d/<project>/. Build, start command and port are the operator's "
+                       "(Squads -> Deploy); the result (running, or failed with the previous release kept) comes as a "
+                       "note in the squad channel. Deploy after a merge the user should try.",
+                       {"project": {"type": "string"}}, []),
     "project_sync": (_tools_manager.t_project_sync,
                      "Bring the project's base branch (merged work of others) into your folder; your unmerged work is kept (committed first). On conflict nothing changes and the files are named.",
                      {}, []),
@@ -360,6 +366,13 @@ BUILTIN = {
                             {"writer": {"type": "string"}, "summary": {"type": "string"},
                              "project": {"type": "string", "description": "optional when you lead one project"}},
                             ["writer", "summary"]),
+    "squad_request_review": (_tools_manager.t_squad_request_review,
+                             "Lead only: ask the user to review a writer's HTML result — UI mockups, design documents (.html/.htm/.md in the writer's folder, self-contained: inline CSS/JS, images as data: or https). The user views them in the squad's Results tab, annotates and approves or requests changes; the writer's ticket cannot go done before the approval. After changes, call it again for the same writer: it becomes the next version.",
+                             {"writer": {"type": "string"},
+                              "files": {"type": "array", "items": {"type": "string"}, "description": "paths in the writer's folder"},
+                              "summary": {"type": "string", "description": "what the user should look at"},
+                              "project": {"type": "string", "description": "optional when you lead one project"}},
+                             ["writer", "files", "summary"]),
     "ticket_list": (_tools_manager.t_ticket_list, "The squad's tickets (id, key, status, assignee, dependencies).",
                     {"project": {"type": "string", "description": "optional when you are in one squad"}}, []),
     "ticket_update": (_tools_manager.t_ticket_update,

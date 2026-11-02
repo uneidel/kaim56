@@ -239,6 +239,7 @@ def guest_env(inst):
     # A minimal VM init does not have /usr/local/bin in PATH -> inject it so
     # claude/fabric are found (guest-init sources the config disk).
     cfg.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    cfg["FC_TEMPLATE"] = inst.get("template", "")   # one image, two agents: claude or codex
     cfg["FC_INSTANCE"] = inst["name"]   # for the host-folder reconciler in the guest
     cfg.setdefault("TZ", _host.HOST_TZ)        # the agent's clock: [Now] line per turn
     cfg["GUEST_DNS"] = _netfw.GUEST_DNS         # guest-init writes resolv.conf from it (site.json, not the image)

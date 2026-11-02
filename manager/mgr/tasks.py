@@ -22,6 +22,7 @@ from mgr import chats as _chats
 from mgr import celldeploy as _celldeploy
 from mgr import claudeaccts as _claudeaccts
 from mgr import decision as _decision
+from mgr import deploy as _deploy
 from mgr import guestchat as _guestchat
 from mgr import guests as _guests
 from mgr import indexer as _indexer
@@ -736,6 +737,10 @@ def _task_worker():
                 _toolchain.sweep()         # squad toolchain layers: due builds, orphaned builders
             except Exception as e:
                 _util._wlog(f"toolchain-sweep failed: {e!r}")
+            try:
+                _deploy.sweep()            # deployed services that should run and do not: boot them again
+            except Exception as e:
+                _util._wlog(f"deploy-sweep failed: {e!r}")
             _claudeaccts.poll_usage_bg()   # usage gauges, every 5 min, in a thread (never raises)
             try:
                 _celldeploy.sync()         # celld with a bucket: deploy the apps when they changed

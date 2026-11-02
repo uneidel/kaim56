@@ -28,7 +28,7 @@ NEXT_COOKIE = "kaim56_next"        # a side host: the page the login was for
 # per side host (mgr/auth.SIDE_KIND): the pages a login may return to, and where
 # it goes when none (None: a plain "Logged in." page)
 _NEXT_RX = {"index": re.compile(r"/indexer/open/[A-Za-z0-9_.%-]{1,200}\Z"),
-            "apps": re.compile(r"/apps/[a-z0-9][a-z0-9_-]{0,40}/[A-Za-z0-9_.%/-]{0,200}\Z")}
+            "apps": re.compile(r"/(apps/[a-z0-9][a-z0-9_-]{0,40}|d/[a-z0-9_-]{1,32})/[A-Za-z0-9_.%/-]{0,200}\Z")}
 _NEXT_DEFAULT = {"index": "/indexer/ui/", "apps": None}
 
 

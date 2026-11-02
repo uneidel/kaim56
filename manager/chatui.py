@@ -13,7 +13,7 @@ out — a new chat here does not start a new agent session.
 
 PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>kAIm56 chat</title>
+<title>kAIm56 Agent cloud</title>
 <link rel=icon type="image/svg+xml" href="/logo.svg">
 <style>
 /* Design system "Industry" (claude.ai/design) — taken directly from the
@@ -21,7 +21,7 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
    blueprint objects with hairlines and registration corners. The dark block
    is derived from the same OKLCH ramps (the system ships only the light
    band). */
-@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
+
 :root{
   color-scheme:light dark;
   --bg:#f2f2f3;--panel:#e9e9ea;--panel-2:#f5f5f8;
@@ -61,7 +61,6 @@ body{margin:0;display:flex;height:100dvh;overflow:hidden;background:var(--bg);co
 
 /* — Blueprint objects: square, hairline — */
 .blueprint{position:relative;border:1px solid var(--border)}
-  color:color-mix(in srgb,var(--text) 55%,transparent)}
 
 .kicker{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
   font-family:var(--font-body);font-weight:500}
@@ -314,10 +313,17 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
   .row.me .body{max-width:92%}
   #hello{padding-top:6vh}
 }
+
+/* kAIm56 Agent cloud: visual refresh. Existing IDs, handlers and APIs preserved. */
+:root{color-scheme:dark;--bg:#131716;--panel:#191e1b;--panel-2:#222a24;--border:#ffffff12;--text:#dce4db;--muted:#94a28e;--heading:#e8eee5;--accent:#c9e8a5;--accent-contrast:#26341e;--accent-100:#263321;--accent-400:#72935e;--accent-600:#d9edc4;--accent-700:#afca97;--accent-800:#37482b;--accent-fill:#c9e8a5;--accent-fill-hover:#d9f0bf;--ok:#a8d88d;--off:#6f7e68;--font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--font-heading:var(--font-body);--shadow:none;--shadow-md:0 8px 35px #0002}
+body{font-size:14px;line-height:1.7}#side{width:230px;background:#171c19}#side.hidden{margin-left:-230px}.side-top{padding:22px 16px 15px;border-bottom:0}.cloud-brand{display:flex;align-items:center;gap:12px;color:var(--text);text-decoration:none;margin:0 9px 27px}.cloud-brand svg,.home svg{width:31px;height:31px;color:var(--accent)}.cloud-brand strong{font-size:25px;font-weight:650;letter-spacing:-1px;line-height:1.1;display:block}.cloud-brand small{font-size:10px;color:var(--muted);letter-spacing:1px;display:block;line-height:1.8;margin-top:4px}#new{border:0;border-radius:8px;background:var(--accent);color:var(--accent-contrast);font-size:13px;padding:11px}#new:hover{background:var(--accent-fill-hover)}.side-label{font-size:9px;letter-spacing:1.4px;padding:15px 22px 10px}#convs{padding:0 12px 12px}.conv{border:0;border-radius:7px;margin-bottom:4px;padding:10px;font-size:12px}.conv.sel{background:#c9e8a511;box-shadow:inset 2px 0 0 #c9e8a5}.conv .ag{background:#c9e8a50c;border-radius:4px;font-size:9px;padding:1px 5px}.side-foot{padding:16px 19px;font-size:11px}.side-apps{gap:10px}.home{margin-top:18px}#main>header{min-height:72px;background:var(--bg);padding:12px 22px;gap:9px}#agent{border-color:transparent;border-radius:7px;font-size:15px;padding:5px;max-width:220px}#state{font-size:10px}.dot.on{box-shadow:none;width:6px;height:6px}.icon{border-radius:7px;font-size:16px;flex-shrink:0}#log{padding:32px 32px 15px}.wrap{max-width:820px}.row{margin-bottom:30px}.av{border-radius:9px;width:32px;height:32px;background:#c9e8a509;border-color:#c9e8a51c}.row:not(.me) .body{border:0;background:none;padding:2px 4px;flex:1}.row.me .body{background:#262f27;color:#dce6d6;border:1px solid #ffffff08;border-radius:12px 12px 3px 12px;padding:13px 17px;font-size:13px}.body h1,.body h2{font-size:24px;line-height:1.3;letter-spacing:-.7px}.body h3{font-size:18px;line-height:1.4}.body a{color:#b7d59d}.body pre,.think{border-radius:8px}.body p{margin:.7rem 0}.body img{border-radius:8px;max-width:min(100%,420px)}.tools button{opacity:.6;font-size:10px}.tools{margin-top:12px}.blueprint{border-radius:10px}#comp{padding:12px 30px 17px}#box{max-width:820px;border-radius:13px;padding:13px 14px 10px;border-color:#4c5f40;background:#1d251f}.inrow{flex-wrap:wrap;gap:5px;align-items:center}#t{order:-1;flex:1 0 100%;width:100%;font-size:14px;min-height:48px;padding:2px 3px 12px}#clipBtn,#branchBtn,#micBtn{width:auto;padding:6px 9px;gap:7px;height:32px;font-size:11px;color:#a1b494}#clipBtn:after{content:'File'}#branchBtn:after{content:'Aside'}#micBtn:after{content:'Voice'}#micBtn.rec:after{content:'Stop recording'}#micBtn.rec{color:#26341e;background:var(--accent)}#send{margin-left:auto;border-radius:8px;width:33px;height:33px;font-size:16px}.foot{max-width:820px;font-size:10px;color:#7e9074;line-height:1.6}#thumbs{flex-wrap:wrap;padding-bottom:10px}#thumbs img,#thumbs .doc{border-radius:7px}#thumbs .doc{max-width:100%}#thumbs .x{border-radius:50%;width:22px;height:22px}#branchbar{border-radius:8px;font-size:11px;padding:10px 12px;max-width:820px!important}.bb-btn{border-radius:6px;font-size:11px}.bb-label{font-size:11px}#panel{width:280px;padding:21px 19px;background:#161c18;gap:20px}#panel .phead{gap:10px;align-items:flex-start}#panel .pcard>.phead{flex-direction:column;gap:7px}.pcard{padding:0 0 20px;border:0;border-bottom:1px solid var(--border);border-radius:0}.pname{font-size:20px;letter-spacing:-.5px}.pstate{font-size:11px}.pstate .sq{border-radius:50%;width:5px;height:5px}.pgrid{gap:17px 10px;margin-top:23px}.pgrid .k,.pk{font-size:9px;letter-spacing:1.3px}.pgrid .v{font-size:12px;margin-top:3px}.pbtns{gap:7px;margin-top:20px}.pbtn{border-radius:6px;font-size:11px;padding:6px}.plist{margin-bottom:20px}.plist>div{padding:12px 0;font-size:11px}.plist .v{font-size:10px}.ptag{border-radius:5px}#pbody>.pk{margin:20px 0 7px}.phead>.sbtn{border-radius:5px}.chips button{border-radius:7px}#hello .panel{border-radius:13px;padding:35px}#hello h2{font-size:30px}#hello p{font-size:13px}
+@media(max-width:1100px){#side{width:190px}#side.hidden{margin-left:-190px}.side-top{padding:20px 12px 14px}#panel{width:255px;padding:20px 15px}#main>header{padding:10px 15px;gap:3px}#agent{max-width:155px;font-size:13px}#log{padding:26px 22px 12px}#comp{padding:10px 20px 15px}.row{gap:9px}.conv{padding:9px 7px;font-size:11px}.conv .ag{font-size:8px}}
+@media(max-width:899px){#panel{position:fixed;right:0;top:0;bottom:0;z-index:30;width:min(330px,90vw);box-shadow:-30px 0 100px #0009}#state{font-size:9px}#agent{max-width:140px}}
+@media(max-width:650px){#side{position:fixed;z-index:25;top:0;bottom:0;width:230px;box-shadow:30px 0 100px #0008}#side.hidden{margin-left:-230px;box-shadow:none}#main>header{padding:8px;flex-wrap:wrap;min-height:60px}#state{max-width:90px;font-size:9px}.icon{width:29px;height:29px}#agent{max-width:130px}#log{padding:22px 14px 10px}#comp{padding:10px 12px 14px}#clipBtn,#branchBtn,#micBtn{padding:5px 7px;font-size:10px}.row{gap:7px}.av{width:25px;height:25px}.body h1,.body h2{font-size:22px}.row.me .body{max-width:92%}#branchbar{flex-wrap:wrap}.bb-label{flex-basis:100%}}
 </style></head><body>
 
 <aside id=side>
-  <div class=side-top><button id=new onclick=newChat()>＋ New chat</button></div>
+  <div class=side-top><a class="cloud-brand" href="/">__LOGO__<span><strong>kAIm56</strong><small>Agent cloud</small></span></a><button id=new onclick=newChat()>＋ New chat</button></div>
   <div class=side-label>Chats</div>
   <div id=convs></div>
   <div class=side-foot>__APPS__<a href="/" class=home>__LOGO__<span>kAIm56</span></a></div>
@@ -357,9 +363,9 @@ mark.sh{background:color-mix(in srgb,var(--accent) 30%,transparent);color:inheri
     <div id=box class=blueprint>
       <div id=thumbs></div>
       <div class=inrow>
-        <button class=icon id=clipBtn title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
-        <button class=icon id=branchBtn title="Open an aside: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="4"/><rect x="1" y="10.5" width="5" height="4"/><rect x="10" y="10.5" width="5" height="4"/><path d="M8 5.5v2.5M8 8H3.5v2.5M8 8h4.5v2.5"/></svg></button>
-        <button class=icon id=micBtn title="Speak (tap again = done)" onclick=micToggle()>🎙</button>
+        <button class=icon id=clipBtn aria-label="Attach file" title="Attach an image (vision) or a document (PDF/DOCX/text — the extracted text goes to the agent)" onclick="document.getElementById('file').click()"></button>
+        <button class=icon id=branchBtn aria-label="Open aside: separate conversation branch" title="Open an aside: ask a follow-up without polluting the main thread (↩ brings you back)" onclick=openBranch()><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="6" r="2"/><path d="M6 7v10M6 13h6a6 6 0 0 0 6-6"/></svg></button>
+        <button class=icon id=micBtn aria-label="Start or stop voice input" title="Voice input: click to record, click again to send. The reply is read aloud." onclick=micToggle()><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg></button>
         <input type=file id=file accept="image/*,.pdf,.docx,.odt,.txt,.md,.csv,.html" hidden onchange=addAttachment(this)>
         <textarea id=t rows=1 placeholder="Message the agent…" autofocus></textarea>
         <button id=send onclick=send(true) title="Send · during a reply: ■ = stop (Enter with text = interject)">➤</button>
@@ -704,7 +710,7 @@ let PANEL={open:null,data:null,agent:''};
 function panelWanted(){
   if(PANEL.open!==null)return PANEL.open;
   try{const v=localStorage.getItem(PKEY);if(v!==null)return v==='1'}catch(e){}
-  return innerWidth>=1100;
+  return innerWidth>=900;
 }
 function panelToggle(force){
   PANEL.open=(typeof force==='boolean')?force:!panelWanted();

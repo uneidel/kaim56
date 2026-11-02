@@ -19,7 +19,7 @@ from mgr import instances as _instances
 # the tool gating and the egress rules would then be moot.
 # An allowlist instead of individual checks: a new route is then closed by
 # default, not open by default.
-GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
+GUEST_POST_PATHS = ("/api/codex-credentials", "/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/api/trace",
                     "/api/skill-proposals", "/api/sessions-search",
                     "/api/stt", "/api/tts", "/api/signal", "/api/mail", "/api/mcp",
                     "/api/memory-search", "/api/task-delete", "/api/task-edit",
@@ -28,9 +28,10 @@ GUEST_POST_PATHS = ("/api/usage", "/api/audit", "/api/task", "/api/chat-log", "/
                     "/api/mission-finish", "/api/ha-alias", "/api/ha-control",
                     "/api/katfs/write", "/api/katfs/delete",   # own share only (katfs_share_for)
                     "/api/project/merge",                       # a lead, when the project allows it
+                    "/api/project/deploy",                      # a lead: the base branch to the service VM (mgr/deploy.py)
                     "/api/project/sync",                        # a writer, its own folder only
                     "/api/squad/post", "/api/squad/ask",        # members of a project (mgr/squads.py)
-                    "/api/squad/propose", "/api/squad/request-member", "/api/squad/request-merge",
+                    "/api/squad/propose", "/api/squad/request-member", "/api/squad/request-merge", "/api/squad/request-review",
                     "/api/squad/toolchain-propose",
                     "/api/squad/ticket-create", "/api/squad/ticket-assign", "/api/squad/ticket-update")  # mgr/squadgate.py
 GUEST_POST_PREFIXES = ("/api/memory/", "/api/llm/", "/api/git/")   # /api/git/: members of a project with a remote (mgr/squadgit.py)

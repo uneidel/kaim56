@@ -20,6 +20,9 @@ A project's lead PROPOSES; only the operator's approval in the UI acts:
   already done, so approving again retries only what failed.
 - ``member``: one more member later (after the squad is approved).
 - ``merge``: a writer's branch to the project's base, by the existing merge path.
+- ``review``: a writer's HTML results (UI mockups, documents) for the operator
+  to view and annotate (mgr/squadreview.py). The writer's ticket cannot go
+  done while its review is open, so tickets that depend on it wait.
 - ``toolchain``: the squad's shared toolchain spec (apt packages, a root
   script, env — mgr/toolchain.py); approving stores it as the squad setting
   and starts the builder VM. One pending per project, revisable like a plan.
@@ -67,11 +70,12 @@ from mgr import repoprofile as _repoprofile
 from mgr import router as _router
 from mgr import skills as _skills
 from mgr import squadrec as _squadrec
+from mgr import squadreview as _squadreview
 from mgr import squads as _squads
 from mgr import toolchain as _toolchain
 
 GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
-KINDS = ("squad", "member", "merge", "toolchain")
+KINDS = ("squad", "member", "merge", "toolchain", "review")
 STATUSES = ("open", "doing", "review", "done", "blocked")
 COMMENT_MAX = 2000
 AUTO = "auto (trusted squad)"          # who decides a trusted squad's merge proposal
@@ -91,15 +95,16 @@ MAX_COMMENTS = 100
 MAX_TICKET_VERSIONS = 5                # a ticket's earlier title/description (a re-scope), newest last
 MAX_VERSIONS = 10               # earlier versions a revised proposal keeps
 OPEN = ("pending", "changes_requested")      # not decided yet
-PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status", "toolchain")
+PLAN_FIELDS = ("goal", "members", "tickets", "budget_tokens_per_day", "warnings", "profile", "edits", "status", "toolchain",
+               "summary", "files", "commit")
 DIFF_FIELDS = ("role", "purpose", "persona", "skills", "model_tier", "model", "template")
 MEMBER_TOOLS = ("squad_post", "squad_ask", "squad_read", "squad_members", "ticket_list", "ticket_update", "ask_human", "project_sync",
                 "git_push_branch", "git_fetch", "pr_create", "pr_list", "pr_view", "pr_comment",
                 "issue_create", "issue_list", "issue_comment",   # git: only with a project remote, role-checked
                 "toolchain_status")                              # read-only: what the shared toolchain layer holds
 DEVOPS_RE = re.compile(r"devops", re.I)
-LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "ticket_create", "ticket_assign",
-              "project_status", "project_diff", "toolchain_propose")   # a lead created here (the kickoff's architect)
+LEAD_TOOLS = ("squad_catalog", "squad_propose", "squad_request_member", "squad_request_merge", "squad_request_review", "ticket_create", "ticket_assign",
+              "project_status", "project_diff", "toolchain_propose", "project_deploy")   # a lead created here (the kickoff's architect)
 # The templates a squad member may use, with what the architect is told.
 MEMBER_TEMPLATES = {"openrouter": "API model via OpenRouter (512 MiB); counts against the squad's daily token budget",
                     "claude": "Claude Code on the user's subscription (1024 MiB); the tier picks haiku/sonnet/opus"}
@@ -446,6 +451,17 @@ def propose(proj, by, kind, body):
         if not summary:
             return None, "summary missing"
         prop.update(writer=writer, summary=summary)
+    elif kind == "review":
+        writer = _txt(body.get("writer"), 64)
+        if proj.get("strategy") != "worktree" or writer not in _projects.writers(proj):
+            return None, f"{writer!r} is no writer of a worktree project {proj['name']}"
+        summary = _txt(body.get("summary"), 2000)
+        if not summary:
+            return None, "summary missing: what the user should look at"
+        commit, files, why = _squadreview.snapshot(proj, writer, body.get("files"))
+        if not commit:
+            return None, why
+        prop.update(writer=writer, summary=summary, files=files, commit=commit)
     elif kind == "toolchain":
         spec, why = _squads.toolchain_spec({k: body.get(k) for k in ("apt", "script", "env")})
         if not spec:
@@ -458,10 +474,10 @@ def propose(proj, by, kind, body):
         prop.update(toolchain=spec, goal=_txt(body.get("reason"), 1000), spec_diff=toolchain_diff(cur, spec))
     else:
         return None, "unknown kind"
-    same = next((p for p in pending if p.get("kind") == kind and kind != "merge"
-                 and (kind in ("squad", "toolchain") or p["members"][0]["name"] == prop["members"][0]["name"])), None)
+    same = next((p for p in pending if p.get("kind") == kind and kind != "merge" and _subject(p) == _subject(prop)), None)
     if same and not same.get("revisable"):
-        what = {"squad": "a squad proposal", "toolchain": "a toolchain proposal"}.get(kind) or f"a proposal for {prop['members'][0]['name']}"
+        what = {"squad": "a squad proposal", "toolchain": "a toolchain proposal",
+                "review": f"a review of {prop.get('writer')}'s result"}.get(kind) or f"a proposal for {_subject(prop)}"
         return None, (f"{what} ({same['id']}) is waiting for approval already — it can be revised "
                       "once the user asks for changes")
     if not same and len(pending) >= MAX_PENDING:
@@ -488,6 +504,11 @@ def propose(proj, by, kind, body):
     except Exception as e:                       # the proposal stands without the bell
         print(f"[quiet] squad notify failed: {e!r}", flush=True)
     return prop, ""
+
+
+def _subject(p):
+    """What one open proposal of its kind is about: a new version replaces the open one of the same subject."""
+    return {"squad": "", "toolchain": "", "review": p.get("writer")}.get(p["kind"], (p.get("members") or [{}])[0].get("name"))
 
 
 def _snapshot(p):
@@ -564,10 +585,16 @@ def _edited(proj, prop, edits):
     return ({"members": [m], "warnings": warn}, "") if m else (None, why)
 
 
-def request_changes(project, pid, who, comment, edits=None):
+def request_changes(project, pid, who, comment, edits=None, annotations=None):
     """The operator asks the lead to revise (comment required; the card's edits
-    so far go along as a summary) -> (proposal, '') or (None, why)."""
-    comment = _txt(comment, 2000)
+    so far go along as a summary; a review's annotations are composed into the
+    comment) -> (proposal, '') or (None, why)."""
+    if annotations:
+        comment, why = _squadreview.compose(_txt(comment, 2000), annotations)
+        if comment is None:
+            return None, why
+    else:
+        comment = _txt(comment, 2000)
     if not comment:
         return None, "say what should change (comment missing)"
     with _decide:
@@ -580,7 +607,7 @@ def request_changes(project, pid, who, comment, edits=None):
         if prop["kind"] == "merge":
             return None, "a merge is approved or rejected (with a note)"
         summary = []
-        if edits:
+        if edits and prop["kind"] != "review":
             f, why = _edited(proj, prop, edits)
             if not f:
                 return None, why
@@ -605,7 +632,8 @@ def request_changes(project, pid, who, comment, edits=None):
 
 
 _REVISE_TOOL = {"squad": "squad_propose", "member": "squad_request_member (same member)",
-                "toolchain": "toolchain_propose"}
+                "toolchain": "toolchain_propose",
+                "review": "squad_request_review (same writer, after the writer changed the files)"}
 
 
 def revise_hint(proj):
@@ -876,6 +904,8 @@ def _run(prop, who):
     proj = _projects.get(name)
     if proj is None:
         return [{"step": "project", "ok": False, "detail": "project gone"}]
+    if prop["kind"] == "review":                  # the decision is the outcome
+        return steps
     if prop["kind"] == "merge":
         r, st = _projects.member_op(name, "merge", prop["writer"])
         steps.append({"step": f"merge {prop['writer']}", "ok": st == 200,
@@ -941,7 +971,7 @@ def decide(project, pid, ok, who, note="", edits=None):
             return None, f"proposal is {prop['status']} already"
         note = _txt(note, 1000) or prop.get("note", "")
         before = {m["name"]: m for m in prop.get("members") or []}
-        if ok and edits and prop["status"] in OPEN and prop["kind"] != "merge":
+        if ok and edits and prop["status"] in OPEN and prop["kind"] not in ("merge", "review"):
             f, why = _edited(proj, prop, edits)
             if not f:
                 return None, why
@@ -959,12 +989,14 @@ def decide(project, pid, ok, who, note="", edits=None):
                         err=", ".join(failed), result=f"{prop['status']} by {who}" + (f": {note}" if note else ""))
     lead_ = lead(_projects.get(project) or {}) or prop["by"]
     what = {"squad": "squad plan", "member": "member request", "merge": f"merge of {prop.get('writer', '')}",
-            "toolchain": "toolchain"}[prop["kind"]]
+            "toolchain": "toolchain", "review": f"result review of {prop.get('writer', '')}"}[prop["kind"]]
     text = (f"Your {what} ({pid}) was {prop['status']} by {who}." + (f" Note: {note}" if note else "")
             + (f" Steps not done: {', '.join(failed)}." if failed else "")
             + (" The members and tickets are set up — start them with ticket_assign or squad_post."
                " To re-scope a ticket, update its title and description (ticket_update), not only comment on it."
-               if ok and prop["kind"] == "squad" else ""))
+               if ok and prop["kind"] == "squad" else "")
+            + (f" {prop.get('writer')} may set its ticket done now; the tickets that depend on it start then."
+               if ok and prop["kind"] == "review" else ""))
     _squads.post(_projects.get(project), "user:" + who, [lead_], text)
     return prop, ""
 
@@ -1069,6 +1101,13 @@ def update_ticket(proj, who, tid, body, may, depth=1):
         why = may(t)
         if why:
             return None, why
+        rv = status == "done" and not who.startswith("user:") and next(
+            (p for p in d["proposals"] if p.get("project") == proj["name"] and p["kind"] == "review"
+             and p.get("writer") == t["assignee"]
+             and p.get("status") in OPEN), None)
+        if rv:
+            return None, (f"the user has not approved {t['assignee']}'s result yet (review {rv['id']}): "
+                          "keep the ticket in review until the approval arrives")
         before = {x["key"] for x in mine if _ready(x, mine)}
         old_assignee, old_status = t["assignee"], t["status"]
         if status:

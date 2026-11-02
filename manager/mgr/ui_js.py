@@ -1322,7 +1322,7 @@ async function sqSave(){
 }
 /* squad gate: proposals the user approves, tickets (mgr/squadgate.py) */
 let SQB={};
-const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request',toolchain:'Toolchain'};
+const SQ_KIND={squad:'Squad plan',member:'New member',merge:'Merge request',toolchain:'Toolchain',review:'Result review'};
 function sqSel(k,opts,cur,lab){return `<select class=input data-k=${k}${lab?` aria-label="${esc(lab)}"`:''}><option value="">—</option>`+
   opts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${escT(o)}</option>`).join('')+'</select>'}
 const SQ_X=`<button class="btn btn-ghost btn-sm" title="remove" aria-label="remove" onclick="this.closest('[data-t]').remove()">✕</button>`;
@@ -1470,6 +1470,8 @@ function sqCard(p){
   const id=esc(p.id);
   let body=(p.warnings||[]).map(w=>`<div style="font-size:12px;color:var(--color-warn)">⚠ ${escT(w)}</div>`).join('');
   if(p.kind==='merge')body+=`<p style="white-space:pre-wrap">${escT(p.summary)}</p><button class="btn btn-ghost btn-sm" onclick="pjReview('${esc(SQ)}','${esc(p.writer)}')">Diff of ${escT(p.writer)}</button>`;
+  else if(p.kind==='review')body+=sqHistory(p)+`<p style="white-space:pre-wrap">${escT(p.summary)}</p><div class=text-muted style="font-size:12px">${escT((p.files||[]).join(', '))}</div>`+
+    `<button type=button class="btn btn-ghost btn-sm" data-rvopen="${esc(p.id)}">Open in Results to view and annotate</button>`;
   else if(p.kind==='toolchain')body+=sqHistory(p)+(p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+sqTc(p);
   else body+=sqHistory(p)+(p.kind==='squad'?`<div class=sq-sub>Goal</div><textarea class="input sq-goal" data-k=goal rows=3 aria-label="squad goal">${escT(p.goal||'')}</textarea>`
     :p.goal?`<p style="white-space:pre-wrap;margin:8px 0">${escT(p.goal)}</p>`:'')+p.members.map(m=>sqMem(p,m)).join('')+(p.kind==='squad'?sqTicketRows(p)+
@@ -1503,6 +1505,7 @@ function sqTc(p){
 }
 function sqCollect(p,c){
   const v=(r,k)=>{const e=r.querySelector('[data-k='+k+']');return e?e.value:''}, out={};
+  if(p.kind==='review')return {};
   if(p.kind==='toolchain')return {toolchain:{apt:v(c,'tc_apt').split(/[\\s,]+/).filter(Boolean),script:v(c,'tc_script'),env:tcEnvObj(v(c,'tc_env'))}};
   const list=x=>x.split(',').map(s=>s.trim()).filter(Boolean);
   out.members=[...c.querySelectorAll('[data-m]')].map(r=>{
@@ -1557,6 +1560,79 @@ async function sqDecide(id,ok,changes){
     if(sk){SK_PEND='';skLoad();loadSquads()}else{sqLoad();loadProjects()}
   }catch(e){btns.forEach(b=>b.disabled=false);say('⚠️ '+(e&&e.message||e)+' — nothing was sent',true)}
 }
+/* — Squad results (mgr/squadreview.py): a writer's HTML results, sandboxed in a frame; select text or Alt+click
+   to annotate; Request changes sends the annotations to the lead, Approve lets the writer's ticket go done — */
+let RV={id:'',f:'',key:''};
+const rvAll=()=>(SQB.proposals||[]).filter(p=>p.kind==='review');
+const rvStore=p=>'kaim-annot:'+p.project+':'+p.id+':'+(p.version||1);
+function rvNotes(p){try{return JSON.parse(localStorage.getItem(rvStore(p))||'[]')}catch(e){return []}}
+function rvSave(p,n){try{localStorage.setItem(rvStore(p),JSON.stringify(n))}catch(e){}}
+function rvCount(){return rvAll().filter(sqOpenP).length}
+function skResults(){
+  const box=document.getElementById('sk-results'), all=rvAll().slice().sort((a,b)=>(b.updated||b.created)-(a.updated||a.created));
+  const key=all.map(p=>p.id+':'+(p.version||1)+':'+p.status).join()+'|'+RV.id+'|'+RV.f;
+  if(!box||key===RV.key)return; RV.key=key;
+  if(!all.length){box.innerHTML='<div class=squad-no-approvals>No results yet. The ui-designer\\'s mockups and the documents the lead sends for review appear here.</div>';return}
+  const p=all.find(x=>x.id===RV.id)||all.find(sqOpenP)||all[0]; RV.id=p.id;
+  if(!(p.files||[]).includes(RV.f))RV.f=(p.files||[])[0]||'';
+  const open=sqOpenP(p);
+  box.innerHTML=`<div class=rv-list role=list>`+all.map(x=>`<button type=button role=listitem class="rv-item${x.id===p.id?' on':''}" data-rv="${esc(x.id)}">`+
+      `<b>${escT(x.writer)}</b> <span class="tag ${sqOpenP(x)?'tag-accent':'tag-neutral'}">${escT(x.status.replace('_',' '))}</span>${(x.version||1)>1?` <span class=text-muted>v${+x.version}</span>`:''}`+
+      `<span class=text-muted>${escT(String(x.summary||'').slice(0,90))}</span></button>`).join('')+'</div>'+
+    `<div class=rv-main><div class=rv-files>`+(p.files||[]).map(f=>`<button type=button class="btn btn-sm ${f===RV.f?'btn-secondary':'btn-ghost'}" data-rvf="${esc(f)}">${escT(f)}</button>`).join('')+
+      `<a class="btn btn-ghost btn-sm" target=_blank rel=noopener href="${rvUrl(p,RV.f)}">Open in a new tab</a></div>`+
+      `<p class=rv-sum>${escT(p.summary||'')}</p>`+sqHistory(p)+
+      `<iframe id=sk-rframe title="Result ${esc(RV.f)}" sandbox="allow-scripts allow-popups" src="${rvUrl(p,RV.f)}"></iframe></div>`+
+    `<aside class=rv-side aria-label=Annotations><div class=sq-sub>Annotations</div>`+
+      (open?`<p class=text-muted style="font-size:12px">Select text in the result, or Alt+click an element, then say what should change.</p>`:'')+
+      `<div id=rv-notes></div>`+(open?`<textarea class=input id=rv-note rows=3 placeholder="General comment to the lead" aria-label="general comment"></textarea>`+
+      `<div class=rv-acts><button type=button class="btn btn-secondary" data-rvd=changes>Request changes</button><button type=button class="btn btn-primary" data-rvd=approve>Approve</button></div>`:
+      `<p class=text-muted style="font-size:12.5px">${escT(p.status)}${p.decided_by?' by '+escT(p.decided_by):''}${p.note?' · '+escT(p.note):''}</p>`)+
+      `<div id=rv-msg role=status aria-live=polite style="font-size:12.5px"></div></aside>`;
+  rvNotesRender(p);
+}
+const rvUrl=(p,f)=>'/api/projects/'+encodeURIComponent(p.project)+'/squad/result?id='+encodeURIComponent(p.id)+'&f='+encodeURIComponent(f)+'&v='+(p.version||1);
+function rvNotesRender(p){
+  const el=document.getElementById('rv-notes'); if(!el)return;
+  const n=rvNotes(p), open=sqOpenP(p);
+  el.innerHTML=n.length?n.map((x,i)=>`<div class=rv-note><div class=text-muted style="font-size:11.5px">${escT(x.file)}</div><q>${escT(x.quote)}</q>`+
+    (open?`<textarea class=input rows=2 data-rvn="${i}" aria-label="comment on the selection" placeholder="What should change?">${escT(x.comment||'')}</textarea><button type=button class="btn btn-ghost btn-sm" data-rvx="${i}" aria-label="remove annotation">Remove</button>`
+      :`<div>${escT(x.comment||'')}</div>`)+'</div>').join(''):'<p class=text-muted style="font-size:12px">None yet.</p>';
+}
+async function rvDecide(ok){
+  const p=rvAll().find(x=>x.id===RV.id), out=document.getElementById('rv-msg'); if(!p)return;
+  const note=(document.getElementById('rv-note')||{}).value||'', notes=rvNotes(p).filter(x=>String(x.comment||'').trim());
+  if(!ok&&!note.trim()&&!notes.length){out.textContent='Request changes: annotate the result or write a comment.';return}
+  out.textContent=ok?'Approving…':'Sending to the lead…';
+  let d={};
+  try{const r=await fetch('/api/projects/'+encodeURIComponent(p.project)+'/squad/decide',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:p.id,approve:ok,changes:!ok,note,annotations:ok?undefined:notes})});
+    try{d=await r.json()}catch(e){d={error:'HTTP '+r.status}}}
+  catch(e){d={error:'manager not reachable'}}
+  if(d.error){out.textContent='⚠️ '+d.error;return}
+  try{localStorage.removeItem(rvStore(p))}catch(e){}
+  RV.key='';SK_PEND='';skLoad();
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-rv],[data-rvf],[data-rvx],[data-rvd],[data-rvopen]'); if(!t)return;
+  const p=rvAll().find(x=>x.id===RV.id);
+  if(t.dataset.rvopen!==undefined){RV.id=t.dataset.rvopen;RV.key='';if(window.skView)skView('results');skResults();return}
+  if(t.dataset.rv){RV.id=t.dataset.rv;RV.f='';skResults();return}
+  if(t.dataset.rvf){RV.f=t.dataset.rvf;skResults();return}
+  if(t.dataset.rvx!==undefined&&p){const n=rvNotes(p);n.splice(+t.dataset.rvx,1);rvSave(p,n);rvNotesRender(p);return}
+  if(t.dataset.rvd)rvDecide(t.dataset.rvd==='approve');
+});
+document.addEventListener('input',e=>{const i=e.target.dataset&&e.target.dataset.rvn; if(i===undefined)return;
+  const p=rvAll().find(x=>x.id===RV.id); if(!p)return; const n=rvNotes(p); if(n[+i]){n[+i].comment=e.target.value;rvSave(p,n)}});
+window.addEventListener('message',e=>{
+  const f=document.getElementById('sk-rframe'), d=e.data;
+  if(!f||e.source!==f.contentWindow||!d||!d.kaimAnnot)return;      /* only the result shown in the frame */
+  const p=rvAll().find(x=>x.id===RV.id); if(!p||!sqOpenP(p))return;
+  const quote=String(d.quote||'').slice(0,300).trim(); if(!quote)return;
+  const n=rvNotes(p); if(n.some(x=>x.quote===quote&&x.file===RV.f&&!x.comment))return;
+  n.push({file:RV.f,quote,comment:''}); rvSave(p,n); rvNotesRender(p);
+  const ta=document.querySelector('[data-rvn="'+(n.length-1)+'"]'); if(ta)ta.focus();
+});
 /* — Squads: one chat per squad; a kickoff from one line (mgr/squadkick.py) — */
 let SK='', SK_JOB='', SK_LIST=[], SK_LAST=-1, SK_PEND='', SK_POLL=false, SK_MEMBERS=[], SK_AT=0;
 /* @-mentions in the composer: typing @ lists the squad's members (+ all); arrows/Enter/Tab pick, Esc closes. */
@@ -1613,7 +1689,7 @@ document.getElementById('sk-list').onclick=e=>{
   loadSquads();
 };
 // the selected squad's problem bar, toolchain line and requirements stay behind otherwise
-function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML='';
+function skClearSquad(){const p=document.getElementById('sk-prob');p.hidden=true;p.innerHTML='';p.dataset.h='';document.getElementById('sk-tc').innerHTML='';document.getElementById('sk-dp').innerHTML='';
   const r=document.getElementById('sk-req');r.innerHTML='';r.dataset.h='';sqClose()}
 // requirements before the plan (mgr/squadreq.py): the lead's REQUIREMENTS.md, "agreed" lets it plan
 function skReq(q){
@@ -1733,6 +1809,7 @@ async function skLoad(){
   if(b.error)skMsg(b.error);
   SQB=b;
   try{skTcRow(b.toolchain)}catch(e){console.error('squad toolchain',e)}
+  try{skDpRow(b.deploy)}catch(e){console.error('squad deploy',e)}
   try{skReq(b.requirements)}catch(e){console.error('squad requirements',e)}
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
@@ -1743,7 +1820,7 @@ async function skLoad(){
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(p=>safe('card',sqCard,p)).join('')+hq.map(x=>safe('card',hqCard,x)).join('')}   /* never under the user's edits */
   try{await skMetrics(name)}catch(e){console.error('squad metrics',e)}
   if(SK!==name)return;
-  SKB_D={d,b}; safe('board',()=>skBoardRender(d,b,hq)); if(SKT)safe('ticket panel',skTkRender);
+  safe('results',skResults); SKB_D={d,b}; safe('board',()=>skBoardRender(d,b,hq)); if(SKT)safe('ticket panel',skTkRender);
 }
 /* — Squads board: team row, summary, Kanban Open · Doing · Review · Blocked · Done; click = ticket, drag = status — */
 let SKB='', SKB_DRAG=false, SKB_D={d:{},b:{}}, SKM={name:'',at:0,ev:[],sum:{}}, SKT=0, SKT_EDIT=false;
@@ -1811,6 +1888,47 @@ async function tcLog(){
   pre.scrollTop=pre.scrollHeight;
 }
 function tcClose(){document.getElementById('tcdlg').style.display='none'}
+/* deploy target "instance" (mgr/deploy.py): the base branch as a service in its own VM, at /d/<project>/ on the apps' host */
+function skDpRow(dp){
+  const el=document.getElementById('sk-dp'); if(!el)return;
+  if(!dp||dp.error){el.innerHTML=dp&&dp.error?`<span class=text-muted>Deploy: ${escT(dp.error)}</span>`:'';return}
+  const st=dp.state||'none', sp=dp.spec||{}, b=(f,t,tip)=>`<button class="btn btn-ghost btn-sm" onclick="${f}" title="${esc(tip||'')}">${t}</button>`;
+  const head=st==='running'?`release ${+dp.release}${dp.commit?' · '+escT(dp.commit.slice(0,10)):''} · <a href="${esc(dp.url)}" target=_blank rel=noopener>open</a>`
+    :st==='deploying'?'deploying… '+kbMmss(Math.max(0,Math.floor(Date.now()/1000)-(dp.started||0)))
+    :st==='failed'?'failed — '+escT(dp.error||''):st==='down'?'down (restarts by itself)':st==='stopped'?'stopped':sp.start?'not deployed':'no spec';
+  el.innerHTML=`<b>Deploy</b> <span class=text-muted>${head}${st==='running'&&dp.error?' · last deploy failed: '+escT(dp.error):''}</span> `+b('dpEdit()','Spec')+
+    (sp.start&&st!=='deploying'?b("dpAct('deploy')",'Deploy','The base branch, built and started in the service VM; a failure keeps the previous release'):'')+
+    (st==='running'||st==='down'?b("dpAct('stop')",'Stop'):'')+(st!=='none'?b('dpLog()','View log'):'');
+}
+let DP_P='';
+function dpDlg(edit){
+  DP_P=SK; document.getElementById('dpdlgname').textContent=SK; document.getElementById('dpdlgmsg').textContent='';
+  document.getElementById('dpdlg-edit').hidden=!edit; document.getElementById('dp-save').hidden=!edit; document.getElementById('dpdlglog').hidden=edit;
+  document.getElementById('dpdlg').style.display='grid';
+}
+function dpEdit(){
+  const sp=((SQB||{}).deploy||{}).spec||{};
+  document.getElementById('dp-build').value=sp.build||''; document.getElementById('dp-start').value=sp.start||'';
+  document.getElementById('dp-port').value=sp.port||8080; document.getElementById('dp-mem').value=sp.mem||1024; document.getElementById('dp-vcpus').value=sp.vcpus||1;
+  dpDlg(true);
+}
+async function dpPost(p,body){
+  try{return await (await fetch('/api/deploy/'+encodeURIComponent(p),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json()}catch(e){return {error:'manager not reachable'}}
+}
+async function dpSave(){
+  const v=id=>document.getElementById(id).value;
+  const d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
+  document.getElementById('dpdlgmsg').textContent=d.error?'⚠️ '+d.error:'saved ✓ — Deploy starts it';
+  if(!d.error)skLoad();
+}
+async function dpAct(a){const d=await dpPost(SK,{action:a}); skMsg(d.error||d.msg); skLoad()}
+async function dpLog(){
+  dpDlg(false);
+  const pre=document.getElementById('dpdlglog'); pre.textContent='loading …';
+  let d={}; try{d=await (await fetch('/api/deploy/'+encodeURIComponent(DP_P))).json()}catch(e){d={error:'manager not reachable'}}
+  pre.textContent=d.error||d.log||'No log yet.'; pre.scrollTop=pre.scrollHeight;
+}
+function dpClose(){document.getElementById('dpdlg').style.display='none'}
 async function skRetryTurns(member){   /* re-deliver the wakes of failed turns (all, or one member's) */
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/retry',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(member?{member}:{})})).json()}catch(e){d={error:'manager not reachable'}}
@@ -3193,4 +3311,41 @@ async function caSave(){
 }
 async function caDel(n){if(confirm('Delete Claude account '+n+'?')){await caPost({op:'delete',name:n});loadClaudeAccts()}}
 loadMe();
+</script><script id="squad-workspace-layout-script">/* Workspace navigation: existing handlers and backend routes remain unchanged. */
+(()=>{
+function setup(){
+ const chat=document.querySelector('#s-squads .sk-chat');if(!chat||chat.dataset.workspaceReady)return;chat.dataset.workspaceReady='1';
+ const tabs=document.createElement('nav');tabs.className='squad-workspace-tabs';tabs.setAttribute('aria-label','Squad workspace');
+ const views=[['board','Board'],['chat','Chat'],['approvals','Approvals'],['results','Results'],['team','Team'],['settings','Settings']];
+ const empty=document.createElement('div');empty.className='squad-no-approvals';empty.textContent='All caught up. No proposals or decisions are waiting for you.';
+ const actions=document.createElement('details');actions.className='squad-action-menu';const summary=document.createElement('summary');summary.textContent='Actions';actions.append(summary);const menu=document.createElement('div');menu.className='squad-menu-items';actions.append(menu);
+ const act=(label,fn,danger=false)=>{const b=document.createElement('button');b.type='button';b.textContent=label;if(danger)b.className='danger';b.onclick=async()=>{actions.open=false;await fn()};menu.append(b)};
+ act('Pause / resume',()=>{if(SK)skPause(!SKB_D.d.settings?.paused)});act('Restart members',()=>{if(SK)skRestart()});if(INDEX_HOST){act('Reindex project',()=>{if(SK)skReindex()});act('Code dashboard',()=>{if(SK)window.open('https://'+INDEX_HOST+'/indexer/open/'+encodeURIComponent(SK),'_blank','noopener')})}act('Delete squad',()=>{if(SK)skDelete()},true);
+ chat.querySelector('.sk-head').append(actions);
+ chat.querySelector('.sk-head').after(tabs);
+ const settings=document.getElementById('sq-panel');chat.append(settings);chat.append(empty);
+ let selected='board';
+ function counts(){const approvals=document.getElementById('sk-cards').children.length;tabs.querySelector('[data-view="approvals"] .squad-tab-count').textContent=String(approvals);tabs.querySelector('[data-view="team"] .squad-tab-count').textContent=String((typeof SK_MEMBERS!=='undefined'?SK_MEMBERS:[]).length);tabs.querySelector('[data-view="results"] .squad-tab-count').textContent=String(rvCount());empty.hidden=approvals>0;}
+ function select(view){selected=view;chat.dataset.view=view;tabs.querySelectorAll('button').forEach(b=>{const active=b.dataset.view===view;b.setAttribute('aria-current',active?'page':'false')});if(view==='chat'){document.getElementById('sk-chatbox').open=true;document.getElementById('sk-text').focus({preventScroll:true})}if(view==='settings'&&typeof SK!=='undefined'&&SK){sqOpen(SK)}else if(settings.style.display!=='none'){sqClose()}counts();}
+ views.forEach(([view,label])=>{const b=document.createElement('button');b.type='button';b.dataset.view=view;b.append(document.createTextNode(label));if(view==='approvals'||view==='team'||view==='results'){const count=document.createElement('span');count.className='squad-tab-count';b.append(count)}b.onclick=()=>select(view);tabs.append(b)});
+ const watch=new MutationObserver(counts);watch.observe(document.getElementById('sk-cards'),{childList:true});watch.observe(document.getElementById('sk-board'),{childList:true});watch.observe(document.getElementById('sk-results'),{childList:true});window.skView=select;
+ const baseMode=skMode;skMode=function(kick){baseMode(kick);if(!kick)select('board');};
+ const baseClose=sqClose;sqClose=function(){baseClose();if(selected==='settings')select('board')};
+ const baseChat=skChat;skChat=function(){select('chat');baseChat()};
+ const basePick=skPick;skPick=function(name){basePick(name);select('board')};
+ select('board');
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup);else setup();
+})();
+</script><script>(()=>{
+function setup(){const chat=document.querySelector('#s-squads .sk-chat');if(!chat||chat.querySelector('.squad-board-tools'))return;
+ const tools=document.createElement('div');tools.className='squad-board-tools';
+ tools.innerHTML='<label class="squad-ticket-search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" placeholder="Find a ticket, member or blocker…" aria-label="Filter board tickets"></label><span class="squad-search-result" role="status"></span>';
+ const nav=chat.querySelector('.squad-workspace-tabs');if(nav)nav.after(tools);else chat.querySelector('.sk-head').after(tools);
+ const input=tools.querySelector('input'),status=tools.querySelector('.squad-search-result');
+ function filter(){const query=input.value.trim().toLowerCase();let total=0,visible=0;document.querySelectorAll('#sk-board .kb-col').forEach(col=>{let n=0;const cards=[...col.querySelectorAll('.kb-tk')];cards.forEach(c=>{const show=!query||((c.textContent||'')+' '+(c.getAttribute('aria-label')||'')).toLowerCase().includes(query);c.hidden=!show;n+=show?1:0});const badge=col.querySelector('.kb-ch b');if(badge)badge.textContent=query?n+'/'+cards.length:String(cards.length);total+=cards.length;visible+=n});status.textContent=query?visible+' of '+total+' tickets':total+' tickets · scroll columns independently';}
+ input.oninput=filter;new MutationObserver(filter).observe(document.getElementById('sk-board'),{childList:true});filter();
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup);else setup();
+})();
 </script></body></html>"""

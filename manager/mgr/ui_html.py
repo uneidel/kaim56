@@ -14,7 +14,7 @@ HTML_TOP = """</head><body>
 </div>
 <div class=navshade onclick=navToggle(false)></div>
 <aside class=side id=side>
-  <div class=brand><div class=brand-mark><svg width=18 height=18 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M12 2 2 7l10 5 10-5-10-5Z"></path><path d="m2 17 10 5 10-5"></path><path d="m2 12 10 5 10-5"></path></svg></div>
+  <div class=brand><div class=brand-mark>__LOGO__</div>
     <div class=brand-txt><b>kAIm56</b><span>Agent cloud</span></div></div>
   <nav class=nav id=nav aria-label=Pages>
     <div class=navgrp><div class=navlbl>Agents</div>
@@ -50,7 +50,7 @@ HTML_TOP = """</head><body>
   <div class=user>
     <div class=avatar id=uavatar>A</div>
     <div class=uinfo><span id=uname>Admin</span><span id=urole>basic</span></div>
-    <button class=iconbtn id=nbell onclick=notifToggle() title="Benachrichtigungen" aria-label=Benachrichtigungen>
+    <button class=iconbtn id=nbell onclick=notifToggle() title="Notifications" aria-label=Notifications>
       <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
       <span class=nbadge id=nbadge hidden>0</span>
     </button>
@@ -58,7 +58,7 @@ HTML_TOP = """</head><body>
   </div>
 </aside>
 <div class=npanel id=npanel hidden>
-  <div class=nhead><b>Benachrichtigungen</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Leeren</button></div>
+  <div class=nhead><b>Notifications</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Clear</button></div>
   <div id=nlist><span class=text-muted style="font-size:13px;padding:12px;display:block">…</span></div>
 </div>
 <main>
@@ -350,28 +350,30 @@ HTML_TOP = """</head><body>
 </section>
 
 <section class="screen" id=s-squads>
-  <p class=lede>One chat per squad · start one with a repo URL and a goal · its architect proposes members, tickets and a budget — nothing runs before you approve</p>
+  <p class=lede>Give your squad a repository and a goal. The architect proposes a team, tickets and a budget. You review the plan before execution.</p>
   <div class=sk>
     <nav class=sk-list id=sk-list aria-label=Squads><span class=text-muted style="font-size:13px">…</span></nav>
     <div class="panel blueprint sk-chat">
       <div class=sk-head><div><b id=sk-title>New squad</b> <span id=sk-status></span></div><div id=sk-acts></div></div>
       <div id=sk-prob class=kb-prob role=status hidden></div>
       <div id=sk-tc class=sk-tc aria-live=polite></div>
+      <div id=sk-dp class=sk-tc aria-live=polite></div>
       <div id=sk-req aria-live=polite></div>
       <div id=sk-cards></div>
+      <div id=sk-results aria-label="Squad results"></div>
       <div id=sk-board hidden aria-label="Squad board"></div>
       <div id=sk-working aria-live=polite></div>
-      <div class=sk-comp><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
-        <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select>
-        <select class=input id=sk-dec aria-label=Suggestions title="Who suggests persona, skills and model tier for the members: OpenJev (JEV_URL) or SubQ (SUBQ_API_KEY in Settings)" style="width:auto">
-          <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select>
-        <select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, a new empty repo, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
-          <option value="">Repo: from a URL</option></select>
-        <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
+      <div class=sk-comp><label class="sk-field sk-field-arch"><span>Architect runtime</span><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
+        <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select></label>
+        <label class="sk-field sk-field-dec"><span>Member suggestions</span><select class=input id=sk-dec aria-label=Suggestions title="Who suggests persona, skills and model tier for the members: OpenJev (JEV_URL) or SubQ (SUBQ_API_KEY in Settings)" style="width:auto">
+          <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select></label>
+        <label class="sk-field sk-field-repo"><span>Repository</span><select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, a new empty repo, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
+          <option value="">Repo: from a URL</option></select></label>
+        <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><label class="sk-input-label" for="sk-text"><span class="kick-label">Goal & context</span><span class="chat-label">Message the squad</span></label><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput="skAt();skGrow(this)" onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button>
-      <details id=sk-teambox ><summary>Team — the roles the architect staffs the squad with (empty = it decides)</summary>
+      <details id=sk-teambox ><summary>Customize the team · leave empty to let the architect decide</summary>
         <textarea class=input id=sk-team rows=9 aria-label=Team style="width:100%;margin-top:6px;font-size:12.5px">__TEAM_DEFAULT__</textarea></details>
       </div>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
@@ -789,7 +791,7 @@ HTML_BOTTOM = """
   lets the MCP hub substitute the value into a server config <i>on the host</i>; only a key that is
   also <b>guest-readable</b> leaves the host raw via <code>/api/secret/&#8249;name&#8250;</code>, the
   instance identified by source IP. Sources: the 0600 secret store and the manager settings. MCP
-  configs are assembled server-side the same way (<code>/api/mcp-config</code>). <b>Claude accounts</b> (<code>mgr/claudeaccts.py</code>, 0600 <code>claude_accounts.json</code>): a claude VM with <code>CLAUDE_ACCOUNT</code> gets that account&#8217;s setup-token from <code>/api/claude-credentials</code> as <code>CLAUDE_CODE_OAUTH_TOKEN</code> (env only, no file), otherwise the host login; the 5 h/week usage gauges are polled every 5 min (a manager-owned login is refreshed, the host login never).</p></div>
+  configs are assembled server-side the same way (<code>/api/mcp-config</code>). <b>Claude accounts</b> (<code>mgr/claudeaccts.py</code>, 0600 <code>claude_accounts.json</code>): a claude VM with <code>CLAUDE_ACCOUNT</code> gets that account&#8217;s setup-token from <code>/api/claude-credentials</code> as <code>CLAUDE_CODE_OAUTH_TOKEN</code> (env only, no file), otherwise the host login; the 5 h/week usage gauges are polled every 5 min (a manager-owned login is refreshed, the host login never). <b>Codex</b> (template <code>codex</code>, the claude image with the Codex CLI): the ChatGPT login (<code>codex login</code> on the host, <code>mgr/codexauth.py</code>) comes from <code>/api/codex-credentials</code>; OpenAI rotates the refresh token, so a VM posts its refreshed login back and the newer one wins.</p></div>
 
   <div class="card blueprint"><span class=card-title>Security gateway</span>
   <p class=card-body>Per-chat toggle (shield icon in app and web). Strips invisible Unicode
@@ -913,9 +915,12 @@ HTML_BOTTOM = """
   each addressed member is woken as a one-off task in its lane, unless a guard (enabled, paused, wakes/hour, the members' tokens today,
   reply depth) blocks it &#8212; the message is kept with the reason. A post during a woken turn inherits its depth.
   <b>Squad gate</b> (<code>mgr/squadgate.py</code>, <code>squadgate.json</code>): the lead only proposes (<code>squad_propose</code>,
-  <code>squad_request_member/merge</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
+  <code>squad_request_member/merge/review</code>); the user approves in the Squad panel, then the manager creates the instances, adds them,
   sets the budget, enables the squad and creates the tickets (each step recorded, re-approve retries). Before approval only the lead
-  can be woken. Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.
+  can be woken. <b>Results</b> (<code>mgr/squadreview.py</code>): <code>squad_request_review</code> snapshots a writer&#8217;s HTML
+  files (the ui-designer&#8217;s mockups, documents); the Results tab shows them sandboxed (opaque origin, no API), a selection or
+  Alt+click becomes an annotation, Request changes sends them to the lead, and the writer&#8217;s ticket goes done only after Approve.
+  Tickets (<code>ticket_*</code>): assigning, or the last dependency reaching done, wakes the assignee through the channel.
   The lead reads <code>squad_catalog</code> (personas, skills, tiers, templates) and picks per member persona or a
   <code>new_persona</code> (created only on approve, never over an existing one), skills, tier and template
   (<code>openrouter</code> or <code>claude</code>: tier &#8594; <code>ANTHROPIC_MODEL</code>); the card shows who chose each field
@@ -929,6 +934,12 @@ HTML_BOTTOM = """
   <code>SQUADS_DIR/&#8249;id&#8250;__&#8249;name&#8250;/projects/&#8249;name&#8250;/repo</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
   <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made. <i>Repo: new (empty)</i>: the first line names it, a local
   <code>git init</code> with an empty first commit on main instead of the clone, no remote.
+  <b>Deploy target &#8220;instance&#8221;</b> (<code>mgr/deploy.py</code>, Squads &#8594; Deploy, lead tool <code>project_deploy</code>): the base branch as a
+  service in its own VM <code>svc-&#8249;project&#8250;</code> &#8212; the squad&#8217;s base image + toolchain layer, a read-only release image
+  (<code>git archive</code> &#8594; <code>mkfs.ext4 -d</code>, never mounted on the host), a fresh upper, a persistent <code>/data</code> disk, a config disk with the
+  operator&#8217;s spec only (build, start, port; no secrets, no NFS); internet yes, no new connection to the host. guest-init builds and starts as uid 1000;
+  the manager waits for the port, a failure boots the previous release again. Served only on the apps&#8217; host at <code>/d/&#8249;project&#8250;/</code>
+  (admin login there; the session cookie and Authorization never reach the VM, connect-src limited to the service).
   <b>Squad records</b> (<code>mgr/squadrec.py</code>): a squad ID and per-membership member IDs, assigned once, a list of projects;
   the archive folder holds <code>squad.json</code>, the channel and every wake turn as day-JSONL, proposals and ticket events
   (write-through, secrets redacted, owned by the SQUADS_DIR owner); migrated at start, a running member's clone is moved later.
@@ -1221,6 +1232,28 @@ HTML_BOTTOM = """
       <span id=tcdlgmsg class=msg style="margin-right:auto"></span>
       <button class="btn btn-secondary" onclick=tcClose()>Close</button>
       <button class="btn btn-primary" id=tc-save onclick=tcSave()>Save &amp; build</button>
+    </div>
+  </div>
+</div>
+
+<div id=dpdlg class=dialog-backdrop style="display:none">
+  <div class="dialog blueprint" style="width:min(860px,100%)">
+    <div class=dialog-title>Deploy — <span id=dpdlgname class=mono style="font-size:16px"></span></div>
+    <div id=dpdlg-edit class=dialog-body>
+      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">The base branch runs in its own VM (the squad's base image + toolchain, no secrets, no host access), at <span class=mono>/d/&lt;project&gt;/</span> on the apps' host. Env: <span class=mono>PORT</span>, <span class=mono>DATA_DIR=/data</span> (kept across deploys), <span class=mono>BASE_PATH</span>.</p>
+      <label for=dp-build>Build <span class=text-muted>(optional, in the release folder, as uid 1000)</span></label><input class="input mono" id=dp-build placeholder="npm ci && npm run build">
+      <label for=dp-start style="margin-top:8px;display:block">Start <span class=text-muted>(listens on $PORT)</span></label><input class="input mono" id=dp-start placeholder="node server.js">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <label>Port <input class="input mono" id=dp-port type=number min=1024 max=65535 style="width:100px"></label>
+        <label>RAM MiB <input class="input mono" id=dp-mem type=number min=256 max=8192 style="width:100px"></label>
+        <label>vCPUs <input class="input mono" id=dp-vcpus type=number min=1 max=4 style="width:70px"></label>
+      </div>
+    </div>
+    <pre id=dpdlglog class=mono hidden style="max-height:60vh;overflow:auto;font-size:12px;line-height:1.45;margin:0;padding:10px;background:var(--color-neutral-100);white-space:pre-wrap"></pre>
+    <div class=dialog-actions>
+      <span id=dpdlgmsg class=msg style="margin-right:auto"></span>
+      <button class="btn btn-secondary" onclick=dpClose()>Close</button>
+      <button class="btn btn-primary" id=dp-save onclick=dpSave()>Save</button>
     </div>
   </div>
 </div>

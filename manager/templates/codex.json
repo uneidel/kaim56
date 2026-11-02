@@ -1,0 +1,82 @@
+{
+  "template": "codex",
+  "description": "Codex CLI Agent (ChatGPT subscription: run codex login on the host once)",
+  "rootfs": "instances/claude-rootfs.ext4",
+  "vcpus": 2,
+  "mem_mib": 2048,
+  "params": [
+    {
+      "key": "TRANSPORT",
+      "label": "Transport",
+      "type": "select",
+      "options": [
+        "web"
+      ],
+      "default": "web"
+    },
+    {
+      "key": "CODEX_MODEL",
+      "label": "Model (Codex); empty = the account default, e.g. gpt-5-codex",
+      "default": ""
+    },
+    {
+      "key": "CODEX_REASONING",
+      "label": "Reasoning effort",
+      "type": "select",
+      "default": "",
+      "options": [
+        {
+          "value": "",
+          "label": "\u2014 default \u2014"
+        },
+        {
+          "value": "low",
+          "label": "low"
+        },
+        {
+          "value": "medium",
+          "label": "medium"
+        },
+        {
+          "value": "high",
+          "label": "high"
+        }
+      ]
+    },
+    {
+      "key": "ALLOW_ACTIONS",
+      "label": "Allow actions",
+      "type": "select",
+      "options": [
+        "true",
+        "false"
+      ],
+      "default": "true"
+    },
+    {
+      "key": "AUTO_RESET_MIN",
+      "label": "Auto-reset after idle (minutes, 0 = never) \u2014 a voice instance forgets the day's chatter, e.g. 30",
+      "default": "0"
+    },
+    {
+      "key": "HINDSIGHT_RETAIN",
+      "label": "Keep turns in the second memory (Hindsight) \u2014 1 = the user's messages and notes are retained; 0 = off (e.g. a high-volume voice agent). Only matters when HINDSIGHT_URL is set.",
+      "type": "select",
+      "options": [
+        "1",
+        "0"
+      ],
+      "default": "1"
+    },
+    {
+      "key": "AGENT_SUDO",
+      "label": "Root inside the VM via sudo (1 = the agent may sudo, e.g. apt-get install; 0 = off)",
+      "type": "select",
+      "options": [
+        "0",
+        "1"
+      ],
+      "default": "0"
+    }
+  ]
+}

@@ -5,8 +5,21 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-02
+
+- Squad results: new default role ui-designer (HTML mockups before UI code); `squad_request_review` puts a writer's HTML/Markdown results in the new Results tab — sandboxed view, select or Alt+click to annotate, Request changes sends the annotations to the lead, Approve unblocks the writer's ticket (`mgr/squadreview.py`).
+
+## 2026-11-01
+
+- Template `codex`: the Codex CLI on the ChatGPT subscription in the claude image (web chat; `codex exec --json`, thread resumed per chat); the login comes from `/api/codex-credentials` and a VM's refreshed one goes back, newer wins (`mgr/codexauth.py`). Fixed: AUTO_RESET_MIN in the claude bridge shared its variable with the turn id.
+- Squads refresh: green Agent-cloud theme on the main page, a squad opens as a workspace with tabs (Board, Chat, Approvals, Team, Settings), an Actions menu (pause, restart, reindex, dashboard, delete) and a ticket filter on the board; kickoff fields labelled; no Google Fonts import.
+- Chat page (`chatui.py`): visual refresh "Agent cloud" (dark green theme, brand in the sidebar, SVG mic/aside icons, aria labels, session panel inline from 900 px); no Google Fonts import.
+- Logo: the main page's brand mark is now logo.svg like the chat page (was a generic layers icon in a box); both logos on the chat page share one size and color.
+- Deploy: a rollback boots the previous release with its own spec (spec stored per release); service VMs are found by `--id` in /proc instead of a pidfile (a lost pidfile left VMs running and unhalted).
+
 ## 2026-10-28
 
+- Deploy target "instance": a project's base branch runs as a service in its own Firecracker VM (`mgr/deploy.py`; squad base image + toolchain, persistent /data, no secrets, no host access), deployed from Squads → Deploy or by the lead (`project_deploy`), a failed deploy keeps the previous release; served only on APPS_HOST at `/d/<project>/`.
 - Squads: "Repo: new (empty)" — the first line names the project, the rest is the idea; a local git repo with an empty first commit on main, no remote; the requirements engineer (and the architect by @mention) discuss it before any member is set up.
 
 ## 2026-10-25

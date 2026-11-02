@@ -19,8 +19,9 @@ if [ ! -f /.fc-overlay ]; then
     # -o sync: stop() pulls the plug on the VM (SIGTERM to Firecracker) —
     # without sync the last writes would still sit in the page cache and be
     # lost (observed: 0-byte file). Synchronous is fine for our write load.
-    # A toolchain builder (fc_build=1) writes async: it syncs and freezes before it ends.
-    MOPT=sync; case " $(cat /proc/cmdline) " in *" fc_build=1 "*) MOPT=async ;; esac
+    # A toolchain builder (fc_build=1) writes async: it syncs and freezes before it ends;
+    # a service (fc_svc=1) gets a fresh upper every boot.
+    MOPT=sync; case " $(cat /proc/cmdline) " in *" fc_build=1 "*|*" fc_svc=1 "*) MOPT=async ;; esac
     if mount -o "$MOPT" "$UP" /mnt 2>/dev/null; then
       mkdir -p /mnt/upper /mnt/work /mnt/root
       # The squad's shared toolchain (manager: fc_layer=, a read-only drive)
@@ -87,6 +88,39 @@ if [ "${TOOLCHAIN_BUILD:-0}" = "1" ]; then
   if [ "$rc" = 0 ]; then echo "KAIM56_TOOLCHAIN_RESULT=ok"; else echo "KAIM56_TOOLCHAIN_RESULT=fail rc=$rc"; fi
   echo b > /proc/sysrq-trigger
   while true; do sleep 3600; done
+fi
+# --- Deployed service mode (manager: mgr/deploy.py) ------------------------------
+# svc-<project>: no secrets, no NFS, no agent. The release (read-only, the
+# project's base branch) is copied to /srv/app, `build` and `start` run there as
+# uid 1000 with PORT, DATA_DIR=/data (the persistent disk) and BASE_PATH (the
+# proxy prefix /d/<project>); the KAIM56_DEPLOY_RESULT lines on the console are
+# what the manager reads.
+if [ "${DEPLOY_SERVICE:-0}" = "1" ]; then
+  echo "nameserver ${GUEST_DNS:-1.1.1.1}" > /etc/resolv.conf
+  [ -f /etc/kaim56-toolchain.env ] && . /etc/kaim56-toolchain.env
+  arg() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" /proc/cmdline; }
+  svc_end() { sync; echo b > /proc/sysrq-trigger; while true; do sleep 3600; done; }
+  mkdir -p /srv/release /srv/app /srv/home /data
+  if ! mount -o ro "$(arg fc_release)" /srv/release 2>/dev/null; then echo "KAIM56_DEPLOY_RESULT=fail no release disk"; svc_end; fi
+  cp -a /srv/release/. /srv/app/ && rm -rf /srv/app/lost+found
+  mount "$(arg fc_data)" /data 2>/dev/null || echo "[svc] WARN: no data disk — /data is not kept"
+  rm -rf /data/lost+found; chown -R 1000:1000 /srv/app /srv/home /data
+  cd /srv/app
+  RUN="setpriv --reuid=1000 --regid=1000 --init-groups env HOME=/srv/home PORT=$DEPLOY_PORT DATA_DIR=/data BASE_PATH=$BASE_PATH"
+  if [ -n "$DEPLOY_BUILD" ]; then
+    echo "[svc] build: $DEPLOY_BUILD"
+    rc=0; timeout 1500 $RUN sh -c "$DEPLOY_BUILD" || rc=$?
+    if [ "$rc" != 0 ]; then echo "KAIM56_DEPLOY_RESULT=fail build rc=$rc"; svc_end; fi
+  fi
+  echo "KAIM56_DEPLOY_RESULT=built"
+  trap 'echo "[svc] stop requested -> sync, reboot"; svc_end' INT TERM
+  echo 0 > /proc/sys/kernel/ctrl-alt-del 2>/dev/null
+  echo "[svc] start: $DEPLOY_START (port $DEPLOY_PORT)"
+  $RUN sh -c "$DEPLOY_START" &
+  MAIN=$!
+  while kill -0 $MAIN 2>/dev/null; do wait $MAIN; done
+  echo "KAIM56_DEPLOY_RESULT=fail the service exited"
+  svc_end
 fi
 # The shared toolchain's env (on the read-only layer): PATH and friends for the agent.
 [ -f /etc/kaim56-toolchain.env ] && . /etc/kaim56-toolchain.env

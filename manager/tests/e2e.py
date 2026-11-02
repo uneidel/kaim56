@@ -29,6 +29,8 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
+import http.server
+import subprocess
 import re
 import socket
 
@@ -1796,6 +1798,9 @@ class ManagerFunctions(unittest.TestCase):
         cls.m._projects.PROJECTS_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-noproj-"), "projects.json")
         # nor any squad record / archive the real squads dir (mgr/squadrec.py)
         cls.m._squadrec.REC_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-norec-"), "squadrec.json")
+        # nor the live deployed services (mgr/deploy.py)
+        _dp = tempfile.mkdtemp(prefix="e2e-nodeploy-")
+        cls.m._deploy.STATE_FILE, cls.m._deploy.DIR = os.path.join(_dp, "deploys.json"), os.path.join(_dp, "deploy")
         cls.m._settings.SITE["SQUADS_DIR"] = tempfile.mkdtemp(prefix="e2e-nosquads-")
         # nor the live human-in-the-loop queue, nor its notifications (mgr/hitlq.py)
         cls.m._hitlq.QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="e2e-hq-"), "hitlq.json")
@@ -3401,6 +3406,91 @@ class ManagerFunctions(unittest.TestCase):
             m._guests.instance_by_ip = old_ip
             undo()
 
+    def test_codex_credentials_route_newer_login_wins(self):
+        """/api/codex-credentials: codex guests only; GET the newest of the host's
+        ~/.codex/auth.json and the manager's copy; a VM's refreshed login comes
+        back by POST and is kept only when newer (OpenAI rotates the refresh token)."""
+        m, ca = self.m, self.m._codexauth
+        tmp = tempfile.mkdtemp(prefix="e2e-codex-")
+        old = (ca.SRC, ca.FILE, m._guests.instance_by_ip)
+        def undo():
+            ca.SRC, ca.FILE, m._guests.instance_by_ip = old
+        self.addCleanup(undo)
+        ca.SRC, ca.FILE = os.path.join(tmp, "auth.json"), os.path.join(tmp, "codex_auth.json")
+        guests = {"172.30.5.2": {"name": "x1", "template": "codex", "index": 5, "config": {}},
+                  "172.30.6.2": {"name": "c1", "template": "claude", "index": 6, "config": {}}}
+        m._guests.instance_by_ip = lambda ip: guests.get(ip)
+        body = lambda h: json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
+        login = lambda at, ts: {"tokens": {"access_token": at, "refresh_token": "r-" + at}, "last_refresh": ts}
+        self.assertIn("/api/codex-credentials", m._guests.GUEST_POST_PATHS)
+        h = self._handler("/api/codex-credentials", "172.30.5.2"); h._do_GET()
+        self.assertEqual(self._status(h), 503)
+        _wtext(ca.SRC, json.dumps(login("host", "2026-11-01T10:00:00Z")))
+        h = self._handler("/api/codex-credentials", "172.30.5.2"); h._do_GET()
+        self.assertEqual(body(h)["tokens"]["access_token"], "host")
+        h = self._post_handler("/api/codex-credentials", "172.30.5.2", json.dumps(login("old", "2026-11-01T09:00:00Z")).encode()); h._do_POST()
+        self.assertEqual((self._status(h), body(h)["kept"]), (200, False))
+        h = self._post_handler("/api/codex-credentials", "172.30.5.2", json.dumps(login("vm", "2026-11-01T11:00:00Z")).encode()); h._do_POST()
+        self.assertEqual((self._status(h), body(h)["kept"]), (200, True))
+        self.assertEqual(oct(os.stat(ca.FILE).st_mode & 0o777), "0o600")
+        h = self._handler("/api/codex-credentials", "172.30.5.2"); h._do_GET()
+        self.assertEqual(body(h)["tokens"]["access_token"], "vm")
+        h = self._post_handler("/api/codex-credentials", "172.30.5.2", b'{"tokens": {}}'); h._do_POST()
+        self.assertEqual(self._status(h), 400)
+        for method in ("GET", "POST"):                                  # a claude guest gets nothing
+            h = self._handler("/api/codex-credentials", "172.30.6.2") if method == "GET" else \
+                self._post_handler("/api/codex-credentials", "172.30.6.2", json.dumps(login("x", "2027")).encode())
+            h._do_GET() if method == "GET" else h._do_POST()
+            self.assertEqual(self._status(h), 403)
+        self.assertEqual(ca.current()["tokens"]["access_token"], "vm")
+
+    def test_codex_bridge_runs_exec_resumes_the_thread_and_syncs_the_login(self):
+        """The codex template's turn: codex exec --json, the reply from the
+        agent_message events, the thread resumed next turn, usage posted; the
+        login goes both ways — the manager's when newer, ours back when codex
+        refreshed it."""
+        import io, types
+        src = next((p for p in (os.path.join(self.m._instances.agents_dir() or "/nonexistent", "claude", "web_bridge.py"),
+                                os.path.join(os.path.dirname(__file__), "..", "..", "agents", "claude", "web_bridge.py"))
+                    if os.path.exists(p)), None)
+        if not src:
+            self.skipTest("agents/claude/web_bridge.py not found (site AGENTS_DIR)")
+        wb = _load("web_bridge_codex", src)
+        posts, cmds = [], []
+        old = wb._post, wb._log, wb.subprocess.run, wb._codex_sync
+        def undo():
+            wb._post, wb._log, wb.subprocess.run, wb._codex_sync = old
+        self.addCleanup(undo)
+        wb._post, wb._log, wb._codex_sync = (lambda p, pl: posts.append((p, pl))), (lambda *a: None), (lambda: None)
+        ev = [{"type": "thread.started", "thread_id": "th-1"}, {"type": "item.completed", "item": {"type": "agent_message", "text": "done"}},
+              {"type": "turn.completed", "usage": {"input_tokens": 50, "output_tokens": 7}}]
+        out = "\n".join(json.dumps(e) for e in ev)
+        wb.subprocess.run = lambda cmd, **k: cmds.append((cmd, k.get("input"))) or types.SimpleNamespace(stdout=out, stderr="", returncode=0)
+        self.assertEqual(wb.run_codex("-v hello"), "done")
+        self.assertEqual(cmds[0][0][:2] + cmds[0][0][-1:], ["codex", "exec", "-"]); self.assertEqual(cmds[0][1], "-v hello")
+        self.assertNotIn("resume", cmds[0][0])
+        wb.run_codex("again")
+        self.assertEqual(cmds[1][0][2:4], ["resume", "th-1"])
+        usage = next(pl for p, pl in posts if p == "/api/usage")
+        self.assertEqual((usage["prompt_tokens"], usage["completion_tokens"], usage["ok"]), (50, 7, True))
+        wb.subprocess.run = lambda cmd, **k: types.SimpleNamespace(stdout=json.dumps({"type": "turn.failed", "error": {"message": "401 Unauthorized"}}), stderr="", returncode=1)
+        self.assertIn("401 Unauthorized", wb.run_codex("x"))
+        self.assertEqual(wb.run_codex("/reset"), "🔄 New conversation."); self.assertIsNone(wb._codex["thread"])
+        # the login sync
+        wb._codex_sync = old[3]
+        tmp = tempfile.mkdtemp(prefix="e2e-codexauth-")
+        wb.CODEX_AUTH = os.path.join(tmp, ".codex", "auth.json")
+        host = {"tokens": {"access_token": "h", "refresh_token": "rh"}, "last_refresh": "2026-11-01T10:00:00Z"}
+        old_open = urllib.request.urlopen
+        self.addCleanup(setattr, urllib.request, "urlopen", old_open)
+        wb.urllib.request.urlopen = lambda url, timeout=None: io.BytesIO(json.dumps(host).encode())
+        posts.clear(); wb._codex_sync()
+        self.assertEqual(json.load(open(wb.CODEX_AUTH))["tokens"]["access_token"], "h")
+        self.assertEqual(oct(os.stat(wb.CODEX_AUTH).st_mode & 0o777), "0o600"); self.assertEqual(posts, [])
+        _wtext(wb.CODEX_AUTH, json.dumps({**host, "tokens": {"access_token": "v", "refresh_token": "rv"}, "last_refresh": "2026-11-01T12:00:00Z"}))
+        wb._codex_sync()
+        self.assertEqual([(p, pl["tokens"]["access_token"]) for p, pl in posts], [("/api/codex-credentials", "v")])
+
     def test_claude_usage_poller_parses_and_maps_errors(self):
         """The poller reads five_hour/seven_day per account (at most every
         5 min), a 403 becomes a short error without the token, an expired
@@ -4598,6 +4688,23 @@ class ManagerFunctions(unittest.TestCase):
             h = self._post_handler("/api/project/merge", "172.30.3.2", mb); h._do_POST()
             self.assertEqual(self._status(h), 200, h.wfile.getvalue())
             self.assertEqual(g("show", "main:x.txt"), "x\n")
+            # the lead deploys (mgr/deploy.py); a writer may not; the spec is the operator's
+            dp, calls = m._deploy.deploy, []
+            m._deploy.deploy = lambda p, who: calls.append((p, who)) or ("deploying lp …", "")
+            try:
+                db = json.dumps({"project": "lp"}).encode()
+                h = self._post_handler("/api/project/deploy", "172.30.4.2", db); h._do_POST()
+                self.assertEqual(self._status(h), 403)
+                h = self._post_handler("/api/project/deploy", "172.30.3.2", db); h._do_POST()
+                self.assertEqual(self._status(h), 200, h.wfile.getvalue())
+                self.assertIn(b"note in the squad channel", h.wfile.getvalue())
+                self.assertEqual(calls, [("lp", "a")])
+                insts[0]["config"]["AGENT_TOOLS"] = "project_status"
+                h = self._post_handler("/api/project/deploy", "172.30.3.2", db); h._do_POST()
+                self.assertEqual(self._status(h), 403)
+            finally:
+                m._deploy.deploy = dp
+                insts[0]["config"].pop("AGENT_TOOLS", None)
             # the admin side: status and diff over /api/projects/<p>/…
             m._guests.instance_by_ip = lambda ip: None
             h = self._handler("/api/projects/lp/status", "127.0.0.1"); h._do_GET()
@@ -6526,6 +6633,65 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squadgate_review_of_a_writers_html_result(self):
+        """review: the lead asks the user to look at a writer's HTML result. The
+        files come from a snapshot commit (a planted symlink is no result); the
+        page is sandboxed and carries the annotate script; the annotations go to
+        the lead with Request changes; the writer's ticket waits for Approve; a
+        revision is the next version of the same review."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        g, wt, pj, rv = m._squadgate, m._projwt, m._projects, sys.modules["mgr.squadreview"]
+        tmp = os.path.dirname(m._squads.SQUAD_DB)
+        old = m._mounts.AGENT_ROOT, wt.STAGE_ROOT
+        try:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT = os.path.join(tmp, "agent"), tmp
+            repo, _ = self._git_repo(tmp)
+            self.assertTrue(pj.upsert({"name": "wp", "strategy": "worktree", "base": "main",
+                                       "source": {"type": "host", "path": repo},
+                                       "members": {"a": "lead", "b": "writer"}}).get("ok"))
+            pj.set_squad("wp", m._squads.normalize_settings({"enabled": True, "approved": True})[0])
+            proj, fb = pj.get("wp"), wt.tree_dir("wp", "b")
+            _wtextp(os.path.join(fb, "ui", "index.html"), "<h1>Hi</h1>")
+            _wtext(os.path.join(fb, "ui", "spec.md"), "# Spec <b>")
+            os.symlink("/etc/hostname", os.path.join(fb, "ui", "link.html"))
+            ask = lambda files, by="a": g.propose(pj.get("wp"), by, "review", {"writer": "b", "files": files, "summary": "the start page"})
+            self.assertIn("only the lead", ask(["ui/index.html"], "b")[1])
+            self.assertIn("not a result path", ask(["../x.html"])[1])
+            self.assertIn("not a result path", ask(["ui/app.js"])[1])
+            self.assertIn("no file", ask(["ui/link.html"])[1])                                  # a link, not a blob
+            p, why = ask(["ui/index.html", "./ui/spec.md"])
+            self.assertEqual((why, p["files"], len(p["commit"])), ("", ["ui/index.html", "ui/spec.md"], 40))
+            html, _ = rv.page(proj, p, "ui/index.html")
+            self.assertTrue(html.startswith(b"<h1>Hi</h1>")); self.assertIn(b"kaimAnnot", html)
+            self.assertIn(b"&lt;b&gt;", rv.page(proj, p, "ui/spec.md")[0])                      # .md: escaped text
+            self.assertIsNone(rv.page(proj, p, "ui/link.html")[0])
+            self.assertIn("sandbox allow-scripts", rv.CSP); self.assertNotIn("same-origin", rv.CSP)
+            self.assertTrue(m._auth.user_allowed("GET", "/api/projects/wp/squad/result"))
+            self.assertIn("ui-designer", m._squads.TEAM_DEFAULT)
+            # the writer's ticket cannot go done while the review is open
+            t = g._ticket_add("wp", {"title": "mockups", "assignee": "b"}, "a")
+            self.assertIn("not approved", g.update_ticket(proj, "b", t["id"], {"status": "done"}, lambda t: "")[1])
+            # Request changes: the annotations reach the lead as one text
+            r, why = g.request_changes("wp", p["id"], "admin", "", annotations=[
+                {"file": "ui/index.html", "quote": "Hi", "comment": "say Hello"}, {"quote": "x", "comment": " "}])
+            self.assertEqual((why, r["status"]), ("", "changes_requested"))
+            self.assertEqual(woke[-1][0], "a")
+            self.assertIn("1. ui/index.html: «Hi» — say Hello", woke[-1][1]); self.assertNotIn("\n2. ", woke[-1][1])
+            self.assertIn("squad_request_review", woke[-1][1])
+            self.assertIn("comment or annotations", g.request_changes("wp", p["id"], "admin", "", annotations=[{"quote": "x", "comment": ""}])[1])
+            _wtext(os.path.join(fb, "ui", "index.html"), "<h1>Hello</h1>")
+            p2, _ = ask(["ui/index.html"])
+            self.assertEqual((p2["id"], p2["version"]), (p["id"], 2))
+            self.assertTrue(rv.page(proj, p2, "ui/index.html")[0].startswith(b"<h1>Hello</h1>"))
+            r, why = g.decide("wp", p["id"], True, "admin")
+            self.assertEqual((why, r["status"], r["steps"]), ("", "approved", []))
+            self.assertIn("may set its ticket done", woke[-1][1])
+            self.assertEqual(g.update_ticket(proj, "b", t["id"], {"status": "done"}, lambda t: "")[1], "")
+        finally:
+            m._mounts.AGENT_ROOT, wt.STAGE_ROOT = old
+            undo()
+
     def test_squad_requirements_before_the_plan(self):
         """A drafting squad: the lead may not propose; REQUIREMENTS.md from the
         lead's workspace shows on the board (never through a symlink); the
@@ -7994,7 +8160,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(s["decision"], "subq")                                           # the Suggestions switch
             self.assertIn("decision must be", self._sq("/api/squads/kickoff", L, {"project": "sq", "text": "x", "decision": "gpt"})[1]["error"])
             self.assertEqual(k._team(None), m._squads.TEAM_DEFAULT)                            # API without it: the default roles
-            for r in ("project-designer", "architect", "devops", "agent-ops", "code-planner", "asset-planner", "coder"):
+            for r in ("project-designer", "architect", "devops", "agent-ops", "code-planner", "asset-planner", "coder", "ui-designer"):
                 self.assertIn("- " + r, m._squads.TEAM_DEFAULT)
             self.assertIn("code-planner", sys.modules["mgr.ui_html"].HTML_TOP.split("id=sk-team rows")[1][:2000])
             self.assertEqual(m._projects.get("sq")["members"]["sq-architect"]["role"], "lead")
@@ -10872,6 +11038,178 @@ class ManagerFunctions(unittest.TestCase):
         return self._idx_req(f"/auth/callback?state={q['state']}&code={code}", host=A,
                              cookie=f"kaim56_login={q['state']}; kaim56_next={nxt}")
 
+    def _deploy_env(self):
+        """A host project "svc1" (a git repo with one commit on main) for the deploy tests."""
+        m = self.m
+        tmp, insts, restore = self._projects_env()
+        d = m._deploy
+        old = (d.STATE_FILE, d.DIR)
+        d.STATE_FILE, d.DIR = os.path.join(tmp, "deploys.json"), os.path.join(tmp, "deploy")
+        self.addCleanup(lambda: setattr(d, "STATE_FILE", old[0]) or setattr(d, "DIR", old[1]))
+        repo = os.path.join(tmp, "repo")
+        _wtext(os.path.join(repo, "server.py"), "print('hi')\n")
+        g = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(g[:3] + ["init", "-q", "-b", "main"], check=True)
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["commit", "-qm", "one"], check=True)
+        r = m._projects.upsert({"name": "svc1", "strategy": "shared", "base": "main", "members": {},
+                                "source": {"type": "host", "path": repo}})
+        self.assertNotIn("error", r, r)
+        self.addCleanup(restore)
+        return tmp, repo
+
+    def test_deploy_spec_routes_and_a_config_without_secrets(self):
+        """Deploy target "instance": the spec is validated, admin only; the config
+        disk holds the spec and nothing else; the drives sit where guest-init looks."""
+        m, d = self.m, self.m._deploy
+        tmp, repo = self._deploy_env()
+        L = "127.0.0.1"
+        self.assertEqual(self._sq("/api/deploy/nope", L)[0], 404)
+        st, j = self._sq("/api/deploy/svc1", L)
+        self.assertEqual((st, j["state"], j["spec"]["port"], j["url"]), (200, "none", 8080, "/d/svc1/"))
+        self.assertIn("set the deploy spec", self._sq("/api/deploy/svc1", L, {"action": "deploy"})[1]["error"])
+        for bad, why in (({"start": ""}, "start:"), ({"start": "x", "port": 80}, "port:"),
+                         ({"start": "x", "mem": 99999}, "mem:"), ({"start": "x", "vcpus": "many"}, "numbers")):
+            self.assertIn(why, self._sq("/api/deploy/svc1", L, {"spec": bad})[1]["error"])
+        st, j = self._sq("/api/deploy/svc1", L, {"spec": {"build": "pip install -r req.txt", "start": "python3 server.py",
+                                                          "port": 3000, "mem": 512, "vcpus": 2}})
+        self.assertEqual((st, j["spec"]["port"], j["spec"]["vcpus"]), (200, 3000, 2))
+        self.assertEqual(self._sq("/api/deploy/svc1", "172.30.3.2", {"action": "deploy"})[0], 403)   # a VM: no
+        cfg = d.config_files("svc1", d.record("svc1")["spec"])["config.env"]
+        self.assertIn("DEPLOY_START='python3 server.py'", cfg); self.assertIn("BASE_PATH=/d/svc1", cfg)
+        self.assertEqual(sorted(x.split("=", 1)[0] for x in cfg.splitlines()),
+                         ["BASE_PATH", "DEPLOY_BUILD", "DEPLOY_PORT", "DEPLOY_SERVICE", "DEPLOY_START", "GUEST_DNS", "PATH"])
+        d._update("svc1", lambda r: r.update(index=231))
+        vc = d.vm_config("svc1", d.record("svc1"), 3, "/c.ext4", "/u.ext4", "/data.ext4", "openrouter", "/layer.ext4")
+        ids = [x["drive_id"] for x in vc["drives"]]
+        self.assertEqual(ids, ["rootfs", "config", "release", "data", "toolchain", "upper"])
+        boot = vc["boot-source"]["boot_args"]
+        for a in ("fc_svc=1", "fc_release=/dev/vdc", "fc_data=/dev/vdd", "fc_layer=/dev/vde", "fc_upper=/dev/vdf", "ip=172.30.231.2"):
+            self.assertIn(a, boot)
+        self.assertEqual([x["is_read_only"] for x in vc["drives"]], [True, True, True, False, True, False])
+        self.assertEqual((vc["machine-config"]["mem_size_mib"], vc["machine-config"]["vcpu_count"]), (512, 2))
+
+    def test_deploy_success_keeps_two_releases_and_a_failure_rolls_back(self):
+        m, d = self.m, self.m._deploy
+        tmp, repo = self._deploy_env()
+        d.save_spec("svc1", {"start": "python3 server.py", "port": 3000})
+        booted, verdicts = [], []
+        old = (d.make_release, d.boot, d.halt, d.wait_ready, d._tail, d._tell)
+        def undo():
+            (d.make_release, d.boot, d.halt, d.wait_ready, d._tail, d._tell) = old
+        self.addCleanup(undo)
+        told = []
+
+        def rel(proj, n):
+            os.makedirs(os.path.join(d.DIR, "svc1"), exist_ok=True)
+            _wtext(d._release_path("svc1", n), "img")
+            return f"{n:040d}"
+        d.make_release, d.boot = rel, lambda p, n: booted.append(n) or 4242
+        d.halt, d._tail = lambda p: "shut down", lambda p: "console"
+        d.wait_ready = lambda p, n, timeout=0: verdicts.pop(0)
+        d._tell = lambda proj, text, ok: told.append((ok, text))
+        for v in ("", ""):                                  # two good deploys
+            verdicts.append(v)
+            d._update("svc1", lambda r: r.update(state="deploying"))
+            d._deploy("svc1", "admin")
+        r = d.record("svc1")
+        self.assertEqual((r["state"], r["release"], r["prev"], r["index"]), ("running", 2, 1, 230))
+        self.assertEqual(sorted(os.listdir(os.path.join(d.DIR, "svc1"))), ["release-1.ext4", "release-2.ext4"])
+        verdicts += ["fail build rc=1", ""]                  # the third fails, release 2 comes back
+        d.save_spec("svc1", {"build": "exit 1", "start": "python3 server.py", "port": 3001})
+        d._deploy("svc1", "admin")
+        r = d.record("svc1")
+        self.assertEqual((d.spec_of(r, 2)["build"], d.spec_of(r, 3)["build"]), ("", "exit 1"))   # the rollback boots with its own spec
+        self.assertEqual(d.address("svc1")[1], 3000)
+        self.assertEqual((r["state"], r["release"], r["last"], r["error"]), ("running", 2, 3, "fail build rc=1"))
+        self.assertEqual(booted, [1, 2, 3, 2])
+        self.assertEqual(told[-1][0], False); self.assertIn("release 2 runs again", told[-1][1])
+        verdicts.append("")
+        d._deploy("svc1", "admin")
+        self.assertEqual(sorted(os.listdir(os.path.join(d.DIR, "svc1"))), ["release-2.ext4", "release-4.ext4"])
+        # the very first deploy fails: nothing runs
+        d.remove("svc1"); d.save_spec("svc1", {"start": "x"})
+        verdicts.append("the VM ended")
+        d._deploy("svc1", "admin")
+        self.assertEqual(d.record("svc1")["state"], "failed")
+
+    def test_deploy_release_image_is_the_base_branch(self):
+        """git archive of the base branch into an ext4 image (mkfs -d), never mounted."""
+        d = self.m._deploy
+        if not shutil.which("debugfs", path="/usr/sbin:/sbin:" + os.environ.get("PATH", "")):
+            self.skipTest("no debugfs")
+        tmp, repo = self._deploy_env()
+        _wtext(os.path.join(repo, "uncommitted.txt"), "not in the release")
+        sha = d.make_release(self.m._projects.get("svc1"), 1)
+        self.assertEqual(len(sha), 40)
+        dbg = shutil.which("debugfs", path="/usr/sbin:/sbin:" + os.environ.get("PATH", ""))
+        ls = subprocess.run([dbg, "-R", "ls -l /", d._release_path("svc1", 1)], capture_output=True, text=True).stdout
+        self.assertIn("server.py", ls); self.assertNotIn("uncommitted", ls); self.assertNotIn(".git", ls)
+
+    def test_deploy_service_only_on_the_apps_host_without_the_session(self):
+        """/d/<project>/: on APPS_HOST only (the manager's host redirects there);
+        the session cookie and Authorization never reach the service, it cannot set
+        that cookie, a root redirect stays under the prefix, its pages may only
+        talk to themselves."""
+        m, d = self.m, self.m._deploy
+        tmp, repo = self._deploy_env()
+        st = self._oidc_env()
+        old = (m._settings.APPS_HOST, d.running, d.address)
+        def undo():
+            (m._settings.APPS_HOST, d.running, d.address) = old
+            m._auth._trusted_cache.update(ts=0.0)
+        self.addCleanup(undo)
+        seen = []
+
+        class Svc(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _answer(self):
+                ln = int(self.headers.get("Content-Length") or 0)
+                seen.append((self.command, self.path, dict(self.headers), self.rfile.read(ln)))
+                self.send_response(302 if self.path == "/go" else 200)
+                if self.path == "/go":
+                    self.send_header("Location", "/home")
+                self.send_header("Set-Cookie", "__Host-kaim56_apps=evil; Path=/")
+                self.send_header("Set-Cookie", "own=1; Path=/d/svc1/")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+            do_GET = do_POST = _answer
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Svc)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        d.save_spec("svc1", {"start": "x"}); d._update("svc1", lambda r: r.update(state="running", index=230))
+        d.running, d.address = (lambda p: True), (lambda p: ("127.0.0.1", srv.server_port))
+        A, M = "apps.example.com", "agents.example.com"
+        _, (_, head, _) = self._oidc_web_login(st)
+        W = "kaim56_sid=" + re.search(r"kaim56_sid=([^;]+)", head).group(1)
+        m._settings.APPS_HOST = ""
+        self.assertIn(b"set APPS_HOST", self._idx_req("/d/svc1/", cookie=W, host=M)[2])
+        m._settings.APPS_HOST = A
+        code, head, _ = self._idx_req("/d/svc1/x?y=1", cookie=W, host=M)
+        self.assertEqual(code, 302); self.assertIn("Location: https://apps.example.com/d/svc1/x?y=1", head)
+        code, head, body = self._apps_login(st, nxt="/d/svc1/")
+        self.assertEqual(code, 200, body)
+        apps = re.search(r"Set-Cookie: __Host-kaim56_apps=([^;]+)", head).group(1)
+        AP = f"__Host-kaim56_apps={apps}; theirs=2"
+        code, head, body = self._idx_req("/d/svc1/x?y=1", cookie=AP, host=A)
+        self.assertEqual((code, body), (200, b"ok"), head)
+        meth, path, hdrs, _ = seen[-1]
+        self.assertEqual((meth, path, hdrs.get("Cookie"), hdrs.get("X-Forwarded-Prefix")), ("GET", "/x?y=1", "theirs=2", "/d/svc1"))
+        self.assertNotIn("Authorization", hdrs)
+        self.assertNotIn("kaim56_apps=evil", head); self.assertIn("Set-Cookie: own=1", head)
+        self.assertIn("Content-Security-Policy: connect-src https://apps.example.com/d/svc1/;", head)
+        code, head, _ = self._idx_req("/d/svc1/go", cookie=AP, host=A)
+        self.assertEqual(code, 302); self.assertIn("Location: /d/svc1/home", head)
+        self.assertEqual(self._idx_req("/d/svc1/p", "POST", cookie=AP, origin="https://apps.example.com", host=A)[0], 200)
+        self.assertEqual(seen[-1][0], "POST")
+        self.assertEqual(self._idx_req("/d/svc1/p", "POST", cookie=AP, origin="https://agents.example.com", host=A)[0], 403)
+        self.assertEqual(self._idx_req("/d/svc1/", host=A)[0], 302)                     # no session: the login
+        d._update("svc1", lambda r: r.update(state="stopped"))
+        self.assertEqual(self._idx_req("/d/svc1/", cookie=AP, host=A)[0], 503)
+
     def test_apps_host_isolation(self):
         """APPS_HOST (the browser apps' own origin): an OIDC login there makes
         an "apps" session (admin and role user, own redirect_uri and host-only
@@ -13182,7 +13520,7 @@ class ClaudeGuest(unittest.TestCase):
                       'ov "lowerdir=/"', "toolchain layer $LY not mountable", '"${TOOLCHAIN_BUILD:-0}" = "1"',
                       "timeout 1800 sh /config/toolchain.sh", "rm -f /.fc-overlay; rm -rf /root/.cache /tmp/*",
                       "fsfreeze -f /oldroot/mnt", 'echo "KAIM56_TOOLCHAIN_RESULT=ok"', "echo b > /proc/sysrq-trigger",
-                      f"[ -f {env_file} ] && . {env_file}", '*" fc_build=1 "*) MOPT=async'):
+                      f"[ -f {env_file} ] && . {env_file}", '*" fc_build=1 "*|*" fc_svc=1 "*) MOPT=async'):
                 self.assertIn(s, text, (init, s))
             start = text.index('if [ "${TOOLCHAIN_BUILD:-0}" = "1" ]')
             block = text[start:text.index("\nfi\n", start)]

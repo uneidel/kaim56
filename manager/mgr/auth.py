@@ -91,7 +91,7 @@ def apps_path_allowed(method, path):
     apps call — the list an app's Cloudflare token gets (mgr/cloud.py), never
     settings writes, secrets, terminals or the admin page."""
     p = path.split("?", 1)[0]
-    return (p in INDEX_AUTH_PATHS or p.startswith("/apps/")
+    return (p in INDEX_AUTH_PATHS or p.startswith("/apps/") or p.startswith("/d/")
             or any(p == x or p.startswith(x) for x in _cloud.APP_TOKEN_PATHS.get(method, ())))
 
 
@@ -262,7 +262,7 @@ _USER_ROUTES = [
     ("POST", r"/api/tasks/[a-f0-9]{1,32}/(run|update|delete)"),
     ("POST", rf"/i/{_N}/(?!term(/|\Z)).*"),
     ("POST", rf"/apps/{_N}/_api(/.*)?"),
-    ("GET", rf"/api/projects/{_N}/squad/(messages|board|notes)"),  # a squad's channel, proposals/tickets, notes:
+    ("GET", rf"/api/projects/{_N}/squad/(messages|board|notes|result)"),  # a squad's channel, proposals/tickets, notes:
                                                             # read and post — not its settings, decisions, ticket edits
     ("POST", rf"/api/projects/{_N}/squad/(post|notes|notes/send|notes/\d{{1,12}}/delete)"),  # notes: mgr/squadnotes.py
     ("GET", r"/api/squads"),                                # the Squads page's list — not the kickoff

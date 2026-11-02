@@ -17,6 +17,7 @@ else lives in mgr/, one concern per module:
     sessions      login sessions after an OIDC login (SQLite, token hashes only)
     guests        a VM is identified by its source IP; what a guest may reach
     secrets       the host secret store and the per-instance release policy
+    codexauth     the codex template's ChatGPT login, shared by its VMs (a refreshed one comes back)
     policy        tool catalog, per-instance tool gating, sandbox config
     llmproxy      the key proxy: LLM keys never enter a VM; budget/rate guard
     guestproxy    admin-to-VM relays: chat stream, terminal, katfs, /i/ proxy
@@ -25,7 +26,8 @@ else lives in mgr/, one concern per module:
     projects      one folder set joined by instances with a role (shared / worktree)
     projwt        the worktree strategy's git: a branch + folder per writer, diff, merge
     squads        a project's members talk in one channel; addressed members are woken (guarded)
-    squadgate     the lead proposes (squad plan, member, merge, toolchain), the user approves; tickets
+    squadgate     the lead proposes (squad plan, member, merge, toolchain, review), the user approves; tickets
+    squadreview   a writer's HTML results for review: snapshot, sandboxed page, annotations for the lead
     toolchain     a squad's shared toolchain: built in a throwaway builder VM, attached read-only to members
     squadgit      a squad's git remote: push, fetch, PRs + issues host-side (token never in a VM)
     squadmetrics  one row per squad event in history.db (squad_events): turns, tokens, tickets, waits; backfilled from the archive
@@ -34,11 +36,13 @@ else lives in mgr/, one concern per module:
     jevsetup      Jev suggests persona, skills and model tier for a new instance (only a suggestion)
     celldeploy    celld with a bucket: deploys the apps and the Worker to S3
     cloud         apps to Cloudflare and back, the app tokens
+    deploy        deploy target "instance": a project's service in its own VM, /d/<project>/ on the apps' host
     cfapi         the Cloudflare Workers API (cfdo's upload path in Python)
     routes_guest  every HTTP route a VM may call
     routes_admin  every HTTP route only the admin may call
     routes_auth   /auth/* login and logout, device flow, who-am-I, session list
     routes_squadgit  /api/git/* (members) and /api/squad-git/* (admin)
+    routes_deploy /api/deploy/<project> (admin) and the service proxy /d/<project>/
   the VMs
     instances     instances/<name>.json, templates, network, running state
     vm            images, harness drive, write layer, start and stop
@@ -75,6 +79,7 @@ from mgr import checkout as _checkout        # noqa: F401
 from mgr import cfapi as _cfapi              # noqa: F401
 from mgr import chats as _chats              # noqa: F401
 from mgr import claudeaccts as _claudeaccts  # noqa: F401
+from mgr import codexauth as _codexauth  # noqa: F401
 from mgr import celldeploy as _celldeploy    # noqa: F401
 from mgr import cloud as _cloud              # noqa: F401
 from mgr import decision as _decision        # noqa: F401
@@ -113,6 +118,7 @@ from mgr import router as _router            # noqa: F401
 from mgr import routes as _routes            # noqa: F401
 from mgr import routes_admin as _routes_admin  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_auth as _routes_auth  # noqa: F401  (registers its routes in ROUTER on import)
+from mgr import routes_deploy as _routes_deploy  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_guest as _routes_guest  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_squadgit as _routes_squadgit  # noqa: F401  (registers its routes in ROUTER on import)
 from mgr import routes_squadkick as _routes_squadkick  # noqa: F401  (registers its routes in ROUTER on import)
@@ -134,6 +140,7 @@ from mgr import startup as _startup
 from mgr import store as _store
 from mgr import tasks as _tasks
 from mgr import toolchain as _toolchain        # noqa: F401
+from mgr import deploy as _deploy              # noqa: F401
 from mgr import ui as _ui                    # noqa: F401
 from mgr import util as _util                # noqa: F401
 from mgr import vm as _vm                    # noqa: F401

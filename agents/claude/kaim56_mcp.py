@@ -170,6 +170,14 @@ def t_squad_request_merge(writer, summary, project=""):
     return _proposed("/api/squad/request-merge", {"writer": writer, "summary": summary, "project": project})
 
 
+def t_squad_request_review(writer, files, summary, project=""):
+    return _proposed("/api/squad/request-review", {"writer": writer, "files": files, "summary": summary, "project": project})
+
+
+def t_project_deploy(project=""):
+    return json.loads(_post("/api/project/deploy", {"project": project}, 60)).get("msg", "deploying")
+
+
 def t_toolchain_propose(apt=None, script="", env=None, reason="", project=""):
     return _proposed("/api/squad/toolchain-propose", {"apt": apt or [], "script": script or "", "env": env or {},
                                                      "reason": reason, "project": project})
@@ -390,6 +398,9 @@ TOOLS = {
         "Lead only, after approval: ask the user for one more member (fields as in squad_propose).",
         {"type": "object", "properties": {"member": {"type": "object"}, "reason": {"type": "string"}, "project": _PROJ},
          "required": ["member"]}),
+    "project_deploy": (_squad(t_project_deploy),
+        "Lead only: deploy the project's base branch (merged work) as a service in its own VM, reachable for the user at /d/<project>/. Build, start command and port are the operator's (Squads -> Deploy); the result (running, or failed with the previous release kept) comes as a note in the squad channel. Deploy after a merge the user should try.",
+        {"type": "object", "properties": {"project": _PROJ}}),
     "toolchain_propose": (_squad(t_toolchain_propose),
         "Lead only: propose the squad's SHARED toolchain — apt packages, an install script (runs as root after apt, e.g. an official tarball into /usr/local) and env (e.g. PATH=/usr/local/go/bin:$PATH). Describe it once here instead of every member installing it: after the user approves, the manager builds it in a throwaway VM and every member gets it as a read-only layer at its next restart. The whole spec each time (it replaces the current one).",
         {"type": "object", "properties": {"apt": {"type": "array", "items": {"type": "string"}, "description": "Debian package names"},
@@ -404,6 +415,12 @@ TOOLS = {
         "Lead only: ask the user to merge a writer's branch; the user reviews the diff and approves.",
         {"type": "object", "properties": {"writer": {"type": "string"}, "summary": {"type": "string"}, "project": _PROJ},
          "required": ["writer", "summary"]}),
+    "squad_request_review": (_squad(t_squad_request_review),
+        "Lead only: ask the user to review a writer's HTML result — UI mockups, design documents (.html/.htm/.md in the writer's folder, self-contained: inline CSS/JS, images as data: or https). The user views them in the squad's Results tab, annotates and approves or requests changes; the writer's ticket cannot go done before the approval. After changes, call it again for the same writer: it becomes the next version.",
+        {"type": "object", "properties": {"writer": {"type": "string"},
+                                          "files": {"type": "array", "items": {"type": "string"}, "description": "paths in the writer's folder"},
+                                          "summary": {"type": "string", "description": "what the user should look at"}, "project": _PROJ},
+         "required": ["writer", "files", "summary"]}),
     "ticket_list": (_squad(t_ticket_list),
         "The squad's tickets (id, key, status, assignee, dependencies).",
         {"type": "object", "properties": {"project": _PROJ}, "required": []}),

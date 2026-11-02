@@ -94,15 +94,15 @@ def _sync_credentials(force=False):
 
 
 AUTO_RESET_MIN = int(os.environ.get("AUTO_RESET_MIN", "0") or 0)   # idle minutes, then a new conversation (0 = never)
-_last_turn = [0.0]
+_last_seen = [0.0]  # not _last_turn: that one holds the turn id for the X-Kaim-Turn header
 
 
 def _auto_reset():
-    import time
+    """Idle for AUTO_RESET_MIN -> the conversation starts over (claude's session; codex's thread by its caller)."""
     global _session
     now = time.time()
-    last, _last_turn[0] = _last_turn[0], now
-    if AUTO_RESET_MIN > 0 and last and _session and now - last >= AUTO_RESET_MIN * 60:
+    last, _last_seen[0] = _last_seen[0], now
+    if AUTO_RESET_MIN > 0 and last and now - last >= AUTO_RESET_MIN * 60:
         _session = None
         return True
     return False
@@ -201,8 +201,119 @@ def run_fabric(msg):
     return (p.stdout or p.stderr or "(leere Antwort)").strip()
 
 
+# ---- Codex (template codex: the same image, the Codex CLI instead of Claude Code) ----
+CODEX_AUTH = os.path.expanduser("~/.codex/auth.json")
+_codex = {"thread": None, "model": os.environ.get("CODEX_MODEL", "")}
+
+
+def _codex_sync():
+    """The ChatGPT login both ways (mgr/codexauth.py): the manager's when it is newer,
+    ours back when codex refreshed it — OpenAI rotates the refresh token, so the next
+    VM would boot with a dead one. The newer last_refresh wins on both sides."""
+    url = manager_base() + "/api/codex-credentials"
+    try:
+        with open(CODEX_AUTH) as fh:
+            mine = json.load(fh)
+    except (OSError, ValueError):
+        mine = {}
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            host = json.loads(r.read().decode())
+    except Exception:
+        return
+    stamp = lambda d: str(d.get("last_refresh") or "")
+    if host.get("tokens") and stamp(host) > stamp(mine):
+        d = os.path.dirname(CODEX_AUTH)
+        os.makedirs(d, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".auth.", dir=d)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(host, fh)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, CODEX_AUTH)
+    elif mine.get("tokens") and stamp(mine) > stamp(host):
+        _post("/api/codex-credentials", mine)
+
+
+def codex_cmd(model, effort, resume):
+    """codex exec [resume <thread>], the prompt on stdin ('-': a prompt starting with '-'
+    is no flag). `resume` has no --sandbox, hence -c sandbox_mode for both."""
+    cmd = ["codex", "exec"] + (["resume", resume] if resume else []) + ["--json", "--skip-git-repo-check"]
+    cmd += ["--dangerously-bypass-approvals-and-sandbox"] if ALLOW_ACTIONS else ["-c", "sandbox_mode=read-only"]
+    if model:
+        cmd += ["-m", model]
+    if effort:
+        cmd += ["-c", f"model_reasoning_effort={effort}"]
+    return cmd + ["-"]
+
+
+def codex_parse(out):
+    """The JSONL events of codex exec --json -> (thread id, reply, usage, error)."""
+    thread, texts, usage, err = None, [], {}, ""
+    for line in out.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t == "thread.started":
+            thread = e.get("thread_id")
+        elif t == "item.completed" and (e.get("item") or {}).get("type") == "agent_message":
+            texts.append(e["item"].get("text") or "")
+        elif t == "turn.completed":
+            usage = e.get("usage") or {}
+        elif t in ("turn.failed", "error"):
+            err = str((e.get("error") or {}).get("message") or e.get("message") or t)
+    return thread, "\n\n".join(x for x in texts if x), usage, err
+
+
+def run_codex(msg):
+    m = msg.strip()
+    low = m.lower()
+    if _auto_reset():
+        _codex["thread"] = None
+    if low == "/reset":
+        _codex["thread"] = None
+        return "🔄 New conversation."
+    if low.startswith("/model"):
+        rest = m[6:].strip()
+        if rest:
+            _codex["model"] = "" if rest.lower() in ("default", "reset", "off") else rest
+        return f"🧠 Model: {_codex['model'] or 'account default'} · /model <id> · /model default"
+    if low.startswith("/fresh"):
+        rest = m[6:].strip()
+        return _codex_run(rest, None, False) if rest else "Usage: /fresh <task> — one request in a throwaway context."
+    return _codex_run(m, _codex["thread"], True)
+
+
+def _codex_run(msg, resume, keep_session):
+    _codex_sync()
+    turn = uuid.uuid4().hex[:8]; _last_turn[0] = turn
+    kind, model = ("chat" if keep_session else "fresh"), _codex["model"] or "codex"
+    _post("/api/trace", {"turn": turn, "event": "start", "kind": kind})
+    t0 = time.monotonic()
+    p = subprocess.run(codex_cmd(_codex["model"], os.environ.get("CODEX_REASONING", ""), resume),
+                       input=msg, cwd=WORKDIR, capture_output=True, text=True, timeout=TIMEOUT)
+    ms = int((time.monotonic() - t0) * 1000)
+    _codex_sync()
+    thread, reply, u, err = codex_parse(p.stdout or "")
+    if keep_session and thread:
+        _codex["thread"] = thread
+    ok = p.returncode == 0 and not err
+    result = reply if ok and reply else (f"⚠️ Codex: {err}" if err else "") or (p.stderr or p.stdout or "(no output)")[-2000:]
+    itok, otok = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+    _post("/api/usage", {"model": model, "prompt_tokens": itok, "completion_tokens": otok, "cost": 0.0,
+                         "turn": turn, "step": 1, "ms": ms, "ok": ok,
+                         "err": "" if ok else str(result)[:200], "direct": True})
+    _post("/api/trace", {"turn": turn, "event": "end", "kind": kind, "steps": 1,
+                         "ms": ms, "outcome": "ok" if ok else "error"})
+    _log(f"turn {turn} {kind} {model} {ms}ms tokens {itok}/{otok} -> {len(result)} chars" + ("" if ok else " ERROR"))
+    return result
+
+
 def run(msg):
     try:
+        if AGENT == "codex":
+            return run_codex(msg)
         return run_fabric(msg) if AGENT == "fabric" else run_claude(msg)
     except subprocess.TimeoutExpired:
         return f"⏱️ Zeitlimit ({TIMEOUT}s) erreicht."

@@ -151,7 +151,7 @@ def render():
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
     empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — New instance, top right</p>"
-    return (PAGE.replace("__ROWS__", FLEET_HEAD + rows + "</table>" if rows else empty)
+    return (PAGE.replace("__LOGO__", LOGO_INLINE).replace("__ROWS__", FLEET_HEAD + rows + "</table>" if rows else empty)
                 .replace("__HOSTMEM__", str(_host.mem_total_mib()))
                 .replace("__TPLS__", tpls or "<option>no templates</option>")
                 .replace("__TPLJSON__", _util.js_json(_instances.load_templates()))

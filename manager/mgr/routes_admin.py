@@ -41,6 +41,7 @@ from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import irohgw as _irohgw
 from mgr import decision as _decision
+from mgr import deploy as _deploy
 from mgr import jevsetup as _jevsetup
 from mgr import katfs as _katfs
 from mgr import mcp as _mcp
@@ -58,6 +59,7 @@ from mgr import squadgate as _squadgate
 from mgr import squadreq as _squadreq
 from mgr import squadkick as _squadkick
 from mgr import squadnotes as _squadnotes
+from mgr import squadreview as _squadreview
 from mgr import squads as _squads
 from mgr import resources as _resources
 from mgr import router as _router
@@ -319,7 +321,7 @@ _PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
 
 # ---- squads: settings, the channel, posting as the operator (mgr/squads.py) --
 def _squad_get(h, name, sub):
-    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board, /squad/notes (also role user)
+    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board, /squad/notes, /squad/result (also role user)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
@@ -331,6 +333,8 @@ def _squad_get(h, name, sub):
     if sub == "notes":                       # ?msg=<id>: my notes + everybody's sent ones (also role user)
         mid = _routes._qs(h).get("msg", [""])[0]
         return h._json({"notes": _squadnotes.notes(name, "user:" + _who(h), int(mid) if mid.isdigit() else None)})
+    if sub == "result":                      # ?id=<review>&f=<file>: the result page, sandboxed (also role user)
+        return _squad_result(h, p)
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "toolchain":                   # the shared toolchain layer: spec, state, the build logs (admin)
@@ -345,18 +349,41 @@ def _squad_get(h, name, sub):
             tc = _toolchain.status(p)
         except Exception as e:               # nor the toolchain row
             tc = {"error": str(e)[:200]}
+        try:
+            dp = _deploy.status(name)
+        except Exception as e:               # nor the deploy row
+            dp = {"error": str(e)[:200]}
         return h._json({"project": name, "approved": _squadgate.approved(p), "tiers": list(_router.TIERS),
                         "tier_models": {t: sorted(k for k, v in tm.items() if v == t) for t in _router.TIERS},
                         "claude_tier": _squadgate.CLAUDE_TIER,
                         "proposals": _squadgate.proposals(name)[::-1], "tickets": _squadgate.tickets(name),
                         "statuses": list(_squadgate.STATUSES), "members": _squads.members(p),
-                        "working": _squads.working(name), "activity": act, "toolchain": tc,
+                        "working": _squads.working(name), "activity": act, "toolchain": tc, "deploy": dp,
                         "requirements": _squadreq.view(p)})
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
                     "members": _squads.members(p), "tokens_today": _squads.tokens_today(p),
                     "squad_id": _squads.squad_id(p), "strategy": p.get("strategy", "shared")})
+
+
+def _squad_result(h, p):
+    q = _routes._qs(h)
+    prop = next((x for x in _squadgate.proposals(p["name"])
+                 if x.get("id") == q.get("id", [""])[0] and x["kind"] == "review"), None)
+    if prop is None:
+        return h._json({"error": "unknown review"}, 404)
+    body, why = _squadreview.page(p, prop, q.get("f", [""])[0])
+    if body is None:
+        return h._json({"error": why}, 404)
+    h.send_response(200)
+    h.send_header("Content-Type", "text/html; charset=utf-8")
+    h.send_header("Content-Security-Policy", _squadreview.CSP)
+    h.send_header("Referrer-Policy", "no-referrer")
+    h.send_header("Cache-Control", "private, max-age=3600")    # a review's commit never changes
+    h.send_header("Content-Length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
 
 
 def _who(h):
@@ -400,7 +427,8 @@ def _squad_post(h, name, sub):
     if sub == "decide":                      # {id, approve | changes, note, goal?, members?, tickets?, budget_tokens_per_day?}
         edits = {k: b[k] for k in ("goal", "members", "tickets", "budget_tokens_per_day", "toolchain") if k in b}
         if b.get("changes"):                 # request changes: the note is the required comment
-            r, why = _squadgate.request_changes(name, str(b.get("id") or ""), who, b.get("note"), edits or None)
+            r, why = _squadgate.request_changes(name, str(b.get("id") or ""), who, b.get("note"), edits or None,
+                                                b.get("annotations"))
             return h._json(r) if r else h._json({"error": why}, 400)
         r, why = _squadgate.decide(name, str(b.get("id") or ""), bool(b.get("approve")), who,
                                    b.get("note"), edits or None)
