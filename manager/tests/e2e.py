@@ -4277,6 +4277,33 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             mcpmod.secret_store, mcpmod.load_mcps, m._mcp.load_mcps, m._secrets.load_secret_policy = old
 
+    def test_assigning_an_mcp_releases_its_secrets(self):
+        """Save MCP releases the ${SECRET}s the ticked servers need to that
+        instance (by_instance only, never guest_readable); a key missing in the
+        store is named, a squad's git token is never released."""
+        m = self.m
+        sec, ins = m._secrets, m._instances
+        entry = {"name": "cal", "command": "x", "args": ["${GIT_TOK}"], "env": {"P": "${CAL_PW}", "Q": "${NOPE}"}}
+        inst = {"name": "i1", "template": "openrouter", "config": {}}
+        tmp = tempfile.mkdtemp(prefix="e2e-rel-")
+        old = (sec.SECRET_POLICY_FILE, sec.secret_store, m._mcp.load_mcps, ins.load_instances, ins.save_instance,
+               ins.is_running, m._squadgit.reserved_secrets)
+        sec.SECRET_POLICY_FILE = os.path.join(tmp, "policy.json")
+        sec.secret_store = lambda: {"CAL_PW": "s", "GIT_TOK": "t"}
+        m._mcp.load_mcps = lambda: [entry]
+        ins.load_instances, ins.save_instance, ins.is_running = (lambda: [inst]), (lambda i: None), (lambda i: False)
+        m._squadgit.reserved_secrets = lambda: {"GIT_TOK"}
+        try:
+            msg = ins._set_config_key("i1", "MCP_SERVERS", "cal")
+            self.assertIn("secrets released: CAL_PW", msg); self.assertIn("not in the secret store (add them in Secrets): NOPE", msg)
+            pol = sec.load_secret_policy()
+            self.assertEqual((pol["by_instance"], pol["guest_readable"]), ({"i1": ["CAL_PW"]}, []))
+            self.assertNotIn("released", ins._set_config_key("i1", "MCP_SERVERS", "cal"))   # released already
+            self.assertEqual(sec.load_secret_policy()["by_instance"], {"i1": ["CAL_PW"]})
+        finally:
+            (sec.SECRET_POLICY_FILE, sec.secret_store, m._mcp.load_mcps, ins.load_instances, ins.save_instance,
+             ins.is_running, m._squadgit.reserved_secrets) = old
+
     # ---- guest boundary (multi-tenancy S-fixes, 2026-09-06) ------------------
     def _handler(self, path, ip, method="GET", auth=None):
         """A handler object without a socket: enough of BaseHTTPRequestHandler's

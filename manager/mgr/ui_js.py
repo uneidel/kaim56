@@ -147,14 +147,16 @@ async function loadPolicy(auto){
     const secrets=(p.secrets||[]).map(s=>`<span class="tag tag-neutral" style="font-size:11px">${escT(s)}</span>`).join(' ')||'<span class=text-muted style="font-size:12px">none</span>';
     /* MCP: assign from the catalog right here. A server that needs ${SECRET}
        placeholders shows them — released ones as a key, missing ones as a
-       warning (release them in the Secrets tab, or the config stays a
-       placeholder and the agent reports it as unresolved). */
+       warning. Save MCP releases the ones in the secret store to this
+       instance (mgr/secrets.release_for); a key not in the store stays a
+       warning until it is added in the Secrets tab. */
     const assigned=new Set(p.mcps||[]), rel=new Set(p.secrets||[]);
     const mcps=(MCPS||[]).map(m=>{
       const need=[...new Set(JSON.stringify(m).split('${').slice(1).map(s=>s.split('}')[0]))];
-      const hint=need.length?` <span class=text-muted style="font-size:11px" title="secrets this server needs — released in the Secrets tab?">${need.map(k=>(rel.has(k)?'🔑 ':'⚠️ ')+escT(k)).join(' ')}</span>`:'';
-      return `<label class=radio style="font-size:12.5px"><input type=checkbox data-pm="${esc(p.name)}" value="${esc(m.name)}" ${assigned.has(m.name)?'checked':''}>`+
-        `<span class=dot></span><span class=mono style="font-size:11.5px" title="${esc(m.description||'')}">${escT(m.name)}</span>${hint}</label>`;
+      const miss=need.filter(k=>!rel.has(k));
+      const hint=need.length?`<span class=mcp-key title="${esc(need.map(k=>k+(rel.has(k)?': released':': not released — Save MCP releases it if it is in the secret store')).join(' · '))}">${miss.length?'⚠ '+miss.length:'🔑'}</span>`:'';
+      return `<label class=mcp-chip title="${esc(m.description||'')}"><input type=checkbox data-pm="${esc(p.name)}" value="${esc(m.name)}" ${assigned.has(m.name)?'checked':''}>`+
+        `<span class=mono>${escT(m.name)}</span>${hint}</label>`;
     }).join('')||'<span class=text-muted style="font-size:12px">catalog empty — add servers in the MCP tab</span>';
     return `<div class="card blueprint" style="padding:16px">${CORNERS}`+
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">`+
@@ -167,7 +169,7 @@ async function loadPolicy(auto){
         `</span></div>`+
       (p.model?`<div class=kv><b>Model</b><span class=mono style="font-size:12px">${escT(p.model)}</span></div>`:'')+
       `<div class=kv><b>Secrets</b><span>${secrets}</span></div>`+
-      `<div class=kv><b>MCP</b><span style="display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center">${mcps}`+
+      `<div class=kv><b>MCP</b><span style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${mcps}`+
         `<button class="btn btn-primary btn-sm" onclick="savePolMcps('${esc(p.name)}')">Save MCP</button><span class=msg data-mmsg="${esc(p.name)}"></span></span></div>`+
       `<div class=kv><b>Auto-reset</b><span style="display:flex;gap:8px;align-items:center;font-size:12.5px"><input class="input mono" type=number min=0 step=5 data-ar="${esc(p.name)}" value="${esc(p.auto_reset||'0')}" style="width:80px;font-size:12.5px">`+
         `<span class=text-muted>min idle, then a fresh context (0 = never) · applies after a restart</span>`+
@@ -210,9 +212,9 @@ function savePolMcps(name){
   fetch(`/api/instances/${name}/config`,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({key:'MCP_SERVERS',value:list.join(',')})}).then(async r=>{
       let d={}; try{d=await r.json()}catch(e){}
-      const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`); if(!el)return;
       const m=d.msg||('HTTP '+r.status), bad=!r.ok||/error/.test(m);
-      if(!bad)POL_DIRTY.delete(name);
+      if(!bad){POL_DIRTY.delete(name); if(/secrets released/.test(m))await loadPolicy(true);}   /* the new keys show as released */
+      const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`); if(!el)return;
       el.innerHTML=(bad?'⚠️ ':'✓ ')+escT(m)+(/applies after/.test(m)?` <button class="btn btn-secondary btn-sm" onclick="act('${esc(name)}','restart')">Restart now</button>`:'');
     }).catch(e=>{const el=document.querySelector(`[data-mmsg="${CSS.escape(name)}"]`);if(el)el.textContent='⚠️ '+e;});
 }

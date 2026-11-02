@@ -757,4 +757,10 @@ body:has(.sk-chat:not(.sk-kick)) #s-squads>.sk{gap:19px}
 .kb-col[data-st=blocked] .kb-ti{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .kb-col[data-st=blocked] .kb-why{font-size:10px;line-height:1.7;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 @media(max-width:650px){.squad-board-tools{flex-wrap:wrap;gap:8px}.squad-ticket-search{max-width:none}.sk-chat[data-view=board] .kb-col{max-height:60dvh}}
+.mcp-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid #ffffff1f;border-radius:999px;font-size:12px;cursor:pointer;user-select:none;color:color-mix(in srgb,var(--color-text) 70%,transparent)}
+.mcp-chip input{position:absolute;opacity:0;width:1px;height:1px}
+.mcp-chip:has(input:checked){border-color:var(--color-accent-400);background:color-mix(in srgb,var(--color-accent-400) 16%,transparent);color:var(--color-text)}
+.mcp-chip:has(input:checked)::before{content:"✓";color:var(--color-accent-400)}
+.mcp-chip:has(input:focus-visible){outline:2px solid var(--color-accent-400);outline-offset:2px}
+.mcp-key{font-size:11px;color:var(--color-warn)}
 </style>"""

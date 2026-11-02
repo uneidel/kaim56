@@ -390,6 +390,11 @@ def _set_config_key(name, key, val):
     else:
         cfg[key] = str(val)
     save_instance(inst)
+    sec = ""
+    if key == "MCP_SERVERS" and val:           # ticking an MCP releases the secrets it needs
+        add, missing = _secrets.release_for(inst, _mcp.mcp_required_secrets([x for x in str(val).split(",") if x]))
+        sec = ((f" · secrets released: {', '.join(add)}" if add else "")
+               + (f" · not in the secret store (add them in Secrets): {', '.join(missing)}" if missing else ""))
     when = (" (applies at once)" if key in RUNTIME_KEYS
             else " (applies after stop/start)" if is_running(inst) else "")
-    return f"{key} " + ("removed" if val in ("", None) else f"= {val}") + when
+    return f"{key} " + ("removed" if val in ("", None) else f"= {val}") + when + sec

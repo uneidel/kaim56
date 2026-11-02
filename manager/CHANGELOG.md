@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-03
+
+- Instance policy: Save MCP releases the secrets the ticked servers need to that instance (in the store, not reserved; missing ones named); MCP choices are toggle chips with a key/warning badge.
+
 ## 2026-11-02
 
 - Squad results: new default role ui-designer (HTML mockups before UI code); `squad_request_review` puts a writer's HTML/Markdown results in the new Results tab — sandboxed view, select or Alt+click to annotate, Request changes sends the annotations to the lead, Approve unblocks the writer's ticket (`mgr/squadreview.py`).

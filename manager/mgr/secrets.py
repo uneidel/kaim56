@@ -176,6 +176,21 @@ def allowed_secret_keys(inst):
     return keys - _squadgit.reserved_secrets()   # a squad's git token never reaches a VM
 
 
+def release_for(inst, keys):
+    """Release `keys` to one instance (by_instance; hub substitution only, never
+    guest_readable) — the ones in the store, not reserved, not released yet.
+    -> (released, not_in_store), both sorted. Assigning an MCP calls this."""
+    from mgr import squadgit as _squadgit       # late: see allowed_secret_keys
+    store, have = secret_store(), allowed_secret_keys(inst)
+    add = sorted(k for k in set(keys) if k in store and k not in have and k not in _squadgit.reserved_secrets())
+    if add:
+        pol = load_secret_policy()
+        mine = pol.setdefault("by_instance", {}).setdefault(inst["name"], [])
+        mine.extend(add)
+        save_secret_policy(pol)
+    return add, sorted(k for k in set(keys) if k not in store)
+
+
 def save_secret_policy(pol):
     """Save the policy (only {by_template,by_instance} with string lists)."""
     if not isinstance(pol, dict):
