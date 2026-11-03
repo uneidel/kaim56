@@ -2630,6 +2630,25 @@ class ManagerFunctions(unittest.TestCase):
         for s in ("<th>Member</th>", "<th>Template</th>", "chosen by:", "from the tier\" data-k", "sqMemRows"):
             self.assertNotIn(s, page)
 
+    def test_fleet_groups_squad_members(self):
+        """The fleet table: instances without a squad first, then one header per
+        squad over its members (data-group); a project without a squad does not group."""
+        m = self.m
+        old = m._projects.load, m._instances.is_running
+        m._projects.load = lambda: [{"name": "zz", "squad": {"enabled": True}, "members": {"b": {"role": "lead"}, "c": {"role": "writer"}}},
+                                    {"name": "aa", "members": {"a": {"role": "writer"}}}]
+        m._instances.is_running = lambda i: i["name"] == "b"
+        mk = lambda n: {"name": n, "index": 3, "template": "openrouter", "rootfs": "x", "config": {}, "mounts": []}
+        try:
+            rows = m._ui._fleet_rows([mk("b"), mk("a"), mk("c")])
+        finally:
+            m._projects.load, m._instances.is_running = old
+        order = re.findall(r"<tbody class=(icard|fgrp) data-(?:name|group)='(\w+)'", rows)
+        self.assertEqual(order, [("icard", "a"), ("fgrp", "zz"), ("icard", "b"), ("icard", "c")])
+        self.assertIn("2 members · 1 running", rows)
+        self.assertIn("data-name='c' data-group='zz'", rows); self.assertIn("data-name='a' data-group=''", rows)
+        self.assertIn("function fleetGroup", m._ui.render())
+
     def test_instance_card_collapses_and_has_config_editor(self):
         """A card starts collapsed (details in .ic-more, a triangle toggles)
         and offers the config editor, which only uses the validated /config route."""

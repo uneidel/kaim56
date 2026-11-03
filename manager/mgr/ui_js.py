@@ -992,6 +992,7 @@ document.addEventListener('keydown',e=>{
 },true);
 function fleetInit(){
   icRestore();
+  const fo=fleetFolded(); document.querySelectorAll('.fgrp-tog').forEach(b=>fleetGroup(b,fo.has(b.closest('.fgrp').dataset.group)));
   document.querySelectorAll('.ftable th[data-k]').forEach(th=>th.onclick=()=>fleetSort(th));
   const cards=[...document.querySelectorAll('.icard')], n=s=>cards.filter(c=>c.dataset.state===s).length;
   const run=n('run')+n('old'), off=n('off'), old=n('old'), on=cards.filter(c=>c.dataset.state!=='off');
@@ -1020,6 +1021,17 @@ function fleetFilter(f){
   document.querySelectorAll('#ffilt button').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
   document.querySelectorAll('.icard').forEach(c=>{const st=c.dataset.state;
     c.hidden=!(f==='all'||st===f||(f==='run'&&st==='old'))||(!!q&&!c.textContent.toLowerCase().includes(q));});
+  document.querySelectorAll('.fgrp').forEach(g=>g.hidden=![...document.querySelectorAll('.icard')].some(c=>c.dataset.group===g.dataset.group&&!c.hidden));
+  const t=document.querySelector('.ftable'); if(t)t.classList.toggle('fq',!!q);   /* a search shows the members of folded squads */
+}
+/* Squad groups in the fleet table: a header folds its members; folded ones are remembered per browser */
+const fleetFolded=()=>{try{return new Set(JSON.parse(localStorage.getItem('fleetFolded')||'[]'))}catch(e){return new Set()}};
+function fleetGroup(b,set){
+  const g=b.closest('.fgrp').dataset.group, s=fleetFolded(), fold=set===undefined?!s.has(g):set;
+  fold?s.add(g):s.delete(g);
+  try{localStorage.setItem('fleetFolded',JSON.stringify([...s]))}catch(e){}
+  b.setAttribute('aria-expanded',String(!fold));
+  document.querySelectorAll('.icard').forEach(c=>{if(c.dataset.group===g)c.toggleAttribute('data-fold',fold)});
 }
 /* Fleet table: a header click sorts by that column, a second click reverses. */
 function fleetSort(th){
@@ -1027,7 +1039,11 @@ function fleetSort(th){
   t.querySelectorAll('th[data-k]').forEach(x=>x.setAttribute('aria-sort','none'));
   th.setAttribute('aria-sort',up?'ascending':'descending');
   const num=k==='cost', v=c=>num?+(c.dataset[k]||0):(c.dataset[k]||'');
-  [...t.tBodies].sort((a,b)=>(num?v(a)-v(b):v(a).localeCompare(v(b)))*(up?1:-1)).forEach(b=>t.appendChild(b));
+  /* within its squad group: the groups keep their order, each header stays on top */
+  const rank=new Map(); [...t.tBodies].forEach(b=>{const g=b.dataset.group||'';if(!rank.has(g))rank.set(g,rank.size)});
+  const head=b=>b.classList.contains('fgrp')?0:1;
+  [...t.tBodies].sort((a,b)=>rank.get(a.dataset.group||'')-rank.get(b.dataset.group||'')||head(a)-head(b)||
+    (num?v(a)-v(b):v(a).localeCompare(v(b)))*(up?1:-1)).forEach(b=>t.appendChild(b));
 }
 async function restartAll(){
   for(const c of document.querySelectorAll('.icard[data-state=old]'))

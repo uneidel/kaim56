@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-03
 
+- Instances: squad members are grouped under a foldable header per squad (members, running); sorting stays within a group, a search shows folded members.
 - Instance policy: Save MCP releases the secrets the ticked servers need to that instance (in the store, not reserved; missing ones named); MCP choices are toggle chips with a key/warning badge.
 
 ## 2026-11-02

@@ -329,7 +329,13 @@ main>.screen{margin-bottom:var(--space-8)}
 .ftable th[aria-sort=ascending]::after{content:" ▲"}.ftable th[aria-sort=descending]::after{content:" ▼"}
 .ftable td{padding:8px 10px;vertical-align:middle;border-bottom:1px solid var(--app-line)}
 .ftable .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.icard[hidden]{display:none}
+.icard[hidden],.fgrp[hidden],.icard[data-fold]{display:none}
+.ftable.fq .icard[data-fold]:not([hidden]){display:table-row-group}
+.fgrp td{padding:14px 6px 6px;border-bottom:1px solid var(--app-line)}
+.fgrp-tog{display:inline-flex;align-items:center;gap:8px;background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:2px 4px}
+.fgrp-tog svg{transition:transform .15s;transform:rotate(90deg)}
+.fgrp-tog[aria-expanded=false] svg{transform:none}
+.fgrp-tog .text-muted{font-size:12px}
 .icard>tr:first-child:hover{background:var(--app-card-hover)}
 .icard.open>tr:first-child td{border-bottom-color:transparent}
 .f-tog{width:28px;padding-right:0}

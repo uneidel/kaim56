@@ -20,6 +20,7 @@ from mgr import instances as _instances
 from mgr import netfw as _netfw
 from mgr import paths as _paths
 from mgr import personas as _personas
+from mgr import projects as _projects
 from mgr import settings as _settings
 from mgr import skills as _skills
 from mgr import util as _util
@@ -68,7 +69,7 @@ def h(v):
     return html.escape(str(v if v is not None else ""), quote=True)
 
 
-def _card(inst):
+def _card(inst, group=""):
     """One fleet card. Usage numbers (today/total, spend, bar) are filled by
     refreshUsage() in the page script, which also keeps them live."""
     name = inst["name"]
@@ -124,7 +125,7 @@ def _card(inst):
            f"<svg width=14 height=14 viewBox='0 0 24 24' fill=currentColor aria-hidden=true><path d='M8 5l10 7-10 7z'/></svg></button>")
     # One <tbody> per instance: the row plus its details row, so filter,
     # sort and open/close move both together.
-    return (f"<tbody class=icard data-name='{h(name)}' data-state={state} data-model='{h(model)}' "
+    return (f"<tbody class=icard data-name='{h(name)}' data-group='{h(group)}' data-state={state} data-model='{h(model)}' "
             f"data-cpu='{int(inst.get('vcpus', 2))}' data-mem='{int(inst.get('mem_mib', 1024))}'>"
             f"<tr><td class=f-tog>{tog}</td>"
             f"<td class=f-name><div class=ic-name>{h(name)}</div><div class=ic-desc>{h(desc)}</div></td>"
@@ -146,8 +147,35 @@ FLEET_HEAD = ("<table class=ftable><thead><tr><th></th>"
                                         ("cost", "Spend", "'fx num'")))
               + "<th class=fx>Flags</th><th></th></tr></thead>")
 
+def _squad_of():
+    """{instance: squad} — the first project with a squad the instance is a member of."""
+    out = {}
+    for p in sorted(_projects.load(), key=lambda p: p.get("name", "")):
+        if p.get("squad"):
+            for n in p.get("members") or {}:
+                out.setdefault(n, p["name"])
+    return out
+
+
+def _fleet_rows(insts):
+    """Instances without a squad first, then one collapsible group per squad
+    (a header <tbody class=fgrp> and its members' cards, data-group)."""
+    sq = _squad_of()
+    rows = "".join(_card(i) for i in insts if i["name"] not in sq)
+    for g in sorted({sq[i["name"]] for i in insts if i["name"] in sq}):
+        mine = [i for i in insts if sq.get(i["name"]) == g]
+        run = sum(1 for i in mine if _instances.is_running(i))
+        rows += (f"<tbody class=fgrp data-group='{h(g)}'><tr><td colspan=7>"
+                 f"<button class=fgrp-tog aria-expanded=true onclick=\"fleetGroup(this)\">"
+                 f"<svg width=12 height=12 viewBox='0 0 24 24' fill=currentColor aria-hidden=true><path d='M8 5l10 7-10 7z'/></svg>"
+                 f"<b>Squad {h(g)}</b><span class=text-muted>{len(mine)} member{'s' if len(mine) != 1 else ''}"
+                 f" · {run} running</span></button></td></tr></tbody>"
+                 + "".join(_card(i, g) for i in mine))
+    return rows
+
+
 def render():
-    rows = "".join(_card(i) for i in _instances.load_instances())
+    rows = _fleet_rows(_instances.load_instances())
     tpls = "".join(f"<option value='{h(t['template'])}'>{h(t['template'])} — {h(t.get('description',''))}</option>"
                    for t in _instances.load_templates())
     empty = "<p class=text-muted style='padding:18px 8px'>no instances yet — New instance, top right</p>"
