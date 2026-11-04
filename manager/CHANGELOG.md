@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-04
+
+- Apps origin: the session lasts 7 days (sliding) instead of 12 h; the IdP re-check still revokes it.
+
 ## 2026-11-03
 
 - Plugins ba_jobs (Arbeitsagentur job search), jobs_seen (seen-list by employer+title) and job_page_check (hidden text / AI-instruction check on a job page); ideas from berlin-job-search (MIT).
