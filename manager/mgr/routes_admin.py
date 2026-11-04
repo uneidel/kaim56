@@ -490,7 +490,13 @@ def _rt_projects_op(h):
 def _rt_waiting(h):
     # ?status=open (default) | approved | denied | answered | changes_requested | expired | all
     st = _routes._qs(h).get("status", ["open"])[0]
-    lst = sorted(_hitlq.items(st), key=lambda x: x["created"], reverse=True)
+    lst = _hitlq.items(st)
+    if st == "open":                         # + a member's squad post to the operator, not answered yet
+        sq = [p["name"] for p in _projects.load() if _squads.settings(p)["enabled"]]
+        lst += [{"id": f"msg-{m['id']}", "kind": "squad_post", "status": "open", "instance": m["from"],
+                 "project": m["project"], "msg_id": m["id"], "title": m["text"][:120], "detail": m["text"],
+                 "created": m["ts"]} for m in _squads.to_operator(sq)]
+    lst = sorted(lst, key=lambda x: x["created"], reverse=True)
     return h._json({"items": lst, "count": len(lst)})
 
 

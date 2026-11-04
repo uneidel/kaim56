@@ -5287,6 +5287,35 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_post_to_the_operator_waits_for_you(self):
+        """A member's post to the operator shows in Waiting for you until a person
+        writes in that channel (the auto-approver does not count); member-to-member
+        posts and turn answers never do; the board's own list leaves it out."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        L = "127.0.0.1"
+        try:
+            P = lambda: m._projects.get("sq")
+            wait = lambda: [x for x in self._sq("/api/waiting?status=open", L)[1]["items"] if x["kind"] == "squad_post"]
+            q0 = m._squads.post(P(), "user:ulrich", ["a"], "replace the city, ask your questions")[0]
+            m._squads.post(P(), "a", ["b"], "b, please check the map")
+            q = m._squads.post(P(), "a", ["user"], "1) Which data source? 2) Where does the code live?")[0]
+            m._squads.turn_answer({"id": "t", "instance": "a", "started": 0, "squad": {"project": "sq", "depth": 1, "msg": q0["id"]}},
+                                  True, "Posted my questions to the operator.")
+            w = wait()
+            self.assertEqual([(x["id"], x["instance"], x["project"], x["msg_id"]) for x in w], [(f"msg-{q['id']}", "a", "sq", q["id"])])
+            self.assertIn("Which data source", w[0]["detail"])
+            self.assertEqual(next(o for o in m._squadkick.overview() if o["name"] == "sq")["waiting_for_you"], 1)
+            m._squads.post(P(), "user:" + m._squadgate.AUTO, ["a"], "Your merge was approved")
+            self.assertEqual(len(wait()), 1)                                           # the auto-approver is no answer
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "OSM, and in this repo", "reply_to": q["id"]})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(d["to"], ["a"])                                           # the reply goes to the asker
+            self.assertEqual(wait(), [])
+            self.assertIn("ask_human", m._squads.WORK)                                 # the rule the members get
+        finally:
+            undo()
+
     def test_squad_turn_answer_into_the_channel(self):
         """A finished wake turn's answer is posted once, from the member to the
         user who started the thread (kind 'turn'), wakes nobody, is archived,

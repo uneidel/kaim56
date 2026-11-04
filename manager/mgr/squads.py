@@ -363,7 +363,9 @@ TREE_NOTE = ("(Your folder {path} is plain files without .git — by design, not
              "the manager commits it onto your branch. Do not run git or ask for a clone; project_sync "
              "brings in the others' merged work; set your ticket to review with the file names.)")
 WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
-        "not into the channel. For someone else's ticket, comment on it instead of doing it.)")
+        "not into the channel. For someone else's ticket, comment on it instead of doing it. A question only the "
+        "operator can decide goes with ask_human — one question each, options with your recommendation first — "
+        "not as a channel post.)")
 
 
 def _frame(project, sender, mid, text, kind, sid="", member_id=""):
@@ -765,6 +767,22 @@ def read(project, viewer=None, since=0, limit=200):
     if viewer is not None:
         out = [m for m in out if m["from"] == viewer or viewer in m["to"] or "all" in m["to"]]
     return out[-limit:]
+
+
+def to_operator(projects, limit=50):
+    """A member's posts to the operator that the operator has not answered yet
+    (no message of a person in that channel since; the auto-approver is none)
+    — they wait for the operator like an ask_human item. Newest first."""
+    if not projects:
+        return []
+    q = ",".join("?" * len(projects))
+    with _db() as c:
+        rows = c.execute(
+            f"SELECT {','.join('m.' + x for x in _COLS)} FROM squad_msg m WHERE m.project IN ({q}) AND m.kind='post' "
+            "AND m.sender NOT LIKE 'user:%' AND m.rcpt LIKE '%\"user:%' AND m.id > COALESCE((SELECT MAX(u.id) "
+            "FROM squad_msg u WHERE u.project=m.project AND u.sender LIKE 'user:%' AND u.sender NOT LIKE 'user:auto%'), 0) "
+            "ORDER BY m.id DESC LIMIT ?", (*projects, int(limit))).fetchall()
+    return [_out(r) for r in rows]
 
 
 def purge(project):

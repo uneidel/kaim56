@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-04
 
+- Waiting for you: a member's squad post to the operator waits there (Reply / Open squad) until a person writes in that channel; members are told to ask operator decisions with ask_human. Root cause: the gtakid lead posted its questions to the chat.
 - Apps origin: the session lasts 7 days (sliding) instead of 12 h; the IdP re-check still revokes it.
 
 ## 2026-11-03

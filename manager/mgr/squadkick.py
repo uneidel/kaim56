@@ -641,6 +641,7 @@ def overview():
     """The squad-enabled projects: name, status, lead, pending proposals, last
     message, members working now, ticket counts, open HITL items (the pills)."""
     out, hq = [], [x["project"] for x in _hitlq.items("open")]
+    hq += [m["project"] for m in _squads.to_operator([p["name"] for p in _projects.load() if _squads.settings(p)["enabled"]])]
     for p in sorted(_projects.load(), key=lambda x: x.get("name", "")):
         s = _squads.settings(p)
         if not s["enabled"]:
@@ -782,6 +783,7 @@ def auto_nudge(now=None):
             _reminded.add(x["id"])                    # the squad waits on you: say it once more
             _notify.notify_add(x["instance"], f"Still waiting for you ({(now - x['created']) // 60} min): {x['title']}",
                                x.get("detail", ""), link="squads")
+    held |= {m["project"] for m in _squads.to_operator([p["name"] for p in _projects.load() if _squads.settings(p)["enabled"]])}
     for proj in _projects.load():
         name = proj["name"]
         if not _squads.settings(proj).get("enabled") or name in held:

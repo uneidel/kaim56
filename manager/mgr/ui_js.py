@@ -1832,7 +1832,7 @@ async function skLoad(){
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
   let hq=[];
-  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name)}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
+  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name&&x.kind!=='squad_post')}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
   if(SK!==name)return;
   const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify((p.members||[]).map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(p=>safe('card',sqCard,p)).join('')+hq.map(x=>safe('card',hqCard,x)).join('')}   /* never under the user's edits */
@@ -2221,7 +2221,7 @@ setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 /* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */
 let WAIT=[];
-const HQ_KIND={approval:'Approval',question:'Question',review:'Review'};
+const HQ_KIND={approval:'Approval',question:'Question',review:'Review',squad_post:'Squad message'};
 async function loadWaiting(){
   let d={}; try{d=await (await fetch('/api/waiting?status=open')).json()}catch(e){return WAIT}
   if(d.error)return WAIT;
@@ -2233,7 +2233,9 @@ async function loadWaiting(){
 function hqCard(it){
   const id=esc(it.id), b=(cls,act,label)=>`<button class="btn ${cls}" onclick="hqAct('${id}','${act}',this)">${label}</button>`;
   const inp=ph=>`<input class=input data-k=text placeholder="${esc(ph)}" aria-label="${esc(ph)}">`;
-  const foot=it.kind==='question'?inp('Your answer')+b('btn-primary','answer','Answer')
+  const foot=it.kind==='squad_post'?inp('Your reply')+`<button class="btn btn-secondary" data-p="${esc(it.project)}" onclick="sqToSquads(this.dataset.p)">Open squad</button>`+
+      `<button class="btn btn-primary" onclick="hqReply('${id}',this)">Reply</button>`   /* a member's post to you: the reply goes to the channel */
+    :it.kind==='question'?inp('Your answer')+b('btn-primary','answer','Answer')
     :it.kind==='review'?inp('Comment (required for Request changes)')+b('btn-secondary','request_changes','Request changes')+b('btn-primary','approve','Approve')
     :inp('Comment (optional)')+b('btn-secondary','deny','Deny')+b('btn-primary','approve','Approve');
   return `<div class=sq-card data-hq="${id}"><div class=sq-head><b>${HQ_KIND[it.kind]||escT(it.kind)} · ${escT(it.title)}</b>`+
@@ -2257,6 +2259,14 @@ async function hqAct(id,action,btn){
   say(d.error||(HQ_KIND[d.item.kind]+' '+d.item.id+': '+d.item.status.replace('_',' ')+' ✓'));
   await loadWaiting();
   if(sk){SK_PEND='';skLoad()}else hqRender();
+}
+async function hqReply(id,btn){
+  const it=WAIT.find(x=>x.id===id), t=btn.closest('[data-hq]').querySelector('[data-k=text]'), text=t.value.trim(), say=x=>{document.getElementById('wait-msg').textContent=x};
+  if(!it)return; if(!text){say('Reply: write an answer.');t.focus();return}
+  btn.disabled=true;
+  let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(it.project)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,reply_to:it.msg_id})})).json()}catch(e){d={error:'manager not reachable'}}
+  btn.disabled=false; say(d.error||('Reply to '+it.instance+' sent ✓'));
+  if(!d.error){await loadWaiting();hqRender()}
 }
 window.addEventListener('hashchange',()=>{if(location.hash==='#waiting')loadWaiting()});
 setInterval(()=>{if(!document.hidden)loadWaiting()},15000);
