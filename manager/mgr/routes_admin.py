@@ -500,14 +500,28 @@ def _rt_waiting(h):
     return h._json({"items": lst, "count": len(lst)})
 
 
+def _waiting_post(h, mid, b):
+    # {action: answer, text} replies in the channel (to the poster) | anything else: mark read
+    m = _squads._get(mid) if str(mid).isdigit() else None
+    p = _projects.get(m["project"]) if m else None
+    if p is None:
+        return h._json({"error": "no such message"}, 404)
+    if b.get("action") == "answer":
+        if not str(b.get("text") or "").strip():
+            return h._json({"error": "write an answer"}, 400)
+        r, why = _squadgate.operator_post(p, _who(h), {"text": b["text"], "reply_to": m["id"]})
+        return h._json({"ok": True, "msg": r["id"]}) if r else h._json({"error": why}, 400)
+    ok, why = _squads.mark_read(mid)
+    return h._json({"ok": True}) if ok else h._json({"error": why}, 404)
+
+
 @_routes.ROUTER.post("/api/waiting/", prefix=True, admin=True)
 def _rt_waiting_decide(h):
     # {action: approve|deny|answer|request_changes, text, choice} — admin only (role user reads)
     iid = _routes._tail(h, "/api/waiting/")[0].strip()
     b = h._body() or {}
-    if iid.startswith("msg-"):               # a squad post to the operator (mgr/squads.to_operator): mark read only
-        ok, why = _squads.mark_read(iid[4:])
-        return h._json({"ok": True}) if ok else h._json({"error": why}, 404)
+    if iid.startswith("msg-"):               # a squad post to the operator (mgr/squads.to_operator): answer or mark read
+        return _waiting_post(h, iid[4:], b)
     if not isinstance(b, dict) or str(b.get("action")) not in _hitlq.DONE:
         return h._json({"error": "action must be approve, deny, answer or request_changes"}, 400)
     pr = getattr(h, "principal", None)

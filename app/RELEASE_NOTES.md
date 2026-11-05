@@ -5,6 +5,12 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.50
+
+- **Waiting for you** shows a squad member's message to you ("Squad message")
+  with **Reply** and **Mark read**: the reply goes to that member in the squad
+  chat. Such entries used to show without any buttons.
+
 ## 5.49
 
 - Tapping a squad notification (approval, question, review, plan waiting for

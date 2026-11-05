@@ -92,6 +92,10 @@ class WaitingTest {
         assertNull(WaitingClient.check("review", "approve", "", ""))
         assertNotNull(WaitingClient.check("question", "answer", "", ""))
         assertNull(WaitingClient.check("question", "answer", "", "sqlite"))
+        assertEquals(listOf("answer", "read"), WaitingClient.actionsFor("squad_post"))
+        assertNotNull(WaitingClient.check("squad_post", "answer", " ", ""))
+        assertNull(WaitingClient.check("squad_post", "answer", "OSM", ""))
+        assertNull(WaitingClient.check("squad_post", "read", "", ""))
     }
 
     @Test

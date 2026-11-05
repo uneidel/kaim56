@@ -8,7 +8,7 @@ import org.json.JSONObject
 /** Something an agent cannot go on without you: an approval, a question or a review. */
 data class WaitingItem(
     val id: String,
-    val kind: String,          // approval | question | review
+    val kind: String,          // approval | question | review | squad_post (a member's message to you)
     val status: String,
     val created: String,
     val project: String,
@@ -118,6 +118,7 @@ class WaitingClient(private val mc: ManagerClient) {
             "approval" -> listOf("approve", "deny")
             "question" -> listOf("answer")
             "review" -> listOf("approve", "request_changes")
+            "squad_post" -> listOf("answer", "read")      // the reply goes to the member in the squad channel
             else -> emptyList()
         }
 
@@ -126,6 +127,7 @@ class WaitingClient(private val mc: ManagerClient) {
             action !in actionsFor(kind) -> "Not possible for a $kind"
             kind == "review" && action == "request_changes" && text.isBlank() -> "Say what should change"
             kind == "question" && text.isBlank() && choice.isBlank() -> "Type or choose an answer"
+            kind == "squad_post" && action == "answer" && text.isBlank() -> "Type a reply"
             else -> null
         }
 

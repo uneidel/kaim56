@@ -62,6 +62,7 @@ internal fun WaitingScreen(prefs: Prefs, refresh: Int, onClose: () -> Unit, onCo
                     "approve" -> "Approved: ${it.title}"
                     "deny" -> "Denied: ${it.title}"
                     "request_changes" -> "Changes requested: ${it.title}"
+                    "read" -> "Marked read: ${it.title}"
                     else -> "Answered: ${it.title}"
                 }
                 is WaitingClient.Outcome.AlreadyDecided -> "Already decided elsewhere — list refreshed"
@@ -102,6 +103,7 @@ private fun WaitingCard(w: WaitingItem, busy: Boolean, decide: (WaitingItem, Str
         "approval" -> Icons.Outlined.CheckCircle to "Approval"
         "question" -> Icons.AutoMirrored.Outlined.HelpOutline to "Question"
         "review" -> Icons.Outlined.RateReview to "Review"
+        "squad_post" -> Icons.AutoMirrored.Outlined.HelpOutline to "Squad message"
         else -> Icons.AutoMirrored.Outlined.HelpOutline to w.kind.ifBlank { "Item" }
     }
     Column(
@@ -143,13 +145,15 @@ private fun WaitingCard(w: WaitingItem, busy: Boolean, decide: (WaitingItem, Str
             KatField(text, { text = it }, placeholder = when (w.kind) {
                 "approval" -> "Comment (optional)"
                 "review" -> "Comment (required to request changes)"
+                "squad_post" -> "Your reply"
                 else -> if (w.options.isEmpty()) "Your answer" else "Or type an answer"
             })
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 actions.forEachIndexed { i, a ->
                     val name = when (a) {
                         "approve" -> "Approve"; "deny" -> "Deny"
-                        "request_changes" -> "Request changes"; else -> "Answer"
+                        "request_changes" -> "Request changes"; "read" -> "Mark read"
+                        else -> if (w.kind == "squad_post") "Reply" else "Answer"
                     }
                     if (i == 0) FilledPill(name, { decide(w, a, text, "") }, height = 38.dp, enabled = !busy)
                     else OutlinePill(name, { decide(w, a, text, "") }, height = 38.dp, enabled = !busy)

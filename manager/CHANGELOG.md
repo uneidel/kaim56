@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-05
 
+- Waiting for you: a squad post can be answered through the queue (POST /api/waiting/msg-<id> action answer → reply to the poster); app 5.50 shows Reply / Mark read. Root cause: the app drew no buttons for the new kind.
 - Waiting for you: a squad post to the operator can be marked read; a member's turn answer that asks (a line ending in "?") waits there too.
 
 ## 2026-11-04

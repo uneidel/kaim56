@@ -5323,6 +5323,12 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((st, d), (200, {"ok": True}))
             self.assertEqual([x["msg_id"] for x in wait()], [ask["id"]])
             self.assertEqual(self._sq("/api/waiting/msg-99999", L, {})[0], 404)
+            # the app answers through the same queue: action answer = a reply to the poster
+            self.assertEqual(self._sq(f"/api/waiting/msg-{ask['id']}", L, {"action": "answer"})[0], 400)
+            st, d = self._sq(f"/api/waiting/msg-{ask['id']}", L, {"action": "answer", "text": "OSM, this repo"})
+            self.assertEqual(st, 200, d)
+            self.assertEqual((m._squads._get(d["msg"])["to"], m._squads._get(d["msg"])["reply_to"]), (["a"], ask["id"]))
+            self.assertEqual(wait(), [])
             self.assertIn("ask_human", m._squads.WORK)                                 # the rule the members get
         finally:
             undo()
