@@ -60,6 +60,7 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "decision": "",
             # {member: ts of its failed turn the operator dismissed} (Squads → Dismiss): no longer "failed"
             "dismissed": {},
+            "read_posts": [],             # ids of posts to the operator marked read in Waiting for you (to_operator)
             "claude_account": "",         # CLAUDE_ACCOUNT of new claude members (mgr/claudeaccts.py); "" = host login
             # the shared toolchain layer (mgr/toolchain.py): the spec and a counter bumped on every change
             "toolchain": {"apt": [], "script": "", "env": {}}, "toolchain_version": 0}
@@ -769,20 +770,39 @@ def read(project, viewer=None, since=0, limit=200):
     return out[-limit:]
 
 
+READ_MAX = 200
+_ASKS = re.compile(r"\?\s*$", re.M)        # a turn answer that ends a line with a question asks something
+
+
 def to_operator(projects, limit=50):
     """A member's posts to the operator that the operator has not answered yet
     (no message of a person in that channel since; the auto-approver is none)
-    — they wait for the operator like an ask_human item. Newest first."""
+    and not marked read — they wait for the operator like an ask_human item.
+    A turn answer counts when it asks (a line ending in "?"). Newest first."""
     if not projects:
         return []
     q = ",".join("?" * len(projects))
     with _db() as c:
         rows = c.execute(
-            f"SELECT {','.join('m.' + x for x in _COLS)} FROM squad_msg m WHERE m.project IN ({q}) AND m.kind='post' "
+            f"SELECT {','.join('m.' + x for x in _COLS)} FROM squad_msg m WHERE m.project IN ({q}) AND m.kind IN ('post','turn') "
             "AND m.sender NOT LIKE 'user:%' AND m.rcpt LIKE '%\"user:%' AND m.id > COALESCE((SELECT MAX(u.id) "
             "FROM squad_msg u WHERE u.project=m.project AND u.sender LIKE 'user:%' AND u.sender NOT LIKE 'user:auto%'), 0) "
-            "ORDER BY m.id DESC LIMIT ?", (*projects, int(limit))).fetchall()
-    return [_out(r) for r in rows]
+            "ORDER BY m.id DESC LIMIT 500", projects).fetchall()
+    read = {n: set(settings(_projects.get(n)).get("read_posts") or []) for n in projects}
+    out = [m for m in map(_out, rows) if m["id"] not in read.get(m["project"], ())
+           and (m["kind"] == "post" or _ASKS.search(m["text"]))]
+    return out[:limit]
+
+
+def mark_read(msg_id):
+    """Waiting for you → Mark read: the post no longer waits. -> (True, '') or (False, why)."""
+    m = _get(msg_id) if str(msg_id).isdigit() else None
+    p = _projects.get(m["project"]) if m else None
+    if p is None:
+        return False, "no such message"
+    s = settings(p)
+    save_settings(p["name"], {**s, "read_posts": ([x for x in s.get("read_posts") or [] if x != m["id"]] + [m["id"]])[-READ_MAX:]})
+    return True, ""
 
 
 def purge(project):

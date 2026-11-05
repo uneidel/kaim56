@@ -5312,6 +5312,17 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(st, 200, d)
             self.assertEqual(d["to"], ["a"])                                           # the reply goes to the asker
             self.assertEqual(wait(), [])
+            # a turn answer that asks waits too; Mark read drops one post, the other stays
+            t = lambda txt: m._squads.turn_answer({"id": "t", "instance": "a", "started": 0,
+                                                  "squad": {"project": "sq", "depth": 1, "msg": q0["id"]}}, True, txt)
+            ask, info = t("Two decisions:\n1. OSM or hand-built?\n2. Which repo?"), t("All done, deployed.")
+            n = m._squads.post(P(), "a", ["user"], "FYI: the map is 4 MB")[0]
+            self.assertEqual([x["msg_id"] for x in wait()], [n["id"], ask["id"]])
+            self.assertTrue(info["id"])
+            st, d = self._sq(f"/api/waiting/msg-{n['id']}", L, {})
+            self.assertEqual((st, d), (200, {"ok": True}))
+            self.assertEqual([x["msg_id"] for x in wait()], [ask["id"]])
+            self.assertEqual(self._sq("/api/waiting/msg-99999", L, {})[0], 404)
             self.assertIn("ask_human", m._squads.WORK)                                 # the rule the members get
         finally:
             undo()

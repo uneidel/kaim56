@@ -2234,7 +2234,7 @@ function hqCard(it){
   const id=esc(it.id), b=(cls,act,label)=>`<button class="btn ${cls}" onclick="hqAct('${id}','${act}',this)">${label}</button>`;
   const inp=ph=>`<input class=input data-k=text placeholder="${esc(ph)}" aria-label="${esc(ph)}">`;
   const foot=it.kind==='squad_post'?inp('Your reply')+`<button class="btn btn-secondary" data-p="${esc(it.project)}" onclick="sqToSquads(this.dataset.p)">Open squad</button>`+
-      `<button class="btn btn-primary" onclick="hqReply('${id}',this)">Reply</button>`   /* a member's post to you: the reply goes to the channel */
+      `<button class="btn btn-secondary" onclick="hqRead('${id}',this)">Mark read</button><button class="btn btn-primary" onclick="hqReply('${id}',this)">Reply</button>`   /* a member's post to you: the reply goes to the channel */
     :it.kind==='question'?inp('Your answer')+b('btn-primary','answer','Answer')
     :it.kind==='review'?inp('Comment (required for Request changes)')+b('btn-secondary','request_changes','Request changes')+b('btn-primary','approve','Approve')
     :inp('Comment (optional)')+b('btn-secondary','deny','Deny')+b('btn-primary','approve','Approve');
@@ -2266,6 +2266,12 @@ async function hqReply(id,btn){
   btn.disabled=true;
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(it.project)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,reply_to:it.msg_id})})).json()}catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; say(d.error||('Reply to '+it.instance+' sent ✓'));
+  if(!d.error){await loadWaiting();hqRender()}
+}
+async function hqRead(id,btn){
+  btn.disabled=true;
+  let d={}; try{d=await (await fetch('/api/waiting/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
+  btn.disabled=false; document.getElementById('wait-msg').textContent=d.error||'';
   if(!d.error){await loadWaiting();hqRender()}
 }
 window.addEventListener('hashchange',()=>{if(location.hash==='#waiting')loadWaiting()});

@@ -505,6 +505,9 @@ def _rt_waiting_decide(h):
     # {action: approve|deny|answer|request_changes, text, choice} — admin only (role user reads)
     iid = _routes._tail(h, "/api/waiting/")[0].strip()
     b = h._body() or {}
+    if iid.startswith("msg-"):               # a squad post to the operator (mgr/squads.to_operator): mark read only
+        ok, why = _squads.mark_read(iid[4:])
+        return h._json({"ok": True}) if ok else h._json({"error": why}, 404)
     if not isinstance(b, dict) or str(b.get("action")) not in _hitlq.DONE:
         return h._json({"error": "action must be approve, deny, answer or request_changes"}, 400)
     pr = getattr(h, "principal", None)

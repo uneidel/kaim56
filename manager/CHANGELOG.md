@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-05
+
+- Waiting for you: a squad post to the operator can be marked read; a member's turn answer that asks (a line ending in "?") waits there too.
+
 ## 2026-11-04
 
 - Waiting for you: a member's squad post to the operator waits there (Reply / Open squad) until a person writes in that channel; members are told to ask operator decisions with ask_human. Root cause: the gtakid lead posted its questions to the chat.
