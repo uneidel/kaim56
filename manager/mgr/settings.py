@@ -68,10 +68,9 @@ SETTINGS_SCHEMA = [
     {"key": "OPENAI_STT_MODEL", "label": "OpenAI speech recognition model (empty = gpt-transcribe)"},
     {"key": "TTS_BACKEND", "label": "Speech output (OpenAI: text leaves the host; needs the OpenAI API key; falls back to Piper)", "options": [
         {"value": "", "label": "Piper (local)"}, {"value": "openai", "label": "OpenAI"}]},
-    {"key": "OPENAI_TTS_MODEL", "label": "OpenAI speech output model (empty = gpt-4o-mini-tts)"},
+    {"key": "OPENAI_TTS_MODEL", "label": "OpenAI speech output model, Realtime API (empty = gpt-realtime-2.1-mini)"},
     {"key": "OPENAI_TTS_VOICE", "label": "OpenAI voice", "options": [{"value": "", "label": "— marin —"}] + [
-        {"value": v, "label": v} for v in ("cedar", "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
-                                           "sage", "shimmer", "verse")]},
+        {"value": v, "label": v} for v in ("cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse")]},
 ]
 # These values NEVER end up in instances/<name>.json and never on the microVM's
 # config disk. The agent fetches them at runtime via the secret broker

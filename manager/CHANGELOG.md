@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-06
 
+- Voice: OpenAI speech output runs on the Realtime API (gpt-realtime-2.1-mini; /v1/audio/speech shuts down 2027-01-06); a reply that is no reading of the text goes to Piper.
 - Voice: optional OpenAI speech recognition and output (`mgr/voicecloud.py`, Settings STT_BACKEND/TTS_BACKEND, key host-side, rate-capped); any failure falls back to Parakeet/Piper.
 - /api/tts answers a text with nothing speakable with a short silence instead of the voice service's 400.
 

@@ -44,6 +44,7 @@ atexit.register(shutil.rmtree, tempfile.tempdir, True)
 # A test server stopped with shutdown() waits out serve_forever's poll interval
 # (0.5 s): ~25 tests paid it once or twice each. 20 ms polls cost nothing here.
 import socketserver
+import struct
 socketserver.BaseServer.serve_forever.__defaults__ = (0.02,)
 
 # The loopback services of a live install (voice :8770, embeddings :8772) are
@@ -2908,7 +2909,20 @@ class ManagerFunctions(unittest.TestCase):
             if st.get("boom"):
                 raise OSError("down")
             return R(b'{"text": "hallo"}' if "transcriptions" in req.full_url else b"\1\0" * 2400)
-        old = (m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok)
+
+        class WS:
+            model, closed, said, sent, q = "", False, "Guten Tag", [], []
+            def send(self, o): self.sent.append(o)
+            def close(self): self.closed = True
+            def recv(self):
+                if not self.q:
+                    self.q += [{"type": "response.output_audio.delta", "delta": base64.b64encode(b"\1\0" * 2400).decode()},
+                               {"type": "response.output_audio_transcript.delta", "delta": self.said},
+                               {"type": "response.done", "response": {"status": "completed"}}]
+                return self.q.pop(0)
+        ws = WS()
+        old = (m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok, vc._ws_open)
+        vc._ws_open = lambda key, model: (setattr(ws, "model", model), ws)[1]
         m._settings.load_settings, urllib.request.urlopen = (lambda: st), fake
         m._util.rate_ok = lambda *a: True
         call = lambda path, body, ctype: (lambda h: (h._do_POST(), h)[1])(self._post_handler(path, "127.0.0.1", body, ctype=ctype))
@@ -2920,11 +2934,20 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(b'filename="audio.webm"', r.data); self.assertIn(b"gpt-transcribe", r.data); self.assertIn(b"RIFFx", r.data)
             self.assertEqual(m._voice.stt_recent()[0]["text"], "hallo")
             w = body(call("/api/tts", json.dumps({"text": "Guten Tag", "speed": 9}).encode(), "application/json"))
-            self.assertEqual(json.loads(sent[-1].data), {"model": "gpt-4o-mini-tts", "voice": "cedar", "input": "Guten Tag",
-                                                         "response_format": "pcm", "speed": 4.0})
+            self.assertEqual(ws.model, "gpt-realtime-2.1-mini")
+            self.assertEqual(ws.sent[0]["session"]["audio"]["output"], {"format": {"type": "audio/pcm", "rate": 24000},
+                                                                        "voice": "cedar", "speed": 1.5})
+            self.assertEqual(json.loads(ws.sent[1]["item"]["content"][0]["text"]), {"read": "Guten Tag"})
+            self.assertTrue(ws.closed)
             with wave.open(io.BytesIO(w)) as f:
                 self.assertEqual((f.getframerate(), f.getsampwidth(), f.getnframes()), (24000, 2, 2400))
             self.assertEqual(local, [])
+            # it answered instead of reading, or the API failed: Piper reads
+            ws.said = "Guten Tag, wie kann ich Ihnen heute helfen?"
+            self.assertIsNone(vc.tts("Wie spät ist es?"))
+            ws.said = "Wie spät ist es"; ws.q = [{"type": "error", "error": {"message": "nope"}}]
+            self.assertIsNone(vc.tts("Wie spät ist es?"))
+            self.assertIsNotNone(vc.tts("Wie spät ist es?"))
             # nothing speakable: a short silence, no 400, nothing sent anywhere
             n = len(sent)
             h = call("/api/tts", json.dumps({"text": "https://a.b/c"}).encode(), "application/json")
@@ -2940,7 +2963,29 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIsNone(vc.tts("x"))
             self.assertEqual(len(local), 2)
         finally:
-            m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok = old
+            m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok, vc._ws_open = old
+
+    def test_voicecloud_websocket_frames(self):
+        """The client masks its frames, answers a ping, and reads 16-bit lengths and fragments."""
+        vc = self.m._voicecloud
+        a, b = socket.socketpair()
+        try:
+            ws = vc._WS(a)
+            ws.send({"x": 1})
+            raw = b.recv(100)
+            self.assertEqual(raw[:2], bytes([0x81, 0x80 | 8]))
+            self.assertEqual(json.loads(bytes(c ^ raw[2:6][i & 3] for i, c in enumerate(raw[6:]))), {"x": 1})
+            big = json.dumps({"d": "x" * 70000}).encode()
+            b.sendall(b"\x89\x02hi" + b"\x01\x7e" + struct.pack(">H", 300) + big[:300]
+                      + b"\x80\x7f" + struct.pack(">Q", len(big) - 300) + big[300:])
+            self.assertEqual(len(ws.recv()["d"]), 70000)
+            pong = b.recv(100)
+            self.assertEqual((pong[0], bytes(c ^ pong[2:6][i & 3] for i, c in enumerate(pong[6:]))), (0x8a, b"hi"))
+            b.sendall(b"\x88\x00")
+            with self.assertRaises(ConnectionError):
+                ws.recv()
+        finally:
+            a.close(); b.close()
 
     def test_stt_recent_ring(self):
         """What did STT hear? Newest first, bounded, in memory only."""
