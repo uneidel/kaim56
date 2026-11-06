@@ -9,9 +9,11 @@ as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
 import collections
+import io
 import re
 import threading
 import time
+import wave
 
 
 _SPK_THINK = re.compile(r"⟦think⟧.*?(?:⟦/think⟧|$)", re.S)
@@ -36,6 +38,18 @@ def speakable_text(text):
     t = _SPK_SPACE.sub(" ", t)
     t = _SPK_NL.sub("\n", t)
     return t.strip()
+
+
+def silence():
+    """A 0.1 s WAV: the answer to a text with nothing speakable (only links, tool
+    lines). The voice service refuses that with 400, which clients show as an error."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\0\0" * 1600)
+    return out.getvalue()
 
 
 # Last transcripts from /api/stt, in memory only (no file: spoken words are

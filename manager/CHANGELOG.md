@@ -5,6 +5,11 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-06
+
+- Voice: optional OpenAI speech recognition and output (`mgr/voicecloud.py`, Settings STT_BACKEND/TTS_BACKEND, key host-side, rate-capped); any failure falls back to Parakeet/Piper.
+- /api/tts answers a text with nothing speakable with a short silence instead of the voice service's 400.
+
 ## 2026-11-05
 
 - Waiting for you: a squad post can be answered through the queue (POST /api/waiting/msg-<id> action answer → reply to the poster); app 5.50 shows Reply / Mark read. Root cause: the app drew no buttons for the new kind.

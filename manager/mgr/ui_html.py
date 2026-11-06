@@ -822,7 +822,7 @@ HTML_BOTTOM = """
 
   <div class="card blueprint"><span class=card-title>Voice</span>
   <p class=card-body>Docker container bound to 127.0.0.1:8770, reachable only through the
-  manager (<code>/api/stt</code>, <code>/api/tts</code>). STT: Parakeet TDT v3 int8 (RTF &#8776;0.08 on this CPU),
+  manager (<code>/api/stt</code>, <code>/api/tts</code>). Optional per direction: OpenAI (<code>mgr/voicecloud.py</code>, Settings <code>STT_BACKEND</code>/<code>TTS_BACKEND</code>, key host-side, the local service answers on any failure). STT: Parakeet TDT v3 int8 (RTF &#8776;0.08 on this CPU),
   TTS: Piper (RTF &#8776;0.07) with three voices baked in (de-thorsten, de-eva_k, en-amy) &#8212;
   voice and speed are picked in the Settings tab and injected by the manager into every
   <code>/api/tts</code> call, so clients keep sending only the text. The app records AAC, the service

@@ -52,6 +52,7 @@ from mgr import tasks as _tasks
 from mgr import ui as _ui
 from mgr import util as _util
 from mgr import voice as _voice
+from mgr import voicecloud as _voicecloud
 
 
 @_routes.ROUTER.get("/api/personas")
@@ -722,9 +723,11 @@ def _rt_chat_log(h):
 @_routes.ROUTER.post("/api/tts")
 def _rt_voice(h):
     # The voice service listens on loopback; the manager is the only door and
-    # passes raw audio / WAV through unchanged.
+    # passes raw audio / WAV through unchanged. OpenAI answers first when it is
+    # switched on (mgr/voicecloud.py); without an answer the local service does.
     p = h.path.split("?", 1)[0]
     payload = h._raw(_routes.BODY_MAX_AUDIO)
+    ctype = h.headers.get("Content-Type", "application/octet-stream")
     if p == "/api/tts":
         # Read-aloud filter + voice/speed from the settings (explicit client values win).
         try:
@@ -736,22 +739,26 @@ def _rt_voice(h):
             if st.get("TTS_SPEED") and not b.get("speed"):
                 b["speed"] = float(str(st["TTS_SPEED"]).replace(",", "."))
             payload = json.dumps(b).encode()
+            wav = _voice.silence() if not b["text"] else _voicecloud.tts(b["text"], b.get("speed"))
+            if wav:
+                return _voice_send(h, 200, wav, "audio/wav")
         except (ValueError, TypeError):
             pass
+    if p == "/api/stt":
+        j = _voicecloud.stt(payload, ctype)
+        if j is not None:
+            _stt_note(h, j, payload)
+            return _voice_send(h, 200, json.dumps(j).encode(), "application/json")
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{_settings.VOICE_PORT}{p[len('/api'):]}", data=payload,
-                                     method="POST", headers={"Content-Type": h.headers.get(
-                                         "Content-Type", "application/octet-stream")})
+                                     method="POST", headers={"Content-Type": ctype})
         with urllib.request.urlopen(req, timeout=180) as r:
             data = r.read()
             ct = r.headers.get("Content-Type", "application/json")
         code = 200
         if p == "/api/stt":
             try:
-                j = json.loads(data)
-                g = h._guest()
-                _voice.stt_remember(j.get("text", ""), j.get("seconds"), g["name"] if g else h.client_address[0],
-                             audio=payload, ctype=h.headers.get("Content-Type", ""))
+                _stt_note(h, json.loads(data), payload)
             except (ValueError, TypeError):
                 pass
     except urllib.error.HTTPError as e:
@@ -759,6 +766,16 @@ def _rt_voice(h):
     except Exception as e:
         data = json.dumps({"error": f"voice service unreachable: {e!r}"}).encode()
         ct, code = "application/json", 503
+    _voice_send(h, code, data, ct)
+
+
+def _stt_note(h, j, audio):
+    g = h._guest()
+    _voice.stt_remember(j.get("text", ""), j.get("seconds"), g["name"] if g else h.client_address[0],
+                        audio=audio, ctype=h.headers.get("Content-Type", ""))
+
+
+def _voice_send(h, code, data, ct):
     h.send_response(code)
     h.send_header("Content-Type", ct)
     h.send_header("Content-Length", str(len(data)))

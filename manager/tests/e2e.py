@@ -28,6 +28,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import wave
 import zipfile
 import http.server
 import subprocess
@@ -2885,6 +2886,61 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(m._voice.speakable_text("Siehe [Doku](https://x.y/z) und https://a.b/c."), "Siehe Doku und")
         self.assertIn("Codeblock übersprungen", m._voice.speakable_text("Hier:\n```py\nprint(1)\n```\nfertig"))
         self.assertEqual(m._voice.speakable_text(""), "")
+
+    def test_voice_openai_first_local_as_fallback(self):
+        """STT_BACKEND/TTS_BACKEND=openai: /api/stt and /api/tts answer from OpenAI
+        (TTS raw PCM wrapped as a WAV), the key goes only there; off, without a
+        key, on an unknown format or on a failure the local service answers."""
+        m = self.m
+        vc, sent, local = m._voicecloud, [], []
+        st = {"STT_BACKEND": "openai", "TTS_BACKEND": "openai", "OPENAI_API_KEY": "k1", "OPENAI_TTS_VOICE": "cedar"}
+
+        class R(io.BytesIO):
+            headers = {"Content-Type": "application/json"}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake(req, timeout=0):
+            if req.full_url.startswith("http://127.0.0.1"):
+                local.append(req.full_url)
+                return R(b'{"text": "lokal", "seconds": 1.0}')
+            sent.append(req)
+            if st.get("boom"):
+                raise OSError("down")
+            return R(b'{"text": "hallo"}' if "transcriptions" in req.full_url else b"\1\0" * 2400)
+        old = (m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok)
+        m._settings.load_settings, urllib.request.urlopen = (lambda: st), fake
+        m._util.rate_ok = lambda *a: True
+        call = lambda path, body, ctype: (lambda h: (h._do_POST(), h)[1])(self._post_handler(path, "127.0.0.1", body, ctype=ctype))
+        body = lambda h: h.wfile.getvalue().split(b"\r\n\r\n", 1)[1]
+        try:
+            self.assertEqual(json.loads(body(call("/api/stt", b"RIFFx", "audio/webm;codecs=opus")))["text"], "hallo")
+            r = sent[-1]
+            self.assertEqual(r.get_header("Authorization"), "Bearer k1")
+            self.assertIn(b'filename="audio.webm"', r.data); self.assertIn(b"gpt-transcribe", r.data); self.assertIn(b"RIFFx", r.data)
+            self.assertEqual(m._voice.stt_recent()[0]["text"], "hallo")
+            w = body(call("/api/tts", json.dumps({"text": "Guten Tag", "speed": 9}).encode(), "application/json"))
+            self.assertEqual(json.loads(sent[-1].data), {"model": "gpt-4o-mini-tts", "voice": "cedar", "input": "Guten Tag",
+                                                         "response_format": "pcm", "speed": 4.0})
+            with wave.open(io.BytesIO(w)) as f:
+                self.assertEqual((f.getframerate(), f.getsampwidth(), f.getnframes()), (24000, 2, 2400))
+            self.assertEqual(local, [])
+            # nothing speakable: a short silence, no 400, nothing sent anywhere
+            n = len(sent)
+            h = call("/api/tts", json.dumps({"text": "https://a.b/c"}).encode(), "application/json")
+            self.assertEqual((self._status(h), body(h)[:4], len(sent), local), (200, b"RIFF", n, []))
+            # an unknown format, a failure, no key, off: the local service
+            self.assertEqual(json.loads(body(call("/api/stt", b"x", "audio/amr")))["text"], "lokal")
+            self.assertEqual(len(sent), n)
+            st["boom"] = True
+            self.assertEqual(json.loads(body(call("/api/stt", b"x", "audio/wav")))["text"], "lokal")
+            st.pop("boom"); st["OPENAI_API_KEY"] = ""
+            self.assertIsNone(vc.tts("x"))
+            st["OPENAI_API_KEY"] = "k1"; st["TTS_BACKEND"] = ""
+            self.assertIsNone(vc.tts("x"))
+            self.assertEqual(len(local), 2)
+        finally:
+            m._settings.load_settings, urllib.request.urlopen, m._util.rate_ok = old
 
     def test_stt_recent_ring(self):
         """What did STT hear? Newest first, bounded, in memory only."""

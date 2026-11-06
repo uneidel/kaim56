@@ -63,6 +63,15 @@ SETTINGS_SCHEMA = [
         {"value": "de-eva_k-x_low", "label": "German · Eva K (x_low, fastest)"},
         {"value": "en-amy-medium", "label": "English · Amy (medium)"}]},
     {"key": "TTS_SPEED", "label": "TTS speed (0.5 slow … 2.0 fast, empty = 1.0)"},
+    {"key": "STT_BACKEND", "label": "Speech recognition (OpenAI: audio leaves the host; needs the OpenAI API key; falls back to Parakeet)", "options": [
+        {"value": "", "label": "Parakeet (local)"}, {"value": "openai", "label": "OpenAI"}]},
+    {"key": "OPENAI_STT_MODEL", "label": "OpenAI speech recognition model (empty = gpt-transcribe)"},
+    {"key": "TTS_BACKEND", "label": "Speech output (OpenAI: text leaves the host; needs the OpenAI API key; falls back to Piper)", "options": [
+        {"value": "", "label": "Piper (local)"}, {"value": "openai", "label": "OpenAI"}]},
+    {"key": "OPENAI_TTS_MODEL", "label": "OpenAI speech output model (empty = gpt-4o-mini-tts)"},
+    {"key": "OPENAI_TTS_VOICE", "label": "OpenAI voice", "options": [{"value": "", "label": "— marin —"}] + [
+        {"value": v, "label": v} for v in ("cedar", "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx",
+                                           "sage", "shimmer", "verse")]},
 ]
 # These values NEVER end up in instances/<name>.json and never on the microVM's
 # config disk. The agent fetches them at runtime via the secret broker
@@ -171,6 +180,9 @@ def validate_decision(d):
         return "DECISION_LOCAL_MODEL: a model id ([A-Za-z0-9._:/@+-], at most 160)"
     if max_tokens_error(d.get("LLM_MAX_TOKENS")):
         return max_tokens_error(d.get("LLM_MAX_TOKENS"))
+    for k in ("OPENAI_STT_MODEL", "OPENAI_TTS_MODEL"):
+        if not _MODEL_RE.match(str(d.get(k) or "")):
+            return f"{k}: a model id ([A-Za-z0-9._:/@+-], at most 160)"
     return ""
 
 

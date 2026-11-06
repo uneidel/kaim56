@@ -54,7 +54,7 @@ else lives in mgr/, one concern per module:
     httpd         the handler class H: auth, guest gating, dispatch
     ui            the admin page (render) with ui_css / ui_html / ui_js
   data and integrations
-    settings, about, models, chats, skills, personas, plugins, audit, voice,
+    settings, about, models, chats, skills, personas, plugins, audit, voice, voicecloud,
     browse, store, memfs, hindsight, missions, rules, mcp, katfs, irohgw,
     signal, gateway, notify, saddler, websearch, extract, haalias
   small
@@ -145,6 +145,7 @@ from mgr import ui as _ui                    # noqa: F401
 from mgr import util as _util                # noqa: F401
 from mgr import vm as _vm                    # noqa: F401
 from mgr import voice as _voice              # noqa: F401
+from mgr import voicecloud as _voicecloud    # noqa: F401
 from mgr import websearch as _websearch_mod
 from mgr import wsfiles as _wsfiles          # noqa: F401
 
