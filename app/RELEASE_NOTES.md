@@ -5,6 +5,13 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.51
+
+- **Waiting for you** now also holds the squad gates: a new squad's
+  **requirements** (Agree or Request changes) and the architect's **squad
+  plan** or other proposals (Approve or Request changes), with the plan's
+  members, models and tickets on the card. No need for the web board anymore.
+
 ## 5.50
 
 - **Waiting for you** shows a squad member's message to you ("Squad message")

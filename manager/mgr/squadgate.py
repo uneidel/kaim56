@@ -407,6 +407,35 @@ def _get(project, pid):
     return next((p for p in proposals(project) if p.get("id") == pid), None)
 
 
+def _plan_text(p):
+    """A proposal as plain text for a Waiting-for-you card (web and app)."""
+    out = [p["goal"]] if p.get("goal") else []
+    for m in p.get("members") or []:
+        how = " · ".join(x for x in (m.get("persona"), m.get("model") or m.get("model_tier"), m.get("template")) if x)
+        out.append(f"- {m['name']} ({m.get('role') or 'member'}{', existing' if m.get('existing') else ''}): "
+                   f"{how}{' — ' + m['purpose'] if m.get('purpose') else ''}")
+    ts = p.get("tickets") or []
+    if ts:
+        out.append(f"{len(ts)} tickets: " + "; ".join(f"{t['key']} {t['title']}" for t in ts[:12]) + (" …" if len(ts) > 12 else ""))
+    if p.get("budget_tokens_per_day"):
+        out.append(f"Budget: {p['budget_tokens_per_day']} tokens/day")
+    if p.get("summary"):
+        out.append(p["summary"])
+    return "\n".join(out)[:4000]
+
+
+def waiting(names):
+    """The pending proposals of these projects as Waiting-for-you items, derived on
+    each read (the board decides them too); id prop-<pid>-<project>."""
+    title = {"squad": "Squad plan", "member": "New member", "merge": "Merge", "review": "Result review",
+             "toolchain": "Toolchain"}
+    return [{"id": f"prop-{p['id']}-{p['project']}", "kind": "proposal", "status": "open", "instance": p["by"],
+             "project": p["project"], "prop_kind": p["kind"],
+             "title": f"{title.get(p['kind'], p['kind'])}: {_subject(p) or p['project']}", "detail": _plan_text(p),
+             "created": p.get("updated") or p.get("created") or 0}
+            for p in _load()["proposals"] if p.get("project") in names and p.get("status") == "pending"]
+
+
 def _put(prop):
     with _lock:
         d = _load()

@@ -1833,7 +1833,7 @@ async function skLoad(){
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
   let hq=[];
-  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name&&x.kind!=='squad_post')}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
+  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name&&!['squad_post','requirements','proposal'].includes(x.kind))}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
   if(SK!==name)return;
   const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify((p.members||[]).map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(p=>safe('card',sqCard,p)).join('')+hq.map(x=>safe('card',hqCard,x)).join('')}   /* never under the user's edits */
@@ -2222,7 +2222,7 @@ setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads')loadSquads()},20000);
 /* — human in the loop: approvals, questions, reviews that wait for you (mgr/hitlq.py) — */
 let WAIT=[];
-const HQ_KIND={approval:'Approval',question:'Question',review:'Review',squad_post:'Squad message'};
+const HQ_KIND={approval:'Approval',question:'Question',review:'Review',squad_post:'Squad message',requirements:'Requirements',proposal:'Proposal'};
 async function loadWaiting(){
   let d={}; try{d=await (await fetch('/api/waiting?status=open')).json()}catch(e){return WAIT}
   if(d.error)return WAIT;
@@ -2237,6 +2237,8 @@ function hqCard(it){
   const foot=it.kind==='squad_post'?inp('Your reply')+`<button class="btn btn-secondary" data-p="${esc(it.project)}" onclick="sqToSquads(this.dataset.p)">Open squad</button>`+
       `<button class="btn btn-secondary" onclick="hqRead('${id}',this)">Mark read</button><button class="btn btn-primary" onclick="hqReply('${id}',this)">Reply</button>`   /* a member's post to you: the reply goes to the channel */
     :it.kind==='question'?inp('Your answer')+b('btn-primary','answer','Answer')
+    :it.kind==='requirements'||it.kind==='proposal'?inp('Comment (required for Request changes)')+`<button class="btn btn-secondary" data-p="${esc(it.project)}" onclick="sqToSquads(this.dataset.p)">Open squad</button>`+   /* a squad gate: the board decides it too */
+      (it.prop_kind==='merge'?b('btn-secondary','deny','Reject'):b('btn-secondary','request_changes','Request changes'))+b('btn-primary','approve',it.kind==='requirements'?'Agree':'Approve')
     :it.kind==='review'?inp('Comment (required for Request changes)')+b('btn-secondary','request_changes','Request changes')+b('btn-primary','approve','Approve')
     :inp('Comment (optional)')+b('btn-secondary','deny','Deny')+b('btn-primary','approve','Approve');
   return `<div class=sq-card data-hq="${id}"><div class=sq-head><b>${HQ_KIND[it.kind]||escT(it.kind)} · ${escT(it.title)}</b>`+

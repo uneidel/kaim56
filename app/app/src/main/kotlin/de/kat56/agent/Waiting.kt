@@ -8,7 +8,7 @@ import org.json.JSONObject
 /** Something an agent cannot go on without you: an approval, a question or a review. */
 data class WaitingItem(
     val id: String,
-    val kind: String,          // approval | question | review | squad_post (a member's message to you)
+    val kind: String,          // approval | question | review | squad_post (a member's message to you) | requirements | proposal (the squad gates)
     val status: String,
     val created: String,
     val project: String,
@@ -119,13 +119,14 @@ class WaitingClient(private val mc: ManagerClient) {
             "question" -> listOf("answer")
             "review" -> listOf("approve", "request_changes")
             "squad_post" -> listOf("answer", "read")      // the reply goes to the member in the squad channel
+            "requirements", "proposal" -> listOf("approve", "request_changes")   // the squad gates (a merge: changes = reject)
             else -> emptyList()
         }
 
         /** Why this decision cannot be sent yet, or null when it can. */
         fun check(kind: String, action: String, text: String, choice: String): String? = when {
             action !in actionsFor(kind) -> "Not possible for a $kind"
-            kind == "review" && action == "request_changes" && text.isBlank() -> "Say what should change"
+            action == "request_changes" && text.isBlank() -> "Say what should change"
             kind == "question" && text.isBlank() && choice.isBlank() -> "Type or choose an answer"
             kind == "squad_post" && action == "answer" && text.isBlank() -> "Type a reply"
             else -> null

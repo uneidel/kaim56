@@ -96,6 +96,12 @@ class WaitingTest {
         assertNotNull(WaitingClient.check("squad_post", "answer", " ", ""))
         assertNull(WaitingClient.check("squad_post", "answer", "OSM", ""))
         assertNull(WaitingClient.check("squad_post", "read", "", ""))
+        for (gate in listOf("requirements", "proposal")) {
+            assertEquals(listOf("approve", "request_changes"), WaitingClient.actionsFor(gate))
+            assertNull(WaitingClient.check(gate, "approve", "", ""))
+            assertNotNull(WaitingClient.check(gate, "request_changes", "", ""))
+            assertNull(WaitingClient.check(gate, "request_changes", "one coder less", ""))
+        }
     }
 
     @Test

@@ -6926,6 +6926,52 @@ class ManagerFunctions(unittest.TestCase):
             m._mounts.AGENT_ROOT = old_root
             undo()
 
+    def test_squad_gates_wait_for_you(self):
+        """The squad gates are Waiting-for-you cards (web and app): the drafting
+        requirements (Agree / Request changes) and a pending proposal (Approve /
+        Request changes) — derived, so the board decides them too (2026-11-07:
+        an "agreed" in the chat did nothing, the board button was missed)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        A, L = "172.30.3.2", "127.0.0.1"
+        old_root = m._mounts.AGENT_ROOT
+        m._mounts.AGENT_ROOT = tempfile.mkdtemp(prefix="e2e-gates-")
+        ids = lambda: {x["id"]: x for x in self._sq("/api/waiting", L)[1]["items"]}
+        try:
+            m._squads.save_settings("sq", {**m._squads.settings(m._projects.get("sq")), "requirements": "drafting"})
+            self.assertNotIn("req-sq", ids())                                  # no document yet
+            os.makedirs(os.path.join(m._mounts.AGENT_ROOT, "a"))
+            with open(os.path.join(m._mounts.AGENT_ROOT, "a", "REQUIREMENTS.md"), "w") as fh:
+                fh.write("# Goal\nSell books.\n")
+            it = ids()["req-sq"]
+            self.assertEqual((it["kind"], it["project"]), ("requirements", "sq")); self.assertIn("Sell books.", it["detail"])
+            self.assertEqual(self._sq("/api/waiting/req-sq", L, {"action": "request_changes"})[0], 400)   # text required
+            del woke[:]
+            self.assertEqual(self._sq("/api/waiting/req-sq", L, {"action": "request_changes", "text": "add eBay"})[0], 200)
+            self.assertEqual(woke[-1][0], "a"); self.assertIn("add eBay", woke[-1][1])
+            st, d = self._sq("/api/waiting/req-sq", L, {"action": "approve"})
+            self.assertEqual((st, d["item"]["status"]), (200, "approved"), d)
+            self.assertEqual(m._squads.settings(m._projects.get("sq"))["requirements"], "agreed")
+            self.assertNotIn("req-sq", ids())
+            self.assertEqual(self._sq("/api/waiting/req-sq", L, {"action": "approve"})[0], 409)       # decided already
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            it = ids()[f"prop-{pid}-sq"]
+            self.assertEqual((it["kind"], it["prop_kind"], it["title"]), ("proposal", "squad", "Squad plan: sq"))
+            for mb in self._SG_PLAN["members"]:
+                self.assertIn(mb["name"], it["detail"])
+            st, d = self._sq(f"/api/waiting/prop-{pid}-sq", L, {"action": "request_changes", "text": "one coder less"})
+            self.assertEqual((st, d["item"]["status"]), (200, "changes_requested"), d)
+            self.assertNotIn(f"prop-{pid}-sq", ids())                          # now the lead's turn
+            pid2 = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]   # v2
+            st, d = self._sq(f"/api/waiting/prop-{pid2}-sq", L, {"action": "approve"})
+            self.assertEqual((st, d["item"]["status"]), (200, "approved"), d)
+            self.assertTrue(m._squadgate.approved(m._projects.get("sq")))
+            self.assertEqual(self._sq("/api/waiting/prop-0000000000-sq", L, {"action": "approve"})[0], 404)
+            self.assertFalse(m._auth.user_allowed("POST", "/api/waiting/req-sq"))
+        finally:
+            m._mounts.AGENT_ROOT = old_root
+            undo()
+
     def test_squadgate_trusted_squad_merges_without_the_operator(self):
         """Trusted: a merge proposal is decided at once (auto) and a done ticket
         merges its writer; supervised: both wait for the operator (live

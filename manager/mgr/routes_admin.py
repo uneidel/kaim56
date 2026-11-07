@@ -492,7 +492,9 @@ def _rt_waiting(h):
     st = _routes._qs(h).get("status", ["open"])[0]
     lst = _hitlq.items(st)
     if st == "open":                         # + a member's squad post to the operator, not answered yet
-        sq = [p["name"] for p in _projects.load() if _squads.settings(p)["enabled"]]
+        sqp = [p for p in _projects.load() if _squads.settings(p)["enabled"]]
+        sq = [p["name"] for p in sqp]
+        lst += _squadreq.waiting(sqp) + _squadgate.waiting(sq)    # the squad gates: agree, approve a plan
         lst += [{"id": f"msg-{m['id']}", "kind": "squad_post", "status": "open", "instance": m["from"],
                  "project": m["project"], "msg_id": m["id"], "title": m["text"][:120], "detail": m["text"],
                  "created": m["ts"]} for m in _squads.to_operator(sq)]
@@ -515,6 +517,43 @@ def _waiting_post(h, mid, b):
     return h._json({"ok": True}) if ok else h._json({"error": why}, 404)
 
 
+def _waiting_gate(h, iid, b):
+    # req-<project> | prop-<pid>-<project>: {action: approve | request_changes + text | deny} — the board's decisions
+    act, text, who = str(b.get("action") or ""), str(b.get("text") or "").strip(), _who(h)
+    if act not in ("approve", "request_changes", "deny"):
+        return h._json({"error": "action must be approve, request_changes or deny"}, 400)
+    if act == "request_changes" and not text:
+        return h._json({"error": "request_changes: text required (what should change)"}, 400)
+    if iid.startswith("req-"):
+        p = _projects.get(iid[4:])
+        if p is None:
+            return h._json({"error": "unknown squad"}, 404)
+        if act == "approve":
+            r, why = _squadreq.agree(p, who)
+        elif act == "deny":
+            return h._json({"error": "requirements: approve or request_changes"}, 400)
+        else:
+            r, why = _squadgate.operator_post(p, who, {"to": [_squadreq.engineer(p) or _squadgate.lead(p)],
+                                                       "text": "Requirements: please change — " + text})
+        kind = "requirements"
+    else:
+        pid, name = iid[5:15], iid[16:]
+        prop = _squadgate._get(name, pid)
+        if prop is None:
+            return h._json({"error": "unknown proposal"}, 404)
+        if act == "request_changes" and prop["kind"] != "merge":
+            r, why = _squadgate.request_changes(name, pid, who, text)
+        else:                                # a merge has no revision: changes = reject with the note
+            r, why = _squadgate.decide(name, pid, act == "approve", who, text)
+        kind = "proposal"
+    if not r:
+        return h._json({"error": why}, 409 if "already" in why else 400)
+    return h._json({"ok": True, "item": {"id": iid, "kind": kind, "status": DONE_GATE[act]}})
+
+
+DONE_GATE = {"approve": "approved", "request_changes": "changes_requested", "deny": "denied"}
+
+
 @_routes.ROUTER.post("/api/waiting/", prefix=True, admin=True)
 def _rt_waiting_decide(h):
     # {action: approve|deny|answer|request_changes, text, choice} — admin only (role user reads)
@@ -522,6 +561,8 @@ def _rt_waiting_decide(h):
     b = h._body() or {}
     if iid.startswith("msg-"):               # a squad post to the operator (mgr/squads.to_operator): answer or mark read
         return _waiting_post(h, iid[4:], b)
+    if iid.startswith(("req-", "prop-")):    # a squad gate (mgr/squadreq.py, mgr/squadgate.py)
+        return _waiting_gate(h, iid, b if isinstance(b, dict) else {})
     if not isinstance(b, dict) or str(b.get("action")) not in _hitlq.DONE:
         return h._json({"error": "action must be approve, deny, answer or request_changes"}, 400)
     pr = getattr(h, "principal", None)

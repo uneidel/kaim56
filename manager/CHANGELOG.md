@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-07
 
+- Squad gates in Waiting for you (web, app): the drafting requirements (Agree / Request changes) and a pending proposal (Approve / Request changes; a merge: Reject) — derived items `req-<project>` and `prop-<pid>-<project>`, the board decides them too; the engineer never marks them agreed itself.
 - New squad: the requirements engineer asks its interview questions with ask_human (buttons, Waiting for you) instead of inline squad posts.
 - New squad, Repo: new (empty): the project name has its own field (API `name`); the text is the idea only.
 - Tasks tab: "Delete all done" also deletes one-off tasks in error, now "Delete done and errors".

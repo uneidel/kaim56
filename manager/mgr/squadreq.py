@@ -40,8 +40,10 @@ INTERVIEW = (
     "who uses it, what is in and what is out of scope, acceptance criteria (testable), constraints "
     "(platform, stack, security, budget), and risks. Propose answers when you can, so I only confirm. "
     f"Keep {FILE} at the top of your workspace current after every answer, with the sections Goal, Users, "
-    "Scope, Out of scope, Acceptance criteria, Constraints, Open questions. Do not call squad_propose: "
-    "it is refused until I mark the requirements agreed on the board.")
+    "Scope, Out of scope, Acceptance criteria, Constraints, Open questions. When nothing important is open, "
+    "tell me they are ready: I agree with the Requirements card in Waiting for you (or on the board). "
+    "Never mark them agreed yourself — an 'agreed' in the chat is not the agreement. Do not call "
+    "squad_propose: it is refused until I agree.")
 # what the ephemeral engineer is told on top (mgr/squadkick.step_post)
 ENGINEER = ("You are the squad's requirements engineer, only for this phase: you write no code and plan "
             "nothing. When I mark the requirements agreed, the architect {arch} gets {file} and plans the "
@@ -79,6 +81,23 @@ def read(proj):
 def view(proj):
     return {"state": _squads.settings(proj).get("requirements", "agreed"), "text": read(proj), "file": FILE,
             "engineer": engineer(proj)}
+
+
+def waiting(projects):
+    """Drafting squads with a document as Waiting-for-you items (derived on each read;
+    the board agrees too); id req-<project>."""
+    out = []
+    for p in projects:
+        doc = read(p) if _squads.settings(p).get("requirements") == "drafting" else ""
+        if doc.strip():
+            try:
+                ts = int(os.lstat(path(p)).st_mtime)
+            except OSError:
+                ts = 0
+            out.append({"id": "req-" + p["name"], "kind": "requirements", "status": "open",
+                        "instance": engineer(p) or _squadgate.lead(p), "project": p["name"],
+                        "title": f"Requirements of {p['name']}: agree when complete", "detail": doc[:4000], "created": ts})
+    return out
 
 
 def write_doc(inst, fname, text):
