@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-07
+
+- Web UI: user, notification bell and logout sit below the logo; the notification panel opens at the top.
+
 ## 2026-11-06
 
 - Voice: OpenAI speech output runs on the Realtime API (gpt-realtime-2.1-mini; /v1/audio/speech shuts down 2027-01-06); a reply that is no reading of the text goes to Piper.

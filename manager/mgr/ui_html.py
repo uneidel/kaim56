@@ -16,6 +16,15 @@ HTML_TOP = """</head><body>
 <aside class=side id=side>
   <div class=brand><div class=brand-mark>__LOGO__</div>
     <div class=brand-txt><b>kAIm56</b><span>Agent cloud</span></div></div>
+  <div class=user>
+    <div class=avatar id=uavatar>A</div>
+    <div class=uinfo><span id=uname>Admin</span><span id=urole>basic</span></div>
+    <button class=iconbtn id=nbell onclick=notifToggle() title="Notifications" aria-label=Notifications>
+      <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+      <span class=nbadge id=nbadge hidden>0</span>
+    </button>
+    <button class=iconbtn id=whoami onclick=whoLogout() title="Log out" aria-label="Log out" hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5M21 12H9"></path></svg></button>
+  </div>
   <nav class=nav id=nav aria-label=Pages>
     <div class=navgrp><div class=navlbl>Agents</div>
       <a href="#instances"><span>Instances</span> <span class=navcnt id=navcnt></span></a>
@@ -47,15 +56,6 @@ HTML_TOP = """</head><body>
     </div>
   </nav>
   <div class=cgauges id=cgauges aria-label="Claude usage" hidden></div>
-  <div class=user>
-    <div class=avatar id=uavatar>A</div>
-    <div class=uinfo><span id=uname>Admin</span><span id=urole>basic</span></div>
-    <button class=iconbtn id=nbell onclick=notifToggle() title="Notifications" aria-label=Notifications>
-      <svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
-      <span class=nbadge id=nbadge hidden>0</span>
-    </button>
-    <button class=iconbtn id=whoami onclick=whoLogout() title="Log out" aria-label="Log out" hidden><svg width=16 height=16 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=1.5 stroke-linecap=round stroke-linejoin=round><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5M21 12H9"></path></svg></button>
-  </div>
 </aside>
 <div class=npanel id=npanel hidden>
   <div class=nhead><b>Notifications</b><button class="btn btn-ghost" style="font-size:12px" onclick=notifClear()>Clear</button></div>
