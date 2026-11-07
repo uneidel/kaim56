@@ -435,7 +435,7 @@ mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);b
 /* new squad as a form: repo · architect · suggestions / the description / team · start */
 .sk-kick>.sk-comp{display:grid;grid-template-columns:auto auto auto 1fr;gap:8px;align-items:center;margin-top:4px}
 .sk-kick>.sk-comp>select{width:auto;max-width:100%}.sk-kick #sk-repo{order:-1}
-.sk-kick .sk-inwrap{grid-column:1/-1;grid-row:2}.sk-kick #sk-text{min-height:14em;line-height:1.5}
+.sk-kick .sk-inwrap{grid-column:1/-1;grid-row:2}.sk-field[hidden]{display:none}.sk-kick #sk-text{min-height:14em;line-height:1.5}
 .sk-kick #sk-send{grid-column:4;grid-row:3;justify-self:end;align-self:start;padding-inline:20px}
 .sk-kick #sk-teambox{grid-column:1/4;grid-row:3;align-self:start;padding-top:6px}.sk-kick #sk-teambox>summary{cursor:pointer;font-size:13px;color:var(--color-neutral-600)}
 .sk-kick #sk-chatbox:not(:has(.sk-bub)){display:none}

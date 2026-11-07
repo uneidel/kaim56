@@ -369,6 +369,7 @@ HTML_TOP = """</head><body>
           <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select></label>
         <label class="sk-field sk-field-repo"><span>Repository</span><select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, a new empty repo, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select></label>
+        <label class="sk-field sk-field-name" id=sk-namef hidden><span>Project name</span><input class=input id=sk-name maxlength=20 placeholder="e.g. tankstellen-app" aria-label="Project name" autocomplete=off></label>
         <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><label class="sk-input-label" for="sk-text"><span class="kick-label">Goal & context</span><span class="chat-label">Message the squad</span></label><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput="skAt();skGrow(this)" onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
@@ -932,7 +933,7 @@ HTML_BOTTOM = """
   <code>squad/&#8249;writer&#8250;/…</code>, merging stays with the user.
   <b>Squad kickoff</b> (<code>mgr/squadkick.py</code>, Squads page, admin): a repo URL + goal → host-side clone into
   <code>SQUADS_DIR/&#8249;id&#8250;__&#8249;name&#8250;/projects/&#8249;name&#8250;/repo</code> (token secret <code>SQUAD_GIT_TOKEN_&#8249;HOST&#8250;</code>, size cap), worktree project, remote,
-  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made. <i>Repo: new (empty)</i>: the first line names it, a local
+  <code>&#8249;name&#8250;-architect</code> as lead, squad enabled but not approved, the goal posted to the architect; a failure removes what the job made. <i>Repo: new (empty)</i>: its own Project name field names it, a local
   <code>git init</code> with an empty first commit on main instead of the clone, no remote.
   <b>Deploy target &#8220;instance&#8221;</b> (<code>mgr/deploy.py</code>, Squads &#8594; Deploy, lead tool <code>project_deploy</code>): the base branch as a
   service in its own VM <code>svc-&#8249;project&#8250;</code> &#8212; the squad&#8217;s base image + toolchain layer, a read-only release image

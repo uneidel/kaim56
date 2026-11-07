@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-07
 
+- New squad, Repo: new (empty): the project name has its own field (API `name`); the text is the idea only.
 - Tasks tab: "Delete all done" also deletes one-off tasks in error, now "Delete done and errors".
 - Web UI: user, notification bell and logout sit below the logo; the notification panel opens at the top.
 

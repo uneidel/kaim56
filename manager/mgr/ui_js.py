@@ -1733,7 +1733,8 @@ async function skRepos(){
 }
 function skRepoPick(){
   const r=document.getElementById('sk-repo').value;
-  document.getElementById('sk-text').placeholder=r==='__new__'?'Name of the new project (first line, e.g. tankstellen-app)\\n\\nThen your idea — the requirements engineer and the architect (@mention) discuss it with you before any member is set up.\\n\\nCtrl+Enter starts the squad.'
+  document.getElementById('sk-namef').hidden=!!SK||r!=='__new__';
+  document.getElementById('sk-text').placeholder=r==='__new__'?'Your idea — the requirements engineer and the architect (@mention) discuss it with you before any member is set up.\\n\\nCtrl+Enter starts the squad.'
     :r?'What should the squad do in '+r+'? Describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.'
     :'https://github.com/owner/repo (an empty repo is fine)\\n\\nThen describe the goal — the requirements engineer asks the rest.\\n\\nCtrl+Enter starts the squad.';
   const b=document.getElementById('sk-send'); if(b)b.textContent=SK?'Send':'Start squad';
@@ -1774,7 +1775,7 @@ function skPick(name){
   if(document.getElementById('sq-panel').style.display!=='none')sqLoad();   /* the open Settings follow the squad */
   document.getElementById('sk-status').dataset.h='';
   document.getElementById('sk-text').placeholder='message the lead, or @member / @all …';
-  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;document.getElementById('sk-send').textContent='Send';
+  document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-namef').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;document.getElementById('sk-send').textContent='Send';
   document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
 }
 /* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */
@@ -2209,12 +2210,12 @@ async function skSend(){
   try{
     d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
        :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
-         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value==='__new__'?'':document.getElementById('sk-repo').value,new:document.getElementById('sk-repo').value==='__new__',
+         body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value==='__new__'?'':document.getElementById('sk-repo').value,new:document.getElementById('sk-repo').value==='__new__',name:document.getElementById('sk-name').value,
            team:document.getElementById('sk-team').value,decision:document.getElementById('sk-dec').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;
-  el.value=''; el.style.height='';
+  el.value=''; el.style.height=''; document.getElementById('sk-name').value='';
   if(SK)skLoad(); else {skJob(d.id);loadSquads()}
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5000);

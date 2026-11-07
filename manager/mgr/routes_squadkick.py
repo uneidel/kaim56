@@ -10,7 +10,8 @@
 - ``GET /api/squads/<name|id>/metrics/events?since=&kind=&limit=&format=csv``
   and ``…/metrics/summary?since=`` (mgr/squadmetrics.py; also role "user").
 - admin only (default deny in mgr/auth.py): ``POST /api/squads/kickoff``
-  {text, architect_template?: openrouter|claude, project?: an existing repo instead of a URL in text},
+  {text, architect_template?: openrouter|claude, project?: an existing repo instead of a URL in text,
+  new?: true + name: a new, empty repo of that name},
   ``GET /api/squads/kickoff`` (the jobs), ``GET …/kickoff/<id>`` (one,
   polled), ``POST …/kickoff/<id>/retry``.
 
@@ -54,8 +55,8 @@ def _rt_kick_post(h):
     rest = h.path.split("?", 1)[0][len(_KICK):].strip("/")
     b = h._body() or {}
     who = _who(h)
-    if not rest and b.get("new"):            # a squad on a new, empty repo (first line = its name)
-        j, why = _squadkick.start_new(b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))
+    if not rest and b.get("new"):            # a squad on a new, empty repo, named by "name"
+        j, why = _squadkick.start_new(b.get("name"), b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))
     elif not rest and b.get("project"):      # a squad on an existing repo (no clone)
         j, why = _squadkick.start_repo(b.get("project"), b.get("text"), who, b.get("architect_template"), b.get("team"), b.get("decision"))
     elif not rest:

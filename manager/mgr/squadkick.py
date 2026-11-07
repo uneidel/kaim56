@@ -208,8 +208,8 @@ def start(text, who, architect_template="", team=None, decision=""):
     return view(job), ""
 
 
-def start_new(text, who, architect_template="", team=None, decision=""):
-    """A squad on a new, empty local repo: the first line of `text` names it, the rest
+def start_new(name, text, who, architect_template="", team=None, decision=""):
+    """A squad on a new, empty local repo: `name` names it, `text`
     is the idea -> (job view, '') or (None, why). The steps run in a thread (STEPS_NEW)."""
     tpl = str(architect_template or "openrouter").strip()
     if tpl not in _squadgate.MEMBER_TEMPLATES:
@@ -217,12 +217,11 @@ def start_new(text, who, architect_template="", team=None, decision=""):
     ok, why = _squads.normalize_settings({"decision": decision})
     if ok is None:
         return None, why
-    first, _, goal = str(text or "").strip().partition("\n")
-    want, goal = re.sub(r"[^a-z0-9]+", "-", first.strip().lower()).strip("-"), goal.strip()
+    want, goal = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-"), str(text or "").strip()
     if not want or len(want) > NAME_MAX:
-        return None, f"the first line is the project's name: a-z 0-9 -, at most {NAME_MAX} characters"
+        return None, f"the project name: a-z 0-9 -, at most {NAME_MAX} characters"
     if not goal:
-        return None, "describe the idea below the name"
+        return None, "describe the idea"
     if len(goal) > GOAL_MAX:
         return None, f"the goal is longer than {GOAL_MAX} characters"
     with _lock:

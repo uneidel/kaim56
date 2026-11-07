@@ -12959,16 +12959,16 @@ class ManagerFunctions(unittest.TestCase):
         return srv, f"http://127.0.0.1:{srv.server_address[1]}/", seen
 
     def test_squadkick_new_empty_repo(self):
-        """Repo: new (empty): the first line names the project, the rest is the idea — a local
+        """Repo: new (empty): the Project name field names it, the text is the idea — a local
         git repo with an empty first commit on main, no remote, the engineer interviews first."""
         m = self.m
         tmp, bare, woke, created, calls, undo = self._kick_env()
         k, L = m._squadkick, "127.0.0.1"
         try:
-            for text, why in (("idea only", "describe the idea"), ("!!!\nidea", "first line is the project's name"),
-                              ("a" * 30 + "\nidea", "first line is the project's name")):
-                self.assertIn(why, self._sq("/api/squads/kickoff", L, {"new": True, "text": text})[1].get("error", ""))
-            st, j = self._sq("/api/squads/kickoff", L, {"new": True, "text": "Tank App!\nfind cheap fuel near me"})
+            for name, text, why in (("tank", "", "describe the idea"), ("", "idea", "the project name"),
+                                    ("!!!", "idea", "the project name"), ("a" * 30, "idea", "the project name")):
+                self.assertIn(why, self._sq("/api/squads/kickoff", L, {"new": True, "name": name, "text": text})[1].get("error", ""))
+            st, j = self._sq("/api/squads/kickoff", L, {"new": True, "name": "Tank App!", "text": "find cheap fuel near me"})
             self.assertEqual((st, j["name"], j["arch"]), (200, "tank-app", "tank-app-architect"), j)
             j = k.get(j["id"])
             self.assertEqual(j["status"], "done", j["log"])
@@ -12981,7 +12981,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual([w[0] for w in woke], ["tank-app-req"])
             self.assertIn("find cheap fuel near me", woke[0][1])
             self.assertEqual(m._squads.settings(p)["requirements"], "drafting")
-            self.assertIn("is taken", self._sq("/api/squads/kickoff", L, {"new": True, "text": "tank-app\nagain"})[1]["error"])
+            self.assertIn("is taken", self._sq("/api/squads/kickoff", L, {"new": True, "name": "tank-app", "text": "again"})[1]["error"])
         finally:
             undo()
 
