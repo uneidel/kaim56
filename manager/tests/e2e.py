@@ -6921,6 +6921,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._sq("/api/squad/propose", A, self._SG_PLAN)[0], 200)
             self.assertEqual(self._sq("/api/projects/sq/squad/requirements", L, {})[0], 400)    # agreed already
             self.assertIn("ONE question at a time", sys.modules["mgr.squadreq"].INTERVIEW)
+            self.assertIn("with ask_human", sys.modules["mgr.squadreq"].INTERVIEW)
         finally:
             m._mounts.AGENT_ROOT = old_root
             undo()

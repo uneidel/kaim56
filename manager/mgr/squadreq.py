@@ -35,7 +35,8 @@ SUFFIX = "-req"                # the engineer's instance: <squad>-req
 
 INTERVIEW = (
     "Before any plan, work out the requirements with me — you are the requirements engineer now. "
-    "Ask ONE question at a time (squad_post to me) until nothing important is open: the problem and goal, "
+    "Ask ONE question at a time with ask_human (options, your recommendation first; never as a squad_post) "
+    "until nothing important is open: the problem and goal, "
     "who uses it, what is in and what is out of scope, acceptance criteria (testable), constraints "
     "(platform, stack, security, budget), and risks. Propose answers when you can, so I only confirm. "
     f"Keep {FILE} at the top of your workspace current after every answer, with the sections Goal, Users, "
