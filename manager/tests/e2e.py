@@ -3816,8 +3816,8 @@ class ManagerFunctions(unittest.TestCase):
             m._tasks._run_ephemeral, m._tasks._run_named, st.TASKS_FILE = old_eph, old_named, old_file
 
     def test_tasks_delete_all_done(self):
-        """Tasks tab "Delete all done": one-off done tasks go, recurring and
-        open/error ones stay; admin only (role user may not)."""
+        """Tasks tab "Delete done and errors": one-off done and error tasks go,
+        recurring and open ones stay; admin only (role user may not)."""
         m = self.m
         import mgr.store as st
         old_file = st.TASKS_FILE
@@ -3829,8 +3829,8 @@ class ManagerFunctions(unittest.TestCase):
             h = self._post_handler("/api/tasks/done/delete", "127.0.0.1", b"{}")
             h._do_POST()
             self.assertEqual(self._status(h), 200)
-            self.assertIn(b"2 done task(s) deleted", h.wfile.getvalue())
-            self.assertEqual(sorted(t["id"] for t in st.load_tasks()), sorted([c["id"], d["id"], r["id"]]))
+            self.assertIn(b"3 finished task(s) deleted", h.wfile.getvalue())
+            self.assertEqual(sorted(t["id"] for t in st.load_tasks()), sorted([d["id"], r["id"]]))
             self.assertFalse(m._auth.user_allowed("POST", "/api/tasks/done/delete"))
         finally:
             st.TASKS_FILE = old_file
