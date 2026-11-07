@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-07
+- Waiting for you: the 15 s refresh no longer wipes a comment you are typing (text, focus and caret are carried over).
 
 - Squad gates in Waiting for you (web, app): the drafting requirements (Agree / Request changes) and a pending proposal (Approve / Request changes; a merge: Reject) — derived items `req-<project>` and `prop-<pid>-<project>`, the board decides them too; the engineer never marks them agreed itself.
 - New squad: the requirements engineer asks its interview questions with ask_human (buttons, Waiting for you) instead of inline squad posts.

@@ -2248,8 +2248,12 @@ function hqCard(it){
     ((it.options||[]).length?'<div class=hq-opts>'+it.options.map(o=>`<button class="btn btn-secondary btn-sm" data-choice="${esc(o)}" onclick="hqAct('${id}','answer',this)">${escT(o)}</button>`).join('')+'</div>':'')+
     `<div class=sq-foot>${foot}</div></div>`;
 }
-function hqRender(){
-  document.getElementById('wait-list').innerHTML=WAIT.length?WAIT.map(hqCard).join(''):'<span class=text-muted style="font-size:13px">Nothing waits for you.</span>';
+function hqRender(){   /* the 15 s poll re-renders: carry typed text, focus and caret over */
+  const l=document.getElementById('wait-list'), typed={}, a=document.activeElement, fid=a&&l.contains(a)&&a.closest('[data-hq]')?.dataset.hq, cur=fid&&a.selectionStart;
+  l.querySelectorAll('[data-hq] [data-k=text]').forEach(t=>{if(t.value)typed[t.closest('[data-hq]').dataset.hq]=t.value});
+  l.innerHTML=WAIT.length?WAIT.map(hqCard).join(''):'<span class=text-muted style="font-size:13px">Nothing waits for you.</span>';
+  l.querySelectorAll('[data-hq]').forEach(c=>{const t=c.querySelector('[data-k=text]'); if(!t)return; t.value=typed[c.dataset.hq]||'';
+    if(c.dataset.hq===fid&&t.value){t.focus(); t.setSelectionRange(cur,cur)}});
 }
 async function hqAct(id,action,btn){
   const c=btn.closest('[data-hq]'), t=c.querySelector('[data-k=text]'), text=t?t.value.trim():'', choice=btn.dataset.choice||'';
