@@ -11307,8 +11307,8 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(self._sq("/api/deploy/nope", L)[0], 404)
         st, j = self._sq("/api/deploy/svc1", L)
         self.assertEqual((st, j["state"], j["spec"]["port"], j["url"]), (200, "none", 8080, "/d/svc1/"))
-        self.assertIn("set the deploy spec", self._sq("/api/deploy/svc1", L, {"action": "deploy"})[1]["error"])
-        for bad, why in (({"start": ""}, "start:"), ({"start": "x", "port": 80}, "port:"),
+        self.assertIn("no start command", self._sq("/api/deploy/svc1", L, {"action": "deploy"})[1]["error"])
+        for bad, why in (({"start": "x", "port": 80}, "port:"),
                          ({"start": "x", "mem": 99999}, "mem:"), ({"start": "x", "vcpus": "many"}, "numbers")):
             self.assertIn(why, self._sq("/api/deploy/svc1", L, {"spec": bad})[1]["error"])
         st, j = self._sq("/api/deploy/svc1", L, {"spec": {"build": "pip install -r req.txt", "start": "python3 server.py",
@@ -11328,6 +11328,28 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn(a, boot)
         self.assertEqual([x["is_read_only"] for x in vc["drives"]], [True, True, True, False, True, False])
         self.assertEqual((vc["machine-config"]["mem_size_mib"], vc["machine-config"]["vcpu_count"]), (512, 2))
+
+    def test_deploy_spec_from_deploy_json_in_the_base_branch(self):
+        """build/start/port come from deploy.json of the base branch (the squad's), RAM/vCPUs stay the operator's;
+        without one the operator's spec; a broken one says so."""
+        m, d = self.m, self.m._deploy
+        tmp, repo = self._deploy_env()
+        proj = m._projects.get("svc1")
+        d.save_spec("svc1", {"start": "op start", "port": 3000, "mem": 512})
+        self.assertEqual(d.effective(proj)[0]["start"], "op start")
+        g = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        _wtext(os.path.join(repo, "deploy.json"), json.dumps({"build": "npm ci", "start": "node s.js", "port": 8081, "mem": 8000}))
+        subprocess.run(g + ["add", "-A"], check=True); subprocess.run(g + ["commit", "-qm", "spec"], check=True)
+        s, why = d.effective(proj)
+        self.assertEqual((s["build"], s["start"], s["port"], s["mem"], why), ("npm ci", "node s.js", 8081, 512, ""))
+        st = d.status("svc1")
+        self.assertEqual((st["run_spec"]["start"], st["spec_error"]), ("node s.js", ""))
+        _wtext(os.path.join(repo, "deploy.json"), "{nope")
+        subprocess.run(g + ["commit", "-qam", "broken"], check=True)
+        self.assertIn("not JSON", d.effective(proj)[1])
+        _wtext(os.path.join(repo, "deploy.json"), json.dumps({"start": "x", "port": 80}))
+        subprocess.run(g + ["commit", "-qam", "port"], check=True)
+        self.assertIn("deploy.json: port", d.effective(proj)[1])
 
     def test_deploy_secrets_reach_the_config_never_a_read(self):
         """The operator's secrets for a service: validated, env on the config disk (the spec's keys win),

@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-07
+- Service VM: build, start and port come from deploy.json in the base branch (the squad writes it), the operator keeps RAM, vCPUs and secrets; the Deploy row shows what will run.
 - Deploy dialog: secrets save on their own, an unfinished spec (no Start yet) no longer drops them.
 - Squad → Approvals shows the same items as Waiting for you (requirements, member messages too); replies there refresh the squad page.
 - Service VM (Deploy): secrets per project — NAME=value in the Deploy dialog, env of build and start; reads show names only, a channel note never carries a value.

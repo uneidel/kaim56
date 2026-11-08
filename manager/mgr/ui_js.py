@@ -1911,12 +1911,13 @@ function tcClose(){document.getElementById('tcdlg').style.display='none'}
 function skDpRow(dp){
   const el=document.getElementById('sk-dp'); if(!el)return;
   if(!dp||dp.error){el.innerHTML=dp&&dp.error?`<span class=text-muted>Deploy: ${escT(dp.error)}</span>`:'';return}
-  const st=dp.state||'none', sp=dp.spec||{}, b=(f,t,tip)=>`<button class="btn btn-ghost btn-sm" onclick="${f}" title="${esc(tip||'')}">${t}</button>`;
+  const st=dp.state||'none', rs=dp.run_spec, b=(f,t,tip)=>`<button class="btn btn-ghost btn-sm" onclick="${f}" title="${esc(tip||'')}">${t}</button>`;
   const head=st==='running'?`release ${+dp.release}${dp.commit?' · '+escT(dp.commit.slice(0,10)):''} · <a href="${esc(dp.url)}" target=_blank rel=noopener>open</a>`
     :st==='deploying'?'deploying… '+kbMmss(Math.max(0,Math.floor(Date.now()/1000)-(dp.started||0)))
-    :st==='failed'?'failed — '+escT(dp.error||''):st==='down'?'down (restarts by itself)':st==='stopped'?'stopped':sp.start?'not deployed':'no spec';
-  el.innerHTML=`<b>Deploy</b> <span class=text-muted>${head}${st==='running'&&dp.error?' · last deploy failed: '+escT(dp.error):''}</span> `+b('dpEdit()','Spec')+
-    (sp.start&&st!=='deploying'?b("dpAct('deploy')",'Deploy','The base branch, built and started in the service VM; a failure keeps the previous release'):'')+
+    :st==='failed'?'failed — '+escT(dp.error||''):st==='down'?'down (restarts by itself)':st==='stopped'?'stopped':rs?'not deployed':'no start command yet';
+  const why=rs?`<span class=text-muted> · runs <code>${escT(rs.start)}</code> on ${+rs.port}</span>`:dp.spec_error?`<span class=text-muted> · ${escT(dp.spec_error)}</span>`:'';
+  el.innerHTML=`<b>Deploy</b> <span class=text-muted>${head}${st==='running'&&dp.error?' · last deploy failed: '+escT(dp.error):''}</span>${why} `+b('dpEdit()','Settings')+
+    (rs&&st!=='deploying'?b("dpAct('deploy')",'Deploy','The base branch, built and started in the service VM; a failure keeps the previous release'):'')+
     (st==='running'||st==='down'?b("dpAct('stop')",'Stop'):'')+(st!=='none'?b('dpLog()','View log'):'');
 }
 let DP_P='';
@@ -1943,10 +1944,9 @@ async function dpSave(){
   let d={}, done=[];       /* the secrets save on their own: an unfinished spec never loses them */
   if(Object.keys(sec).length){d=await dpPost(DP_P,{secrets:sec}); if(d.error)return say('⚠️ '+d.error);
     document.getElementById('dp-sec').value=''; document.getElementById('dp-secnames').textContent=d.secrets.map(x=>'✓ '+x).join('  ')||'none'; done.push('secrets')}
-  if(v('dp-start').trim()||v('dp-build').trim()||!done.length){
-    d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
-    if(d.error)return say((done.length?'secrets saved ✓ · ':'')+'⚠️ '+d.error); done.push('spec')}
-  say(done.join(' + ')+' saved ✓'+(done.includes('spec')?' — Deploy starts it':' — the spec still needs Start'));
+  d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
+  if(d.error)return say((done.length?'secrets saved ✓ · ':'')+'⚠️ '+d.error);
+  say([...done,'settings'].join(' + ')+' saved ✓');
   skLoad();
   if(!d.error)skLoad();
 }

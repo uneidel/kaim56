@@ -938,7 +938,7 @@ HTML_BOTTOM = """
   <b>Deploy target &#8220;instance&#8221;</b> (<code>mgr/deploy.py</code>, Squads &#8594; Deploy, lead tool <code>project_deploy</code>): the base branch as a
   service in its own VM <code>svc-&#8249;project&#8250;</code> &#8212; the squad&#8217;s base image + toolchain layer, a read-only release image
   (<code>git archive</code> &#8594; <code>mkfs.ext4 -d</code>, never mounted on the host), a fresh upper, a persistent <code>/data</code> disk, a config disk with the
-  operator&#8217;s spec only (build, start, port; no secrets, no NFS); internet yes, no new connection to the host. guest-init builds and starts as uid 1000;
+  spec (build, start, port from <code>deploy.json</code> in the base branch, else the operator&#8217;s; RAM, vCPUs the operator&#8217;s) and the operator&#8217;s secrets for it (names only on read; no NFS); internet yes, no new connection to the host. guest-init builds and starts as uid 1000;
   the manager waits for the port, a failure boots the previous release again. Served only on the apps&#8217; host at <code>/d/&#8249;project&#8250;/</code>
   (admin login there; the session cookie and Authorization never reach the VM, connect-src limited to the service).
   <b>Squad records</b> (<code>mgr/squadrec.py</code>): a squad ID and per-membership member IDs, assigned once, a list of projects;
@@ -1242,6 +1242,7 @@ HTML_BOTTOM = """
     <div class=dialog-title>Deploy — <span id=dpdlgname class=mono style="font-size:16px"></span></div>
     <div id=dpdlg-edit class=dialog-body>
       <p class=text-muted style="font-size:12.5px;margin:0 0 8px">The base branch runs in its own VM (the squad's base image + toolchain, only the secrets set here, no host access), at <span class=mono>/d/&lt;project&gt;/</span> on the apps' host. Env: <span class=mono>PORT</span>, <span class=mono>DATA_DIR=/data</span> (kept across deploys), <span class=mono>BASE_PATH</span>.</p>
+      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">Build, Start and Port come from <span class=mono>deploy.json</span> in the base branch (the squad writes it); fill them here only for a project without one.</p>
       <label for=dp-build>Build <span class=text-muted>(optional, in the release folder, as uid 1000)</span></label><input class="input mono" id=dp-build placeholder="npm ci && npm run build">
       <label for=dp-start style="margin-top:8px;display:block">Start <span class=text-muted>(listens on $PORT)</span></label><input class="input mono" id=dp-start placeholder="node server.js">
       <div style="display:flex;gap:8px;margin-top:8px">

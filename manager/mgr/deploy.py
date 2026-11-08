@@ -7,8 +7,10 @@
 What celld cannot run — any server a squad writes (Python, Node, Go …) — runs
 as ``svc-<project>``: the base image the squad's members use plus the squad's
 toolchain layer (mgr/toolchain.py), so it has the tools the squad built and
-tested with. The spec (``build``, ``start``, ``port``, RAM, vCPUs) changes only
-by the operator; a deploy is the operator's (or the lead's) button.
+tested with. ``build``, ``start`` and ``port`` are the squad's: ``deploy.json`` at
+the root of the base branch (the code it runs is the squad's anyway), else the
+operator's; RAM and vCPUs only the operator's. A deploy is the operator's (or
+the lead's) button.
 
 A deploy: ``git archive`` of the project's base branch -> a read-only release
 image (``mkfs.ext4 -d``: the host never mounts it), a fresh throwaway upper, the
@@ -68,6 +70,7 @@ MAX_BODY = 64 * 1024 * 1024
 SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 SECRET_RESERVED = {"PATH", "HOME", "PORT", "DATA_DIR", "BASE_PATH", "GUEST_DNS", "IFS", "ENV", "BASH_ENV", "SHELL"}
 SECRETS_MAX, SECRET_LEN = 20, 8192
+REPO_SPEC = "deploy.json"             # {build, start, port} in the base branch
 SPEC_DEFAULT = {"build": "", "start": "", "port": 8080, "mem": 1024, "vcpus": 1}
 _HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
         "proxy-authenticate", "content-length", "host"}
@@ -119,8 +122,6 @@ def normalize(spec):
         if len(v) > 2000 or "\0" in v:
             return None, f"{k}: at most 2000 characters"
         out[k] = v
-    if not out["start"]:
-        return None, "start: the command that runs the service (it listens on $PORT)"
     try:
         out["port"], out["mem"], out["vcpus"] = (int(s.get(k) or SPEC_DEFAULT[k]) for k in ("port", "mem", "vcpus"))
     except (TypeError, ValueError):
@@ -155,6 +156,28 @@ def save_secrets(project, secrets):
     if len(merged(record(project))) > SECRETS_MAX:
         return None, f"at most {SECRETS_MAX} secrets"
     return sorted(_update(project, lambda r: r.update(secrets=merged(r)))["secrets"]), ""
+
+
+def _base_ref(proj):
+    return proj.get("base") or _projwt.current_branch(proj["source"]["path"])
+
+
+def effective(proj, ref=None):
+    """The spec a deploy of `ref` (default the base branch) runs with -> (spec, '') or (None, why):
+    build/start/port from its deploy.json if there is one, RAM and vCPUs the operator's."""
+    op = record(proj["name"])["spec"]
+    raw = _projwt.git(proj["source"]["path"], ["show", f"{ref or _base_ref(proj)}:{REPO_SPEC}"], check=False)
+    try:
+        rs = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return None, f"{REPO_SPEC} in the base branch is not JSON"
+    if not isinstance(rs, dict):
+        return None, f"{REPO_SPEC}: an object {{build, start, port}}"
+    if not (rs.get("start") or op.get("start")):
+        return None, f"no start command: add {REPO_SPEC} {{build, start, port}} to the base branch (or set it in Squads -> Settings -> Deploy)"
+    mine = {k: rs[k] for k in ("build", "start", "port") if k in rs} if rs.get("start") else {}
+    s, why = normalize({**op, **mine})
+    return (s, "") if s else (None, (f"{REPO_SPEC}: " if rs.get("start") else "") + why)
 
 
 # ---- the VM --------------------------------------------------------------------
@@ -384,8 +407,9 @@ def deploy(project, who="operator"):
     if (proj.get("source") or {}).get("type") != "host":
         return None, "a deploy needs a host-folder repo"
     rec = record(project)
-    if not rec["spec"].get("start"):
-        return None, "set the deploy spec first (start command, port)"
+    _s, why = effective(proj)
+    if why:
+        return None, why
     if rec.get("state") == "deploying":
         return None, "a deploy is running"
     if not _plock(project).acquire(blocking=False):
@@ -416,7 +440,10 @@ def _deploy(project, who):
         rec = _update(project, lambda r: r.update(index=idx))
     prev, n = rec.get("release"), int(rec.get("last") or rec.get("release") or 0) + 1
     sha = make_release(proj, n)
-    _update(project, lambda r: r.update(last=n, specs={**(r.get("specs") or {}), str(n): r["spec"]}))
+    spec, why = effective(proj, sha)                 # the deploy.json of exactly this release
+    if why:
+        raise RuntimeError(why)
+    _update(project, lambda r: r.update(last=n, specs={**(r.get("specs") or {}), str(n): spec}))
     halt(project)
     boot(project, n)
     why = wait_ready(project, n)
@@ -507,6 +534,11 @@ def status(project):
     r = record(project)
     out = {k: r.get(k) for k in ("spec", "state", "release", "prev", "commit", "ok_at", "started", "error", "by")}
     out["secrets"] = sorted(r.get("secrets", {}))           # names only: a value never leaves deploys.json
+    proj = _projects.get(project)
+    try:
+        out["run_spec"], out["spec_error"] = effective(proj) if proj and (proj.get("source") or {}).get("type") == "host" else (None, "")
+    except Exception as e:                                   # a broken repo never costs the board
+        out["run_spec"], out["spec_error"] = None, str(e)[:200]
     out["running"] = running(project)
     if r.get("state") == "running" and not out["running"]:
         out["state"] = "down"
