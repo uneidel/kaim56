@@ -1833,7 +1833,7 @@ async function skLoad(){
   /* each part in its own boundary: a bad card, the waiting list or the metrics never keep the board away */
   const safe=(what,f,x)=>{try{return f(x)}catch(e){console.error('squad '+what,x&&x.id,e);return ''}};
   let hq=[];
-  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name&&!['squad_post','requirements','proposal'].includes(x.kind))}catch(e){console.error('squad waiting',e)}   /* approvals, questions, reviews (mgr/hitlq.py) */
+  try{await loadWaiting(); hq=WAIT.filter(x=>x.project===name&&x.kind!=='proposal')}catch(e){console.error('squad waiting',e)}   /* the same items as Waiting for you; a proposal is the board's own card */
   if(SK!==name)return;
   const pend=(b.proposals||[]).filter(sqOpenP), key=pend.map(p=>p.id+':'+(p.version||1)+':'+p.status+':'+JSON.stringify((p.members||[]).map(m=>m.suggested||0))).join()+'|'+hq.map(x=>x.id).join();
   if(key!==SK_PEND){SK_PEND=key;document.getElementById('sk-cards').innerHTML=pend.map(p=>safe('card',sqCard,p)).join('')+hq.map(x=>safe('card',hqCard,x)).join('')}   /* never under the user's edits */
@@ -2269,22 +2269,22 @@ async function hqAct(id,action,btn){
   let d={}; try{d=await (await fetch('/api/waiting/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,text,choice})})).json()}catch(e){d={error:'manager not reachable'}}
   btn.disabled=false;
   say(d.error||(HQ_KIND[d.item.kind]+' '+d.item.id+': '+d.item.status.replace('_',' ')+' ✓'));
-  await loadWaiting();
-  if(sk){SK_PEND='';skLoad()}else hqRender();
+  await hqDone();
 }
+const hqDone=async()=>{await loadWaiting(); if(location.hash==='#squads'){SK_PEND='';skLoad()}else hqRender()};
 async function hqReply(id,btn){
-  const it=WAIT.find(x=>x.id===id), t=btn.closest('[data-hq]').querySelector('[data-k=text]'), text=t.value.trim(), say=x=>{document.getElementById('wait-msg').textContent=x};
+  const it=WAIT.find(x=>x.id===id), t=btn.closest('[data-hq]').querySelector('[data-k=text]'), text=t.value.trim(), say=x=>{document.getElementById(location.hash==='#squads'?'sk-msg':'wait-msg').textContent=x};
   if(!it)return; if(!text){say('Reply: write an answer.');t.focus();return}
   btn.disabled=true;
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(it.project)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,reply_to:it.msg_id})})).json()}catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; say(d.error||('Reply to '+it.instance+' sent ✓'));
-  if(!d.error){await loadWaiting();hqRender()}
+  if(!d.error)await hqDone();
 }
 async function hqRead(id,btn){
   btn.disabled=true;
   let d={}; try{d=await (await fetch('/api/waiting/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json()}catch(e){d={error:'manager not reachable'}}
-  btn.disabled=false; document.getElementById('wait-msg').textContent=d.error||'';
-  if(!d.error){await loadWaiting();hqRender()}
+  btn.disabled=false; document.getElementById(location.hash==='#squads'?'sk-msg':'wait-msg').textContent=d.error||'';
+  if(!d.error)await hqDone();
 }
 window.addEventListener('hashchange',()=>{if(location.hash==='#waiting')loadWaiting()});
 setInterval(()=>{if(!document.hidden)loadWaiting()},15000);
