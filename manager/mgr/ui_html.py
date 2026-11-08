@@ -1241,7 +1241,7 @@ HTML_BOTTOM = """
   <div class="dialog blueprint" style="width:min(860px,100%)">
     <div class=dialog-title>Deploy — <span id=dpdlgname class=mono style="font-size:16px"></span></div>
     <div id=dpdlg-edit class=dialog-body>
-      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">The base branch runs in its own VM (the squad's base image + toolchain, no secrets, no host access), at <span class=mono>/d/&lt;project&gt;/</span> on the apps' host. Env: <span class=mono>PORT</span>, <span class=mono>DATA_DIR=/data</span> (kept across deploys), <span class=mono>BASE_PATH</span>.</p>
+      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">The base branch runs in its own VM (the squad's base image + toolchain, only the secrets set here, no host access), at <span class=mono>/d/&lt;project&gt;/</span> on the apps' host. Env: <span class=mono>PORT</span>, <span class=mono>DATA_DIR=/data</span> (kept across deploys), <span class=mono>BASE_PATH</span>.</p>
       <label for=dp-build>Build <span class=text-muted>(optional, in the release folder, as uid 1000)</span></label><input class="input mono" id=dp-build placeholder="npm ci && npm run build">
       <label for=dp-start style="margin-top:8px;display:block">Start <span class=text-muted>(listens on $PORT)</span></label><input class="input mono" id=dp-start placeholder="node server.js">
       <div style="display:flex;gap:8px;margin-top:8px">
@@ -1249,6 +1249,7 @@ HTML_BOTTOM = """
         <label>RAM MiB <input class="input mono" id=dp-mem type=number min=256 max=8192 style="width:100px"></label>
         <label>vCPUs <input class="input mono" id=dp-vcpus type=number min=1 max=4 style="width:70px"></label>
       </div>
+      <label for=dp-sec style="margin-top:8px;display:block">Secrets <span class=text-muted>(env of build and start, one <span class=mono>NAME=value</span> per line; <span class=mono>NAME=</span> removes; set: <span id=dp-secnames class=mono>none</span>)</span></label><textarea class="input mono" id=dp-sec rows=3 autocomplete=off spellcheck=false placeholder="ANTHROPIC_API_KEY=…"></textarea>
     </div>
     <pre id=dpdlglog class=mono hidden style="max-height:60vh;overflow:auto;font-size:12px;line-height:1.45;margin:0;padding:10px;background:var(--color-neutral-100);white-space:pre-wrap"></pre>
     <div class=dialog-actions>

@@ -11329,6 +11329,33 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual([x["is_read_only"] for x in vc["drives"]], [True, True, True, False, True, False])
         self.assertEqual((vc["machine-config"]["mem_size_mib"], vc["machine-config"]["vcpu_count"]), (512, 2))
 
+    def test_deploy_secrets_reach_the_config_never_a_read(self):
+        """The operator's secrets for a service: validated, env on the config disk (the spec's keys win),
+        reads show names only, an empty value removes one, a channel note never carries a value."""
+        m, d = self.m, self.m._deploy
+        self._deploy_env()
+        L = "127.0.0.1"
+        for bad in ({"PATH": "x"}, {"DEPLOY_START": "x"}, {"lower": "x"}, {"LD_PRELOAD": "x"}, {"K1": 5}, ["K1"]):
+            self.assertEqual(self._sq("/api/deploy/svc1", L, {"secrets": bad})[0], 400, bad)
+        self.assertEqual(self._sq("/api/deploy/svc1", "172.30.3.2", {"secrets": {"K1": "v"}})[0], 403)   # a VM: no
+        st, j = self._sq("/api/deploy/svc1", L, {"secrets": {"API_KEY": "s3cr'et v", "EBAY_TOKEN": "tok"}})
+        self.assertEqual((st, j["secrets"]), (200, ["API_KEY", "EBAY_TOKEN"]))
+        self.assertEqual(self._sq("/api/deploy/svc1", L, {"secrets": {"EBAY_TOKEN": ""}})[1]["secrets"], ["API_KEY"])
+        st, j = self._sq("/api/deploy/svc1", L)
+        self.assertEqual(j["secrets"], ["API_KEY"]); self.assertNotIn("s3cr", json.dumps(j))
+        d.save_spec("svc1", {"start": "node s.js"})
+        cfg = d.config_files("svc1", d.record("svc1")["spec"])["config.env"]
+        self.assertIn("API_KEY='s3cr'\"'\"'et v'\n", cfg); self.assertTrue(cfg.startswith("API_KEY="))
+        posted, sq, nt = [], d._squads, d._notify
+        d._squads = type("S", (), {"settings": staticmethod(lambda p: {"enabled": True}),
+                                   "post": staticmethod(lambda *a, **k: posted.append(a[3]))})
+        d._notify = type("N", (), {"notify_add": staticmethod(lambda *a, **k: posted.append(a[1]))})
+        try:
+            d._tell(m._projects.get("svc1"), "failed: s3cr'et v leaked", ok=False)
+        finally:
+            d._squads, d._notify = sq, nt
+        self.assertEqual(posted, ["failed: *** leaked"] * 2)
+
     def test_deploy_success_keeps_two_releases_and_a_failure_rolls_back(self):
         m, d = self.m, self.m._deploy
         tmp, repo = self._deploy_env()

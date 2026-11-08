@@ -13,7 +13,9 @@ by the operator; a deploy is the operator's (or the lead's) button.
 A deploy: ``git archive`` of the project's base branch -> a read-only release
 image (``mkfs.ext4 -d``: the host never mounts it), a fresh throwaway upper, the
 persistent data disk (``/data``, kept across deploys), a config disk with the
-spec and nothing else — no secrets, no LLM key, no NFS, no host folders. The VM
+spec and the operator's secrets for this service (env of build and start; set
+only by the operator, names shown, values never again, never to a member) — no
+LLM key, no NFS, no host folders. The VM
 reaches the internet but not the host (a mangle rule drops every new
 connection to a host address; the manager's own connections to it are
 answered). guest-init copies the release, runs ``build`` and ``start`` as uid
@@ -63,6 +65,9 @@ LOG_TAIL = 8000
 RESTART_EVERY = 600                # a service that died is booted again at most this often (sweep)
 SESSION_COOKIE = "__Host-kaim56_apps"
 MAX_BODY = 64 * 1024 * 1024
+SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+SECRET_RESERVED = {"PATH", "HOME", "PORT", "DATA_DIR", "BASE_PATH", "GUEST_DNS", "IFS", "ENV", "BASH_ENV", "SHELL"}
+SECRETS_MAX, SECRET_LEN = 20, 8192
 SPEC_DEFAULT = {"build": "", "start": "", "port": 8080, "mem": 1024, "vcpus": 1}
 _HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
         "proxy-authenticate", "content-length", "host"}
@@ -135,6 +140,21 @@ def save_spec(project, spec):
         return None, why
     _update(project, lambda r: r.update(spec=s))
     return s, ""
+
+
+def save_secrets(project, secrets):
+    """The operator's {NAME: value} -> (names, '') or (None, why). An empty value removes NAME."""
+    if not isinstance(secrets, dict):
+        return None, "secrets: {NAME: value}"
+    for k, v in secrets.items():
+        if not SECRET_NAME.match(k) or k in SECRET_RESERVED or k.startswith(("DEPLOY_", "LD_")):
+            return None, f"{k}: A-Z 0-9 _, not PATH, PORT, DEPLOY_* and the like"
+        if not isinstance(v, str) or len(v) > SECRET_LEN or "\0" in v:
+            return None, f"{k}: a text of at most {SECRET_LEN} characters"
+    merged = lambda r: {k: v for k, v in {**r.get("secrets", {}), **secrets}.items() if v}
+    if len(merged(record(project))) > SECRETS_MAX:
+        return None, f"at most {SECRETS_MAX} secrets"
+    return sorted(_update(project, lambda r: r.update(secrets=merged(r)))["secrets"]), ""
 
 
 # ---- the VM --------------------------------------------------------------------
@@ -222,8 +242,9 @@ def make_release(proj, n):
 
 
 def config_files(project, spec):
-    """The config disk: the spec, DNS, PATH — nothing from an instance, the settings or the secret store."""
-    env = (("DEPLOY_SERVICE", "1"), ("DEPLOY_BUILD", spec["build"]), ("DEPLOY_START", spec["start"]),
+    """The config disk: the operator's secrets for this service, then the spec, DNS, PATH (they win) —
+    nothing from an instance, the settings or the secret store."""
+    env = (*sorted(record(project).get("secrets", {}).items()), ("DEPLOY_SERVICE", "1"), ("DEPLOY_BUILD", spec["build"]), ("DEPLOY_START", spec["start"]),
            ("DEPLOY_PORT", str(spec["port"])), ("BASE_PATH", f"/d/{project}"), ("GUEST_DNS", _netfw.GUEST_DNS),
            ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"))
     return {"config.env": "".join(f"{k}={shlex.quote(v)}\n" for k, v in env)}
@@ -432,6 +453,8 @@ def _drop_old(project, keep):
 
 
 def _tell(proj, text, ok):
+    for v in record(proj["name"]).get("secrets", {}).values():   # the service's console is its own: it may print one
+        text = text.replace(v, "***")
     try:
         if _squads.settings(proj).get("enabled"):
             _squads.post(proj, "manager", ["all"], text, kind="note")
@@ -483,6 +506,7 @@ def sweep():
 def status(project):
     r = record(project)
     out = {k: r.get(k) for k in ("spec", "state", "release", "prev", "commit", "ok_at", "started", "error", "by")}
+    out["secrets"] = sorted(r.get("secrets", {}))           # names only: a value never leaves deploys.json
     out["running"] = running(project)
     if r.get("state") == "running" and not out["running"]:
         out["state"] = "down"

@@ -5,7 +5,8 @@
 """HTTP routes of the deploy target "instance" (mgr/deploy.py), admin only:
 
 - ``GET /api/deploy/<project>`` — spec, state, release, the console log.
-- ``POST /api/deploy/<project>`` {spec} saves the spec; {action: deploy | stop | remove}.
+- ``POST /api/deploy/<project>`` {spec} saves the spec; {secrets: {NAME: value}} sets them
+  (an empty value removes one; reads show the names only); {action: deploy | stop | remove}.
 - ``GET|POST /d/<project>/…`` — the service itself, only on the apps' own origin
   (settings.APPS_HOST): a browser on the manager's host is sent there, never
   served here (the service's pages must not run with the manager's session).
@@ -48,6 +49,9 @@ def _rt_deploy_post(h):
         return h._json({"error": "unknown project"}, 404)
     b = h._body() or {}
     act = str(b.get("action") or "")
+    if "secrets" in b and not act:
+        names, why = _deploy.save_secrets(name, b["secrets"])
+        return h._json({"ok": True, "secrets": names}) if names is not None else h._json({"error": why}, 400)
     if "spec" in b and not act:
         s, why = _deploy.save_spec(name, b["spec"])
         return h._json({"ok": True, "spec": s}) if s else h._json({"error": why}, 400)
@@ -59,7 +63,7 @@ def _rt_deploy_post(h):
     if act == "remove":
         _deploy.remove(name)
         return h._json({"msg": f"{name}: service, release images and data removed"})
-    return h._json({"error": "spec, or action deploy | stop | remove"}, 400)
+    return h._json({"error": "spec, secrets, or action deploy | stop | remove"}, 400)
 
 
 def _service(h, method):

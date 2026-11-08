@@ -1929,6 +1929,7 @@ function dpEdit(){
   const sp=((SQB||{}).deploy||{}).spec||{};
   document.getElementById('dp-build').value=sp.build||''; document.getElementById('dp-start').value=sp.start||'';
   document.getElementById('dp-port').value=sp.port||8080; document.getElementById('dp-mem').value=sp.mem||1024; document.getElementById('dp-vcpus').value=sp.vcpus||1;
+  document.getElementById('dp-sec').value=''; document.getElementById('dp-secnames').textContent=(((SQB||{}).deploy||{}).secrets||[]).join(', ')||'none';
   dpDlg(true);
 }
 async function dpPost(p,body){
@@ -1936,8 +1937,12 @@ async function dpPost(p,body){
 }
 async function dpSave(){
   const v=id=>document.getElementById(id).value;
-  const d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
-  document.getElementById('dpdlgmsg').textContent=d.error?'⚠️ '+d.error:'saved ✓ — Deploy starts it';
+  const sec={}, bad=v('dp-sec').split('\\n').map(l=>l.trim()).filter(Boolean).filter(l=>{const i=l.indexOf('='); if(i<1)return true; sec[l.slice(0,i).trim()]=l.slice(i+1).trim()});
+  const say=x=>{document.getElementById('dpdlgmsg').textContent=x};
+  if(bad.length)return say('⚠️ Secrets: NAME=value per line');
+  let d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
+  if(!d.error&&Object.keys(sec).length){d=await dpPost(DP_P,{secrets:sec}); if(!d.error){document.getElementById('dp-sec').value=''; document.getElementById('dp-secnames').textContent=d.secrets.join(', ')||'none'}}
+  say(d.error?'⚠️ '+d.error:'saved ✓ — Deploy starts it');
   if(!d.error)skLoad();
 }
 async function dpAct(a){const d=await dpPost(SK,{action:a}); skMsg(d.error||d.msg); skLoad()}
