@@ -1947,6 +1947,7 @@ async function dpSave(){
     d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
     if(d.error)return say((done.length?'secrets saved ✓ · ':'')+'⚠️ '+d.error); done.push('spec')}
   say(done.join(' + ')+' saved ✓'+(done.includes('spec')?' — Deploy starts it':' — the spec still needs Start'));
+  skLoad();
   if(!d.error)skLoad();
 }
 async function dpAct(a){const d=await dpPost(SK,{action:a}); skMsg(d.error||d.msg); skLoad()}
