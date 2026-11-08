@@ -148,7 +148,7 @@ def save_secrets(project, secrets):
         return None, "secrets: {NAME: value}"
     for k, v in secrets.items():
         if not SECRET_NAME.match(k) or k in SECRET_RESERVED or k.startswith(("DEPLOY_", "LD_")):
-            return None, f"{k}: A-Z 0-9 _, not PATH, PORT, DEPLOY_* and the like"
+            return None, f"{k}: a name of A-Z, 0-9 and _ (upper case), not PATH, PORT, DEPLOY_* or LD_*"
         if not isinstance(v, str) or len(v) > SECRET_LEN or "\0" in v:
             return None, f"{k}: a text of at most {SECRET_LEN} characters"
     merged = lambda r: {k: v for k, v in {**r.get("secrets", {}), **secrets}.items() if v}

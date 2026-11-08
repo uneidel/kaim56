@@ -1937,7 +1937,7 @@ async function dpPost(p,body){
 }
 async function dpSave(){
   const v=id=>document.getElementById(id).value;
-  const sec={}, bad=v('dp-sec').split('\\n').map(l=>l.trim()).filter(Boolean).filter(l=>{const i=l.indexOf('='); if(i<1)return true; sec[l.slice(0,i).trim()]=l.slice(i+1).trim()});
+  const sec={}, bad=v('dp-sec').split('\\n').map(l=>l.trim()).filter(Boolean).filter(l=>{const i=l.indexOf('='); if(i<1)return true; sec[l.slice(0,i).trim().toUpperCase()]=l.slice(i+1).trim()});
   const say=x=>{document.getElementById('dpdlgmsg').textContent=x};
   if(bad.length)return say('⚠️ Secrets: NAME=value per line');
   let d={}, done=[];       /* the secrets save on their own: an unfinished spec never loses them */
