@@ -1940,9 +1940,13 @@ async function dpSave(){
   const sec={}, bad=v('dp-sec').split('\\n').map(l=>l.trim()).filter(Boolean).filter(l=>{const i=l.indexOf('='); if(i<1)return true; sec[l.slice(0,i).trim()]=l.slice(i+1).trim()});
   const say=x=>{document.getElementById('dpdlgmsg').textContent=x};
   if(bad.length)return say('⚠️ Secrets: NAME=value per line');
-  let d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
-  if(!d.error&&Object.keys(sec).length){d=await dpPost(DP_P,{secrets:sec}); if(!d.error){document.getElementById('dp-sec').value=''; document.getElementById('dp-secnames').textContent=d.secrets.join(', ')||'none'}}
-  say(d.error?'⚠️ '+d.error:'saved ✓ — Deploy starts it');
+  let d={}, done=[];       /* the secrets save on their own: an unfinished spec never loses them */
+  if(Object.keys(sec).length){d=await dpPost(DP_P,{secrets:sec}); if(d.error)return say('⚠️ '+d.error);
+    document.getElementById('dp-sec').value=''; document.getElementById('dp-secnames').textContent=d.secrets.join(', ')||'none'; done.push('secrets')}
+  if(v('dp-start').trim()||v('dp-build').trim()||!done.length){
+    d=await dpPost(DP_P,{spec:{build:v('dp-build'),start:v('dp-start'),port:+v('dp-port'),mem:+v('dp-mem'),vcpus:+v('dp-vcpus')}});
+    if(d.error)return say((done.length?'secrets saved ✓ · ':'')+'⚠️ '+d.error); done.push('spec')}
+  say(done.join(' + ')+' saved ✓'+(done.includes('spec')?' — Deploy starts it':' — the spec still needs Start'));
   if(!d.error)skLoad();
 }
 async function dpAct(a){const d=await dpPost(SK,{action:a}); skMsg(d.error||d.msg); skLoad()}

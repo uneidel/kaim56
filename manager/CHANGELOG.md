@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-07
+- Deploy dialog: secrets save on their own, an unfinished spec (no Start yet) no longer drops them.
 - Squad → Approvals shows the same items as Waiting for you (requirements, member messages too); replies there refresh the squad page.
 - Service VM (Deploy): secrets per project — NAME=value in the Deploy dialog, env of build and start; reads show names only, a channel note never carries a value.
 - Waiting for you: the 15 s refresh no longer wipes a comment you are typing (text, focus and caret are carried over).
