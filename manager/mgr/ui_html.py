@@ -1249,7 +1249,7 @@ HTML_BOTTOM = """
         <label>RAM MiB <input class="input mono" id=dp-mem type=number min=256 max=8192 style="width:100px"></label>
         <label>vCPUs <input class="input mono" id=dp-vcpus type=number min=1 max=4 style="width:70px"></label>
       </div>
-      <label for=dp-sec style="margin-top:8px;display:block">Secrets <span class=text-muted>(env of build and start, one <span class=mono>NAME=value</span> per line; <span class=mono>NAME=</span> removes; a value is never shown again; set: <span id=dp-secnames class=mono>none</span>)</span></label><textarea class="input mono" id=dp-sec rows=3 autocomplete=off spellcheck=false placeholder="ANTHROPIC_API_KEY=…"></textarea>
+      <label for=dp-sec style="margin-top:8px;display:block">Secrets <span class=text-muted>(env of build and start, one <span class=mono>NAME=value</span> per line; <span class=mono>NAME=</span> removes; a value is never shown again)</span></label><div style="font-size:13px;margin:2px 0 6px">Stored: <span id=dp-secnames class=mono>none</span></div><textarea class="input mono" id=dp-sec rows=3 autocomplete=off spellcheck=false placeholder="NEW_NAME=value"></textarea>
     </div>
     <pre id=dpdlglog class=mono hidden style="max-height:60vh;overflow:auto;font-size:12px;line-height:1.45;margin:0;padding:10px;background:var(--color-neutral-100);white-space:pre-wrap"></pre>
     <div class=dialog-actions>
