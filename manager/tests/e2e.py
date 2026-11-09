@@ -11351,6 +11351,25 @@ class ManagerFunctions(unittest.TestCase):
         subprocess.run(g + ["commit", "-qam", "port"], check=True)
         self.assertIn("deploy.json: port", d.effective(proj)[1])
 
+    def test_deploy_smoke_follows_the_proxy_and_lists_services(self):
+        """After a deploy the manager fetches /d/<p>/ through its own proxy for the channel note:
+        redirects inside the prefix followed, a loop reported, the title shown; GET /api/deploy/ lists the VMs."""
+        m, d = self.m, self.m._deploy
+        self._deploy_env()
+        old = d.forward
+        self.addCleanup(setattr, d, "forward", old)
+        page = (200, [], b"<html><title> Bookseller </title></html>")
+        d.forward = lambda meth, p, rel, h: (302, [("Location", "/d/svc1/home")], b"") if rel == "" else page
+        self.assertEqual(d.smoke("svc1"), ("302 → 200 · title “Bookseller”", True))
+        d.forward = lambda meth, p, rel, h: (302, [("Location", "/d/svc1/")], b"")
+        self.assertEqual(d.smoke("svc1"), ("302 → 302 → 302 → 302 → 302 · redirect loop", False))
+        d.forward = lambda meth, p, rel, h: (503, [], b"svc1 is not running")
+        self.assertEqual(d.smoke("svc1"), ("503 · svc1 is not running", False))
+        d.save_spec("svc1", {"start": "x"})
+        st, j = self._sq("/api/deploy/", "127.0.0.1")
+        self.assertEqual((st, [x["project"] for x in j["services"]]), (200, ["svc1"]))
+        self.assertEqual(self._sq("/api/deploy/", "172.30.3.2")[0], 403)        # a VM: no
+
     def test_deploy_secrets_reach_the_config_never_a_read(self):
         """The operator's secrets for a service: validated, env on the config disk (the spec's keys win),
         reads show names only, an empty value removes one, a channel note never carries a value."""

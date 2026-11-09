@@ -4,7 +4,7 @@
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """HTTP routes of the deploy target "instance" (mgr/deploy.py), admin only:
 
-- ``GET /api/deploy/<project>`` — spec, state, release, the console log.
+- ``GET /api/deploy/`` — every service VM's status; ``GET /api/deploy/<project>`` — spec, state, release, the console log.
 - ``POST /api/deploy/<project>`` {spec} saves the spec; {secrets: {NAME: value}} sets them
   (an empty value removes one; reads show the names only); {action: deploy | stop | remove}.
 - ``GET|POST /d/<project>/…`` — the service itself, only on the apps' own origin
@@ -37,6 +37,8 @@ def _project(h, prefix):
 @_routes.ROUTER.get(_API, prefix=True, admin=True)
 def _rt_deploy_get(h):
     name, _ = _project(h, _API)
+    if not name:
+        return h._json({"services": _deploy.services()})
     if _projects.get(name) is None:
         return h._json({"error": "unknown project"}, 404)
     return h._json({"project": name, **_deploy.status(name), "log": _deploy.log(name)})

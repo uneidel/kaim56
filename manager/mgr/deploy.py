@@ -452,7 +452,8 @@ def _deploy(project, who):
         _update(project, lambda r: r.update(state="running", release=n, prev=prev, commit=sha, ok_at=int(time.time()),
                                             error="", log_tail=tail[-LOG_TAIL:]))
         _drop_old(project, {n, prev})
-        return _tell(proj, f"Deployed {project} ({sha[:10]}) — /d/{project}/", ok=True)
+        seen, good = smoke(project)
+        return _tell(proj, f"Deployed {project} ({sha[:10]}) — /d/{project}/ · through the proxy: {seen}", ok=good)
     halt(project)
     if prev:
         boot(project, prev)
@@ -548,6 +549,28 @@ def status(project):
 
 def log(project):
     return _tail(project) or record(project).get("log_tail") or ""
+
+
+def smoke(project, hops=5):
+    """-> (what a browser gets at /d/<project>/ through the proxy, ok): status, redirects
+    followed, the page title or the body's start. The squad cannot open that URL itself."""
+    path, trail = "", []
+    for _ in range(hops):
+        st, hdrs, data = forward("GET", project, path, {})
+        trail.append(str(st))
+        loc = next((v for k, v in hdrs if k.lower() == "location"), "")
+        if not (300 <= st < 400 and loc.startswith(f"/d/{project}/")):
+            text = data[:4000].decode("utf-8", "replace")
+            m = re.search(r"<title[^>]*>(.*?)</title>", text, re.S | re.I)
+            show = (f"title “{m.group(1).strip()[:80]}”" if m else " ".join(text.split())[:160]) or "empty body"
+            return " → ".join(trail) + f" · {show}", st < 400
+        path = loc[len(f"/d/{project}/"):]
+    return " → ".join(trail) + " · redirect loop", False
+
+
+def services():
+    """Every project with a service VM: its status, for the Instances tab."""
+    return [{"project": p, **status(p)} for p in sorted(_load())]
 
 
 # ---- the proxy -------------------------------------------------------------------

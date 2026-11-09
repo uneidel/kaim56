@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-09
 - Security and Architecture tabs removed (nav, screens, /api/security, security.json handling, SVG and cards).
+- Deploy: the channel note says what a browser gets at /d/<project>/ through the proxy (status, redirects, title or loop); Instances lists the service VMs.
 - Service VM proxy forwards the full /d/<project>/ path (stripping it looped /d/x/ -> / -> 302 /d/x/); readiness probes that path and needs a status < 400.
 - Settings: fields grouped into cards (LLM providers, Voice, Routing, Mail, Signal, Apps) over the full width; labels split into title and hint.
 

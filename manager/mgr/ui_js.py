@@ -2816,6 +2816,16 @@ async function saveModel(){
   alert(d.msg||'ok');location.reload();
 }
 
+/* — Service VMs (mgr/deploy.py): not instances, so listed apart under the fleet — */
+async function loadSvcVms(){
+  let d; try{d=await (await fetch('/api/deploy/')).json()}catch(e){return}
+  const s=d.services||[]; document.getElementById('svcvms').hidden=!s.length;
+  document.getElementById('svclist').innerHTML=s.map(v=>{const sp=v.run_spec||v.spec||{};
+    return `<div class=kv><b>svc-${escT(v.project)}</b><span class="tag ${v.running?'tag-accent':'tag-neutral'}">${escT(v.state||'—')}</span>`+
+    `<span class=text-muted>release ${escT(String(v.release||'–'))}${v.commit?' · '+escT(v.commit.slice(0,10)):''}${sp.mem?' · '+escT(String(sp.mem))+' MiB':''}${sp.vcpus?' · '+escT(String(sp.vcpus))+' vCPU':''}${v.error?' · '+escT(v.error):''}</span>`+
+    `<span style="margin-left:auto;display:flex;gap:10px">${v.running?`<a href="${APPS_HOST?'https://'+APPS_HOST:''}${esc(v.url)}" target=_blank rel=noopener>open</a>`:''}<a href="#squads">squad</a></span></div>`}).join('');
+}
+
 /* — Models: the full catalog live, and from it the shortlist for the create form.
      The ticks live in CURATED (models.json), no longer in the source. — */
 let CATALOG=[], PICKED=new Set();
@@ -3156,7 +3166,7 @@ function saveSecrets(){
 window.onload=()=>{
   showTab(location.hash.slice(1));
   if(location.hash==='#squads')loadSquads();
-  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadSvcVms();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
   loadClaudeAccts();setInterval(()=>{if(!document.hidden)loadUsageGauges()},60000);
   // Tasks, policy and the usage numbers used to arrive only on page load —

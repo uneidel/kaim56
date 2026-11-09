@@ -108,6 +108,8 @@ HTML_TOP = """</head><body>
     <span><b id=ocount></b> run on an outdated image.</span>
     <button class="btn btn-primary" onclick=restartAll()>Restart all</button></div>
   <div class=fleet id=fleet>__ROWS__</div>
+  <div id=svcvms hidden><div class=fhead style="margin-top:24px"><h3>Service VMs</h3><span class=text-muted style="font-size:12.5px">a project's deployed base branch · managed in Squads → Settings → Deploy</span></div>
+    <div class="panel blueprint" id=svclist></div></div>
 
   <div id=newdlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)newClose()">
   <div class="dialog blueprint" id=newform role=dialog aria-modal=true aria-labelledby=newtitle style="width:min(960px,100%)">
