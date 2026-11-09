@@ -11457,8 +11457,8 @@ class ManagerFunctions(unittest.TestCase):
             def _answer(self):
                 ln = int(self.headers.get("Content-Length") or 0)
                 seen.append((self.command, self.path, dict(self.headers), self.rfile.read(ln)))
-                self.send_response(302 if self.path == "/go" else 200)
-                if self.path == "/go":
+                self.send_response(302 if self.path == "/d/svc1/go" else 200)
+                if self.path == "/d/svc1/go":
                     self.send_header("Location", "/home")
                 self.send_header("Set-Cookie", "__Host-kaim56_apps=evil; Path=/")
                 self.send_header("Set-Cookie", "own=1; Path=/d/svc1/")
@@ -11486,7 +11486,7 @@ class ManagerFunctions(unittest.TestCase):
         code, head, body = self._idx_req("/d/svc1/x?y=1", cookie=AP, host=A)
         self.assertEqual((code, body), (200, b"ok"), head)
         meth, path, hdrs, _ = seen[-1]
-        self.assertEqual((meth, path, hdrs.get("Cookie"), hdrs.get("X-Forwarded-Prefix")), ("GET", "/x?y=1", "theirs=2", "/d/svc1"))
+        self.assertEqual((meth, path, hdrs.get("Cookie"), hdrs.get("X-Forwarded-Prefix")), ("GET", "/d/svc1/x?y=1", "theirs=2", "/d/svc1"))
         self.assertNotIn("Authorization", hdrs)
         self.assertNotIn("kaim56_apps=evil", head); self.assertIn("Set-Cookie: own=1", head)
         self.assertIn("Content-Security-Policy: connect-src https://apps.example.com/d/svc1/;", head)

@@ -26,7 +26,7 @@ the console. The manager waits until the port answers; a failed deploy boots
 the previous release again and keeps the log.
 
 Reached only through the manager on the apps' own origin (settings.APPS_HOST):
-``/d/<project>/…`` (GET, POST), admin login there; the kAIm56 session cookie
+``/d/<project>/…`` (GET, POST; the path arrives unchanged, so serve under BASE_PATH), admin login there; the kAIm56 session cookie
 and Authorization never reach the VM, the VM cannot set that cookie.
 
 State: deploys.json in the manager dir (root-only), keyed by project; images in
@@ -369,13 +369,13 @@ def result(log):
     return hits[-1] if hits else ""
 
 
-def _answers(host, port):
+def _answers(host, port, path="/"):
     try:
         c = http.client.HTTPConnection(host, port, timeout=3)
-        c.request("GET", "/")
-        c.getresponse().read(1)
+        c.request("GET", path)
+        ok = c.getresponse().status < 400
         c.close()
-        return True
+        return ok
     except (OSError, http.client.HTTPException):
         return False
 
@@ -390,7 +390,7 @@ def wait_ready(project, n, timeout=TIMEOUT):
         r = result(_tail(project))
         if r.startswith("fail"):
             return r
-        if r == "built" and _answers(host, port):
+        if r == "built" and _answers(host, port, f"/d/{project}/"):     # the path the proxy sends
             return ""
         if not running(project):
             return "the VM ended" + (f" ({r})" if r else "")
@@ -575,7 +575,8 @@ def forward(method, project, rel, headers, body=b""):
     fwd.update({"X-Forwarded-Prefix": f"/d/{project}", "X-Forwarded-Proto": "https"})
     try:
         c = http.client.HTTPConnection(host, port, timeout=120)
-        c.request(method, "/" + rel, body=body or None, headers=fwd)
+        # the full path: the service serves under BASE_PATH (stripping it made /d/x/ -> / -> 302 /d/x/ loop)
+        c.request(method, f"/d/{project}/" + rel, body=body or None, headers=fwd)
         resp = c.getresponse()
         data = resp.read(MAX_BODY + 1)
         c.close()
