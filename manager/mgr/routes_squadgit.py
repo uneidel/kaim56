@@ -23,6 +23,7 @@ from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import routes as _routes
 from mgr import secrets as _secrets
+from mgr import squadgate as _squadgate
 from mgr import squadgit as _squadgit
 from mgr import util as _util
 
@@ -105,4 +106,6 @@ def _rt_squadgit_post(h):
     if r is None:
         return h._json({"error": why}, 400)
     _projects.set_remote(name, r)
+    for t in _squadgate.tickets(name):              # the board so far -> issues (known ones: updated)
+        _squadgit.mirror_ticket(name, t)
     return h._json({"ok": True, "remote": r})

@@ -20,9 +20,13 @@ enters a VM. Design: docs/plans/2026-10-09-squad-git-design.md.
 - API (stdlib urllib, no redirects): PRs and issues — create, list, view,
   comment; the label is added (created when missing) and may fail quietly.
   Merging is NOT offered: it stays with the user (or the squad merge gate).
+- Tickets: every squad ticket is mirrored one way into an issue (title
+  "<key>: <title>", status as open/closed, changes and comments as issue
+  comments); the squad board stays the source. A background worker, so a
+  slow forge never holds up a ticket.
 
 State: squadgit.json in the manager dir (root-only): the PRs/issues the squad
-created (the Squad panel's list, the daily limit).
+created (the Squad panel's list, the daily limit) and the ticket -> issue numbers.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -31,6 +35,7 @@ one place.
 import base64
 import json
 import os
+import queue
 import re
 import subprocess
 import threading
@@ -313,14 +318,18 @@ def _load():
         return {"created": []}
 
 
+def _save(d):
+    tmp = STATE_FILE + ".tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+        json.dump(d, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, STATE_FILE)
+
+
 def _record(entry):
     with _lock:
         d = _load()
         d["created"] = (d["created"] + [entry])[-KEEP:]
-        tmp = STATE_FILE + ".tmp"
-        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
-            json.dump(d, fh, indent=1, ensure_ascii=False)
-        os.replace(tmp, STATE_FILE)
+        _save(d)
 
 
 def created(project, limit=30):
@@ -332,6 +341,62 @@ def created_today(project, member):
     midnight = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
     return sum(1 for e in _load()["created"]
                if e.get("project") == project and e.get("by") == member and e.get("ts", 0) >= midnight)
+
+
+# ---- tickets mirrored as issues (one way) ------------------------------------------
+_mq = queue.Queue()
+_worker = [None]
+
+
+def mirror_ticket(project, t, by="", change=None):
+    """Queue a ticket create/update for the project's remote; no remote: nothing."""
+    if not settings(_projects.get(project)):
+        return
+    _mq.put((project, dict(t), by, dict(change or {})))
+    with _lock:
+        if not (_worker[0] and _worker[0].is_alive()):
+            _worker[0] = threading.Thread(target=_mirror_loop, daemon=True, name="ticket-mirror")
+            _worker[0].start()
+
+
+def _mirror_loop():
+    while True:
+        project, t, by, change = _mq.get()
+        try:
+            _mirror_one(project, t, by, change)
+        except Exception as e:                    # a forge hiccup must not stop the worker
+            print(f"[quiet] ticket mirror {project}/{t.get('key')}: {e!r}", flush=True)
+        finally:
+            _mq.task_done()
+
+
+def _mirror_one(project, t, by, change):
+    cfg = settings(_projects.get(project))
+    if not cfg:
+        return
+    token = _token(cfg)
+    slot = f"{project} {cfg['url']}"              # another remote: other issue numbers
+    title = f"{t['key']}: {t['title']}"[:TITLE_MAX]
+    body = (f"{t.get('description') or ''}\n\n---\n_kAIm56 squad ticket {t['key']} · "
+            f"assignee: {t.get('assignee') or '-'} · status: {t.get('status')}_")[:BODY_MAX]
+    state = "closed" if t.get("status") == "done" else "open"
+    num = _load().get("tickets", {}).get(slot, {}).get(t["key"])
+    if not num:
+        num = (_api(cfg, token, "POST", "/issues", {"title": title, "body": body}) or {}).get("number")
+        if not num:
+            return
+        with _lock:
+            d = _load()
+            d.setdefault("tickets", {}).setdefault(slot, {})[t["key"]] = num
+            _save(d)
+        _label(cfg, token, num)
+    _api(cfg, token, "PATCH", f"/issues/{num}", {"title": title, "body": body, "state": state})
+    what = [f"{k}: {change[k]}" for k in ("status", "assignee", "level") if change.get(k)]
+    if change.get("title") or change.get("description"):
+        what.append("re-scoped")
+    if what or change.get("comment"):
+        text = f"**{by or '?'}** " + " · ".join(what) + (f"\n\n{change['comment']}" if change.get("comment") else "")
+        _api(cfg, token, "POST", f"/issues/{num}/comments", {"body": text[:BODY_MAX]})
 
 
 # ---- what a member may do ---------------------------------------------------------

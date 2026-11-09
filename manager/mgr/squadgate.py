@@ -69,6 +69,7 @@ from mgr import projects as _projects
 from mgr import repoprofile as _repoprofile
 from mgr import router as _router
 from mgr import skills as _skills
+from mgr import squadgit as _squadgit
 from mgr import squadrec as _squadrec
 from mgr import squadreview as _squadreview
 from mgr import squads as _squads
@@ -1065,6 +1066,7 @@ def _ticket_add(project, t, who):
         d["tickets"].append(new)
         _save(d)
     _squadrec.log_ticket(project, "create", new, who)
+    _squadgit.mirror_ticket(project, new, who)
     return new
 
 
@@ -1165,10 +1167,11 @@ def update_ticket(proj, who, tid, body, may, depth=1):
             t["comments"] = (t["comments"] + [{"ts": int(time.time()), "by": who, "text": comment}])[-MAX_COMMENTS:]
         t["updated"] = int(time.time())
         _save(d)
-    _squadrec.log_ticket(proj["name"], "update", t, who,
-                         {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment), ("level", level),
-                                            ("title", title if rescoped else None), ("description", desc if rescoped else None))
-                          if v or (k in ("assignee", "description") and v is not None)})
+    change = {k: v for k, v in (("status", status), ("assignee", assignee), ("comment", comment), ("level", level),
+                                ("title", title if rescoped else None), ("description", desc if rescoped else None))
+              if v or (k in ("assignee", "description") and v is not None)}
+    _squadrec.log_ticket(proj["name"], "update", t, who, change)
+    _squadgit.mirror_ticket(proj["name"], t, who, change)
     now = [x for x in mine if _ready(x, mine)]
     wake = [x for x in now if x["key"] not in before
             or (x is t and assignee and assignee != old_assignee)]

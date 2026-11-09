@@ -12961,6 +12961,33 @@ class ManagerFunctions(unittest.TestCase):
             undo()
 
 
+    def test_squadgit_mirrors_tickets_as_issues(self):
+        """With a remote, every ticket becomes an issue (once), changes and
+        comments land as issue comments, done closes it; setting the remote
+        mirrors the tickets made before; no remote, no call."""
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        srv, url, log = _fake_forge()
+        sg, old_api = m._squadgit, m._squadgit.api_base
+        sg.api_base = lambda cfg: url + "/api/v1/repos/own/rep"
+        try:
+            t = {"key": "BK-1", "title": "spec", "description": "write it", "assignee": "b", "status": "open"}
+            sg.mirror_ticket("wp", t, "a"); sg._mq.join()
+            self.assertEqual(log, [])                                                     # no remote yet
+            self._sg_remote("gitea"); sg._mq.join()
+            sg.mirror_ticket("wp", t, "a"); sg._mq.join()
+            sg.mirror_ticket("wp", {**t, "status": "done"}, "b", {"status": "done", "comment": "green"}); sg._mq.join()
+            made = [e for e in log if e[1:3] == ("POST", "/repos/own/rep/issues")]
+            self.assertEqual([e[5]["title"] for e in made], ["BK-1: spec"])               # one issue, then updates
+            self.assertIn("write it", made[0][5]["body"])
+            self.assertEqual(log[-2][1:3] + (log[-2][5]["state"],), ("PATCH", "/repos/own/rep/issues/1", "closed"))
+            self.assertEqual((log[-1][1:3], log[-1][5]["body"]), (("POST", "/repos/own/rep/issues/1/comments"),
+                                                                   "**b** status: done\n\ngreen"))
+        finally:
+            sg.api_base = old_api
+            srv.shutdown(); srv.server_close()
+            undo()
+
     # ---- squad kickoff: repo URL + goal -> clone, project, remote, architect, goal posted -----
     SK_TOK = "ghp_KiCkOfFtOkEn9876543210"
 
@@ -13551,6 +13578,9 @@ def _fake_forge():
                 return self._send(200, out)
             if mm and not mm.group(3) and meth == "GET" and int(mm.group(2)) in mine:
                 return self._send(200, mine[int(mm.group(2))])
+            if mm and not mm.group(3) and meth == "PATCH" and int(mm.group(2)) in mine:
+                mine[int(mm.group(2))].update(body)
+                return self._send(200, mine[int(mm.group(2))])
             if mm and mm.group(3) == "/comments":
                 key = (prov, int(mm.group(2)))
                 if meth == "POST":
@@ -13571,7 +13601,7 @@ def _fake_forge():
                 return self._send(200, {"name": name}) if name in labels["github"] else self._send(404, {"message": "Not Found"})
             return self._send(404, {"message": "Not Found"})
 
-        do_GET = do_POST = _do
+        do_GET = do_POST = do_PATCH = _do
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
