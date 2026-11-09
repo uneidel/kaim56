@@ -442,7 +442,7 @@ def turn_end(task, begun, ok, result):
             pass
     now = time.time()
     ev = {"ts": int(now), "squad_id": rec["id"], "project": sq.get("project"), "member_id": mid, "instance": inst,
-          "task_id": task.get("id"), "msg_id": sq.get("msg"), "depth": sq.get("depth"),
+          "task_id": task.get("id"), "msg_id": sq.get("msg"), "depth": sq.get("depth"), "generation": sq.get("gen"),
           "incoming": task.get("message", ""), "result": str(result if result is not None else ""),
           "status": "done" if ok else "error", "duration_s": round(now - t0, 1), "tokens": tokens}
     _safe(_append, os.path.join(folder(rec), "conversations", "members", f"{mid}__{inst}", _day(now) + ".jsonl"), ev)

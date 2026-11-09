@@ -140,6 +140,8 @@ class H(BaseHTTPRequestHandler):
         # answer by it if the stream breaks (app closed, network gone).
         want = str(d.get("turn") or "")
         turn = want if re.fullmatch(r"[0-9a-f]{8,16}", want) else uuid.uuid4().hex[:8]
+        if d.get("gen") and not self.path.rstrip("/").endswith("/steer"):
+            agent.persist.switch(d["gen"])            # a squad turn's context: its ticket, a new one starts empty
         # Steering: Nachricht in einen LAUFENDEN Turn einspeisen. queued=false
         # heisst: gerade kein Turn aktiv -> Aufrufer sendet normal.
         if self.path.rstrip("/").endswith("/steer"):

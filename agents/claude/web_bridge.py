@@ -144,6 +144,8 @@ def _claude_once(msg, resume, keep_session):
     out = _claude_run(msg, resume, keep_session)
     if any(k in out for k in AUTH_FAIL_MARKS) and _sync_credentials(force=True):
         out = _claude_run(msg, resume, keep_session)      # einmal mit frischer Anmeldung
+    if resume and "No conversation found" in out:         # a generation's session the CLI no longer has
+        out = _claude_run(msg, None, keep_session)
     return out
 
 
@@ -310,6 +312,38 @@ def _codex_run(msg, resume, keep_session):
     return result
 
 
+# ---- generations (the manager's squadgate.generation) ----
+# A squad turn names its context — the member's ticket, the lead's phase, "channel":
+# one conversation each (claude's session, codex's thread), a new one starts empty.
+# The map lives in the home (the persistent write layer); the transcripts stay where
+# the CLI keeps them, and every turn is in the manager's squad archive too.
+GENS_FILE = os.path.expanduser("~/.kaim56-generations.json")
+
+
+def run_gen(msg, gen):
+    global _session
+    if not gen:
+        return run(msg)
+    try:
+        with open(GENS_FILE) as fh:
+            gens = json.load(fh)
+    except (OSError, ValueError):
+        gens = {}
+    gens = gens if isinstance(gens, dict) else {}
+    _session = _codex["thread"] = gens.get(gen)
+    _last_seen[0] = time.time()                  # the generation decides here, not the idle reset
+    out = run(msg)
+    gens[gen] = _codex["thread"] if AGENT == "codex" else _session
+    try:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(GENS_FILE), prefix=".gens.")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(gens, fh)
+        os.replace(tmp, GENS_FILE)
+    except OSError as e:
+        _log(f"generations not saved: {e!r}")
+    return out
+
+
 def run(msg):
     try:
         if AGENT == "codex":
@@ -371,7 +405,7 @@ class H(BaseHTTPRequestHandler):
             d = json.loads(self.rfile.read(ln) or b"{}")
         except json.JSONDecodeError:
             d = {}
-        reply = run(d.get("message", "")) if d.get("message") else ""
+        reply = run_gen(d["message"], str(d.get("gen") or "")[:160]) if d.get("message") else ""
         b = json.dumps({"reply": reply}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

@@ -15,12 +15,19 @@ sets them up fresh, and image bytes are dropped because they are large and
 rarely needed twice. The system prompt is never stored: the current one
 from the config applies after a restart. HISTORY_PERSIST=0 turns it off.
 
+Generations: a squad turn names its context (the member's ticket, the lead's
+phase, "channel"; the manager's squadgate.generation). switch() parks the
+running history under ``.state/gens/<generation>.json`` and brings that
+generation's back — a new one starts empty. The parked files stay: every
+generation's conversation is kept in the memory folder on the host.
+
 Part of the openrouter agent package (runs inside the VM): no import from the
 package root. Sibling modules are used as ``_name.func`` (module attribute),
 so a test can replace one definition in one place.
 """
 import json
 import os
+import re
 import time
 
 from . import config as _config
@@ -31,6 +38,8 @@ STATE_DIR = ".state"
 FILE = "history.json"
 _ROLES = ("user", "assistant", "system", "tool")
 _last = [""]           # last serialized message list written (no rewrite when nothing changed)
+GENS, GEN_FILE, UNNAMED = "gens", "generation", "chat"
+_gen = [None]          # the generation the running history belongs to (None: not read yet)
 
 
 def path():
@@ -82,6 +91,60 @@ def save():
     return True
 
 
+def _read(p):
+    """-> (messages, ts) of a history file; raises OSError/ValueError/KeyError/TypeError."""
+    with open(p, encoding="utf-8") as fh:
+        d = json.load(fh)
+    msgs = d["messages"]
+    if not isinstance(msgs, list) or not all(isinstance(m, dict) and m.get("role") in _ROLES for m in msgs):
+        raise ValueError("not a message list")
+    return msgs, float(d.get("ts") or 0)
+
+
+def _write(p, msgs):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write('{"v": 1, "ts": %r, "messages": %s}' % (time.time(), json.dumps(msgs, ensure_ascii=False)))
+    os.replace(tmp, p)
+
+
+def switch(gen):
+    """Make `gen` the running generation (see the module docstring). Never
+    raises: a failed park costs that context, not the turn. -> True when the
+    context changed."""
+    p, gen = path(), re.sub(r"[^A-Za-z0-9._-]", "_", str(gen or ""))[:120]
+    if not (p and gen):
+        return False
+    d = os.path.dirname(p)
+    if _gen[0] is None:
+        try:
+            with open(os.path.join(d, GEN_FILE), encoding="utf-8") as fh:
+                _gen[0] = fh.read().strip()
+        except OSError:
+            _gen[0] = ""
+    if gen == _gen[0]:
+        return False
+    try:
+        _write(os.path.join(d, GENS, (_gen[0] or UNNAMED) + ".json"), _durable(_context._history[1:]))
+    except OSError as e:
+        _config.log("generation: not parked:", repr(e)[:120])
+    try:
+        msgs = _read(os.path.join(d, GENS, gen + ".json"))[0]
+    except (OSError, ValueError, KeyError, TypeError):
+        msgs = []
+    _context._history[1:] = msgs
+    _gen[0], _last[0] = gen, ""
+    try:
+        with open(os.path.join(d, GEN_FILE), "w", encoding="utf-8") as fh:
+            fh.write(gen)
+    except OSError:
+        pass
+    _config.log(f"generation: {gen} ({len(msgs)} message(s) back)")
+    save()
+    return True
+
+
 def load():
     """Read the history back at start. Returns the timestamp of the saved
     state (0.0 when nothing was restored) so the caller can treat the idle
@@ -90,13 +153,7 @@ def load():
     if not p or len(_context._history) > 1:      # nothing to restore, or already running
         return 0.0
     try:
-        with open(p, encoding="utf-8") as fh:
-            d = json.load(fh)
-        msgs = d["messages"]
-        if not isinstance(msgs, list) or not all(
-                isinstance(m, dict) and m.get("role") in _ROLES for m in msgs):
-            raise ValueError("not a message list")
-        ts = float(d.get("ts") or 0)
+        msgs, ts = _read(p)
     except (OSError, ValueError, KeyError, TypeError) as e:
         if not isinstance(e, FileNotFoundError):
             _config.log("history: not restored:", repr(e)[:120])

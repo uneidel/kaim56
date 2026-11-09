@@ -157,6 +157,17 @@ def approved(proj):
     return bool(_squads.settings(proj).get("approved"))
 
 
+def generation(proj, member):
+    """The context a member's turn runs in (mgr/tasks.py sends it, the bridge keeps one
+    conversation each, a new one starts empty): the lead's phase, else its ticket in work
+    (doing first, then the one touched last that is not done), else "channel"."""
+    if member == lead(proj):
+        return f"{proj['name']}/lead-" + ("build" if approved(proj) else "plan")
+    mine = sorted((t for t in tickets(proj["name"]) if t.get("assignee") == member and t.get("status") != "done"),
+                  key=lambda t: (t.get("status") == "doing", t.get("updated") or 0))
+    return f"{proj['name']}/" + (mine[-1]["key"] if mine else "channel")
+
+
 # ---- validation -------------------------------------------------------------
 def _new_persona(raw, name, strict, warn):
     """A member's proposed persona -> (persona, '') or (None, why). An existing

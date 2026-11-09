@@ -824,6 +824,36 @@ class AgentLogic(unittest.TestCase):
             ctx._history[:] = old[1]
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_generation_switch_parks_and_brings_back_a_context(self):
+        """A squad turn names its generation: a new one starts empty, the old one is
+        parked under .state/gens/ (kept) and comes back when its ticket does."""
+        import tempfile, shutil, json
+        a, ctx, ps = self.a, self.a._context, self.a._persist
+        tmp = tempfile.mkdtemp(prefix="e2e-gen-")
+        old = (ctx.MEMORY_DIR, list(ctx._history), ps._last[0], ps.PERSIST, ps._gen[0])
+        try:
+            ctx.MEMORY_DIR = tmp; ps.PERSIST = True; ps._last[0] = ""; ps._gen[0] = None
+            u = lambda t: {"role": "user", "content": t}
+            ctx._history[:] = [{"role": "system", "content": "S"}, u("chat before")]
+            self.assertTrue(ps.switch("bookseller/BK-1"))
+            self.assertEqual(ctx._history, [{"role": "system", "content": "S"}])          # a new one: empty
+            ctx._history.append(u("work on BK-1"))
+            self.assertFalse(ps.switch("bookseller/BK-1"))                              # same: kept
+            self.assertTrue(ps.switch("bookseller/BK-2"))
+            self.assertEqual(len(ctx._history), 1)
+            gens = os.path.join(tmp, ".state", "gens")
+            self.assertEqual(sorted(os.listdir(gens)), ["bookseller_BK-1.json", "chat.json"])
+            with open(os.path.join(gens, "chat.json")) as fh:
+                self.assertEqual(json.load(fh)["messages"], [u("chat before")])
+            ps._gen[0] = None                                                            # a restart reads it back
+            self.assertTrue(ps.switch("bookseller/BK-1"))
+            self.assertEqual(ctx._history[1:], [u("work on BK-1")])
+            self.assertFalse(ps.switch("")); ctx.MEMORY_DIR = ""; self.assertFalse(ps.switch("x"))
+        finally:
+            ctx.MEMORY_DIR, ps._last[0], ps.PERSIST, ps._gen[0] = old[0], old[2], old[3], old[4]
+            ctx._history[:] = old[1]
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_compact_summarizes_and_replaces_history(self):
         """/compact folds the whole conversation into one [Summary] block, keeps
         the system prompt, passes the focus to the summarizer, and reports empty."""
@@ -3610,6 +3640,42 @@ class ManagerFunctions(unittest.TestCase):
         _wtext(wb.CODEX_AUTH, json.dumps({**host, "tokens": {"access_token": "v", "refresh_token": "rv"}, "last_refresh": "2026-11-01T12:00:00Z"}))
         wb._codex_sync()
         self.assertEqual([(p, pl["tokens"]["access_token"]) for p, pl in posts], [("/api/codex-credentials", "v")])
+
+    def test_bridge_keeps_one_session_per_generation(self):
+        """A squad turn's `gen`: claude resumes that generation's session, a new one starts
+        without --resume, the map survives in the home; a session the CLI lost starts over."""
+        import types
+        src = next((p for p in (os.path.join(self.m._instances.agents_dir() or "/nonexistent", "claude", "web_bridge.py"),
+                                os.path.join(os.path.dirname(__file__), "..", "..", "agents", "claude", "web_bridge.py"))
+                    if os.path.exists(p)), None)
+        if not src:
+            self.skipTest("agents/claude/web_bridge.py not found (site AGENTS_DIR)")
+        wb = _load("web_bridge_gen", src)
+        tmp = tempfile.mkdtemp(prefix="e2e-gens-")
+        old = wb._post, wb._log, wb.subprocess.run, wb._sync_credentials, wb.GENS_FILE, wb.AGENT
+        def undo():
+            wb._post, wb._log, wb.subprocess.run, wb._sync_credentials, wb.GENS_FILE, wb.AGENT = old
+        self.addCleanup(undo)
+        wb._post, wb._log, wb._sync_credentials = (lambda *a: None), (lambda *a: None), (lambda force=False: False)
+        wb.GENS_FILE, wb.AGENT = os.path.join(tmp, "gens.json"), "claude"
+        cmds, n = [], [0]
+        def run(cmd, **k):
+            cmds.append(cmd); n[0] += 1
+            r = cmd[cmd.index("--resume") + 1] if "--resume" in cmd else ""
+            if r == "gone":
+                return types.SimpleNamespace(stdout="", stderr="No conversation found with session ID: gone", returncode=1)
+            return types.SimpleNamespace(stdout=json.dumps({"session_id": r or f"s{n[0]}", "result": "ok"}), stderr="", returncode=0)
+        wb.subprocess.run = run
+        res = lambda c: c[c.index("--resume") + 1] if "--resume" in c else None
+        wb.run_gen("t1", "bs/BK-1"); wb.run_gen("t2", "bs/BK-2"); wb.run_gen("t3", "bs/BK-1")
+        self.assertEqual([res(c) for c in cmds], [None, None, "s1"])
+        with open(wb.GENS_FILE) as fh:
+            self.assertEqual(json.load(fh), {"bs/BK-1": "s1", "bs/BK-2": "s2"})
+        _wtext(wb.GENS_FILE, json.dumps({"bs/BK-3": "gone"}))
+        cmds.clear(); wb.run_gen("t4", "bs/BK-3")
+        self.assertEqual([res(c) for c in cmds], ["gone", None])
+        with open(wb.GENS_FILE) as fh:
+            self.assertNotEqual(json.load(fh)["bs/BK-3"], "gone")
 
     def test_claude_usage_poller_parses_and_maps_errors(self):
         """The poller reads five_hour/seven_day per account (at most every
@@ -11350,6 +11416,29 @@ class ManagerFunctions(unittest.TestCase):
         _wtext(os.path.join(repo, "deploy.json"), json.dumps({"start": "x", "port": 80}))
         subprocess.run(g + ["commit", "-qam", "port"], check=True)
         self.assertIn("deploy.json: port", d.effective(proj)[1])
+
+    def test_squad_generation_is_the_ticket_or_the_leads_phase(self):
+        """A member's turn runs in its ticket's context (doing first, else the one touched
+        last), without one in "channel"; the lead's in its phase; the bridge gets it as `gen`."""
+        m, g = self.m, self.m._squadgate
+        old = (g.tickets, g.lead, g.approved, m._tasks._run_named)
+        self.addCleanup(lambda: setattr(g, "tickets", old[0]) or setattr(g, "lead", old[1])
+                        or setattr(g, "approved", old[2]) or setattr(m._tasks, "_run_named", old[3]))
+        T = [{"key": "BK-1", "assignee": "ui", "status": "done", "updated": 9},
+             {"key": "BK-2", "assignee": "ui", "status": "review", "updated": 5},
+             {"key": "BK-3", "assignee": "ui", "status": "open", "updated": 7},
+             {"key": "BK-4", "assignee": "qa", "status": "doing", "updated": 1},
+             {"key": "BK-5", "assignee": "qa", "status": "open", "updated": 8}]
+        g.tickets, g.lead, ap = (lambda p: T), (lambda proj: "arch"), [False]
+        g.approved = lambda proj: ap[0]
+        P = {"name": "bs"}
+        self.assertEqual([g.generation(P, x) for x in ("ui", "qa", "dev", "arch")],
+                         ["bs/BK-3", "bs/BK-4", "bs/channel", "bs/lead-plan"])
+        ap[0] = True; self.assertEqual(g.generation(P, "arch"), "bs/lead-build")
+        seen = []
+        m._tasks._run_named = lambda inst, msg, timeout=600, **kw: (seen.append(kw), (True, "ok"))[1]
+        m._tasks._run_task_now("ui", "x", gen="bs/BK-3")
+        self.assertEqual(seen, [{"gen": "bs/BK-3"}])
 
     def test_deploy_smoke_follows_the_proxy_and_lists_services(self):
         """After a deploy the manager fetches /d/<p>/ through its own proxy for the channel note:

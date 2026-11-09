@@ -36,6 +36,7 @@ from mgr import settings as _settings
 from mgr import signal as _signal_mod
 from mgr import squadkick as _squadkick
 from mgr import squadmetrics as _squadmetrics
+from mgr import squadgate as _squadgate
 from mgr import squadrec as _squadrec
 from mgr import squads as _squads
 from mgr import store as _store
@@ -56,14 +57,14 @@ _active_lock = threading.Lock()
 _stop = threading.Event()             # set only by tests: ends the dispatcher loop
 
 
-def _chat_post(inst, message, timeout=600, turn=None):
+def _chat_post(inst, message, timeout=600, turn=None, gen=""):
     """Non-streaming chat call to an instance's bridge. The agent gets the
     deadline along and stops its tool loop in time — a run that outlives the
     caller answers into the void (a 12-step job search once did). `turn`
     names the turn (the cost router planned it under that id)."""
     url = f"http://{_instances.net_of(inst)['guest']}:{_instances.WEB_GUEST_PORT}/api/chat"
     data = json.dumps({"message": message, "deadline": time.time() + timeout - 30,
-                       "kind": "task", **({"turn": turn} if turn else {})}).encode()
+                       "kind": "task", **({"turn": turn} if turn else {}), **({"gen": gen} if gen else {})}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     body = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
@@ -191,7 +192,7 @@ def task_target_sweep():
     return hit
 
 
-def _run_task_now(instance, message, model=None, timeout=600, sandbox=None, max_steps=0):
+def _run_task_now(instance, message, model=None, timeout=600, sandbox=None, max_steps=0, gen=""):
     """Run a task — on a named instance (routing to the capability) or in an
     ephemeral VM (target == 'ephemeral'). `model` applies to the ephemeral VM
     only — a named instance keeps its own configuration. `timeout` is the
@@ -201,7 +202,7 @@ def _run_task_now(instance, message, model=None, timeout=600, sandbox=None, max_
         if sandbox:
             return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, sandbox, **extra)
         return _run_ephemeral(message, (model or "").strip()[:120] or None, timeout, **extra)
-    return _run_named(instance, message, timeout)
+    return _run_named(instance, message, timeout, **({"gen": gen} if gen else {}))
 
 
 def _run_routed(t, msg):
@@ -216,22 +217,23 @@ def _run_routed(t, msg):
     if t["instance"] != "ephemeral":
         inst = next((i for i in _instances.load_instances() if i["name"] == t["instance"]), None)
     sq = t.get("squad") or {}
+    gen = {"gen": sq["gen"]} if sq.get("gen") else {}
     pol = _router.cost_routing(inst, _squads.cost_routing_on(sq.get("project"))) if inst else None
     if not pol:
         ok, res = _run_task_now(t["instance"], msg, t.get("model"), timeout=TASK_TIMEOUT, sandbox=t.get("sandbox"),
-                                **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}))
+                                **({"max_steps": t["max_steps"]} if t.get("max_steps") else {}), **gen)
         return ok, res, None
     level = int(sq.get("level") or t.get("level") or 0) or _decision.judge(t["message"])["level"]
     turn = uuid.uuid4().hex[:12]
     _router.plan(t["instance"], turn, level)
-    ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn)
+    ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn, **gen)
     bad = _router.failed(ok, res) or (bool(pol.get("check")) and not _decision.sufficient(t["message"], res))
     _router.book(t["instance"], turn, "failed" if bad else "ok")
     up = _router.next_level(t["instance"], turn, level) if bad and pol.get("escalate", True) else None
     if up:
         turn2 = uuid.uuid4().hex[:12]
         _router.plan(t["instance"], turn2, up, escalated=True)
-        ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn2)
+        ok, res = _run_named(t["instance"], msg, TASK_TIMEOUT, turn=turn2, **gen)
         _router.book(t["instance"], turn2, "failed" if _router.failed(ok, res) else "ok")
     return ok, res, level
 
@@ -546,6 +548,13 @@ def _execute(t):
         # (bug Aug 20: exception in the follow-up -> outer except ->
         # the task never fired again and the chat entry was missing).
         begun = None
+        try:
+            sq = t.get("squad")
+            proj = _projects.get(sq["project"]) if sq else None
+            if proj:                                         # its context generation: the member's ticket
+                sq["gen"] = _squadgate.generation(proj, t["instance"])
+        except Exception as e:
+            _util._wlog(f"{t['id']}: squad generation: {e!r}")
         try:
             begun = _squadrec.turn_begin(t)                  # a squad wake: archived below
         except Exception as e:
