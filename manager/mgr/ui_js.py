@@ -1354,6 +1354,7 @@ async function skGraphCommit(sha){
 async function sqGit(){
   const el=document.getElementById('sq-git'); if(!el)return;
   let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(sqName()))).json()}catch(e){return}
+  delete el.dataset.dirty; el.oninput=el.onchange=()=>{el.dataset.dirty='1'};   // the panel's Save also saves a changed remote
   if(d.error){el.textContent=d.error;return}
   const r=d.remote||d.defaults||{}, on=!!d.remote, S=v=>String(v==null?'':v);
   const opt=(v,cur)=>`<option value="${esc(S(v))}"${v===cur?' selected':''}>${escT(S(v))}</option>`;
@@ -1388,6 +1389,8 @@ async function sqGitFetch(){
   document.getElementById('sg-msg').textContent=d.error||`fetched ${d.refs} branches into ${d.namespace} · base ${d.base||'?'}`;
 }
 async function sqSave(){
+  const sg=document.getElementById('sq-git');
+  if(sg&&sg.dataset.dirty&&document.getElementById('sg-url').value.trim()){await sqGitSave();if(sg.dataset.dirty){document.getElementById('sqmsg').textContent='Git remote: '+document.getElementById('sg-msg').textContent;return}}
   const body={enabled:document.getElementById('sq-enabled').checked,paused:document.getElementById('sq-paused').checked,approved:document.getElementById('sq-approved').checked,cost_routing:document.getElementById('sq-cost_routing').checked,security_skills:document.getElementById('sq-security_skills').checked,push_when_done:document.getElementById('sq-push_when_done').checked};
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>body[k]=+document.getElementById('sq-'+k).value);
   body.autonomy=document.getElementById('sq-autonomy').value; body.approval_tools=document.getElementById('sq-approval_tools').value;body.claude_account=document.getElementById('sq-claude_account').value.trim();
