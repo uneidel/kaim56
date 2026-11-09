@@ -1295,6 +1295,61 @@ async function sqReindex(){
   document.getElementById('sqmsg').textContent=d.error||d.msg||'';
   sqIndex();
 }
+/* squad git graph (GET /api/squad-git/<p>/graph): one lane per branch, merges back to the base, member branches at the side */
+const GR_H=28, GR_W=18, GR_COL=['#7fb069','#5fa8d3','#e6a23c','#c678dd','#e06c75','#56b6c2','#d19a66','#98c379','#61afef','#be5046'];
+function grLanes(cs){
+  // newest first: a commit takes the lane that waits for it (others waiting merge in), its first parent keeps the lane,
+  // further parents (merges) get a lane -> [{lane}] per row + edges [i, from lane, via lane, parent row]
+  const idx={}; cs.forEach((c,i)=>idx[c.sha]=i);
+  let lanes=[]; const pos=[], edges=[], name=[], laneName=[];
+  const free=()=>{const k=lanes.indexOf(null);return k<0?lanes.length:k};
+  cs.forEach((c,i)=>{
+    let l=lanes.indexOf(c.sha); if(l<0)l=free();
+    lanes=lanes.map((x,j)=>x===c.sha&&j!==l?null:x);
+    const own=(c.refs||[]).map(r=>r.replace(/^HEAD -> /,'')).find(r=>!/^tag: /.test(r)&&r!=='HEAD');
+    if(own)laneName[l]=own;
+    pos[i]=l; name[i]=laneName[l]||'';
+    const ps=c.parents.filter(p=>p in idx);
+    lanes[l]=ps[0]||null; if(!ps[0])laneName[l]='';
+    ps.forEach((p,n)=>{let e=l;if(n){e=lanes.indexOf(p);if(e<0){e=free();lanes[e]=p;laneName[e]=''}}edges.push([i,l,e,idx[p]])});
+  });
+  return {pos,edges,name,width:Math.max(1,...pos.map(x=>x+1),...edges.map(e=>e[2]+1))};
+}
+function grShort(r,p){return r.replace(/^HEAD -> /,'').replace('proj/'+p+'/','').replace(p+'-','')}
+function grInit(n,p){const s=grShort(n||'',p).split('/').pop()||'?';return s.slice(0,2).toUpperCase()}
+async function skGraph(){
+  const el=document.getElementById('sk-graph'); if(!el||!SK)return;
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SK)+'/graph')).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){el.innerHTML=`<p class=text-muted>${escT(d.error)}</p>`;return}
+  const cs=d.commits||[], g=grLanes(cs), p=SK, x=l=>12+l*GR_W, y=i=>GR_H/2+i*GR_H, col=l=>GR_COL[l%GR_COL.length];
+  let svg='';
+  g.edges.forEach(([i,a,e,j])=>{
+    const c=col(a===e?a:e); let path=`M${x(a)} ${y(i)}`;
+    if(j===i+1)path+=` C${x(a)} ${y(i)+GR_H/2} ${x(g.pos[j])} ${y(j)-GR_H/2} ${x(g.pos[j])} ${y(j)}`;
+    else{path+=` C${x(a)} ${y(i)+GR_H/2} ${x(e)} ${y(i)+GR_H/2} ${x(e)} ${y(i+1)} L${x(e)} ${y(j-1)}`;
+      path+=g.pos[j]===e?` L${x(e)} ${y(j)}`:` C${x(e)} ${y(j-1)+GR_H/2} ${x(g.pos[j])} ${y(j)-GR_H/2} ${x(g.pos[j])} ${y(j)}`}
+    svg+=`<path d="${path}" fill=none stroke="${c}" stroke-width=2 opacity=.85 />`;
+  });
+  cs.forEach((c,i)=>{const l=g.pos[i];svg+=`<circle cx=${x(l)} cy=${y(i)} r=9 fill="${col(l)}" stroke="#111" stroke-width=1.5 /><text x=${x(l)} y=${y(i)+3.5} text-anchor=middle font-size=8 font-weight=700 fill="#111">${escT(grInit(g.name[i]||(c.subject.match(/(\S+?)'s work|sync (\S+) with/)||[]).slice(1).find(Boolean)||'main',p))}</text>`});
+  const W=12+g.width*GR_W;
+  const rows=cs.map((c,i)=>`<div class=gr-row data-sha="${esc(c.sha)}" onclick="skGraphCommit(this.dataset.sha)" title="${esc(c.sha.slice(0,10))} · ${esc(c.author)}">`+
+    (c.refs||[]).filter(r=>r!=='HEAD').map(r=>`<span class=gr-ref style="border-color:${col(g.pos[i])}">${escT(grShort(r,p))}</span>`).join('')+
+    `<span class=gr-subj>${escT(c.subject)}</span><span class=gr-ts>${new Date(c.ts*1000).toLocaleString([], {dateStyle:'short',timeStyle:'short'})}</span></div>`).join('');
+  const br=(d.branches||[]).map(b=>`<div class=gr-br><b>${escT(grShort(b.branch,p))}</b> <code>${escT(b.tip)}</code>`+
+    `<div class=text-muted>${b.ahead==null?'':`↑${b.ahead} ↓${b.behind} vs ${escT(d.base)}`} · ${b.ts?new Date(b.ts*1000).toLocaleString():''}</div>`+
+    (b.ticket?`<div>${escT(b.ticket.key)} · ${escT(b.ticket.status)} · ${escT(b.ticket.title)}</div>`:'<div class=text-muted>no open ticket</div>')+
+    `<div class=text-muted style="font-size:11px">${escT(b.folder||'')}</div></div>`).join('')||'<span class=text-muted>no member branches</span>';
+  el.innerHTML=`<div class=gr><div class=gr-main><svg width=${W} height=${cs.length*GR_H} aria-hidden=true>${svg}</svg><div class=gr-rows>${rows||'<span class=text-muted>no commits</span>'}</div></div>`+
+    `<aside class=gr-side><h6>Branches</h6>${br}<h6 style="margin-top:14px">Commit</h6><div id=gr-commit class=text-muted>Click a commit.</div></aside></div>`;
+}
+async function skGraphCommit(sha){
+  const el=document.getElementById('gr-commit'); if(!el)return;
+  document.querySelectorAll('#sk-graph .gr-row').forEach(r=>r.classList.toggle('on',r.dataset.sha===sha));
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SK)+'/commit?sha='+encodeURIComponent(sha))).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){el.textContent=d.error;return}
+  el.innerHTML=`<code>${escT(d.sha.slice(0,10))}</code> · ${escT(d.author)} · ${new Date(d.ts*1000).toLocaleString()}<pre class=gr-msg>${escT(d.message)}</pre>`+
+    `<div class=gr-files>${(d.files||[]).map(f=>`<div><code>${escT(f[0])}</code> ${escT(f[1])}</div>`).join('')||'no file changes'}</div>`;
+}
 /* squad git remote (mgr/squadgit.py): settings, Fetch now, what the squad opened */
 async function sqGit(){
   const el=document.getElementById('sq-git'); if(!el)return;
@@ -3347,7 +3402,7 @@ loadMe();
 function setup(){
  const chat=document.querySelector('#s-squads .sk-chat');if(!chat||chat.dataset.workspaceReady)return;chat.dataset.workspaceReady='1';
  const tabs=document.createElement('nav');tabs.className='squad-workspace-tabs';tabs.setAttribute('aria-label','Squad workspace');
- const views=[['board','Board'],['chat','Chat'],['approvals','Approvals'],['results','Results'],['team','Team'],['settings','Settings']];
+ const views=[['board','Board'],['chat','Chat'],['approvals','Approvals'],['results','Results'],['graph','Graph'],['team','Team'],['settings','Settings']];
  const empty=document.createElement('div');empty.className='squad-no-approvals';empty.textContent='All caught up. No proposals or decisions are waiting for you.';
  const actions=document.createElement('details');actions.className='squad-action-menu';const summary=document.createElement('summary');summary.textContent='Actions';actions.append(summary);const menu=document.createElement('div');menu.className='squad-menu-items';actions.append(menu);
  const act=(label,fn,danger=false)=>{const b=document.createElement('button');b.type='button';b.textContent=label;if(danger)b.className='danger';b.onclick=async()=>{actions.open=false;await fn()};menu.append(b)};
@@ -3357,7 +3412,7 @@ function setup(){
  const settings=document.getElementById('sq-panel');chat.append(settings);chat.append(empty);
  let selected='board';
  function counts(){const approvals=document.getElementById('sk-cards').children.length;tabs.querySelector('[data-view="approvals"] .squad-tab-count').textContent=String(approvals);tabs.querySelector('[data-view="team"] .squad-tab-count').textContent=String((typeof SK_MEMBERS!=='undefined'?SK_MEMBERS:[]).length);tabs.querySelector('[data-view="results"] .squad-tab-count').textContent=String(rvCount());empty.hidden=approvals>0;}
- function select(view){selected=view;chat.dataset.view=view;tabs.querySelectorAll('button').forEach(b=>{const active=b.dataset.view===view;b.setAttribute('aria-current',active?'page':'false')});if(view==='chat'){document.getElementById('sk-chatbox').open=true;document.getElementById('sk-text').focus({preventScroll:true})}if(view==='settings'&&typeof SK!=='undefined'&&SK){sqOpen(SK)}else if(settings.style.display!=='none'){sqClose()}counts();}
+ function select(view){selected=view;chat.dataset.view=view;tabs.querySelectorAll('button').forEach(b=>{const active=b.dataset.view===view;b.setAttribute('aria-current',active?'page':'false')});if(view==='chat'){document.getElementById('sk-chatbox').open=true;document.getElementById('sk-text').focus({preventScroll:true})}if(view==='graph')skGraph();if(view==='settings'&&typeof SK!=='undefined'&&SK){sqOpen(SK)}else if(settings.style.display!=='none'){sqClose()}counts();}
  views.forEach(([view,label])=>{const b=document.createElement('button');b.type='button';b.dataset.view=view;b.append(document.createTextNode(label));if(view==='approvals'||view==='team'||view==='results'){const count=document.createElement('span');count.className='squad-tab-count';b.append(count)}b.onclick=()=>select(view);tabs.append(b)});
  const watch=new MutationObserver(counts);watch.observe(document.getElementById('sk-cards'),{childList:true});watch.observe(document.getElementById('sk-board'),{childList:true});watch.observe(document.getElementById('sk-results'),{childList:true});window.skView=select;
  const baseMode=skMode;skMode=function(kick){baseMode(kick);if(!kick)select('board');};

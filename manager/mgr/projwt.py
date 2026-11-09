@@ -320,6 +320,44 @@ def diff(proj, member):
     return out if len(out) <= DIFF_MAX else out[:DIFF_MAX] + f"\n… cut at {DIFF_MAX} characters\n"
 
 
+# ---- the squad's git graph (read only) -----------------------------------------
+GRAPH_MAX = 300
+SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def graph(proj, limit=GRAPH_MAX, remote_ns="refs/remotes/kaim56"):
+    """The newest commits of every branch (and the fetched remote ones), newest
+    first, plus each member branch against the base -> {base, commits, branches}."""
+    repo, base = proj["source"]["path"], proj["base"]
+    out = git(repo, ["log", "--date-order", f"-n{int(limit)}", "--format=%H%x1f%P%x1f%ct%x1f%an%x1f%s%x1f%D",
+                     "--branches", f"--glob={remote_ns}/*", "--"], check=False)
+    commits = []
+    for ln in out.splitlines():
+        f = ln.split("\x1f")
+        if len(f) == 6:
+            commits.append({"sha": f[0], "parents": f[1].split(), "ts": int(f[2] or 0), "author": f[3],
+                            "subject": f[4][:200], "refs": [r.strip() for r in f[5].split(",") if r.strip()]})
+    branches = []
+    for ln in git(repo, ["for-each-ref", "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:unix)",
+                         f"refs/heads/proj/{proj['name']}/"], check=False).splitlines():
+        name, tip, ts = (ln.split("\t") + ["", ""])[:3]
+        lr = git(repo, ["rev-list", "--left-right", "--count", f"refs/heads/{base}...refs/heads/{name}"], check=False).split()
+        branches.append({"branch": name, "member": name.rsplit("/", 1)[-1], "tip": tip, "ts": int(ts or 0),
+                         "behind": int(lr[0]) if len(lr) == 2 else None, "ahead": int(lr[1]) if len(lr) == 2 else None})
+    return {"base": base, "commits": commits, "branches": branches}
+
+
+def commit(proj, sha):
+    """One commit: message, time, changed files."""
+    if not SHA_RE.match(str(sha or "")):
+        raise GitError("sha: 7-40 hex characters")
+    repo = proj["source"]["path"]
+    head = git(repo, ["show", "-s", "--format=%H%x1f%an%x1f%ct%x1f%B", sha, "--"]).split("\x1f", 3)
+    files = [ln.split("\t", 1) for ln in git(repo, ["show", "--no-ext-diff", "--no-textconv", "--format=", "--name-status",
+                                                     "--no-renames", "-m", "--first-parent", sha, "--"]).splitlines() if "\t" in ln]
+    return {"sha": head[0], "author": head[1], "ts": int(head[2] or 0), "message": head[3].strip()[:4000], "files": files[:500]}
+
+
 # ---- merge and discard -----------------------------------------------------
 def markers(repo, base_sha, tip):
     """Files the writer changed that still hold a conflict marker (from a sync)."""

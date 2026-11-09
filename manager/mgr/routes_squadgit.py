@@ -8,19 +8,22 @@
   pr-comment, issue-create, issues, issue-comment; the caller is the VM by
   source IP and must be a member of the project; every call is audited.
 - admin: ``GET/POST /api/squad-git/<project>`` (the remote settings; the
-  token secret's value never leaves the host) and ``POST …/<project>/fetch``.
+  token secret's value never leaves the host) and ``POST …/<project>/fetch``;
+  ``GET …/<project>/graph`` and ``…/commit?sha=`` read the repo (the Squad graph).
   Role "user" (OIDC) is refused: default deny in mgr/auth.py.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import os
 import urllib.parse
 
 from mgr import audit as _audit
 from mgr import hitlq as _hitlq
 from mgr import policy as _policy
 from mgr import projects as _projects
+from mgr import projwt as _projwt
 from mgr import routes as _routes
 from mgr import secrets as _secrets
 from mgr import squadgate as _squadgate
@@ -71,10 +74,30 @@ def _name(h):
 
 @_routes.ROUTER.get("/api/squad-git/", prefix=True, admin=True)
 def _rt_squadgit_get(h):
-    name, _sub = _name(h)
+    name, sub = _name(h)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
+    if sub in ("graph", "commit"):
+        # GET /api/squad-git/<p>/graph | /commit?sha=<hex>: the repo read, nothing written
+        src = p.get("source") or {}
+        if p.get("strategy") != "worktree" or src.get("type") != "host" or not os.path.isdir(os.path.join(src.get("path") or "/nonexistent", ".git")):
+            return h._json({"error": "the graph needs a worktree project on a host git repository"}, 400)
+        try:
+            if sub == "commit":
+                sha = urllib.parse.parse_qs(urllib.parse.urlsplit(h.path).query).get("sha", [""])[0]
+                return h._json(_projwt.commit(p, sha))
+            g = _projwt.graph(p)
+        except _projwt.GitError as e:
+            return h._json({"error": str(e)}, 400)
+        doing = {}
+        for t in sorted(_squadgate.tickets(name), key=lambda t: t.get("status") == "doing"):
+            if t.get("status") != "done" and t.get("assignee"):
+                doing[t["assignee"]] = {"key": t["key"], "title": t["title"][:120], "status": t["status"]}
+        for b in g["branches"]:
+            b["ticket"] = doing.get(b["member"])
+            b["folder"] = _projwt.tree_dir(name, b["member"])
+        return h._json(g)
     return h._json({"project": name, "remote": _squadgit.settings(p), "defaults": _squadgit.DEFAULTS,
                     "providers": list(_squadgit.PROVIDERS), "secrets": sorted(_secrets.load_secrets_file()),
                     "strategy": p.get("strategy"), "created": _squadgit.created(name)})

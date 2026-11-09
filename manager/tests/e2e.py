@@ -12962,6 +12962,31 @@ class ManagerFunctions(unittest.TestCase):
             undo()
 
 
+    def test_squad_graph_reads_branches_and_commits(self):
+        """Graph: the commits of every branch with parents and refs, each member
+        branch ahead/behind the base, a commit's files; admin only, a bad sha refused."""
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        L = "127.0.0.1"
+        try:
+            g("checkout", "-q", "-B", "proj/wp/b"); _wtext(os.path.join(repo, "feat.txt"), "f\n")
+            g("add", "-A"); g("commit", "-q", "-m", "b's work")
+            g("checkout", "-q", "main"); g("merge", "-q", "--no-ff", "-m", "Merge b", "proj/wp/b")
+            g("checkout", "-q", "-B", "proj/wp/a"); _wtext(os.path.join(repo, "a.txt"), "a\n")
+            g("add", "-A"); g("commit", "-q", "-m", "a's work"); g("checkout", "-q", "main")
+            st, d = self._sq("/api/squad-git/wp/graph", L)
+            self.assertEqual(st, 200, d)
+            self.assertEqual([c["subject"] for c in d["commits"]][-1], "init")
+            merge = next(c for c in d["commits"] if c["subject"] == "Merge b")
+            self.assertEqual(len(merge["parents"]), 2); self.assertIn("HEAD -> main", merge["refs"])
+            self.assertEqual({b["member"]: (b["ahead"], b["behind"]) for b in d["branches"]}, {"a": (1, 0), "b": (0, 1)})
+            st, c = self._sq("/api/squad-git/wp/commit?sha=" + g("rev-parse", "proj/wp/a").strip(), L)
+            self.assertEqual((st, c["message"], c["files"]), (200, "a's work", [["A", "a.txt"]]))
+            self.assertEqual(self._sq("/api/squad-git/wp/commit?sha=HEAD;rm", L)[0], 400)
+            self.assertEqual(self._sq("/api/squad-git/wp/graph", "172.30.4.2")[0], 403)          # a VM: no
+        finally:
+            undo()
+
     def test_squadgit_mirrors_tickets_as_issues(self):
         """With a remote, every ticket becomes an issue (once), changes and
         comments land as issue comments, done closes it; setting the remote

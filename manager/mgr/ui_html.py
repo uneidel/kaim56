@@ -362,6 +362,7 @@ HTML_TOP = """</head><body>
       <div id=sk-cards></div>
       <div id=sk-results aria-label="Squad results"></div>
       <div id=sk-board hidden aria-label="Squad board"></div>
+      <div id=sk-graph aria-label="Squad git graph"></div>
       <div id=sk-working aria-live=polite></div>
       <div class=sk-comp><label class="sk-field sk-field-arch"><span>Architect runtime</span><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select></label>
