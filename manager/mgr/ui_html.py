@@ -593,7 +593,7 @@ HTML_TOP = """</head><body>
 
 HTML_BOTTOM = """
 
-<section class="screen" id=s-settings style="max-width:640px">
+<section class="screen" id=s-settings>
   <p class=lede>Shared and persisted · values apply to all new instances; empty template fields are pre-filled from here.</p>
   <div class="panel blueprint">
     
@@ -603,10 +603,11 @@ HTML_BOTTOM = """
       <button class="btn btn-secondary btn-sm" id=updbtn hidden style="margin-left:auto" onclick=runUpdate()>Update</button>
     </div>
     <pre id=updlog hidden class=mono style="font-size:11.5px;max-height:180px;overflow:auto;margin:-8px 0 16px;padding:8px 12px;border:1px solid var(--color-divider);white-space:pre-wrap"></pre>
-    <div class=stack id=settings></div>
+    <div class=setgrid id=settings></div>
     <div class=panel-foot><span id=setmsg class=msg></span><button class="btn btn-secondary" title="One sample setup suggestion with the saved decision backend" onclick=decisionTest()>Test decision backend</button><button class="btn btn-primary" onclick=saveSettings()>Save</button></div>
   </div>
-  <div class="panel blueprint" id=capanel style="margin-top:18px">
+  <div class=setgrid style="margin-top:18px;align-items:start">
+  <div class="panel blueprint" id=capanel>
     <h6 style="margin:0 0 10px">Claude accounts</h6>
     <p class=text-muted style="font-size:12.5px">Create a token per account with <code>claude setup-token</code>. For the usage gauges, optionally paste the account&#8217;s <code>~/.claude/.credentials.json</code> from a login made just for kAIm56 (e.g. <code>CLAUDE_CONFIG_DIR=/tmp/k claude login</code>) &#8212; the manager then owns and refreshes it. An instance picks its account with <code>CLAUDE_ACCOUNT</code>; <code>default</code> is the host login (read only).</p>
     <div class=stack id=calist></div>
@@ -618,9 +619,10 @@ HTML_BOTTOM = """
     </div>
     <div class=panel-foot><span id=camsg class=msg></span><button class="btn btn-primary" onclick=caSave()>Save account</button></div>
   </div>
-  <div class="panel blueprint" id=sesspanel hidden style="margin-top:18px">
+  <div class="panel blueprint" id=sesspanel hidden>
     <h6 style="margin:0 0 10px">Sessions (OIDC logins)</h6>
     <div class=stack id=sesslist></div>
+  </div>
   </div>
 </section>
 

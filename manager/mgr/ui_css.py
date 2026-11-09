@@ -208,6 +208,11 @@ main>.screen{margin-bottom:var(--space-8)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px 28px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
 .span2{grid-column:1/-1}
+/* Settings: one card per group, as many columns as the width allows */
+.setgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(400px,100%),1fr));gap:16px}
+.setgrp{border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.setgrp h6{margin:0;color:var(--color-accent)}
+.setgrp .field>label .hint{display:block;font-size:11.5px;text-transform:none;letter-spacing:0;font-weight:400;color:var(--color-neutral-600);margin-top:2px}
 .panel-foot{display:flex;justify-content:flex-end;align-items:center;gap:12px;
   margin-top:24px;padding-top:18px;border-top:1px solid var(--color-divider)}
 .msg{font-size:13px;color:var(--color-accent-700)}

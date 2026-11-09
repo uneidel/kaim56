@@ -2529,11 +2529,19 @@ function renderSettings(){
   // type=password: a real password field makes Chrome's password manager
   // offer "Save password?" on navigating away — with the katfs node-id as a
   // supposed username. Chrome ignores autocomplete=off there.
-  document.getElementById('settings').innerHTML=SETTINGS_SCHEMA.map(s=>{
-    if(s.options)return `<div class=field><label>${escT(s.label)}</label><select class=input data-s="${esc(s.key)}">`+
+  // Grouped by key; a label splits at the first " — " or " (" into title and hint.
+  const lab=t=>{t=t.replace(/^Mail: /,'');const m=/^(.*?)( — | \()(.*)$/.exec(t); return m?escT(m[1])+'<span class=hint>'+escT((m[2]===' ('?'(':'')+m[3])+'</span>':escT(t)};
+  const field=s=>{
+    if(s.options)return `<div class=field><label>${lab(s.label)}</label><select class=input data-s="${esc(s.key)}">`+
       s.options.map(o=>`<option value="${esc(o.value)}"${(SETTINGS[s.key]||'')===o.value?' selected':''}>${escT(o.label)}</option>`).join('')+`</select></div>`;
-    return `<div class=field><label>${escT(s.label)}</label><input class="input${s.key.indexOf('KEY')>=0?' seckey':''}" data-s="${esc(s.key)}" value="${esc(SETTINGS[s.key])}" `+
-    `type=text autocomplete=off spellcheck=false></div>`;}).join('');
+    return `<div class=field><label>${lab(s.label)}</label><input class="input${s.key.indexOf('KEY')>=0?' seckey':''}" data-s="${esc(s.key)}" value="${esc(SETTINGS[s.key])}" `+
+    `type=text autocomplete=off spellcheck=false></div>`;};
+  const groups=[['LLM providers',/^(OPENROUTER|ANTHROPIC|OPENAI|ORCAROUTER|BRAVE|LLAMA)_|^LLM_/],['Voice',/^(TTS|STT)_|^OPENAI_(STT|TTS)_/],
+    ['Routing & decisions',/^(JEV|DECISION|SUBQ|HINDSIGHT)_/],['Mail',/^MAIL_/],['Signal',/SIGNAL|^ALLOWED_SENDERS$/],['Apps & Cloudflare',/^(CF|CELLD)_/]];
+  const pick=k=>(groups.find(g=>k.match(/^OPENAI_(STT|TTS)_/)?g[0]==='Voice':g[1].test(k))||['Other'])[0];
+  document.getElementById('settings').innerHTML=[...groups.map(g=>g[0]),'Other'].map(name=>{
+    const fs=SETTINGS_SCHEMA.filter(s=>pick(s.key)===name);
+    return fs.length?`<div class=setgrp><h6>${escT(name)}</h6>${fs.map(field).join('')}</div>`:'';}).join('');
   voiceHealth();
 }
 async function voiceHealth(){

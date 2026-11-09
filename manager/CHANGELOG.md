@@ -7,6 +7,7 @@ commit messages.
 
 ## 2026-11-09
 - Security and Architecture tabs removed (nav, screens, /api/security, security.json handling, SVG and cards).
+- Settings: fields grouped into cards (LLM providers, Voice, Routing, Mail, Signal, Apps) over the full width; labels split into title and hint.
 
 ## 2026-11-07
 - Service VM: build, start and port come from deploy.json in the base branch (the squad writes it), the operator keeps RAM, vCPUs and secrets; the Deploy row shows what will run.
