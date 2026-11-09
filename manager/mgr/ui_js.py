@@ -1305,7 +1305,7 @@ async function sqGit(){
   const url=u=>/^https?:/i.test(S(u))?esc(S(u)):'#';
   el.innerHTML='<div class=grid2>'+
     `<div class=field><label>Provider</label><select class=input id=sg-provider>${(d.providers||[]).map(p=>opt(p,r.provider)).join('')}</select></div>`+
-    `<div class=field><label>Repo URL (https)</label><input class="input mono" id=sg-url placeholder="https://github.com/owner/repo" value="${esc(S(r.url))}"></div>`+
+    `<div class=field><label>Repo URL (https)</label><input class="input mono" id=sg-url placeholder="https://github.com/owner/repo" value="${esc(S(r.url))}" oninput="sgGuess(this.value)"></div>`+
     `<div class=field><label>Token secret (host store, never sent to a VM)</label><select class=input id=sg-token><option value="">— choose —</option>${(d.secrets||[]).map(x=>opt(x,r.token_secret)).join('')}</select></div>`+
     `<div class=field><label>Base branch</label><input class="input mono" id=sg-base value="${esc(S(r.base||'main'))}"></div>`+
     `<div class=field><label>Label (empty: none)</label><input class=input id=sg-label value="${esc(S(r.label))}"></div>`+
@@ -1317,6 +1317,8 @@ async function sqGit(){
       `<div class=text-muted>${new Date((+c.ts||0)*1000).toLocaleString()} · ${escT(S(c.by))} · ${c.kind==='pr'?'PR':'issue'} <a href="${url(c.url)}" target=_blank rel=noopener>#${+c.number||0}</a> ${escT(S(c.title))}</div>`).join('')+'</div>'
       :'<span class=text-muted style="font-size:12px">No PRs or issues opened by the squad yet.</span>');
 }
+// the provider follows the URL (github.com -> github, any other host -> gitea); still changeable for GitHub Enterprise
+function sgGuess(u){const m=/^https:\/\/([^\/]+)\//i.exec(u.trim()), p=document.getElementById('sg-provider'); if(m&&p)p.value=/^github\.com$/i.test(m[1])?'github':'gitea';}
 async function sqGitSave(remove){
   if(remove&&!confirm('Remove the git remote of '+SQ+'? The token secret stays in the store.'))return;
   const v=id=>document.getElementById(id).value;
