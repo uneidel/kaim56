@@ -995,11 +995,6 @@ def _rt_audit_read(h):
 
 
 
-@_routes.ROUTER.get("/api/security", admin=True)
-def _rt_security(h):
-    return h._json({"issues": _about.load_security()})
-
-
 @_routes.ROUTER.get("/api/secret-keys", admin=True)
 def _rt_secret_keys(h):
     # Names only, never values; `sources` says where a key lives (the store
@@ -1151,11 +1146,6 @@ def _rt_plugins_manage(h):
 @_routes._msg_route("POST", "/api/settings")
 def _rt_settings_save(h):
     return _settings.save_settings(h._body())
-
-
-@_routes._msg_route("POST", "/api/security")
-def _rt_security_save(h):
-    return _about.save_security(h._body().get("issues") or [])
 
 
 @_routes._msg_route("POST", "/api/gateway")

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 the kAIm56 authors
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # This program is free software under the GNU AGPL v3+; see LICENSE.
-"""What the About/Updates tab shows: installed version against the newest GitHub release, the update run and the security checklist (security.json).
+"""What the About/Updates tab shows: installed version against the newest GitHub release, the update run.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
@@ -123,31 +123,4 @@ def update_start():
     print(f"[update] started {UPDATE_UNIT}", flush=True)
     return "update started — the manager restarts when the installer is done"
 
-SECURITY_FILE = os.path.join(_paths.BASE, "security.json")
-
-
 _mcp.configure(_paths.BASE, _mcp.load_instances)   # injection (mgr/mcp)
-
-def load_security():
-    try:
-        with open(SECURITY_FILE) as fh:
-            d = json.load(fh)
-        items = d.get("issues") if isinstance(d, dict) else d
-        return items if isinstance(items, list) else []
-    except (FileNotFoundError, ValueError):
-        return []
-
-
-def save_security(items):
-    """Only toggle the status — text and assessment come from the file; the UI
-    must not be able to rewrite findings."""
-    cur = {i.get("id"): i for i in load_security()}
-    n = 0
-    for upd in items if isinstance(items, list) else []:
-        it = cur.get(upd.get("id"))
-        if it and upd.get("status") in ("open", "done") and it.get("status") != upd["status"]:
-            it["status"] = upd["status"]
-            n += 1
-    with open(SECURITY_FILE, "w") as fh:
-        json.dump({"issues": list(cur.values())}, fh, indent=2, ensure_ascii=False)
-    return f"{n} entry/entries updated"

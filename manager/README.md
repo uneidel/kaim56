@@ -227,21 +227,6 @@ Place `traefik-firecracker.yml` in the **file provider folder** of the Traefik s
 `htpasswd -nbB admin 'PW'`. **Important:** The manager controls VMs as root —
 **never expose it without auth** (basic auth or your pocket-id/SSO in front).
 
-## Changelog & security (tab "Changelog")
-The tab shows the **open findings** from `security.json` at the top — sorted by
-severity, with location, description and suggested fix — and below that the rendered
-`CHANGELOG.md`. Resolved items are hidden and can be revealed.
-
-Through the UI **only the status** can be toggled (open/done); text and
-assessment live in the file, so a finding can't disappear on a click.
-Both routes are admin-only — the list describes holes, guests do not read
-along.
-
-| Endpoint | Meaning |
-|---|---|
-| `GET /api/security` | `{issues:[…]}` |
-| `POST /api/security` | `{issues:[{id,status}]}` — the status only |
-
 ## Credentials (secret broker)
 Access credentials are **not** in the instance config and therefore not on the
 config disk of the microVM. `SECRET_PARAMS` in `manager.py`

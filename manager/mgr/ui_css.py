@@ -226,15 +226,6 @@ main>.screen{margin-bottom:var(--space-8)}
 .fbsharerow.sel{background:var(--color-neutral-100);box-shadow:inset 3px 0 0 var(--color-accent)}
 .fbsz{color:var(--color-neutral-500);font-size:12px;font-variant-numeric:tabular-nums}
 .fbact{font-size:12px;padding:2px 8px}
-/* Architecture diagram. The rules live HERE and not as a <style> inside the SVG:
-   a style element in inline SVG ends the SVG context during HTML parsing, and
-   everything after it drops invisibly out of the image (Chrome; jsdom forgives it). */
-#archsvg .bx{fill:var(--color-surface);stroke:var(--color-divider)}
-#archsvg .bx2{fill:none;stroke:var(--color-accent)}
-#archsvg .tt{fill:var(--color-text);font-size:13px;font-weight:600}
-#archsvg .ss{fill:var(--color-neutral-600);font-size:11px}
-#archsvg .ln{stroke:var(--color-neutral-500);stroke-width:1.2;marker-end:url(#arw);fill:none}
-#archsvg .lb{fill:var(--color-neutral-600);font-size:10px}
 .stack{display:flex;flex-direction:column;gap:18px}
 .mrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
 /* — dialog — */
@@ -257,18 +248,6 @@ main>.screen{margin-bottom:var(--space-8)}
 .kv{display:flex;gap:12px;align-items:baseline;font-size:13.5px;padding:7px 0;
   border-bottom:1px solid color-mix(in srgb,var(--color-text) 8%,transparent)}
 .kv:last-child{border-bottom:none}
-.sev{display:inline-flex;align-items:center;font-size:10px;letter-spacing:.08em;
-  text-transform:uppercase;padding:3px 8px;white-space:nowrap;flex:none}
-.sev-high{background:var(--color-accent-700);color:var(--color-bg)}
-.sev-medium{background:var(--color-accent-200);color:var(--color-accent-900)}
-.sev-low{background:var(--color-neutral-200);color:var(--color-neutral-800)}
-.issue{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:start;
-  padding:12px 0;border-bottom:1px solid color-mix(in srgb,var(--color-text) 8%,transparent)}
-.issue:last-child{border-bottom:none}
-.issue.done{opacity:.5}
-.issue h5{margin:0 0 3px;font-size:15px}
-.issue .meta{font-size:11.5px;font-family:var(--font-mono)}
-.issue p{margin:4px 0 0;font-size:13px}
 .kv b{font-family:var(--font-heading);font-weight:600;font-size:12px;letter-spacing:.06em;
   text-transform:uppercase;min-width:130px;color:color-mix(in srgb,var(--color-text) 60%,transparent)}
 /* — Instances dashboard: KPI tiles, token chart, fleet cards — */

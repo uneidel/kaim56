@@ -8916,7 +8916,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(cl.token_app(token, "GET", "/api/instances"), "flow")
             self.assertEqual(cl.token_app(token, "POST", "/api/tasks"), "flow")
             for meth, path in (("POST", "/api/settings"), ("GET", "/i/vm/term"), ("POST", "/api/secret-store"),
-                               ("POST", "/api/update"), ("GET", "/api/security"), ("POST", "/api/apps/flow/restore")):
+                               ("POST", "/api/update"), ("GET", "/api/secret-keys"), ("POST", "/api/apps/flow/restore")):
                 self.assertIsNone(cl.token_app(token, meth, path), path)
             self.assertIsNone(cl.token_app("wrong", "GET", "/api/instances"))
             m._auth.PW = "admin-pw"
@@ -11560,7 +11560,7 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(self._idx_req("/apps/board/_api/x", "POST", auth=basic, origin="https://apps.example.com", host=A)[0], 401)
         # nothing else answers there, with or without a session
         for meth, p in (("GET", "/"), ("GET", "/api/auth/me"), ("GET", "/i/a1/"), ("GET", "/katfs/"),
-                        ("GET", "/indexer/ui/"), ("GET", "/api/security"), ("POST", "/api/settings"),
+                        ("GET", "/indexer/ui/"), ("GET", "/api/secret-keys"), ("POST", "/api/settings"),
                         ("POST", "/api/secret-store"), ("POST", "/api/apps/board/delete"), ("POST", "/api/auth/device")):
             self.assertEqual(self._idx_req(p, meth, cookie=AP, origin="https://apps.example.com", host=A)[0], 404, p)
         # the apps session is no good on the manager's host

@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-09
+- Security and Architecture tabs removed (nav, screens, /api/security, security.json handling, SVG and cards).
+
 ## 2026-11-07
 - Service VM: build, start and port come from deploy.json in the base branch (the squad writes it), the operator keeps RAM, vCPUs and secrets; the Deploy row shows what will run.
 - Deploy dialog: secrets save on their own, an unfinished spec (no Start yet) no longer drops them.

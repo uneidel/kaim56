@@ -4,16 +4,16 @@
 # This program is free software under the GNU AGPL v3+; see LICENSE.
 """Manager web UI, assembled from its parts.
 
-Was a single 2.100-line constant — CSS, markup, the architecture SVG and the
+Was a single 2.100-line constant — CSS, markup and the
 whole client script in one string nobody could navigate. The parts live in
-ui_css / ui_html (ARCH_SVG separate, because the update cycle edits it) /
+ui_css / ui_html /
 ui_js; this module keeps the public contract: ``PAGE``, consumed by
 manager.py's render(). Pure data — logic stays in manager.py."""
 import html
 import os
 import time
 from mgr.ui_css import CSS
-from mgr.ui_html import HTML_TOP, ARCH_SVG, HTML_BOTTOM
+from mgr.ui_html import HTML_TOP, HTML_BOTTOM
 from mgr.ui_js import JS
 from mgr import host as _host
 from mgr import instances as _instances
@@ -26,7 +26,7 @@ from mgr import skills as _skills
 from mgr import util as _util
 from mgr import vm as _vm
 
-PAGE = CSS + HTML_TOP + ARCH_SVG + HTML_BOTTOM + JS
+PAGE = CSS + HTML_TOP + HTML_BOTTOM + JS
 
 
 # ---- Brand ------------------------------------------------------------------

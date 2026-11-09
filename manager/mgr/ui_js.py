@@ -2808,46 +2808,6 @@ async function saveModel(){
   alert(d.msg||'ok');location.reload();
 }
 
-/* — Security: findings live in security.json, the UI only toggles
-     the status. */
-let ISSUES=[];
-const SEVORDER={high:0,medium:1,low:2};
-async function loadSecurity(){
-  try{
-    const i=await (await fetch('/api/security')).json();
-    ISSUES=(i.issues||[]).slice().sort((a,b)=>
-      (a.status===b.status?0:a.status==='open'?-1:1)||
-      (SEVORDER[a.severity]??9)-(SEVORDER[b.severity]??9));
-  }catch(e){document.getElementById('issues').textContent='not reachable';return}
-  renderIssues();
-}
-function renderIssues(){
-  const showDone=document.getElementById('showdone').checked;
-  const rows=ISSUES.filter(i=>showDone||i.status!=='done');
-  const open=ISSUES.filter(i=>i.status!=='done').length;
-  document.getElementById('issues').innerHTML=rows.map(i=>
-    `<div class="issue ${i.status==='done'?'done':''}">`+
-    `<span class="sev sev-${esc(i.severity)}">${escT(i.severity)}</span>`+
-    `<div><h5>${escT(i.title)}</h5>`+
-    `<div class="meta text-muted">${escT(i.where||'')} · ${escT(i.kind||'')}</div>`+
-    `<p>${escT(i.detail||'')}</p>`+
-    (i.fix?`<p class=text-muted><b>Fix:</b> ${escT(i.fix)}</p>`:'')+`</div>`+
-    `<label class=radio><input type=checkbox data-i="${esc(i.id)}" ${i.status==='done'?'checked':''}>`+
-    `<span class=dot></span>done</label></div>`).join('')||
-    '<span class=text-muted style="font-size:13px">nothing open</span>';
-  document.getElementById('secissuemsg').textContent=open+' open';
-}
-function saveIssues(){
-  document.querySelectorAll('#issues input[data-i]').forEach(c=>{
-    const it=ISSUES.find(x=>x.id===c.dataset.i);
-    if(it)it.status=c.checked?'done':'open';
-  });
-  fetch('/api/security',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({issues:ISSUES.map(i=>({id:i.id,status:i.status}))})})
-    .then(r=>r.json()).then(d=>{document.getElementById('secissuemsg').textContent=(d.msg||'saved')+' ✓';
-      loadSecurity();});
-}
-
 /* — Models: the full catalog live, and from it the shortlist for the create form.
      The ticks live in CURATED (models.json), no longer in the source. — */
 let CATALOG=[], PICKED=new Set();
@@ -3188,7 +3148,7 @@ function saveSecrets(){
 window.onload=()=>{
   showTab(location.hash.slice(1));
   if(location.hash==='#squads')loadSquads();
-  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadSecurity();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
+  renderSettings();renderParams();renderSkillPick();loadMissions();loadProjects();loadRouter();loadAppsPanel();loadPrompts();loadPlaybooks();renderPersonas();renderSkills();renderSecrets();renderMcps();loadKatfs();loadIroh();loadModels2();loadTools();loadPlugins();loadTasks();loadPolicy();loadResources();loadVersion();
   fleetInit();refreshUsage();loadSeries();
   loadClaudeAccts();setInterval(()=>{if(!document.hidden)loadUsageGauges()},60000);
   // Tasks, policy and the usage numbers used to arrive only on page load —
