@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-09
+- Secrets: "Add / replace" read the squad kickoff's project-name field (same id) and always said "Name and value?"; the form has its own ids now.
 - Squad git: every ticket is mirrored one way into an issue on the project remote (key: title, done closes it, changes and comments as issue comments); setting the remote mirrors the board so far.
 - Security and Architecture tabs removed (nav, screens, /api/security, security.json handling, SVG and cards).
 - Squad generations: each member turn runs in its ticket's context (lead: its phase, no ticket: channel); a new ticket starts empty, the old conversation is kept (claude/codex session map, openrouter .state/gens/) and comes back with its ticket.

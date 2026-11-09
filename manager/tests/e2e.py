@@ -12471,6 +12471,7 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(m._secrets.secret_delete("MRMUSIC_TOKEN"), "MRMUSIC_TOKEN deleted")
             self.assertEqual(m._secrets.secret_delete("MRMUSIC_TOKEN"), "MRMUSIC_TOKEN not in the store")
             self.assertEqual(set(m._secrets.load_secrets_file()), {"HA_TOKEN", "CALDAV_PASSWORD"})
+            self.assertEqual(len(re.findall(r"id=sk-name\b", m._ui.PAGE)), 1)                       # was also the secret form's: it read the kickoff field
             m._guests.instance_by_ip = lambda ip: None; m._auth.PW = ""
             h = self._handler("/api/secret-keys", "10.0.0.5"); h._do_GET()
             body = json.loads(h.wfile.getvalue().split(b"\r\n\r\n", 1)[1])
