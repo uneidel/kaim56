@@ -9,17 +9,22 @@
   source IP and must be a member of the project; every call is audited.
 - admin: ``GET/POST /api/squad-git/<project>`` (the remote settings; the
   token secret's value never leaves the host) and ``POST …/<project>/fetch``;
-  ``GET …/<project>/graph`` and ``…/commit?sha=`` read the repo (the Squad graph).
+  ``GET …/<project>/graph`` and ``…/commit?sha=`` read the repo (the Squad graph);
+  ``GET …/<project>/pr-draft?member=`` (title + body from the local LLM, else
+  from the ticket and commits, plus the diff) and ``POST …/<project>/pr``
+  {member, title, body}: the operator opens a PR from a member's branch.
   Role "user" (OIDC) is refused: default deny in mgr/auth.py.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import json
 import os
 import urllib.parse
 
 from mgr import audit as _audit
+from mgr import decision as _decision
 from mgr import hitlq as _hitlq
 from mgr import policy as _policy
 from mgr import projects as _projects
@@ -78,6 +83,14 @@ def _rt_squadgit_get(h):
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
+    if sub == "pr-draft":
+        member = urllib.parse.parse_qs(urllib.parse.urlsplit(h.path).query).get("member", [""])[0]
+        if member not in _projects.writers(p) or not _squadgit.settings(p):
+            return h._json({"error": "a writer of a project with a git remote"}, 400)
+        try:
+            return h._json(_pr_draft(p, member))
+        except _projwt.GitError as e:
+            return h._json({"error": str(e)}, 400)
     if sub in ("graph", "commit"):
         # GET /api/squad-git/<p>/graph | /commit?sha=<hex>: the repo read, nothing written
         src = p.get("source") or {}
@@ -97,10 +110,37 @@ def _rt_squadgit_get(h):
         for b in g["branches"]:
             b["ticket"] = doing.get(b["member"])
             b["folder"] = _projwt.tree_dir(name, b["member"])
-        return h._json(g)
+        return h._json({**g, "remote": bool(_squadgit.settings(p))})
     return h._json({"project": name, "remote": _squadgit.settings(p), "defaults": _squadgit.DEFAULTS,
                     "providers": list(_squadgit.PROVIDERS), "secrets": sorted(_secrets.load_secrets_file()),
                     "strategy": p.get("strategy"), "created": _squadgit.created(name)})
+
+
+PR_SYSTEM = ("You write the pull request for a branch. Answer with only a JSON object "
+             '{"title": one line, at most 72 characters, "body": markdown — what changed and why, then a short list '
+             'of the main changes}. Use only facts from the ticket, the commits and the diff.')
+
+
+def _pr_draft(p, member):
+    """{title, body, diff, by}: the local LLM writes title and body; without it
+    (or when it fails) the member's ticket and commit subjects do."""
+    diff = _projwt.diff(p, member)                 # snapshots the folder first
+    subjects = _projwt.git(p["source"]["path"], ["log", "--format=%s", "-n", "50", f"refs/heads/{p['base']}.."
+                                                 f"refs/heads/{_projwt.branch(p['name'], member)}"]).splitlines()
+    mine = [t for t in _squadgate.tickets(p["name"]) if t.get("assignee") == member]
+    t = next((x for x in mine if x.get("status") != "done"), mine[-1] if mine else None)
+    title = f"{t['key']}: {t['title']}" if t else (subjects[0] if subjects else f"{member}'s work")
+    body = ((t.get("description") or "").strip() + "\n\n" if t else "") + "Commits:\n" + "\n".join(f"- {s}" for s in subjects)
+    by = "ticket and commits"
+    try:
+        d = _decision._json_of(_decision.write(PR_SYSTEM, json.dumps(
+            {"ticket": {k: t.get(k) for k in ("key", "title", "description")} if t else None,
+             "commits": subjects, "diff": diff[:40000]}, ensure_ascii=False)))
+        if str(d.get("title") or "").strip() and str(d.get("body") or "").strip():
+            title, body, by = str(d["title"]).strip(), str(d["body"]).strip(), "local LLM"
+    except Exception as e:                       # the template stands
+        by += f" (local LLM: {_decision.safe_err(e)})"
+    return {"title": title[:_squadgit.TITLE_MAX], "body": body[:_squadgit.BODY_MAX], "diff": diff, "by": by}
 
 
 @_routes.ROUTER.post("/api/squad-git/", prefix=True, admin=True)
@@ -119,6 +159,21 @@ def _rt_squadgit_post(h):
             return h._json(_squadgit.fetch(p, cfg))
         except _squadgit.Refused as e:
             return h._json({"error": str(e)}, e.status)
+    if sub == "pr":
+        b = h._body() or {}
+        cfg, member = _squadgit.settings(p), str(b.get("member") or "")
+        if not cfg:
+            return h._json({"error": "no git remote set"}, 400)
+        try:
+            title = _squadgit._text(b.get("title"), _squadgit.TITLE_MAX, "title")
+            body = (str(b.get("body") or "")[:_squadgit.BODY_MAX]
+                    + f"\n\n---\n_Opened by the operator in kAIm56 from `{member}`'s branch (project `{name}`)._")
+            r = _squadgit.open_pr(p, cfg, _squadgit._token(cfg), member, "", title, body, "operator")
+        except _squadgit.Refused as e:
+            _audit.audit_append("operator", "pr_create", f"{name} {member}", False, err=str(e))
+            return h._json({"error": str(e)}, e.status)
+        _audit.audit_append("operator", "pr_create", f"{name} {member} #{r.get('number')}", True, result=r.get("url") or "")
+        return h._json(r)
     if sub:
         return h._json({"error": "unknown operation"}, 404)
     b = h._body() or {}

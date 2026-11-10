@@ -395,9 +395,13 @@ HTML_TOP = """</head><body>
     </div>
     <h5>Work</h5>
     <div class=grid2>
-      <div class=field><label>Autonomy</label><select class=input id=sq-autonomy>
-        <option value=trusted title="Only merges, PRs, new members and the approval tools need you">trusted</option>
-        <option value=supervised title="Also every ticket a member sets done is a review for you">supervised — you review every done ticket</option></select></div>
+      <div class=field><label>Level</label><select class=input id=sq-level onchange="sqLevel(this.value)"
+        title="Sets Autonomy and the approval tools (Advanced); the plan and new members always need you">
+        <option value=supervised>Supervised — you approve push/PR/issue, risky bash, merges and review every done ticket</option>
+        <option value=merges>Approve merges — you approve push/PR/issue and every merge</option>
+        <option value=auto>Auto — only risky bash commands ask you</option>
+        <option value=full>Full access — nothing asks you</option>
+        <option value=custom disabled>Custom (Advanced)</option></select></div>
       <div class=field><label>Daily token budget</label><input class=input type=number min=0 id=sq-daily_token_budget>
         <span class=text-muted style="font-size:12px" id=sq-usage></span></div>
       <div class="field span2 sq-chks"><label title="All tickets done: the result goes out as branch squad/&#8249;id&#8250; to the repo&#8217;s remotes"><input type=checkbox id=sq-push_when_done> Push to <code>squad/&#8249;id&#8250;</code> when all tickets are done</label></div>
@@ -412,8 +416,12 @@ HTML_TOP = """</head><body>
         <label title="Wake turns run on the cheapest model that fits the ticket&#8217;s level; a failed turn runs once more one level up; Claude members stay on Claude"><input type=checkbox id=sq-cost_routing> Cost routing</label>
       </div>
       <div class=grid2>
-        <div class="field span2"><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false
-          title="Comma-separated; bash = network, install, delete and push commands only. Shown in Waiting for you."></div>
+        <div class=field><label>Autonomy</label><select class=input id=sq-autonomy onchange="sqLevelShow()">
+          <option value=trusted title="Merges run by themselves; only the approval tools need you">trusted</option>
+          <option value=merges title="Every merge waits for you">merges — you approve every merge</option>
+          <option value=supervised title="Also every ticket a member sets done is a review for you">supervised — you review every done ticket</option></select></div>
+        <div class=field><label>Tools that need your approval</label><input class="input mono" id=sq-approval_tools placeholder="git_push_branch, pr_create, issue_create, bash" spellcheck=false
+          title="Comma-separated; bash = network, install, delete and push commands only. Shown in Waiting for you." oninput="sqLevelShow()"></div>
         <div class=field><label>Claude account (new members)</label><input class="input mono" id=sq-claude_account placeholder="empty = host login" spellcheck=false></div>
         <div class=field><label>Max wakes / hour · reply depth</label><span style="display:flex;gap:6px">
           <input class=input type=number min=0 id=sq-max_wakes_per_hour aria-label="Max wakes per hour"><input class=input type=number min=1 id=sq-max_depth aria-label="Max reply depth"></span></div>

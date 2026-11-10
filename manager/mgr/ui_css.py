@@ -696,6 +696,7 @@ body{font-size:14px;line-height:1.7}.shell{grid-template-columns:220px minmax(0,
 .gr-main svg{flex:none}.gr-rows{flex:1;min-width:0}.gr-row{height:28px;display:flex;align-items:center;gap:6px;padding:0 10px;font-size:12px;cursor:pointer;white-space:nowrap}.gr-row:hover,.gr-row.on{background:#ffffff0a}
 .gr-ref{border:1px solid;border-radius:4px;padding:0 6px;font-size:10.5px;flex:none}.gr-subj{overflow:hidden;text-overflow:ellipsis;flex:1}.gr-ts{color:var(--color-neutral-600);font-size:11px;flex:none}
 .gr-side{position:sticky;top:12px;font-size:12px;display:grid;gap:8px}.gr-side h6{margin:0;color:var(--color-accent)}.gr-br{border:1px solid #ffffff10;border-radius:8px;padding:8px 10px;display:grid;gap:3px}
+.gr-act{display:flex;gap:6px;margin-top:4px}.gr-diff{white-space:pre;font-size:11px;max-height:420px;overflow:auto;margin:6px 0}#gr-commit .input{width:100%;margin-bottom:6px}
 .gr-msg{white-space:pre-wrap;font-size:11.5px;margin:6px 0;max-height:180px;overflow:auto}.gr-files{max-height:300px;overflow:auto;font-size:11.5px}
 @media(max-width:1100px){.gr{grid-template-columns:1fr}.gr-side{position:static}}
 .sk-chat:not(.sk-kick)[data-view=board]>#sk-board:not([hidden]),.sk-chat:not(.sk-kick)[data-view=team]>#sk-board:not([hidden]){display:block!important}

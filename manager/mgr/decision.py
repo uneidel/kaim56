@@ -106,6 +106,23 @@ def _json_of(text):
     return json.loads(text[a:b + 1])
 
 
+def write(system, user, max_tokens=1200):
+    """Free text from the local LLM (LLAMA_ENDPOINT: nothing leaves the LAN) -> the
+    answer without thinking; raises when it is not configured or fails."""
+    url, headers, model, timeout = _endpoint("local-llm", _settings.load_settings())
+    body = {"model": model, "temperature": 0.2, "max_tokens": max_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user[:REQ_MAX // 2]}]}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", **headers})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read(RESP_MAX + 1)
+    if len(raw) > RESP_MAX:
+        raise ValueError("answer too large")
+    content = ((json.loads(raw).get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    return re.sub(r"<think>.*?</think>", "", content, flags=re.S).strip()
+
+
 def ask(task, be=None):
     """One typed decision task -> ({question key: {option: score}}, ms).
     task = {"state": str, "questions": {key: {"type": "choice"|"multi",

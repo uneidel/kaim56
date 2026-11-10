@@ -5,6 +5,10 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-10
+- Squad graph: Diff and PR… per member branch — the draft (local LLM, else ticket + commits) is editable, Push + open PR opens it to the base.
+- Squad settings: Level (Supervised / Approve merges / Auto / Full access) presets Autonomy + approval tools; new autonomy "merges".
+
 ## 2026-11-09
 - Deploy: a failure (or a failed proxy check) wakes the lead and the devops members with the service log's last 40 lines (secrets masked) — the note woke nobody and the squad could not read the log; a success stays a note.
 - Squad settings: the panel's Save also saves a changed git remote (it saved only the squad settings and the reload showed the old provider again).

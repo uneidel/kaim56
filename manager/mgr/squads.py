@@ -46,7 +46,8 @@ DEFAULTS = {"enabled": False, "approved": False, "paused": False, "cost_routing"
             "max_wakes_per_hour": 60,
             "daily_token_budget": 2_000_000, "max_depth": 8,
             # human in the loop (mgr/hitlq.py): tools a member needs approval for ("bash" = risky
-            # commands only); supervised: a member's "done" is a review for the operator
+            # commands only); merges: every merge waits for the operator; supervised: also a
+            # member's "done" is a review for the operator (the UI's Level presets set both)
             "approval_tools": [], "autonomy": "trusted",
             # all tickets done: the manager pushes the base as squad/<id> to the remotes (mgr/projects.push_run)
             "push_when_done": True,
@@ -79,7 +80,7 @@ TEAM_DEFAULT = (
     "- asset-planner: like the code-planner, for non-code work (docs, content, assets, data) — a wider dispatch field.\n"
     "- coder (1-2): implement the coding tasks; the only members who write product code.\n"
     "The planners write the milestones and tasks; you turn them into tickets and assign them.")
-AUTONOMY = ("trusted", "supervised")
+AUTONOMY = ("trusted", "merges", "supervised")
 TOOL_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 ACCOUNT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 PKG_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,62}$")       # a Debian package name
@@ -203,7 +204,7 @@ def normalize_settings(body, old=None):
         s["decision"] = d
     if "autonomy" in body:
         if body["autonomy"] not in AUTONOMY:
-            return None, "autonomy must be trusted or supervised"
+            return None, "autonomy must be trusted, merges or supervised"
         s["autonomy"] = body["autonomy"]
     if "claude_account" in body:
         a = str(body["claude_account"] or "").strip()

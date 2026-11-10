@@ -465,6 +465,22 @@ def _footer(member, project):
     return f"\n\n---\n_Opened by kAIm56 squad member `{member}` (project `{project}`)._"
 
 
+def _opened(pname, kind, out, by):
+    _record({"ts": int(time.time()), "project": pname, "kind": kind,
+             "number": out["number"], "title": out["title"], "url": out["url"], "by": by})
+    _squadmetrics.git(pname, by, kind, out["number"], detail={"title": str(out["title"] or "")[:120], "url": out["url"]})
+
+
+def open_pr(proj, cfg, token, writer, name, title, body, by):
+    """Push the writer's branch and open a PR from it to the base -> the PR item (+ note)."""
+    pushed = push_branch(proj, cfg, writer, name)
+    out = _item(_api(cfg, token, "POST", "/pulls", {"title": title, "body": body, "head": pushed["branch"],
+                                                    "base": cfg["base"]}))
+    _opened(proj["name"], "pr", out, by)
+    note = _label(cfg, token, out["number"]) if out.get("number") else ""
+    return {**out, "branch": pushed["branch"], **({"note": note} if note else {})}
+
+
 def call(inst_name, action, b):
     """One member request -> (result, project name, repo, number). Raises Refused."""
     if action not in TOOLS:
@@ -489,16 +505,11 @@ def call(inst_name, action, b):
             if created_today(pname, inst_name) >= cfg["daily_limit"]:
                 raise Refused(f"daily limit reached: {cfg['daily_limit']} PRs/issues per member and day", 429)
             if action == "pr-create":
-                pushed = push_branch(proj, cfg, _writer_of(proj, inst_name, role, b), str(b.get("name") or "").strip())
-                d = _api(cfg, token, "POST", "/pulls", {"title": title, "body": body, "head": pushed["branch"],
-                                                        "base": cfg["base"]})
-            else:
-                d = _api(cfg, token, "POST", "/issues", {"title": title, "body": body})
-            out = _item(d)
-            _record({"ts": int(time.time()), "project": pname, "kind": "pr" if action == "pr-create" else "issue",
-                     "number": out["number"], "title": out["title"], "url": out["url"], "by": inst_name})
-            _squadmetrics.git(pname, inst_name, "pr" if action == "pr-create" else "issue", out["number"],
-                              detail={"title": str(out["title"] or "")[:120], "url": out["url"]})
+                out = open_pr(proj, cfg, token, _writer_of(proj, inst_name, role, b), str(b.get("name") or "").strip(),
+                              title, body, inst_name)
+                return out, pname, repo, out.get("number") or ""
+            out = _item(_api(cfg, token, "POST", "/issues", {"title": title, "body": body}))
+            _opened(pname, "issue", out, inst_name)
         note = _label(cfg, token, out["number"]) if out.get("number") else ""
         return {**out, **({"note": note} if note else {})}, pname, repo, out.get("number") or ""
     if action in ("prs", "issues"):

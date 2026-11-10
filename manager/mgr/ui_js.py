@@ -1256,6 +1256,14 @@ let SQ='';
 /* the project the squad views act on: the Projects panel's, else the Squads tab's (SQ was empty
    there after a reload, and an empty name made '/api/projects//squad/decide' -> 'unknown operation') */
 function sqName(){return SQ||(typeof SK!=='undefined'?SK:'')}
+/* Level: a preset of Autonomy + the approval tools (both stay editable under Advanced -> "Custom") */
+const SQ_LEVELS={supervised:['supervised','git_push_branch, pr_create, issue_create, bash'],
+  merges:['merges','git_push_branch, pr_create, issue_create'],auto:['trusted','bash'],full:['trusted','']};
+function sqLevel(v){const l=SQ_LEVELS[v];if(!l)return;
+  document.getElementById('sq-autonomy').value=l[0];document.getElementById('sq-approval_tools').value=l[1]}
+function sqLevelShow(){
+  const a=document.getElementById('sq-autonomy').value, t=document.getElementById('sq-approval_tools').value.split(',').map(x=>x.trim()).filter(Boolean).sort().join();
+  document.getElementById('sq-level').value=Object.keys(SQ_LEVELS).find(k=>SQ_LEVELS[k][0]===a&&SQ_LEVELS[k][1].split(', ').filter(Boolean).sort().join()===t)||'custom'}
 async function sqOpen(name){SQ=name;document.getElementById('sq-panel').style.display='';document.getElementById('sqmsg').textContent='';
   await sqLoad();document.getElementById('sq-panel').scrollIntoView({block:'nearest'})}
 function sqClose(){SQ='';document.getElementById('sq-panel').style.display='none'}
@@ -1268,7 +1276,7 @@ async function sqLoad(){
   if(s.error){document.getElementById('sqmsg').textContent=s.error;return}
   const st=s.settings||{};
   document.getElementById('sq-head').textContent='Settings · '+SQ;
-  document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');document.getElementById('sq-claude_account').value=st.claude_account||'';
+  document.getElementById('sq-autonomy').value=st.autonomy||'trusted'; document.getElementById('sq-approval_tools').value=(st.approval_tools||[]).join(', ');document.getElementById('sq-claude_account').value=st.claude_account||'';sqLevelShow();
   document.getElementById('sq-enabled').checked=!!st.enabled; document.getElementById('sq-paused').checked=!!st.paused; document.getElementById('sq-approved').checked=!!st.approved; document.getElementById('sq-cost_routing').checked=!!st.cost_routing; document.getElementById('sq-security_skills').checked=!!st.security_skills;
   ['max_wakes_per_hour','daily_token_budget','max_depth'].forEach(k=>document.getElementById('sq-'+k).value=st[k]);
   document.getElementById('sq-usage').textContent='Tokens today: '+(s.tokens_today||0).toLocaleString()+' of '+(st.daily_token_budget||0).toLocaleString()+' (measured as the LLM usage of the member instances since midnight)';
@@ -1338,17 +1346,43 @@ async function skGraph(){
   const br=(d.branches||[]).map(b=>`<div class=gr-br><b>${escT(grShort(b.branch,p))}</b> <code>${escT(b.tip)}</code>`+
     `<div class=text-muted>${b.ahead==null?'':`↑${b.ahead} ↓${b.behind} vs ${escT(d.base)}`} · ${b.ts?new Date(b.ts*1000).toLocaleString():''}</div>`+
     (b.ticket?`<div>${escT(b.ticket.key)} · ${escT(b.ticket.status)} · ${escT(b.ticket.title)}</div>`:'<div class=text-muted>no open ticket</div>')+
-    `<div class=text-muted style="font-size:11px">${escT(b.folder||'')}</div></div>`).join('')||'<span class=text-muted>no member branches</span>';
+    `<div class=text-muted style="font-size:11px">${escT(b.folder||'')}</div>`+
+    `<div class=gr-act><button class="btn btn-ghost btn-sm" onclick="skGraphDiff('${esc(b.member)}')">Diff</button>`+
+    (d.remote?`<button class="btn btn-ghost btn-sm" onclick="skGraphPr('${esc(b.member)}')" title="Push the branch and open a PR to ${esc(d.base)}">PR…</button>`:'')+
+    `</div></div>`).join('')||'<span class=text-muted>no member branches</span>';
   el.innerHTML=`<div class=gr><div class=gr-main><svg width=${W} height=${cs.length*GR_H} aria-hidden=true>${svg}</svg><div class=gr-rows>${rows||'<span class=text-muted>no commits</span>'}</div></div>`+
-    `<aside class=gr-side><h6>Branches</h6>${br}<h6 style="margin-top:14px">Commit</h6><div id=gr-commit class=text-muted>Click a commit.</div></aside></div>`;
+    `<aside class=gr-side><h6>Branches</h6>${br}<h6 style="margin-top:14px" id=gr-dh>Commit</h6><div id=gr-commit class=text-muted>Click a commit.</div></aside></div>`;
 }
 async function skGraphCommit(sha){
   const el=document.getElementById('gr-commit'); if(!el)return;
   document.querySelectorAll('#sk-graph .gr-row').forEach(r=>r.classList.toggle('on',r.dataset.sha===sha));
   let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SK)+'/commit?sha='+encodeURIComponent(sha))).json()}catch(e){d={error:'manager not reachable'}}
   if(d.error){el.textContent=d.error;return}
+  document.getElementById('gr-dh').textContent='Commit';
   el.innerHTML=`<code>${escT(d.sha.slice(0,10))}</code> · ${escT(d.author)} · ${new Date(d.ts*1000).toLocaleString()}<pre class=gr-msg>${escT(d.message)}</pre>`+
     `<div class=gr-files>${(d.files||[]).map(f=>`<div><code>${escT(f[0])}</code> ${escT(f[1])}</div>`).join('')||'no file changes'}</div>`;
+}
+/* a member branch's diff, and a PR from it: the draft (local LLM, else ticket + commits) is editable */
+function grPanel(head,html){document.getElementById('gr-dh').textContent=head;const el=document.getElementById('gr-commit');el.innerHTML=html;return el}
+async function skGraphDiff(m){
+  const el=grPanel('Diff · '+m,'taking a snapshot of the folder…');
+  try{const t=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/diff/'+encodeURIComponent(m))).text();el.innerHTML=`<pre class=gr-diff>${escT(t||'no changes')}</pre>`}
+  catch(e){el.textContent='manager not reachable'}
+}
+async function skGraphPr(m){
+  const el=grPanel('Pull request · '+m,'writing the draft…');
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SK)+'/pr-draft?member='+encodeURIComponent(m))).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){el.textContent=d.error;return}
+  el.innerHTML=`<input class=input id=gr-prt value="${esc(d.title)}" aria-label="PR title"><textarea class=input id=gr-prb rows=8 aria-label="PR description">${escT(d.body)}</textarea>`+
+    `<div><button class="btn btn-primary btn-sm" onclick="skGraphPrOpen('${esc(m)}')">Push + open PR</button> <span class=text-muted id=gr-prmsg>draft: ${escT(d.by)}</span></div>`+
+    `<pre class=gr-diff>${escT(d.diff||'no changes')}</pre>`;
+}
+async function skGraphPrOpen(m){
+  const msg=document.getElementById('gr-prmsg'); msg.textContent='pushing…';
+  let d={}; try{d=await (await fetch('/api/squad-git/'+encodeURIComponent(SK)+'/pr',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({member:m,title:document.getElementById('gr-prt').value,body:document.getElementById('gr-prb').value})})).json()}catch(e){d={error:'manager not reachable'}}
+  if(d.error){msg.textContent=d.error;return}
+  msg.innerHTML=`opened <a href="${/^https?:/i.test(d.url||'')?esc(d.url):'#'}" target=_blank rel=noopener>#${escT(String(d.number))}</a>`+(d.note?' — '+escT(d.note):'');
 }
 /* squad git remote (mgr/squadgit.py): settings, Fetch now, what the squad opened */
 async function sqGit(){

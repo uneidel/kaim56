@@ -7076,12 +7076,15 @@ class ManagerFunctions(unittest.TestCase):
             del woke[:]
             g.merge_done("sq", "e", "T1")
             self.assertEqual(sorted(w[0] for w in woke), ["a", "e"]); self.assertIn("a.go", woke[0][1])
-            # supervised: the operator decides
+            # merges (Level "Approve merges") and supervised: the operator decides
             m._projects.member_op = lambda n, op, w: (merges.append((n, op, w)), ({"commit": "abc123"}, 200))[1]
-            self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", {"autonomy": "supervised"})[0], 200)
-            del merges[:]
-            st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "again"})
-            self.assertEqual((st, d["status"], merges), (200, "pending", []))
+            self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", {"autonomy": "bogus"})[0], 400)
+            for level in ("merges", "supervised"):
+                self.assertEqual(self._sq("/api/projects/sq/squad", "127.0.0.1", {"autonomy": level})[0], 200)
+                del merges[:]
+                st, d = self._sq("/api/squad/request-merge", A, {"writer": "b", "summary": "again " + level})
+                self.assertEqual((st, d["status"], merges), (200, "pending", []), level)
+                self.assertEqual(g.decide("sq", d["id"], False, "admin")[0]["status"], "rejected")
         finally:
             undo()
 
@@ -13008,6 +13011,53 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual(self._sq("/api/squad-git/wp/graph", "172.30.4.2")[0], 403)          # a VM: no
         finally:
             undo()
+
+    def test_operator_opens_a_pr_from_a_member_branch(self):
+        """Graph → PR…: the draft from the local LLM, else from the ticket and
+        commits, plus the diff; Push + open PR pushes squad/<writer>/<project>
+        and opens the PR to the base; a reader or no remote is refused."""
+        m = self.m
+        tmp, repo, g, bare, calls, undo = self._sg_env()
+        srv, url, log = _fake_forge()
+        sg, L, old = m._squadgit, "127.0.0.1", (m._squadgit.api_base, m._decision.write)
+        sg.api_base = lambda cfg: url + "/api/v1/repos/own/rep"
+        try:
+            self.assertEqual(self._sq("/api/squad-git/wp/pr-draft?member=b", L)[0], 400)      # no remote yet
+            self._sg_remote("gitea")
+            self.assertTrue(self._sq("/api/squad-git/wp/graph", L)[1]["remote"])
+            _wtext(os.path.join(m._projwt.tree_dir("wp", "b"), "feat.txt"), "new feature\n")
+            m._decision.write = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("LLAMA_ENDPOINT not configured"))
+            st, d = self._sq("/api/squad-git/wp/pr-draft?member=b", L)
+            self.assertEqual(st, 200, d)
+            self.assertIn("feat.txt", d["diff"]); self.assertTrue(d["title"])
+            self.assertIn("ticket and commits", d["by"])
+            m._decision.write = lambda *a, **k: '<think>x</think>{"title": "Add the feature", "body": "Adds feat.txt."}'
+            d = self._sq("/api/squad-git/wp/pr-draft?member=b", L)[1]
+            self.assertEqual((d["title"], d["body"], d["by"]), ("Add the feature", "Adds feat.txt.", "local LLM"))
+            self.assertEqual(self._sq("/api/squad-git/wp/pr-draft?member=d", L)[0], 400)      # a reader
+            self.assertEqual(self._sq("/api/squad-git/wp/pr-draft?member=b", "172.30.4.2")[0], 403)   # a VM
+            st, r = self._sq("/api/squad-git/wp/pr", L, {"member": "b", "title": "Add the feature", "body": "Adds it."})
+            self.assertEqual((st, r.get("branch")), (200, "squad/b/wp"), r)
+            pr = next(e for e in log if e[1:3] == ("POST", "/repos/own/rep/pulls"))
+            self.assertEqual((pr[5]["head"], pr[5]["base"], pr[5]["title"]), ("squad/b/wp", "main", "Add the feature"))
+            self.assertIn("Opened by the operator", pr[5]["body"])
+            self.assertEqual(self._sq("/api/squad-git/wp/pr", L, {"member": "d", "title": "x"})[0], 403)
+            self.assertEqual(self._sq("/api/squad-git/wp/pr", L, {"member": "b", "title": ""})[0], 400)
+            self._sg_no_token(tmp, calls, json.dumps(r))
+        finally:
+            sg.api_base, m._decision.write = old
+            srv.shutdown(); srv.server_close()
+            undo()
+
+    def test_squad_settings_level_presets(self):
+        """The Level select is a preset of Autonomy + the approval tools; every
+        preset's autonomy is one the server accepts."""
+        page = self.m._ui.PAGE
+        self.assertIn("id=sq-level", page); self.assertIn("SQ_LEVELS", page)
+        levels = re.findall(r"(\w+):\['(\w+)',", page.split("const SQ_LEVELS=", 1)[1].split(";", 1)[0])
+        self.assertEqual([k for k, _a in levels], ["supervised", "merges", "auto", "full"])
+        for level in levels:
+            self.assertIn(level[1], self.m._squads.AUTONOMY, level)
 
     def test_squadgit_mirrors_tickets_as_issues(self):
         """With a remote, every ticket becomes an issue (once), changes and
