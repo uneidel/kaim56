@@ -11504,7 +11504,7 @@ class ManagerFunctions(unittest.TestCase):
         d.make_release, d.boot = rel, lambda p, n: booted.append(n) or 4242
         d.halt, d._tail = lambda p: "shut down", lambda p: "console"
         d.wait_ready = lambda p, n, timeout=0: verdicts.pop(0)
-        d._tell = lambda proj, text, ok: told.append((ok, text))
+        d._tell = lambda proj, text, ok, tail="": told.append((ok, text))
         for v in ("", ""):                                  # two good deploys
             verdicts.append(v)
             d._update("svc1", lambda r: r.update(state="deploying"))
@@ -11529,6 +11529,28 @@ class ManagerFunctions(unittest.TestCase):
         verdicts.append("the VM ended")
         d._deploy("svc1", "admin")
         self.assertEqual(d.record("svc1")["state"], "failed")
+
+    def test_deploy_failure_wakes_the_lead_and_devops_with_the_log(self):
+        """A failure is a post to the lead and the devops members (it wakes them)
+        with the log's last lines, secrets masked; a success stays a note to all."""
+        d, sq = self.m._deploy, self.m._squads
+        posts, old = [], (sq.settings, sq.post, d.record)
+        try:
+            sq.settings = lambda p: {"enabled": True}
+            sq.post = lambda proj, sender, to, text, **k: posts.append((sender, sorted(to), text, k.get("kind", "post")))
+            d.record = lambda name: {"secrets": {"API_KEY": "s3cr3t"}}
+            proj = {"name": "svc1", "members": {"arch": {"role": "lead"}, "svc1-devops": {"role": "writer"},
+                                                "svc1-ui": {"role": "writer"}}}
+            d._tell(proj, "Deploy of svc1 failed: fail the service exited", ok=False,
+                    tail="\n".join(f"line {i}" for i in range(100)) + "\nError: key s3cr3t rejected")
+            sender, to, text, kind = posts[-1]
+            self.assertEqual((sender, to, kind), ("user:auto (deploy)", ["arch", "svc1-devops"], "post"))
+            self.assertIn("line 99", text); self.assertNotIn("line 50\n", text)
+            self.assertIn("key *** rejected", text); self.assertNotIn("s3cr3t", text)
+            d._tell(proj, "Deployed svc1", ok=True)
+            self.assertEqual(posts[-1][:2] + (posts[-1][3],), ("manager", ["all"], "note"))
+        finally:
+            sq.settings, sq.post, d.record = old
 
     def test_deploy_release_image_is_the_base_branch(self):
         """git archive of the base branch into an ext4 image (mkfs -d), never mounted."""

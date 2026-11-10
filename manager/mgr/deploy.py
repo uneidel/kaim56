@@ -64,6 +64,7 @@ UPPER_MB, DATA_MB = 16384, 4096    # sparse
 TIMEOUT = 30 * 60                  # build + start until the port answers; the guest stops the build at 25 min
 RESULT = "KAIM56_DEPLOY_RESULT="
 LOG_TAIL = 8000
+FAIL_LINES = 40                             # log lines a failure note carries
 RESTART_EVERY = 600                # a service that died is booted again at most this often (sweep)
 SESSION_COOKIE = "__Host-kaim56_apps"
 MAX_BODY = 64 * 1024 * 1024
@@ -465,7 +466,7 @@ def _deploy(project, who):
         state, msg = "failed", f"Deploy of {project} ({sha[:10]}) failed: {why}"
         halt(project)
     _update(project, lambda r: r.update(state=state, error=why[:400], log_tail=tail[-LOG_TAIL:]))
-    _tell(proj, msg, ok=False)
+    _tell(proj, msg, ok=False, tail=tail)
 
 
 def _drop_old(project, keep):
@@ -480,12 +481,21 @@ def _drop_old(project, keep):
     _update(project, lambda r: r.update(specs={k: v for k, v in (r.get("specs") or {}).items() if int(k) in keep}))
 
 
-def _tell(proj, text, ok):
+def _tell(proj, text, ok, tail=""):
+    """The result into the squad channel. A failure wakes the lead and any
+    devops member with the service log's last lines (they cannot read the log)."""
+    if not ok and tail:
+        text += "\n\nLast lines of the service log:\n```\n" + "\n".join(tail.splitlines()[-FAIL_LINES:])[-3000:] + "\n```"
     for v in record(proj["name"]).get("secrets", {}).values():   # the service's console is its own: it may print one
         text = text.replace(v, "***")
     try:
         if _squads.settings(proj).get("enabled"):
-            _squads.post(proj, "manager", ["all"], text, kind="note")
+            mem = proj.get("members") or {}
+            fix = [n for n, m in mem.items() if m.get("role") == "lead" or "devops" in n] if not ok else []
+            if fix:
+                _squads.post(proj, "user:auto (deploy)", fix, text + "\nFind the cause, fix it on a branch, deploy again.")
+            else:
+                _squads.post(proj, "manager", ["all"], text, kind="note")
         _notify.notify_add("deploy", text, "" if ok else "the log is in Squads → Deploy", link="squads")
     except Exception as e:
         _util._wlog(f"deploy note {proj['name']}: {e!r}")
