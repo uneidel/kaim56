@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-11
+- Waiting for you: a squad post to the operator waits only when it asks (a line ending in "?"); status reports ("hotfix running, handled") no longer need an answer.
 - Squad channel: every message kept (no 500 cap); squad log kinds fact / fail (squad_post kind=, ticket=; squad_read kinds=, ticket=), a ticket's log in its assignee's wake.
 - Squad channel view: FACT / FAIL entries marked (colour + ticket).
 - Decision backend cloud-llm: OpenRouter (OPENROUTER_API_KEY, DECISION_CLOUD_MODEL), also per squad (Suggestions: cloud LLM).

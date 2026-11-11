@@ -5455,7 +5455,7 @@ class ManagerFunctions(unittest.TestCase):
             undo()
 
     def test_squad_post_to_the_operator_waits_for_you(self):
-        """A member's post to the operator shows in Waiting for you until a person
+        """A member's post to the operator that asks shows in Waiting for you until a person
         writes in that channel (the auto-approver does not count); member-to-member
         posts and turn answers never do; the board's own list leaves it out."""
         m = self.m
@@ -5483,7 +5483,8 @@ class ManagerFunctions(unittest.TestCase):
             t = lambda txt: m._squads.turn_answer({"id": "t", "instance": "a", "started": 0,
                                                   "squad": {"project": "sq", "depth": 1, "msg": q0["id"]}}, True, txt)
             ask, info = t("Two decisions:\n1. OSM or hand-built?\n2. Which repo?"), t("All done, deployed.")
-            n = m._squads.post(P(), "a", ["user"], "FYI: the map is 4 MB")[0]
+            m._squads.post(P(), "a", ["user"], "Cause found, hotfix running — handled.")   # a status report waits for nobody
+            n = m._squads.post(P(), "a", ["user"], "The map is 4 MB — ok?")[0]
             self.assertEqual([x["msg_id"] for x in wait()], [n["id"], ask["id"]])
             self.assertTrue(info["id"])
             st, d = self._sq(f"/api/waiting/msg-{n['id']}", L, {})

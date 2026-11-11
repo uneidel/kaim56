@@ -780,14 +780,15 @@ def read(project, viewer=None, since=0, limit=200, kinds=(), ticket=""):
 
 
 READ_MAX = 200
-_ASKS = re.compile(r"\?\s*$", re.M)        # a turn answer that ends a line with a question asks something
+_ASKS = re.compile(r"\?\s*$", re.M)        # a post or turn answer that ends a line with a question asks something
 
 
 def to_operator(projects, limit=50):
     """A member's posts to the operator that the operator has not answered yet
     (no message of a person in that channel since; the auto-approver is none)
     and not marked read — they wait for the operator like an ask_human item.
-    A turn answer counts when it asks (a line ending in "?"). Newest first."""
+    Only one that asks (a line ending in "?") counts; a status report is no
+    approval. Newest first."""
     if not projects:
         return []
     q = ",".join("?" * len(projects))
@@ -799,7 +800,7 @@ def to_operator(projects, limit=50):
             "ORDER BY m.id DESC LIMIT 500", projects).fetchall()
     read = {n: set(settings(_projects.get(n)).get("read_posts") or []) for n in projects}
     out = [m for m in map(_out, rows) if m["id"] not in read.get(m["project"], ())
-           and (m["kind"] == "post" or _ASKS.search(m["text"]))]
+           and _ASKS.search(m["text"])]
     return out[:limit]
 
 
