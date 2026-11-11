@@ -1021,6 +1021,7 @@ def decide(project, pid, ok, who, note="", edits=None):
             if "members" in f:
                 prop["members"] = [_chose(m, "you", before.get(m["name"], {})) for m in f["members"]]
         prop.pop("revisable", None)
+        again = prop["status"] == "approved" and ok         # a re-run of the steps: the lead heard it already
         prop.update(status="approved" if ok else "rejected", decided=int(time.time()), decided_by=who, note=note)
         if ok:
             prop["steps"] = _run(prop, who)
@@ -1038,7 +1039,8 @@ def decide(project, pid, ok, who, note="", edits=None):
                if ok and prop["kind"] == "squad" else "")
             + (f" {prop.get('writer')} may set its ticket done now; the tickets that depend on it start then."
                if ok and prop["kind"] == "review" else ""))
-    _squads.post(_projects.get(project), "user:" + who, [lead_], text)
+    if not (again and not failed):
+        _squads.post(_projects.get(project), "user:" + who, [lead_], text)
     return prop, ""
 
 
@@ -1282,7 +1284,8 @@ def _finished(proj, mine):
     m, why = _squads.post(proj, _squads._last_user(proj["name"]) or "user:operator", [ld],
                           f"@{ld} All {len(mine)} tickets of {proj['name']} are done. Write the user the final summary now "
                           "(answer directly, no tools needed beyond reading): what was built and why, where it is "
-                          "(branches, PRs, files), how to try it, what was tested, open points and suggested next steps. "
+                          "(branches, PRs, files), how to try it, what was tested — live, or only against a mock or stub "
+                          "(name each part that is not live) —, open points and suggested next steps. "
                           + (f"The manager pushes the result as branch squad/{_squads.squad_id(proj) or proj['name']} "
                              "to the project's remotes — name that branch, nothing on main. "
                              if s.get("push_when_done", True) and proj.get("strategy") == "worktree" else "")

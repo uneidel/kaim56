@@ -6,6 +6,8 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-11
+- Deploy: smoke checks from deploy.json ("smoke": [{path, method, body, status}]) run through the proxy after each deploy, a failing one wakes the lead; a success wakes the member who deployed; the proxy passes PUT/PATCH/DELETE to the service (was 501).
+- Squads: members decide what they would recommend themselves (kind=fact "DECISION: …"), ask the operator only for money, secrets, outside accounts or what cannot be undone; done = no stub or mock in what ships, the final summary names what is not live; a re-approval posts no second "approved"; project_deploy says deploy.json is the squad's.
 - Waiting for you: a squad post to the operator waits only when it asks (a line ending in "?"); status reports ("hotfix running, handled") no longer need an answer.
 - Squad channel: every message kept (no 500 cap); squad log kinds fact / fail (squad_post kind=, ticket=; squad_read kinds=, ticket=), a ticket's log in its assignee's wake.
 - Squad channel view: FACT / FAIL entries marked (colour + ticket).

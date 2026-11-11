@@ -273,10 +273,7 @@ BUILTIN = {
                       {"project": {"type": "string"}, "member": {"type": "string", "description": "the writer instance"}},
                       ["project", "member"]),
     "project_deploy": (_tools_manager.t_project_deploy,
-                       "As the LEAD of a project: deploy its base branch (merged work) as a service in its own VM, "
-                       "reachable for the user at /d/<project>/. Build, start command and port are the operator's "
-                       "(Squads -> Deploy); the result (running, or failed with the previous release kept) comes as a "
-                       "note in the squad channel. Deploy after a merge the user should try.",
+                       "As the LEAD of a project: deploy the project's base branch (merged work) as a service in its own VM, reachable for the user at /d/<project>/. Build, start command, port and the smoke checks come from deploy.json in the base branch — the squad writes it: {\"build\": \"...\", \"start\": \"...\", \"port\": 8080, \"smoke\": [{\"path\": \"api/health\"}, {\"method\": \"POST\", \"path\": \"api/x\", \"body\": {}, \"status\": 200}]}; RAM, vCPUs and secrets are the operator's. The manager runs the smoke checks through the user's proxy after each deploy (you cannot open the URL yourself; no checks with effects outside the service); the result — running with each check, or failed with the log's last lines and the previous release kept — comes into the squad channel. Deploy after a merge the user should try, without asking.",
                        {"project": {"type": "string"}}, []),
     "project_sync": (_tools_manager.t_project_sync,
                      "Bring the project's base branch (merged work of others) into your folder; your unmerged work is kept (committed first). On conflict nothing changes and the files are named.",

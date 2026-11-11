@@ -368,9 +368,12 @@ TREE_NOTE = ("(Your folder {path} is plain files without .git — by design, not
              "the manager commits it onto your branch. Do not run git or ask for a clone; project_sync "
              "brings in the others' merged work; set your ticket to review with the file names.)")
 WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
-        "not into the channel. For someone else's ticket, comment on it instead of doing it. A question only the "
-        "operator can decide goes with ask_human — one question each, options with your recommendation first — "
-        "not as a channel post. An approach that failed goes in the squad log — squad_post kind=fail ticket=<key>: "
+        "not into the channel. For someone else's ticket, comment on it instead of doing it. Decide yourself "
+        "whenever you would recommend one option: post it as kind=fact (\"DECISION: …, because …\") and go on. "
+        "Only what needs money, a secret, an outside account or cannot be undone goes to the operator with "
+        "ask_human — one question each, options with your recommendation first — not as a channel post. "
+        "Done means it works for real: no stub, placeholder or mock left in what ships; what is tested only "
+        "against a mock is reported as not live. An approach that failed goes in the squad log — squad_post kind=fail ticket=<key>: "
         "what you tried, why it failed; a verified finding others need: kind=fact. Both wake nobody.)")
 
 

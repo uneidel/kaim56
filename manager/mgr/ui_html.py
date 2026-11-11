@@ -767,7 +767,7 @@ HTML_BOTTOM = """
     <div class=dialog-title>Deploy — <span id=dpdlgname class=mono style="font-size:16px"></span></div>
     <div id=dpdlg-edit class=dialog-body>
       <p class=text-muted style="font-size:12.5px;margin:0 0 8px">The base branch runs in its own VM (the squad's base image + toolchain, only the secrets set here, no host access), at <span class=mono>/d/&lt;project&gt;/</span> on the apps' host. Env: <span class=mono>PORT</span>, <span class=mono>DATA_DIR=/data</span> (kept across deploys), <span class=mono>BASE_PATH</span>.</p>
-      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">Build, Start and Port come from <span class=mono>deploy.json</span> in the base branch (the squad writes it); fill them here only for a project without one.</p>
+      <p class=text-muted style="font-size:12.5px;margin:0 0 8px">Build, Start, Port and the smoke checks come from <span class=mono>deploy.json</span> in the base branch (the squad writes it); fill them here only for a project without one.</p>
       <label for=dp-build>Build <span class=text-muted>(optional, in the release folder, as uid 1000)</span></label><input class="input mono" id=dp-build placeholder="npm ci && npm run build">
       <label for=dp-start style="margin-top:8px;display:block">Start <span class=text-muted>(listens on $PORT)</span></label><input class="input mono" id=dp-start placeholder="node server.js">
       <div style="display:flex;gap:8px;margin-top:8px">

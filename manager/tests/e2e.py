@@ -2516,8 +2516,8 @@ class ManagerFunctions(unittest.TestCase):
         router is immune by construction; this covers what is still a chain."""
         from mgr.routes import source_routes, shadowed
         src = open(HTTPD_PATH).read()
-        get_src = src[src.index("    def _do_GET(self):"):src.index("    def _do_POST(self):")]
-        post_src = src[src.index("    def _do_POST(self):"):]
+        get_src = src[src.index("    def _do_GET(self):"):src.index("    def _do_POST(self")]
+        post_src = src[src.index("    def _do_POST(self"):]
         for name, part in (("GET", get_src), ("POST", post_src)):
             bad = shadowed(source_routes(part))
             self.assertEqual(bad, [], f"{name}: dead branches behind a prefix: {bad}")
@@ -2555,7 +2555,7 @@ class ManagerFunctions(unittest.TestCase):
         inv = m._routes.ROUTER.inventory()
         self.assertTrue(inv, "the router should carry routes")
         for method, kind, path, admin in inv:
-            self.assertIn(method, ("GET", "POST"))
+            self.assertIn(method, ("GET", "POST") if path != "/d/" else ("GET", "POST", "PUT", "PATCH", "DELETE"))
             self.assertIn(kind, ("exact", "prefix"))
             self.assertTrue(path.startswith("/"))
             self.assertIsInstance(admin, bool)
@@ -5498,6 +5498,8 @@ class ManagerFunctions(unittest.TestCase):
             self.assertEqual((m._squads._get(d["msg"])["to"], m._squads._get(d["msg"])["reply_to"]), (["a"], ask["id"]))
             self.assertEqual(wait(), [])
             self.assertIn("ask_human", m._squads.WORK)                                 # the rule the members get
+            for rule in ("Decide yourself", "DECISION", "not live"):                    # decide, record it; done = really works
+                self.assertIn(rule, m._squads.WORK)
         finally:
             undo()
 
@@ -5984,6 +5986,10 @@ class ManagerFunctions(unittest.TestCase):
         try:
             pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
             self.assertEqual(m._squadgate.decide("sq", pid, True, "admin")[0]["status"], "approved")
+            told = lambda: [x for x in m._squads.read("sq", limit=1000) if "was approved by" in x["text"]]
+            self.assertEqual(len(told()), 1)
+            m._squadgate.decide("sq", pid, True, "admin")                                    # approved again: no second post
+            self.assertEqual(len(told()), 1)
             del woke[:]
             st, d = self._sq("/api/squad/ticket-create", B, {"title": "x"})
             self.assertEqual(st, 400); self.assertIn("only the lead", d["error"])
@@ -11262,13 +11268,13 @@ class ManagerFunctions(unittest.TestCase):
         return q, self._oidc_req(f"/auth/callback?state={q['state']}&code=c-1", cookie=f"kaim56_login={q['state']}")
 
     def _idx_req(self, path, method="GET", cookie=None, auth=None, origin=None, host="index.example.com"):
-        h = self._post_handler(path, "10.0.0.9", b"{}", origin=origin) if method == "POST" else self._handler(path, "10.0.0.9")
+        h = self._post_handler(path, "10.0.0.9", b"{}", origin=origin) if method != "GET" else self._handler(path, "10.0.0.9")
         h.headers["Host"] = host
         if auth:
             h.headers["Authorization"] = auth
         if cookie:
             h.headers["Cookie"] = cookie
-        (h.do_POST if method == "POST" else h.do_GET)()
+        getattr(h, "do_" + method)()
         head, _, data = h.wfile.getvalue().partition(b"\r\n\r\n")
         return self._status(h), head.decode(), data
 
@@ -11498,6 +11504,49 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual((st, [x["project"] for x in j["services"]]), (200, ["svc1"]))
         self.assertEqual(self._sq("/api/deploy/", "172.30.3.2")[0], 403)        # a VM: no
 
+    def test_deploy_smoke_checks_from_deploy_json(self):
+        """deploy.json "smoke": the squad's checks, validated, run through the proxy after a deploy;
+        one failing makes the note a failure that wakes the lead; none = a hint how to add them."""
+        m, d = self.m, self.m._deploy
+        tmp, repo = self._deploy_env()
+        proj = m._projects.get("svc1")
+        g = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        def spec(sp):
+            _wtext(os.path.join(repo, "deploy.json"), json.dumps(sp))
+            subprocess.run(g + ["add", "-A"], check=True); subprocess.run(g + ["commit", "-qm", "s"], check=True)
+        self.assertEqual(d.checks(proj), ([], ""))
+        for bad in ({"smoke": "api"}, {"smoke": [{"path": "a", "method": "TRACE"}]}, {"smoke": [{"path": "../x"}]},
+                    {"smoke": [{"path": "a", "status": "200"}]}, {"smoke": ["a"] * 21}):
+            spec({"start": "x", **bad})
+            self.assertEqual(d.checks(proj)[0], [], bad); self.assertIn("smoke", d.checks(proj)[1])
+        spec({"start": "x", "smoke": ["/api/health", {"method": "put", "path": "api/settings", "body": {"a": 1}, "status": 200}]})
+        lst, why = d.checks(proj)
+        self.assertEqual((why, [(c["method"], c["path"]) for c in lst]), ("", [("GET", "api/health"), ("PUT", "api/settings")]))
+        seen, old = [], (d.forward, d.make_release, d.boot, d.halt, d.wait_ready, d._tail, d._tell, d.smoke, d.effective)
+        def undo():
+            (d.forward, d.make_release, d.boot, d.halt, d.wait_ready, d._tail, d._tell, d.smoke, d.effective) = old
+        self.addCleanup(undo)
+        d.forward = lambda meth, p, rel, h, body=b"": seen.append((meth, rel, body)) or (
+            (200, [], b"ok") if meth == "GET" else (501, [], b"Not Implemented"))
+        lines, good = d.run_checks("svc1", lst)
+        self.assertFalse(good)
+        self.assertEqual(lines[0], "✓ GET /api/health → 200")
+        self.assertEqual(lines[1], "✗ PUT /api/settings → 501 (expected 200): Not Implemented")
+        self.assertEqual(seen[1], ("PUT", "api/settings", b'{"a": 1}'))
+        told = []
+        sha = subprocess.run(g[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        d.make_release, d.boot, d.halt = (lambda p, n: sha), (lambda p, n: 1), (lambda p: "")
+        d.wait_ready, d._tail, d.smoke = (lambda p, n, timeout=0: ""), (lambda p: ""), (lambda p: ("200 · title “x”", True))
+        d._tell = lambda proj, text, ok, tail="", by="": told.append((ok, text, by))
+        os.makedirs(os.path.join(d.DIR, "svc1"), exist_ok=True)
+        d._deploy("svc1", "svc1-arch")
+        ok, text, by = told[-1]
+        self.assertEqual((ok, by), (False, "svc1-arch")); self.assertIn("✗ PUT /api/settings → 501", text)
+        spec({"start": "x"})
+        sha = subprocess.run(g[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        d._deploy("svc1", "svc1-arch")
+        self.assertTrue(told[-1][0]); self.assertIn('"smoke"', told[-1][1])
+
     def test_deploy_secrets_reach_the_config_never_a_read(self):
         """The operator's secrets for a service: validated, env on the config disk (the spec's keys win),
         reads show names only, an empty value removes one, a channel note never carries a value."""
@@ -11543,7 +11592,7 @@ class ManagerFunctions(unittest.TestCase):
         d.make_release, d.boot = rel, lambda p, n: booted.append(n) or 4242
         d.halt, d._tail = lambda p: "shut down", lambda p: "console"
         d.wait_ready = lambda p, n, timeout=0: verdicts.pop(0)
-        d._tell = lambda proj, text, ok, tail="": told.append((ok, text))
+        d._tell = lambda proj, text, ok, tail="", by="": told.append((ok, text))
         for v in ("", ""):                                  # two good deploys
             verdicts.append(v)
             d._update("svc1", lambda r: r.update(state="deploying"))
@@ -11588,6 +11637,9 @@ class ManagerFunctions(unittest.TestCase):
             self.assertIn("key *** rejected", text); self.assertNotIn("s3cr3t", text)
             d._tell(proj, "Deployed svc1", ok=True)
             self.assertEqual(posts[-1][:2] + (posts[-1][3],), ("manager", ["all"], "note"))
+            d._tell(proj, "Deployed svc1", ok=True, by="arch")                 # the lead that deployed waits for it
+            self.assertEqual(posts[-1][:2] + (posts[-1][3],), ("user:auto (deploy)", ["arch"], "post"))
+            self.assertNotIn("Find the cause", posts[-1][2])
         finally:
             sq.settings, sq.post, d.record = old
 
@@ -11634,7 +11686,7 @@ class ManagerFunctions(unittest.TestCase):
                 self.send_header("Content-Length", "2")
                 self.end_headers()
                 self.wfile.write(b"ok")
-            do_GET = do_POST = _answer
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _answer
         srv = http.server.HTTPServer(("127.0.0.1", 0), Svc)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
@@ -11663,6 +11715,11 @@ class ManagerFunctions(unittest.TestCase):
         self.assertEqual(code, 302); self.assertIn("Location: /d/svc1/home", head)
         self.assertEqual(self._idx_req("/d/svc1/p", "POST", cookie=AP, origin="https://apps.example.com", host=A)[0], 200)
         self.assertEqual(seen[-1][0], "POST")
+        for meth in ("PUT", "PATCH", "DELETE"):                                   # the service's REST API passes too
+            self.assertEqual(self._idx_req("/d/svc1/p", meth, cookie=AP, origin="https://apps.example.com", host=A)[0], 200)
+            self.assertEqual((seen[-1][0], seen[-1][3]), (meth, b"{}"))
+        self.assertEqual(self._idx_req("/d/svc1/p", "PUT", cookie=AP, origin="https://agents.example.com", host=A)[0], 403)
+        self.assertEqual(self._idx_req("/api/projects", "PUT", cookie=W, origin="https://agents.example.com", host=M)[0], 404)
         self.assertEqual(self._idx_req("/d/svc1/p", "POST", cookie=AP, origin="https://agents.example.com", host=A)[0], 403)
         self.assertEqual(self._idx_req("/d/svc1/", host=A)[0], 302)                     # no session: the login
         d._update("svc1", lambda r: r.update(state="stopped"))

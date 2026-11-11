@@ -71,7 +71,9 @@ MAX_BODY = 64 * 1024 * 1024
 SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 SECRET_RESERVED = {"PATH", "HOME", "PORT", "DATA_DIR", "BASE_PATH", "GUEST_DNS", "IFS", "ENV", "BASH_ENV", "SHELL"}
 SECRETS_MAX, SECRET_LEN = 20, 8192
-REPO_SPEC = "deploy.json"             # {build, start, port} in the base branch
+REPO_SPEC = "deploy.json"             # {build, start, port, smoke} in the base branch
+SMOKE_MAX = 20                        # the squad's own checks after a deploy (deploy.json "smoke")
+SMOKE_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 SPEC_DEFAULT = {"build": "", "start": "", "port": 8080, "mem": 1024, "vcpus": 1}
 _HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization",
         "proxy-authenticate", "content-length", "host"}
@@ -179,6 +181,43 @@ def effective(proj, ref=None):
     mine = {k: rs[k] for k in ("build", "start", "port") if k in rs} if rs.get("start") else {}
     s, why = normalize({**op, **mine})
     return (s, "") if s else (None, (f"{REPO_SPEC}: " if rs.get("start") else "") + why)
+
+
+def checks(proj, ref=None):
+    """deploy.json "smoke" of `ref`: [{path, method?, body?, status?}] -> (checks, '') or ([], why).
+    The squad's own live checks — the manager runs them through its proxy after a deploy."""
+    raw = _projwt.git(proj["source"]["path"], ["show", f"{ref or _base_ref(proj)}:{REPO_SPEC}"], check=False)
+    try:
+        lst = (json.loads(raw) if raw.strip() else {}).get("smoke") or []
+    except (ValueError, AttributeError):
+        return [], ""                                  # effective() reports a broken deploy.json
+    if not isinstance(lst, list) or len(lst) > SMOKE_MAX:
+        return [], f"{REPO_SPEC} smoke: a list of at most {SMOKE_MAX} checks"
+    out = []
+    for c in lst:
+        c = {"path": c} if isinstance(c, str) else c
+        if not isinstance(c, dict) or not isinstance(c.get("path"), str) or ".." in c["path"] or len(c["path"]) > 300:
+            return [], f"{REPO_SPEC} smoke: each check {{path, method?, body?, status?}}"
+        meth, st = str(c.get("method") or "GET").upper(), c.get("status")
+        if meth not in SMOKE_METHODS or not (st is None or isinstance(st, int)):
+            return [], f"{REPO_SPEC} smoke: method one of {', '.join(SMOKE_METHODS)}, status a number"
+        out.append({"path": c["path"].lstrip("/"), "method": meth, "body": c.get("body"), "status": st})
+    return out, ""
+
+
+def run_checks(project, lst):
+    """-> (lines, all passed). A check passes on its status, or below 400 without one."""
+    lines, good = [], True
+    for c in lst:
+        body = b"" if c["body"] is None else json.dumps(c["body"]).encode()
+        hdrs = {"Content-Type": "application/json", "Content-Length": str(len(body))} if body else {}
+        st, _h, data = forward(c["method"], project, c["path"], hdrs, body)
+        ok = st == c["status"] if c["status"] else st < 400
+        good &= ok
+        lines.append(f"{'✓' if ok else '✗'} {c['method']} /{c['path']} → {st}"
+                     + ("" if ok else f" (expected {c['status'] or '< 400'}): "
+                        + " ".join(data[:300].decode("utf-8", "replace").split())))
+    return lines, good
 
 
 # ---- the VM --------------------------------------------------------------------
@@ -454,7 +493,16 @@ def _deploy(project, who):
                                             error="", log_tail=tail[-LOG_TAIL:]))
         _drop_old(project, {n, prev})
         seen, good = smoke(project)
-        return _tell(proj, f"Deployed {project} ({sha[:10]}) — /d/{project}/ · through the proxy: {seen}", ok=good)
+        lst, why = checks(proj, sha)
+        lines, passed = run_checks(project, lst)
+        text = f"Deployed {project} ({sha[:10]}) — /d/{project}/ · through the proxy: {seen}"
+        if why or lines:
+            text += "\n\nSmoke checks (deploy.json):\n" + "\n".join(lines + ([why] if why else []))
+        elif good:
+            text += (f"\n(No smoke checks: list the endpoints that must work in {REPO_SPEC} "
+                     '"smoke": [{"path": "api/health"}, {"method": "POST", "path": "api/x", "body": {}, "status": 200}] — '
+                     "the manager runs them after each deploy; no calls with effects outside the service.)")
+        return _tell(proj, text, ok=good and passed and not why, by=who)
     halt(project)
     if prev:
         boot(project, prev)
@@ -481,9 +529,10 @@ def _drop_old(project, keep):
     _update(project, lambda r: r.update(specs={k: v for k, v in (r.get("specs") or {}).items() if int(k) in keep}))
 
 
-def _tell(proj, text, ok, tail=""):
+def _tell(proj, text, ok, tail="", by=""):
     """The result into the squad channel. A failure wakes the lead and any
-    devops member with the service log's last lines (they cannot read the log)."""
+    devops member with the service log's last lines (they cannot read the log);
+    a success wakes the member who deployed (it waits for it), else is a note."""
     if not ok and tail:
         text += "\n\nLast lines of the service log:\n```\n" + "\n".join(tail.splitlines()[-FAIL_LINES:])[-3000:] + "\n```"
     for v in record(proj["name"]).get("secrets", {}).values():   # the service's console is its own: it may print one
@@ -491,9 +540,10 @@ def _tell(proj, text, ok, tail=""):
     try:
         if _squads.settings(proj).get("enabled"):
             mem = proj.get("members") or {}
-            fix = [n for n, m in mem.items() if m.get("role") == "lead" or "devops" in n] if not ok else []
+            fix = [n for n, m in mem.items() if m.get("role") == "lead" or "devops" in n] if not ok else \
+                [by] if by in mem else []
             if fix:
-                _squads.post(proj, "user:auto (deploy)", fix, text + "\nFind the cause, fix it on a branch, deploy again.")
+                _squads.post(proj, "user:auto (deploy)", fix, text + ("" if ok else "\nFind the cause, fix it on a branch, deploy again."))
             else:
                 _squads.post(proj, "manager", ["all"], text, kind="note")
         _notify.notify_add("deploy", text, "" if ok else "the log is in Squads → Deploy", link="squads")

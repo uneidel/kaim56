@@ -119,19 +119,29 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         except Exception:
             self._fail500()
 
-    def do_POST(self):
+    def do_POST(self, method="POST"):
         self._sent = False
         try:
-            self._do_POST()
+            self._do_POST(method)
             p = getattr(self, "principal", None)
             if p is not None:                # a person changed something: the access log
-                _audit.access_append(p, "POST", self.path, getattr(self, "_status", 0))
+                _audit.access_append(p, method, self.path, getattr(self, "_status", 0))
         except _util.BodyTooLarge as e:
             self.close_connection = True          # the body was never read
             if not getattr(self, "_sent", False):
                 self._json({"error": f"body too large ({e} bytes)"}, 413)
         except Exception:
             self._fail500()
+
+    # the manager's API is GET/POST; these reach only a deployed service (/d/<project>/…, mgr/routes_deploy.py)
+    def do_PUT(self):
+        self.do_POST("PUT")
+
+    def do_PATCH(self):
+        self.do_POST("PATCH")
+
+    def do_DELETE(self):
+        self.do_POST("DELETE")
 
     def _forbid(self):
         self.send_response(403)
@@ -255,7 +265,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self.end_headers()
         self.wfile.write(body)
 
-    def _do_POST(self):
+    def _do_POST(self, method="POST"):
         if not self._auth():
             return
         p = self.path.split("?", 1)[0]
@@ -268,7 +278,7 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
                 or _grants.allowed(guest, "POST", p)):             # MANAGE_APPS (mgr/guestgrants.py)
             _actlog.record(guest["name"], "denied", method="POST", path=self.path)
             return self._forbid()
-        if self._dispatch("POST"):
+        if self._dispatch(method):
             return
         self._json({"msg": "unknown"}, 404)
 

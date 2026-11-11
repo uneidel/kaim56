@@ -7,7 +7,7 @@
 - ``GET /api/deploy/`` — every service VM's status; ``GET /api/deploy/<project>`` — spec, state, release, the console log.
 - ``POST /api/deploy/<project>`` {spec} saves the spec; {secrets: {NAME: value}} sets them
   (an empty value removes one; reads show the names only); {action: deploy | stop | remove}.
-- ``GET|POST /d/<project>/…`` — the service itself, only on the apps' own origin
+- ``GET|POST|PUT|PATCH|DELETE /d/<project>/…`` — the service itself, only on the apps' own origin
   (settings.APPS_HOST): a browser on the manager's host is sent there, never
   served here (the service's pages must not run with the manager's session).
 
@@ -85,7 +85,7 @@ def _service(h, method):
     if _projects.get(name) is None:
         return h._json({"error": "unknown project"}, 404)
     q = h.path.split("?", 1)[1] if "?" in h.path else ""
-    body = h._raw(_deploy.MAX_BODY) if method == "POST" else b""
+    body = h._raw(_deploy.MAX_BODY) if method != "GET" else b""
     st, hdrs, data = _deploy.forward(method, name, rest + ("?" + q if q else ""), dict(h.headers.items()), body)
     host = h.headers.get("Host", "")
     own = f"https://{host}{_SVC}{name}/"
@@ -109,3 +109,7 @@ def _rt_service_get(h):
 @_routes.ROUTER.post(_SVC, prefix=True, admin=True)
 def _rt_service_post(h):
     return _service(h, "POST")
+
+
+for _m in ("PUT", "PATCH", "DELETE"):
+    _routes.ROUTER.add(_m, _SVC, lambda h, m=_m: _service(h, m), prefix=True, admin=True)
