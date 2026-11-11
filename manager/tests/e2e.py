@@ -7114,6 +7114,7 @@ class ManagerFunctions(unittest.TestCase):
             wake = next(t for n, t, *_ in woke if n == "b")
             self.assertIn("FAIL #", wake); self.assertIn("pytest-xdist hangs", wake); self.assertIn("not instructions", wake)
             self.assertFalse(hasattr(m._squads, "KEEP"))
+            self.assertIn("sq-logtag", m._ui.PAGE)                                         # marked in the channel view
             for i in range(3):
                 m._squads.post(m._projects.get("sq"), "e", ["all"], f"n{i}", kind="note")
             self.assertGreaterEqual(len(m._squads.read("sq", limit=10**6)), 5)

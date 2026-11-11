@@ -1910,8 +1910,8 @@ async function skLoad(){
   if(last!==SK_LAST&&!sqaBusy(document.getElementById('sk-thread'))){
     SK_LAST=last; skSeen(name,last);
     const th=document.getElementById('sk-thread');
-    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.kind==='turn'?' sq-tbub':''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
-      `<div class=text-muted style="font-size:12px"><b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))} · ${new Date(m.ts*1000).toLocaleString()}${m.kind!=='post'?' · '+escT(m.kind):''}</div>`+
+    th.innerHTML=msgs.length?msgs.map(m=>`<div class="sk-bub${String(m.from).startsWith('user:')?' me':''}${m.kind==='turn'?' sq-tbub':''}${m.kind==='fact'||m.kind==='fail'?' sq-'+m.kind:''}${m.blocked||Object.keys(m.failed||{}).length?' bad':''}">`+
+      `<div class=text-muted style="font-size:12px">${m.kind==='fact'||m.kind==='fail'?`<span class=sq-logtag>${m.kind.toUpperCase()}${m.ticket?' · '+escT(m.ticket):''}</span> `:''}<b>${escT(m.from)}</b> → ${escT((m.to||[]).join(', '))} · ${new Date(m.ts*1000).toLocaleString()}${m.kind!=='post'&&m.kind!=='fact'&&m.kind!=='fail'?' · '+escT(m.kind):''}</div>`+
       sqText(m)+
       sqDelivery(m)+'</div>').join('')
       :'<span class=text-muted>No messages yet.</span>';

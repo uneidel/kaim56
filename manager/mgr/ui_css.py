@@ -390,6 +390,8 @@ button.chip:hover{background:var(--app-chip-hover);color:#fff}
 .sk-bub.me{justify-self:end;background:var(--app-chip)}
 .sk-bub.bad{border-left:3px solid var(--color-warn)}
 .sq-tbub{opacity:.82}
+.sq-fact{border-left:3px solid var(--color-success,#3fb950)}.sq-fail{border-left:3px solid var(--color-danger,#f85149)}
+.sq-logtag{font-weight:700;font-size:11px;letter-spacing:.04em}.sq-fact .sq-logtag{color:var(--color-success,#3fb950)}.sq-fail .sq-logtag{color:var(--color-danger,#f85149)}
 mark.sq-mk{color:inherit;background:color-mix(in srgb,var(--color-accent) 24%,transparent);border-radius:2px;
   box-shadow:0 1px 0 var(--color-accent-400);cursor:pointer}
 mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);box-shadow:none}
