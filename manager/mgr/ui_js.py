@@ -2150,8 +2150,10 @@ function skBoardRender(d,b,hq){
   el.hidden=false;
   if(html===SKB||SKB_DRAG)return;                       /* redraw only on change, never under a drag */
   const f=document.activeElement, fid=f&&el.contains(f)?f.dataset.id:null, sx=(el.querySelector('.kb-board')||{}).scrollLeft||0;
+  const sy={}; el.querySelectorAll('.kb-col').forEach(c=>sy[c.dataset.st]=c.scrollTop);      /* a column keeps its scroll over the redraw */
   SKB=html; el.innerHTML=html;
   el.querySelector('.kb-board').scrollLeft=sx;
+  el.querySelectorAll('.kb-col').forEach(c=>c.scrollTop=sy[c.dataset.st]||0);
   if(fid){const c=el.querySelector(`.kb-tk[data-id="${fid}"]`); if(c)c.focus({preventScroll:true})}
 }
 async function skTk(id,change){       /* the operator's ticket edit (existing /squad/ticket route) */
