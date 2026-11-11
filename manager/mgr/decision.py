@@ -10,10 +10,12 @@ Setting DECISION_BACKEND:
 - "local-llm": the llama.cpp endpoint the platform already uses
   (LLAMA_ENDPOINT/LLAMA_API_KEY, model DECISION_LOCAL_MODEL) — nothing leaves
   the LAN; slower, so a longer timeout.
+- "cloud-llm": OpenRouter (OPENROUTER_API_KEY, model DECISION_CLOUD_MODEL) —
+  the same chat-completions call; the question's text goes to OpenRouter.
 - "subq": SubQ's native Decisions API (api.subq.ai/v1/systemone, SUBQ_API_KEY;
   `_ask_subq`). A squad may pick its own backend (squad setting "decision").
 
-local-llm gets an OpenAI-compatible chat-completions call with a
+local-llm and cloud-llm get an OpenAI-compatible chat-completions call with a
 strict-JSON prompt, subq its native API. The whole wire format lives in `ask()` — a typed task
 ({state, questions: {key: {type, instructions, criteria, max}}} -> {key:
 {option: score}}) shaped like the decide/evaluate APIs, so a native call can
@@ -82,6 +84,12 @@ def _endpoint(be, st):
         key = (st.get("LLAMA_API_KEY") or "").strip()
         return (url, {"Authorization": f"Bearer {key}"} if key else {},
                 (st.get("DECISION_LOCAL_MODEL") or "").strip() or "local-model", LOCAL_TIMEOUT)
+    if be == "cloud-llm":
+        url, key = _llmproxy._routed_upstream({"backend": "openrouter"}, st)
+        model = (st.get("DECISION_CLOUD_MODEL") or "").strip()
+        if not url or not model:
+            raise RuntimeError("OPENROUTER_API_KEY or DECISION_CLOUD_MODEL not set")
+        return url, {"Authorization": f"Bearer {key}"}, model, TIMEOUT
     raise RuntimeError(f"no LLM decision backend: {be}")
 
 

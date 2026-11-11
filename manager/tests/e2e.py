@@ -8051,18 +8051,20 @@ class ManagerFunctions(unittest.TestCase):
         return st, undo
 
     def test_decision_backends_suggest_with_full_catalogs(self):
-        """local-llm: ONE request with every persona and
+        """local-llm, cloud-llm: ONE request with every persona and
         every non-standard skill (no pre-filter), the tiers, purpose and
         context; the key in the header (each backend its own); unknown names
         dropped, scores clamped, at most 6 skills; same shape as Jev's."""
         m = self.m
         base, calls, stop = self._fake_llm(self._DEC_ANSWERS)
         want = {
-                "local-llm": ("/v1/chat/completions", "Authorization", "Bearer llama-SECRETKEY3", "qwen-local")}
+                "local-llm": ("/v1/chat/completions", "Authorization", "Bearer llama-SECRETKEY3", "qwen-local"),
+                "cloud-llm": ("/api/v1/chat/completions", "Authorization", "Bearer sk-or-SECRETKEY1", "anthropic/claude-x")}
         try:
             for be, (path, hdr, val, model) in want.items():
                 calls.clear()
-                st, undo = self._dec_env("", {"DECISION_BACKEND": be, "DECISION_LOCAL_MODEL": "qwen-local"}, base)
+                st, undo = self._dec_env("", {"DECISION_BACKEND": be, "DECISION_LOCAL_MODEL": "qwen-local",
+                                                "DECISION_CLOUD_MODEL": "anthropic/claude-x"}, base)
                 try:
                     s = m._jevsetup.suggest("write and fix the backend code", "Repository: Cloudflare Workers. Squad goal: ship")
                 finally:

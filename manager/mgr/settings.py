@@ -45,9 +45,11 @@ SETTINGS_SCHEMA = [
     {"key": "DECISION_BACKEND", "label": "Decision backend — who scores the setup suggestion (persona, skills, tier) and, if allowed below, the model router", "options": [
         {"value": "", "label": "Jev (OpenJev, JEV_URL) — default"},
         {"value": "local-llm", "label": "Local LLM (LLAMA_ENDPOINT, e.g. the Jetson) — stays in the LAN"},
+        {"value": "cloud-llm", "label": "Cloud LLM via OpenRouter (OPENROUTER_API_KEY, model DECISION_CLOUD_MODEL)"},
         {"value": "subq", "label": "SubQ Decisions API (api.subq.ai, SUBQ_API_KEY below)"}]},
     {"key": "SUBQ_API_KEY", "label": "SubQ API key — decision backend subq, also per squad (New squad → Suggestions); console.subq.ai, stays on the host"},
     {"key": "DECISION_LOCAL_MODEL", "label": "Decision backend local-llm: model name at LLAMA_ENDPOINT (blank = local-model)"},
+    {"key": "DECISION_CLOUD_MODEL", "label": "Decision backend cloud-llm: OpenRouter model id, e.g. anthropic/claude-haiku-4.5 (blank = cloud-llm off, Jev answers)"},
     {"key": "DECISION_ROUTER", "label": "Model router uses the decision backend too (privacy: with SubQ EVERY user message of a routed instance goes to api.subq.ai)", "options": [
         {"value": "", "label": "— off: the router asks Jev —"},
         {"value": "1", "label": "on — router classifies via the decision backend"}]},
@@ -150,7 +152,7 @@ def settings_for_ui():
     return d
 
 
-DECISION_BACKENDS = ("jev", "local-llm", "subq")   # mgr/decision.py
+DECISION_BACKENDS = ("jev", "local-llm", "cloud-llm", "subq")   # mgr/decision.py
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._:/@+-]{0,160}$")
 
 
@@ -175,8 +177,9 @@ def validate_decision(d):
         return "DECISION_BACKEND must be one of " + ", ".join(DECISION_BACKENDS)
     if (d.get("DECISION_ROUTER") or "") not in ("", "1"):
         return "DECISION_ROUTER must be empty or 1"
-    if not _MODEL_RE.match(str(d.get("DECISION_LOCAL_MODEL") or "")):
-        return "DECISION_LOCAL_MODEL: a model id ([A-Za-z0-9._:/@+-], at most 160)"
+    for k in ("DECISION_LOCAL_MODEL", "DECISION_CLOUD_MODEL"):
+        if not _MODEL_RE.match(str(d.get(k) or "")):
+            return f"{k}: a model id ([A-Za-z0-9._:/@+-], at most 160)"
     if max_tokens_error(d.get("LLM_MAX_TOKENS")):
         return max_tokens_error(d.get("LLM_MAX_TOKENS"))
     for k in ("OPENAI_STT_MODEL", "OPENAI_TTS_MODEL"):

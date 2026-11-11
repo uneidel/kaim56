@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-11
+- Decision backend cloud-llm: OpenRouter (OPENROUTER_API_KEY, DECISION_CLOUD_MODEL), also per squad (Suggestions: cloud LLM).
+
 ## 2026-11-10
 - Squad graph: Diff and PR… per member branch — the draft (local LLM, else ticket + commits) is editable, Push + open PR opens it to the base.
 - Squad settings: Level (Supervised / Approve merges / Auto / Full access) presets Autonomy + approval tools; new autonomy "merges".

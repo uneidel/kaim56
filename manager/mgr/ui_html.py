@@ -367,7 +367,7 @@ HTML_TOP = """</head><body>
       <div class=sk-comp><label class="sk-field sk-field-arch"><span>Architect runtime</span><select class=input id=sk-arch aria-label=Architect title="The architect: OpenRouter (API model, token budget) or Claude (Claude Code on your subscription)" style="width:auto">
         <option value=openrouter>Architect: OpenRouter</option><option value=claude>Architect: Claude</option></select></label>
         <label class="sk-field sk-field-dec"><span>Member suggestions</span><select class=input id=sk-dec aria-label=Suggestions title="Who suggests persona, skills and model tier for the members: OpenJev (JEV_URL) or SubQ (SUBQ_API_KEY in Settings)" style="width:auto">
-          <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=subq>Suggestions: SubQ</option></select></label>
+          <option value="">Suggestions: as in Settings</option><option value=jev>Suggestions: OpenJev</option><option value=cloud-llm>Suggestions: cloud LLM</option><option value=subq>Suggestions: SubQ</option></select></label>
         <label class="sk-field sk-field-repo"><span>Repository</span><select class=input id=sk-repo aria-label=Repository title="A new clone from a URL, a new empty repo, or an existing repo from Repos" style="width:auto" onchange=skRepoPick()>
           <option value="">Repo: from a URL</option></select></label>
         <label class="sk-field sk-field-name" id=sk-namef hidden><span>Project name</span><input class=input id=sk-name maxlength=20 placeholder="e.g. tankstellen-app" aria-label="Project name" autocomplete=off></label>
