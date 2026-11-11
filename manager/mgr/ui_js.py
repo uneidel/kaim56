@@ -2313,6 +2313,10 @@ function skFiles(inp){
   const el=document.getElementById('sk-files'); el.hidden=!SKF.length;
   el.textContent=SKF.length?'📎 '+SKF.map(f=>f.name).join(', ')+' ✕':'';
 }
+function skPaste(e){        /* a pasted screenshot or file becomes an attachment; pasted text stays text */
+  const c=e.clipboardData; if(!SK||!c||!c.files.length||c.getData('text'))return;
+  e.preventDefault(); skFiles({files:c.files});
+}
 async function skSend(){
   const el=document.getElementById('sk-text'), text=el.value.trim(), up=SK?SKF:[]; if(!text&&!up.length)return;
   if(up.reduce((n,f)=>n+f.size,0)>20*1024*1024||up.length>10)return skMsg('⚠️ attachments: at most 10 files, 20 MB in all');
