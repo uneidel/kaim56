@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-11
+- Squad channel: every message kept (no 500 cap); squad log kinds fact / fail (squad_post kind=, ticket=; squad_read kinds=, ticket=), a ticket's log in its assignee's wake.
 - Decision backend cloud-llm: OpenRouter (OPENROUTER_API_KEY, DECISION_CLOUD_MODEL), also per squad (Suggestions: cloud LLM).
 
 ## 2026-11-10

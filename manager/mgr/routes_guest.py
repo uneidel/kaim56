@@ -893,8 +893,17 @@ def _rt_squad_send(h):
         m, why = _squads.post(p, name, [str(b.get("to") or "")], b.get("question"), kind="ask",
                               depth=_squads.turn_depth(name) + 1)
     else:
-        m, why = _squads.post(p, name, b.get("to"), b.get("text"), reply_to=b.get("reply_to"),
-                              depth=_squads.turn_depth(name) + 1,
+        # kind fact / fail: the squad log (to all, wakes nobody), optionally on one ticket
+        kind, tk = str(b.get("kind") or "post"), str(b.get("ticket") or "").strip()
+        if kind not in ("post",) + _squads.LOG_KINDS:
+            return h._json({"error": "kind: post, fact or fail"}, 400)
+        if tk:
+            t = next((x for x in _squadgate.tickets(p["name"]) if tk in (x["key"], str(x["id"]))), None)
+            if t is None or kind == "post":
+                return h._json({"error": f"ticket {tk}: no such ticket" if t is None else "ticket goes with kind fact or fail"}, 400)
+            tk = t["key"]
+        m, why = _squads.post(p, name, b.get("to"), b.get("text"), reply_to=b.get("reply_to"), kind=kind,
+                              depth=_squads.turn_depth(name) + 1, ticket=tk,
                               wake=str(b.get("wake", True)).lower() not in ("false", "0", "no"))
     _audit.audit_append(name, "squad_ask" if ask else "squad_post",
                         f"{p['name']} -> {','.join(m['to']) if m else b.get('to')}", m is not None,
@@ -911,7 +920,9 @@ def _rt_squad_read(h):
     if err:
         return h._json({"error": err}, 403)
     since = q.get("since", ["0"])[0]
-    return h._json({"project": p["name"], "messages": _squads.read(p["name"], inst["name"], int(since) if since.isdigit() else 0)})
+    kinds = tuple(k for k in q.get("kinds", [""])[0].split(",") if k in _squads.LOG_KINDS)
+    return h._json({"project": p["name"], "messages": _squads.read(p["name"], inst["name"], int(since) if since.isdigit() else 0,
+                                                                   kinds=kinds, ticket=q.get("ticket", [""])[0].strip())})
 
 
 @_routes.ROUTER.get("/api/squad/members")

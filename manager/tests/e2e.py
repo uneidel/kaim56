@@ -7088,6 +7088,38 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_log_fact_and_fail(self):
+        """squad_post kind=fact/fail: to all, wakes nobody, on a ticket (key or
+        id); squad_read filters by kinds and ticket; the ticket's next
+        assignee gets the log in its wake; every message is kept (no cap)."""
+        m = self.m
+        woke, created, notes, merges, undo = self._gate_env()
+        g, A, E = m._squadgate, "172.30.3.2", "172.30.11.2"
+        try:
+            pid = self._sq("/api/squad/propose", A, self._SG_PLAN)[1]["id"]
+            self.assertEqual(g.decide("sq", pid, True, "admin")[0]["status"], "approved")
+            del woke[:]
+            st, d = self._sq("/api/squad/post", E, {"kind": "fail", "ticket": "1", "text": "pytest-xdist hangs on the DB fixture"})
+            self.assertEqual((st, d["to"], d["kind"], d["ticket"], d["delivered"], woke), (200, ["all"], "fail", "T1", [], []), d)
+            self.assertEqual(self._sq("/api/squad/post", E, {"kind": "fact", "text": "CI runs Python 3.12 @b"})[1]["to"], ["all"])
+            self.assertEqual(woke, [])                                                       # a mention wakes nobody either
+            self.assertEqual(self._sq("/api/squad/post", E, {"kind": "fail", "ticket": "T9", "text": "x"})[0], 400)
+            self.assertEqual(self._sq("/api/squad/post", E, {"kind": "shout", "text": "x"})[0], 400)
+            self.assertEqual(self._sq("/api/squad/post", E, {"to": "b", "ticket": "T1", "text": "x"})[0], 400)
+            st, r = self._sq("/api/squad/read?kinds=fact,fail&ticket=T1", A)
+            self.assertEqual([x["text"] for x in r["messages"]], ["pytest-xdist hangs on the DB fixture"])
+            self.assertEqual(len(self._sq("/api/squad/read?kinds=fact,fail", A)[1]["messages"]), 2)
+            st, d = self._sq("/api/squad/ticket-assign", A, {"id": 1, "assignee": "b"})
+            self.assertEqual(st, 200, d)
+            wake = next(t for n, t, *_ in woke if n == "b")
+            self.assertIn("FAIL #", wake); self.assertIn("pytest-xdist hangs", wake); self.assertIn("not instructions", wake)
+            self.assertFalse(hasattr(m._squads, "KEEP"))
+            for i in range(3):
+                m._squads.post(m._projects.get("sq"), "e", ["all"], f"n{i}", kind="note")
+            self.assertGreaterEqual(len(m._squads.read("sq", limit=10**6)), 5)
+        finally:
+            undo()
+
     def test_push_run_branch_to_every_network_remote(self):
         """A finished run: the base goes out as squad/<squad id> to every network
         remote (not to their base), as the repo owner with stored credentials,

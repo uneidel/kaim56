@@ -93,8 +93,9 @@ def _q(**kw):
     return urllib.parse.urlencode({k: v for k, v in kw.items() if v})
 
 
-def t_squad_post(text, to="", reply_to="", project="", wake=True):
-    d = json.loads(_post("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None, "project": project, "wake": wake}))
+def t_squad_post(text, to="", reply_to="", project="", wake=True, kind="post", ticket=""):
+    d = json.loads(_post("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None, "project": project, "wake": wake,
+                                             "kind": kind or "post", "ticket": ticket}))
     st = ("delivered to " + ", ".join(d["delivered"])) if d.get("delivered") else \
         ("not delivered: " + d["blocked"] if d.get("blocked") else "stored")
     return f"Posted #{d['id']} in {d['project']} ({st})."
@@ -117,8 +118,8 @@ def t_squad_ask(to, question, wait=True, timeout=600, project=""):
     return f"No answer to #{d['id']} yet; check later with squad_read."
 
 
-def t_squad_read(since="", project=""):
-    d = json.loads(_get("/api/squad/read?" + _q(since=since, project=project)))
+def t_squad_read(since="", project="", kinds="", ticket=""):
+    d = json.loads(_get("/api/squad/read?" + _q(since=since, project=project, kinds=kinds, ticket=ticket)))
     return "\n".join(f"#{m['id']} {m['from']} -> {', '.join(m['to'])}"
                      f"{' (re ' + str(m['reply_to']) + ')' if m.get('reply_to') else ''} [{m['kind']}]: {m['text']}"
                      for m in d.get("messages") or []) or f"No new messages in {d.get('project')}."
@@ -342,6 +343,8 @@ TOOLS = {
                         "to": {"type": "string", "description": "member name(s), comma-separated, or 'all' (empty with reply_to = its sender)"},
                         "reply_to": {"type": "string", "description": "optional: id of the message you answer"},
                         "wake": {"type": "boolean", "description": "false = only store it, wake nobody — ONLY for a pure ack or thanks. A post that hands the addressee the next step (a review result with work left, an instruction, 'go ahead', 'over to you') must wake them, or nobody works (default true)"},
+                        "kind": {"type": "string", "enum": ["post", "fact", "fail"], "description": "kind: post (default), or the squad log — fact = a verified finding, fail = an approach that did not work (what you tried, why it failed). fact/fail go to all and wake nobody; give ticket= so the next assignee of that ticket sees it in its wake"},
+                        "ticket": {"type": "string", "description": "with kind fact/fail: the ticket key or id it belongs to"},
                         "project": _PROJ},
          "required": ["text"]}),
     "squad_ask": (_squad(t_squad_ask),
@@ -356,6 +359,8 @@ TOOLS = {
         "Read your squad channel: messages to you or to all, and your own (oldest first).",
         {"type": "object",
          "properties": {"since": {"type": "string", "description": "optional: only messages after this id"},
+                        "kinds": {"type": "string", "description": "optional: 'fact,fail' = only the squad log"},
+                        "ticket": {"type": "string", "description": "optional: only entries of this ticket key"},
                         "project": _PROJ},
          "required": []}),
     "squad_members": (_squad(t_squad_members),

@@ -649,10 +649,11 @@ def _squad_call(path, payload=None, timeout=60):
         return None, f"Error: {e!r}"
 
 
-def t_squad_post(to="", text="", reply_to="", project="", wake=True):
-    """Post to the project channel; the addressed members are woken (unless wake=False)."""
+def t_squad_post(to="", text="", reply_to="", project="", wake=True, kind="post", ticket=""):
+    """Post to the project channel; the addressed members are woken (unless wake=False).
+    kind fact / fail: the squad log (to all, wakes nobody), optionally on a ticket."""
     d, err = _squad_call("/api/squad/post", {"to": to, "text": text, "reply_to": reply_to or None,
-                                             "project": project, "wake": wake})
+                                             "project": project, "wake": wake, "kind": kind or "post", "ticket": ticket})
     if err:
         return err
     st = f"delivered to {', '.join(d['delivered'])}" if d.get("delivered") else \
@@ -680,9 +681,9 @@ def t_squad_ask(to, question, wait=True, timeout=600, project=""):
     return f"No answer to #{d['id']} yet; check later with squad_read."
 
 
-def t_squad_read(since="", project=""):
-    """The channel messages addressed to this agent (or all), plus its own."""
-    q = urllib.parse.urlencode({"since": since or 0, "project": project})
+def t_squad_read(since="", project="", kinds="", ticket=""):
+    """The channel messages addressed to this agent (or all), plus its own; kinds/ticket filter."""
+    q = urllib.parse.urlencode({"since": since or 0, "project": project, "kinds": kinds, "ticket": ticket})
     d, err = _squad_call(f"/api/squad/read?{q}")
     if err:
         return err

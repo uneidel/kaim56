@@ -16,7 +16,7 @@ that replies to it (``reply_to``) from that member; answers wake nobody — the
 asker polls.
 
 Settings live in the project (projects.json, key ``squad``); messages in
-squad.db in the manager dir (root-only, the last KEEP per project). The squad
+squad.db in the manager dir (root-only, every message kept). The squad
 ID, the member IDs and the archive of every message: mgr/squadrec.py.
 
 Part of the mgr package: no import from manager.py. Sibling modules are used
@@ -89,7 +89,6 @@ _ENV_REF = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
 TC_PKGS, TC_SCRIPT, TC_ENV, TC_ENV_VAL = 100, 8192, 50, 512
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
-KEEP = 500                      # messages kept per project
 ASK_TTL = 3600                  # an unanswered ask expires after this
 QUEUE_TTL = 1800                # a member's queued reply expires after this (or once its addressee posted)
 CODE_LINES = 30                 # a longer code block / any diff goes through git, not the channel
@@ -98,7 +97,11 @@ _DIFF = re.compile(r"^(?:diff --git |@@ -\d)", re.M)
 _B64 = re.compile(r"[A-Za-z0-9+/]{400,}={0,2}")   # a patch as base64 (live 2026-10-13, hand-copied with typos)
 _MENTION = re.compile(r"(?<![\w@])@([a-z0-9][a-z0-9_-]{0,63})", re.I)
 _lock = threading.Lock()        # guard check + insert: the hourly wake count stays honest
-_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome", "queued")
+_COLS = ("id", "ts", "project", "sender", "rcpt", "text", "reply_to", "kind", "depth", "woke", "blocked", "outcome", "queued",
+         "ticket")
+# The squad log: a verified finding (fact) or a failed approach (fail), to all, waking nobody;
+# the ones of a ticket go into its assignee's wake (mgr/squadgate._wake)
+LOG_KINDS = ("fact", "fail")
 
 
 def _conn():
@@ -113,7 +116,7 @@ def _conn():
     c.execute("""CREATE TABLE IF NOT EXISTS squad_note(            -- the operator's feedback (mgr/squadnotes.py)
         id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, msg_id INTEGER, quote TEXT, prefix TEXT, suffix TEXT,
         comment TEXT, by TEXT, created INTEGER, status TEXT, sent_msg_id INTEGER)""")
-    for col in ("outcome", "queued"):   # outcome: per member "ok" or why the turn failed;
+    for col in ("outcome", "queued", "ticket"):   # outcome: per member "ok" or why the turn failed;
         try:                            # queued: a rate/budget-blocked wake waiting to be delivered
             c.execute(f"ALTER TABLE squad_msg ADD COLUMN {col} TEXT")
         except sqlite3.OperationalError:
@@ -142,7 +145,7 @@ def _out(row):
             # "delivered" = a wake turn was queued; "received" = that turn ran;
             # "failed" = it did not reach the member (VM down, no web bridge, timeout)
             "received": sorted(m for m, v in outcome.items() if v == "ok"),
-            "failed": {m: v for m, v in outcome.items() if v != "ok"}, "queued": queued}
+            "failed": {m: v for m, v in outcome.items() if v != "ok"}, "queued": queued, "ticket": r["ticket"] or ""}
 
 
 def _get(mid):
@@ -367,7 +370,8 @@ TREE_NOTE = ("(Your folder {path} is plain files without .git — by design, not
 WORK = ("(Work only on tickets assigned to you; progress goes on the ticket — ticket_update status/comment — "
         "not into the channel. For someone else's ticket, comment on it instead of doing it. A question only the "
         "operator can decide goes with ask_human — one question each, options with your recommendation first — "
-        "not as a channel post.)")
+        "not as a channel post. An approach that failed goes in the squad log — squad_post kind=fail ticket=<key>: "
+        "what you tried, why it failed; a verified finding others need: kind=fact. Both wake nobody.)")
 
 
 def _frame(project, sender, mid, text, kind, sid="", member_id=""):
@@ -417,7 +421,7 @@ def _last_user(project):
     return row[0] if row else ""
 
 
-def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None, level=0, wake=True):
+def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None, level=0, wake=True, ticket=""):
     """Store one message and wake its addressees. -> (message, '') or (None, why).
     `sender` is a member's name or 'user:<name>'; it is never woken. `hints`:
     {member: line} added to that member's wake only (not to the channel). wake=False
@@ -428,6 +432,8 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     if len(text) > TEXT_MAX:
         return None, f"text longer than {TEXT_MAX} characters"
     code = "" if str(sender).startswith("user:") or kind in ("turn", "note", "hitl") else code_in_text(text)
+    if kind in LOG_KINDS:
+        to, reply_to = ["all"], None
     if code:
         return None, f"{code} in the message — {GIT_HINT}"
     # The code indexer (template 'indexer', mgr/indexer.py) reads the project and takes no turns.
@@ -444,7 +450,7 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
         if kind == "post" and orig["kind"] == "ask" and orig["to"] == [sender]:
             kind = "answer"
         to = to or [orig["from"]]
-    if kind not in ("ask", "hitl", "turn", "note"):   # a question names its one addressee in `to`
+    if kind not in ("ask", "hitl", "turn", "note") + LOG_KINDS:   # a question names its one addressee in `to`
         to += [m for m in _MENTION.findall(text) if m in names or m == "all"]
     # The operator is no member: "user", "admin", "operator" or no addressee at
     # all means the person who last wrote in this channel (live 2026-10-09: an
@@ -467,18 +473,15 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     rcpt = ["all"] if "all" in to else sorted(set(to))
     # "hitl": a waiting item's card for the operator (mgr/hitlq.py), "turn": a
     # member's final answer (turn_answer), "note": the manager's — they wake nobody
-    targets = [] if not wake or kind in ("answer", "hitl", "turn", "note") else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
+    targets = [] if not wake or kind in ("answer", "hitl", "turn", "note") + LOG_KINDS else sorted((names if rcpt == ["all"] else set(rcpt) & names) - {sender})
     now = int(time.time())
     with _lock:
         blocked = _guard(proj, targets, depth, now, str(sender).startswith("user:")) if targets else ""
         with _db() as c:
-            mid = c.execute("INSERT INTO squad_msg(ts,project,sender,rcpt,text,reply_to,kind,depth,woke,blocked) "
-                            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            mid = c.execute("INSERT INTO squad_msg(ts,project,sender,rcpt,text,reply_to,kind,depth,woke,blocked,ticket) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                             (now, proj["name"], sender, json.dumps(rcpt), text, orig["id"] if orig else None,
-                             kind, int(depth), "{}", blocked)).lastrowid
-            c.execute("DELETE FROM squad_msg WHERE project=? AND id NOT IN "
-                      "(SELECT id FROM squad_msg WHERE project=? ORDER BY id DESC LIMIT ?)",
-                      (proj["name"], proj["name"], KEEP))
+                             kind, int(depth), "{}", blocked, str(ticket or ""))).lastrowid
         if targets and blocked.startswith(_WAIT_REASONS):     # not lost: delivered once there is room again
             with _db() as c:
                 c.execute("UPDATE squad_msg SET queued=? WHERE id=?",
@@ -759,12 +762,17 @@ def answer(ask_id, asker):
     return {"status": "pending", "answer": ""}
 
 
-def read(project, viewer=None, since=0, limit=200):
+def read(project, viewer=None, since=0, limit=200, kinds=(), ticket=""):
     """Messages of a project after `since`, oldest first. A member (viewer)
-    sees what was addressed to it or to all, and its own; the operator all."""
+    sees what was addressed to it or to all, and its own; the operator all.
+    kinds / ticket: only those (e.g. the squad log of one ticket)."""
+    sql, args = f"SELECT {','.join(_COLS)} FROM squad_msg WHERE project=? AND id>?", [project, int(since or 0)]
+    if kinds:
+        sql += f" AND kind IN ({','.join('?' * len(kinds))})"; args += list(kinds)
+    if ticket:
+        sql += " AND ticket=?"; args.append(ticket)
     with _db() as c:
-        rows = c.execute(f"SELECT {','.join(_COLS)} FROM squad_msg WHERE project=? AND id>? ORDER BY id",
-                         (project, int(since or 0))).fetchall()
+        rows = c.execute(sql + " ORDER BY id", args).fetchall()
     out = [_out(r) for r in rows]
     if viewer is not None:
         out = [m for m in out if m["from"] == viewer or viewer in m["to"] or "all" in m["to"]]
