@@ -5454,6 +5454,24 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_chat_page_lists_no_squad_members(self):
+        """/chat offers the instances outside a squad; a member only by its direct link (?i=)."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        try:
+            for i in self._sq_insts:
+                i["config"] = {"TRANSPORT": "web"}
+
+            def listed(path):
+                h = self._handler(path, "127.0.0.1")
+                h._do_GET()
+                page = h.wfile.getvalue().decode()
+                return [a["name"] for a in json.loads(page.split("const AGENTS=", 1)[1].split(", START=", 1)[0])]
+            self.assertEqual(listed("/chat"), ["c"])
+            self.assertEqual(listed("/chat?i=b"), ["b", "c"])
+        finally:
+            undo()
+
     def test_squad_operator_long_message_and_attachments(self):
         """A person's message over TEXT_MAX: the channel keeps it whole, the woken
         member gets its start and inbox/msg-<id>.md, a member reading the channel

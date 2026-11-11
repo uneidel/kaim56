@@ -206,7 +206,9 @@ def _rt_resources(h):
 @_routes.ROUTER.get("/chat", admin=True)
 def _rt_chat_page(h):
     want = _routes._qs(h).get("i", [""])[0]
-    body = chatui.render(_guestchat.web_instances(), want, _ui.LOGO_INLINE, apps=_apps.load_apps()).encode()
+    squad = _ui._squad_of()             # squad members work in their channel: not listed, bar a direct link
+    agents = [a for a in _guestchat.web_instances() if a["name"] == want or a["name"] not in squad]
+    body = chatui.render(agents, want, _ui.LOGO_INLINE, apps=_apps.load_apps()).encode()
     h.send_response(200)
     h.send_header("Content-Type", "text/html; charset=utf-8")
     # Don't cache: otherwise the browser holds on to an old version (that
