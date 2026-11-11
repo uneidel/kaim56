@@ -843,7 +843,16 @@ function sqText(m){
   const t=String(m.text||''), pre='white-space:pre-wrap;word-break:break-word;margin:4px 0', an=sqAnnot(m);
   const body=`<div ${an?`class=sq-ann data-mid=${+m.id} `:''}style="${pre}">${escT(t)}</div>`;
   return (m.kind==='turn'&&t.length>600?`<details class=sq-turn><summary>${escT(t.slice(0,280))}…</summary>${body}</details>`:body)+
-    (an?`<div class=sq-nb data-mid=${+m.id}></div>`:'');
+    sqFiles(m)+(an?`<div class=sq-nb data-mid=${+m.id}></div>`:'');
+}
+function sqFiles(m){        /* a person's attachments (the line squadgate._attach puts first): an image as a small preview, the rest as download links */
+  const a=String(m.from).startsWith('user:')&&String(m.text||'').match(/^\\[Attached, in inbox\\/ at the top of your workspace: ([^\\]]+)\\]/);
+  if(!a)return '';
+  return '<div class=sq-att>'+a[1].split(', ').map(x=>{
+    const n=x.replace(/ \\([\\d,]+ bytes\\)$/,''), u='/api/projects/'+encodeURIComponent(SK)+'/squad/file?f='+encodeURIComponent(n);
+    return /\\.(png|jpe?g|gif|webp)$/i.test(n)
+      ?`<a href="${u}" target=_blank rel=noopener title="${esc(n)}"><img src="${u}" alt="${esc(n)}" loading=lazy onerror="this.parentNode.remove()"></a>`
+      :`<a href="${u}" download>📎 ${escT(n)}</a>`}).join('')+'</div>';
 }
 let SQN={p:'',list:[]}, SQA={sel:null,open:false,note:null,p:'',ret:null,t:0};
 const sqEl=id=>document.getElementById(id);

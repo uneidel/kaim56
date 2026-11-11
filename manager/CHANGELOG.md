@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-11
+- Squad chat: a person's attachments show in the chat — an image as a small preview (click = full size), other files as download links; the copy lives in the squad archive (`attachments/`).
 - Squad board: a column keeps its scroll position over the 5 s refresh (it jumped back to the top whenever a member was working).
 - Chat page (/chat): squad members are no longer in the instance list (they work in their squad's channel); a direct link (Fleet card, ?i=) still opens one.
 - Squad chat: a person's message may be 200,000 characters (members get its start, the whole as `inbox/msg-<id>.md` in their workspace) and carry attachments (📎 or a pasted screenshot, 10 files / 20 MB, into `inbox/` of every member's workspace).

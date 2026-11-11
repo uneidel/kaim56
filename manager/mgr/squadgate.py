@@ -707,6 +707,8 @@ def _attach(proj, files):
         got.append((f"{stamp}-{i}-{_util.download_name(f.get('name'))}", data))
     if sum(len(d) for _, d in got) > FILES_BYTES:
         return "", f"attachments larger than {FILES_BYTES // 1024 ** 2} MB in all"
+    for name, data in got:                 # the operator's copy: the chat's preview and download
+        _squadrec.put_file(proj["name"], name, data)
     idx = {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
     for m in sorted(set(proj.get("members") or {}) - idx):
         for name, data in got:

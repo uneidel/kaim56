@@ -397,6 +397,8 @@ mark.sq-mk{color:inherit;background:color-mix(in srgb,var(--color-accent) 24%,tr
 mark.sq-mk.sent{background:color-mix(in srgb,var(--color-text) 9%,transparent);box-shadow:none}
 .sq-nb{font-size:12px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
 .sq-nb:empty{display:none}
+.sq-att{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;font-size:12px;align-items:flex-end}
+.sq-att img{display:block;max-width:160px;max-height:120px;border-radius:6px;border:1px solid var(--app-line)}
 #sqa-fab,.sqa-menu,.sqa-pop{position:fixed;z-index:70}
 .sqa-menu,.sqa-pop{background:var(--app-card);border:1px solid var(--app-line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);padding:4px}
 .sqa-pop{width:min(380px,calc(100vw - 32px));padding:10px;display:grid;gap:8px;animation:sqa-in .12s ease-out}

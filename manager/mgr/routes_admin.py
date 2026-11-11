@@ -56,6 +56,7 @@ from mgr import policy as _policy
 from mgr import projects as _projects
 from mgr import projwt as _projwt
 from mgr import squadgate as _squadgate
+from mgr import squadrec as _squadrec
 from mgr import squadreq as _squadreq
 from mgr import squadkick as _squadkick
 from mgr import squadnotes as _squadnotes
@@ -323,7 +324,7 @@ _PROJECT_POST = {"merge": lambda n, m: _projects.member_op(n, "merge", m),
 
 # ---- squads: settings, the channel, posting as the operator (mgr/squads.py) --
 def _squad_get(h, name, sub):
-    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board, /squad/notes, /squad/result (also role user)
+    # GET /api/projects/<n>/squad (settings; admin) | /squad/messages, /squad/board, /squad/notes, /squad/result, /squad/file (also role user)
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
@@ -337,6 +338,8 @@ def _squad_get(h, name, sub):
         return h._json({"notes": _squadnotes.notes(name, "user:" + _who(h), int(mid) if mid.isdigit() else None)})
     if sub == "result":                      # ?id=<review>&f=<file>: the result page, sandboxed (also role user)
         return _squad_result(h, p)
+    if sub == "file":                        # ?f=<name>: a channel attachment, the operator's copy (also role user)
+        return _squad_file(h, p)
     if sub == "index":                       # the code indexer for this project (mgr/indexer.py)
         return h._json({"project": name, **_indexer.project_status(name)})
     if sub == "toolchain":                   # the shared toolchain layer: spec, state, the build logs (admin)
@@ -367,6 +370,26 @@ def _squad_get(h, name, sub):
     return h._json({"project": name, "settings": _squads.settings(p), "defaults": _squads.DEFAULTS,
                     "members": _squads.members(p), "tokens_today": _squads.tokens_today(p),
                     "squad_id": _squads.squad_id(p), "strategy": p.get("strategy", "shared")})
+
+
+_IMAGES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+
+
+def _squad_file(h, p):
+    """An image shows inline; anything else (svg and html too) only downloads."""
+    name = _routes._qs(h).get("f", [""])[0]
+    body = _squadrec.get_file(p["name"], name) if name == _util.download_name(name) else None
+    if body is None:
+        return h._json({"error": "unknown file"}, 404)
+    ctype = _IMAGES.get(name.rsplit(".", 1)[-1].lower())
+    h.send_response(200)
+    h.send_header("Content-Type", ctype or "application/octet-stream")
+    h.send_header("Content-Disposition", f'{"inline" if ctype else "attachment"}; filename="{name}"')
+    h.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+    h.send_header("Cache-Control", "private, max-age=3600")    # a name is written once
+    h.send_header("Content-Length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
 
 
 def _squad_result(h, p):

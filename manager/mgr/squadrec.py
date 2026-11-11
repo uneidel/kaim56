@@ -20,6 +20,7 @@ The archive, under SQUADS_DIR (site setting; default ~<manager owner>/squads)::
     conversations/channel/YYYY-MM-DD.jsonl        every channel message
     conversations/members/<memberId>__<instance>/YYYY-MM-DD.jsonl   every wake turn
     conversations/hitl/YYYY-MM-DD.jsonl           every human-in-the-loop item + decision (mgr/hitlq.py)
+    attachments/<name>                            the operator's copy of every channel attachment
     proposals/<proposalId>.json                   proposal, edits, decision, steps
     tickets.jsonl                                 every ticket create / update
 
@@ -342,6 +343,34 @@ def _write_json(path, obj):
             _own(fh.fileno(), 0o640)
             fh.write(data)
         os.replace(tmp, path)
+
+
+def _write_file(path, data):
+    with _lock:
+        mkdirs(os.path.dirname(path))
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640), "wb") as fh:
+            _own(fh.fileno(), 0o640)
+            fh.write(data)
+
+
+def put_file(project, name, data):
+    """The operator's copy of a channel attachment (<folder>/attachments/<name>):
+    what the chat shows — never read back from a member's inbox."""
+    rec = of_project(project)
+    if rec:
+        _safe(_write_file, os.path.join(folder(rec), "attachments", name), data)
+
+
+def get_file(project, name):
+    """That copy's bytes, or None (no record, no such file, no plain filename)."""
+    rec = of_project(project)
+    if not rec or name != os.path.basename(name) or name in ("", ".", ".."):
+        return None
+    try:
+        with open(os.open(os.path.join(folder(rec), "attachments", name), os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
 
 
 def _day(ts):

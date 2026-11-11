@@ -5498,17 +5498,36 @@ class ManagerFunctions(unittest.TestCase):
             self.assertLess(len(seen), m._squads.TEXT_MAX)
             self.assertIn("longer than 8000", m._squads.post(P, "a", ["b"], "x " * 4001)[1])
             self.assertIn("longer than 200000", self._sq("/api/projects/sq/squad/post", L, {"text": "x" * 200001})[1]["error"])
+            m._squadrec.ensure(P)                                                       # the archive keeps the operator's copy
             st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "see the screenshots", "files": [
-                {"name": "../../shot one.png", "data": b64(b"\x89PNG first")}, {"name": "shot one.png", "data": b64(b"second")}]})
+                {"name": "../../shot one.png", "data": b64(b"\x89PNG first")}, {"name": "shot one.png", "data": b64(b"second")},
+                {"name": "page.html", "data": b64(b"<script>1</script>")}]})
             self.assertEqual(st, 200, d)
             self.assertTrue(d["text"].startswith("[Attached, in inbox/ at the top of your workspace: "), d["text"])
             self.assertTrue(d["text"].endswith("see the screenshots"))
             names = re.findall(r"(\S+) \(\d", d["text"])
-            self.assertEqual([n.split("-", 4)[-1] for n in names], ["shot_one.png", "shot_one.png"])
+            self.assertEqual([n.split("-", 4)[-1] for n in names], ["shot_one.png", "shot_one.png", "page.html"])
             for member in ("a", "b", "d"):
                 got = [open(os.path.join(root, member, "inbox", n), "rb").read() for n in names]
-                self.assertEqual(got, [b"\x89PNG first", b"second"])
+                self.assertEqual(got, [b"\x89PNG first", b"second", b"<script>1</script>"])
             self.assertIn(names[0], woke[-1][1])
+
+            def fetch(f):                              # the chat's preview / download: the operator's copy
+                h = self._handler("/api/projects/sq/squad/file?f=" + urllib.parse.quote(f, safe=""), L)
+                h._do_GET()
+                head, body = h.wfile.getvalue().split(b"\r\n\r\n", 1)
+                return self._status(h), head.decode(), body
+            st, head, body = fetch(names[0])
+            self.assertEqual((st, body), (200, b"\x89PNG first"))
+            self.assertIn("Content-Type: image/png", head)
+            self.assertIn("Content-Disposition: inline", head)
+            st, head, body = fetch(names[2])           # no image: never rendered by the browser
+            self.assertEqual((st, body), (200, b"<script>1</script>"))
+            self.assertIn("Content-Type: application/octet-stream", head)
+            self.assertIn("Content-Disposition: attachment", head)
+            for f in ("../squad.json", "nope.png", ""):
+                self.assertEqual(fetch(f)[0], 404, f)
+            self.assertTrue(m._auth.user_allowed("GET", "/api/projects/sq/squad/file"))   # role user reads the channel
             for bad in ([{"name": "x", "data": "!!"}], [{"name": "x"}], [{"name": "x", "data": ""}] * 11, "x"):
                 st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "hi", "files": bad})
                 self.assertEqual(st, 400, d)
