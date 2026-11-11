@@ -417,7 +417,7 @@ def _squad_post(h, name, sub):
     p = _projects.get(name)
     if p is None:
         return h._json({"error": "unknown project"}, 404)
-    b = h._body() or {}
+    b = h._body(limit=_squadgate.POST_MAX if sub == "post" else None) or {}
     who = _who(h)
     if sub == "notes":
         return _squad_notes_post(h, p, who, b)

@@ -5454,6 +5454,58 @@ class ManagerFunctions(unittest.TestCase):
         finally:
             undo()
 
+    def test_squad_operator_long_message_and_attachments(self):
+        """A person's message over TEXT_MAX: the channel keeps it whole, the woken
+        member gets its start and inbox/msg-<id>.md, a member reading the channel
+        the same brief; a member's post stays capped. Attachments land in inbox/
+        of every member's workspace, named at the top of the message; no name
+        leaves inbox/ and a link planted there is not followed."""
+        m = self.m
+        woke, tasks, undo = self._squad_env()
+        L, old = "127.0.0.1", m._mounts.AGENT_ROOT
+        m._mounts.AGENT_ROOT = root = tempfile.mkdtemp(prefix="e2e-inbox-")
+        try:
+            P, b64 = m._projects.get("sq"), lambda b: base64.b64encode(b).decode()
+            long = "Spec. " + "A requirement with details. " * 600                    # ~16k characters
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": long})
+            self.assertEqual(st, 200, d)
+            self.assertEqual(d["text"], long.strip())                                  # the channel: whole
+            with open(os.path.join(root, "a", "inbox", f"msg-{d['id']}.md")) as fh:
+                self.assertEqual(fh.read(), long.strip())
+            self.assertEqual(woke[-1][0], "a")
+            self.assertIn(f"read the whole message in inbox/msg-{d['id']}.md", woke[-1][1])
+            self.assertNotIn(long.strip(), woke[-1][1])
+            seen = m._squads.read("sq", "a")[-1]["text"]
+            self.assertIn(f"inbox/msg-{d['id']}.md", seen)
+            self.assertLess(len(seen), m._squads.TEXT_MAX)
+            self.assertIn("longer than 8000", m._squads.post(P, "a", ["b"], "x " * 4001)[1])
+            self.assertIn("longer than 200000", self._sq("/api/projects/sq/squad/post", L, {"text": "x" * 200001})[1]["error"])
+            st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "see the screenshots", "files": [
+                {"name": "../../shot one.png", "data": b64(b"\x89PNG first")}, {"name": "shot one.png", "data": b64(b"second")}]})
+            self.assertEqual(st, 200, d)
+            self.assertTrue(d["text"].startswith("[Attached, in inbox/ at the top of your workspace: "), d["text"])
+            self.assertTrue(d["text"].endswith("see the screenshots"))
+            names = re.findall(r"(\S+) \(\d", d["text"])
+            self.assertEqual([n.split("-", 4)[-1] for n in names], ["shot_one.png", "shot_one.png"])
+            for member in ("a", "b", "d"):
+                got = [open(os.path.join(root, member, "inbox", n), "rb").read() for n in names]
+                self.assertEqual(got, [b"\x89PNG first", b"second"])
+            self.assertIn(names[0], woke[-1][1])
+            for bad in ([{"name": "x", "data": "!!"}], [{"name": "x"}], [{"name": "x", "data": ""}] * 11, "x"):
+                st, d = self._sq("/api/projects/sq/squad/post", L, {"text": "hi", "files": bad})
+                self.assertEqual(st, 400, d)
+                self.assertIn("files", d["error"])
+            out = os.path.join(root, "outside")
+            os.makedirs(out), os.makedirs(os.path.join(root, "zz"))
+            os.symlink(out, os.path.join(root, "zz", "inbox"))
+            self.assertFalse(m._mounts.put_inbox("zz", "x.txt", b"x"))
+            self.assertFalse(m._mounts.put_inbox("a", "../x.txt", b"x"))
+            self.assertEqual(os.listdir(out), [])
+        finally:
+            m._mounts.AGENT_ROOT = old
+            shutil.rmtree(root, ignore_errors=True)
+            undo()
+
     def test_squad_post_to_the_operator_waits_for_you(self):
         """A member's post to the operator that asks shows in Waiting for you until a person
         writes in that channel (the auto-approver does not count); member-to-member

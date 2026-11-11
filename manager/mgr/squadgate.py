@@ -49,6 +49,7 @@ Part of the mgr package: no import from manager.py. Sibling modules are used
 as ``_name.func`` (module attribute), so a test can replace one definition in
 one place.
 """
+import base64
 import json
 import os
 import re
@@ -61,6 +62,7 @@ from mgr import indexer as _indexer
 from mgr import instances as _instances
 from mgr import decision as _decision
 from mgr import jevsetup as _jevsetup
+from mgr import mounts as _mounts
 from mgr import notify as _notify
 from mgr import paths as _paths
 from mgr import personas as _personas
@@ -74,6 +76,7 @@ from mgr import squadrec as _squadrec
 from mgr import squadreview as _squadreview
 from mgr import squads as _squads
 from mgr import toolchain as _toolchain
+from mgr import util as _util
 
 GATE_FILE = os.path.join(_paths.BASE, "squadgate.json")
 KINDS = ("squad", "member", "merge", "toolchain", "review")
@@ -686,12 +689,44 @@ def revise_hint(proj):
                     f"— it becomes v{p.get('version', 1) + 1}.)" for p in ps)
 
 
+FILES_MAX, FILES_BYTES = 10, 20 * 1024 * 1024
+POST_MAX = 32 * 1024 * 1024               # the body of a post with attachments (base64)
+
+
+def _attach(proj, files):
+    """The operator's attachments [{name, data: base64}] into inbox/ of every
+    member's workspace -> (the line that names them, '') or ('', why)."""
+    if not isinstance(files, list) or len(files) > FILES_MAX:
+        return "", f"files: a list of at most {FILES_MAX}"
+    stamp, got = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4], []
+    for i, f in enumerate(files, 1):
+        try:
+            data = base64.b64decode(str(f["data"]), validate=True)
+        except (ValueError, KeyError, TypeError):
+            return "", "files: [{name, data: base64}]"
+        got.append((f"{stamp}-{i}-{_util.download_name(f.get('name'))}", data))
+    if sum(len(d) for _, d in got) > FILES_BYTES:
+        return "", f"attachments larger than {FILES_BYTES // 1024 ** 2} MB in all"
+    idx = {i["name"] for i in _instances.load_instances() if i.get("template") == "indexer"}
+    for m in sorted(set(proj.get("members") or {}) - idx):
+        for name, data in got:
+            if not _mounts.put_inbox(m, name, data):
+                return "", f"writing {name} into {m}'s workspace failed"
+    return ("[Attached, in inbox/ at the top of your workspace: "
+            + ", ".join(f"{n} ({len(d):,} bytes)" for n, d in got) + "]"), ""
+
+
 def operator_post(proj, who, body):
-    """The operator writes in the channel (no addressee = the lead). A lead
-    woken while a proposal waits is told it may revise it; that proposal
-    becomes replaceable. -> (message, '') or (None, why)."""
-    ld, hint = lead(proj), revise_hint(proj)
-    m, why = _squads.post(proj, "user:" + who, body.get("to"), body.get("text"), reply_to=body.get("reply_to"),
+    """The operator writes in the channel (no addressee = the lead), with
+    attachments if any. A lead woken while a proposal waits is told it may
+    revise it; that proposal becomes replaceable. -> (message, '') or (None, why)."""
+    ld, hint, text = lead(proj), revise_hint(proj), str(body.get("text") or "")
+    if body.get("files"):                # ponytail: files of a post that is refused afterwards stay in the inboxes
+        line, why = _attach(proj, body["files"])
+        if why:
+            return None, why
+        text = line + "\n\n" + text
+    m, why = _squads.post(proj, "user:" + who, body.get("to"), text, reply_to=body.get("reply_to"),
                           hints={ld: hint} if ld and hint else None)
     if m and ld and hint and ld in m["delivered"]:
         with _lock:

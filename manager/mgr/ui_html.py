@@ -374,10 +374,12 @@ HTML_TOP = """</head><body>
         <span class=sk-inwrap style="flex:1;min-width:0;position:relative;display:flex"><label class="sk-input-label" for="sk-text"><span class="kick-label">Goal & context</span><span class="chat-label">Message the squad</span></label><textarea class=input id=sk-text rows=1 style="flex:1;min-width:0;resize:vertical" aria-label=Message autocomplete=off
           role=combobox aria-autocomplete=list aria-controls=sk-at aria-expanded=false oninput="skAt();skGrow(this)" onkeydown="skAtKey(event)" onblur="setTimeout(skAtClose,150)"></textarea>
           <div id=sk-at class=sk-at role=listbox hidden></div></span>
+        <button class="btn btn-ghost" id=sk-clip type=button onclick="document.getElementById('sk-file').click()" title="Attach files — they land in inbox/ of every member's workspace (20 MB in all)" aria-label="Attach files">&#128206;</button><input type=file id=sk-file multiple hidden onchange=skFiles(this)>
         <button class="btn btn-primary" id=sk-send onclick=skSend()>Send</button>
       <details id=sk-teambox ><summary>Customize the team · leave empty to let the architect decide</summary>
         <textarea class=input id=sk-team rows=9 aria-label=Team style="width:100%;margin-top:6px;font-size:12.5px">__TEAM_DEFAULT__</textarea></details>
       </div>
+      <button class="btn btn-ghost btn-sm" id=sk-files type=button onclick="skFiles()" title="Remove the attachments" hidden></button>
       <span id=sk-msg class=msg style="margin-top:6px"></span>
       <details id=sk-chatbox ontoggle="if(this.open){const t=document.getElementById('sk-thread');t.scrollTop=t.scrollHeight}">
         <summary id=sk-chatsum onclick="skChatPref(!this.parentNode.open)">Chat</summary>

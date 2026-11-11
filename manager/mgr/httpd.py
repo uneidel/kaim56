@@ -336,9 +336,9 @@ class H(_guestproxy.GuestProxyMixin, _llmproxy.LLMProxyMixin, BaseHTTPRequestHan
         self._actbody = self.rfile.read(ln) if ln > 0 else b""
         return self._actbody
 
-    def _body(self, default=None):
+    def _body(self, default=None, limit=None):
         """JSON body; {} (or `default`) when empty or malformed."""
-        raw = self._raw()
+        raw = self._raw(limit)
         if not raw:
             return {} if default is None else default
         try:

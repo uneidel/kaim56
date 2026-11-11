@@ -2307,19 +2307,27 @@ async function skPause(on){
   let d={}; try{d=await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:on})})).json()}catch(e){d={error:'manager not reachable'}}
   skMsg(d.error||(on?'paused':'resumed')); skLoad(); loadSquads();
 }
+let SKF=[];        /* files for the next squad message; skFiles() without an input drops them */
+function skFiles(inp){
+  SKF=inp?SKF.concat([...inp.files]):[]; if(inp)inp.value='';
+  const el=document.getElementById('sk-files'); el.hidden=!SKF.length;
+  el.textContent=SKF.length?'📎 '+SKF.map(f=>f.name).join(', ')+' ✕':'';
+}
 async function skSend(){
-  const el=document.getElementById('sk-text'), text=el.value.trim(); if(!text)return;
+  const el=document.getElementById('sk-text'), text=el.value.trim(), up=SK?SKF:[]; if(!text&&!up.length)return;
+  if(up.reduce((n,f)=>n+f.size,0)>20*1024*1024||up.length>10)return skMsg('⚠️ attachments: at most 10 files, 20 MB in all');
   const btn=document.getElementById('sk-send'); btn.disabled=true;
   let d={};
   try{
-    d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json()
+    const files=await Promise.all(up.map(async f=>({name:f.name,data:_b64(await f.arrayBuffer())})));
+    d=SK?await (await fetch('/api/projects/'+encodeURIComponent(SK)+'/squad/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(files.length?{text,files}:{text})})).json()
        :await (await fetch('/api/squads/kickoff',{method:'POST',headers:{'Content-Type':'application/json'},
          body:JSON.stringify({text,architect_template:document.getElementById('sk-arch').value,project:document.getElementById('sk-repo').value==='__new__'?'':document.getElementById('sk-repo').value,new:document.getElementById('sk-repo').value==='__new__',name:document.getElementById('sk-name').value,
            team:document.getElementById('sk-team').value,decision:document.getElementById('sk-dec').value})})).json();
   }catch(e){d={error:'manager not reachable'}}
   btn.disabled=false; skMsg(d.error||'');
   if(d.error)return;
-  el.value=''; el.style.height=''; document.getElementById('sk-name').value='';
+  el.value=''; el.style.height=''; document.getElementById('sk-name').value=''; skFiles();
   if(SK)skLoad(); else {skJob(d.id);loadSquads()}
 }
 setInterval(()=>{if(!document.hidden&&location.hash==='#squads'&&SK)skLoad();},5000);

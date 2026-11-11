@@ -67,6 +67,49 @@ def own_guest_dir(path, mode=0o2750):
         print(f"[quiet] own_guest_dir {path}: {e!r}", flush=True)
 
 
+_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _guest_own(fd, mode):
+    if os.geteuid() == 0:
+        os.fchown(fd, GUEST_UID, _host.ADMIN_GID)
+    os.fchmod(fd, mode)
+
+
+def put_inbox(name, fname, data):
+    """A file from the operator (a long squad message, an attachment) into
+    inbox/ at the top of instance `name`'s workspace -> ok. The VM owns that
+    folder: each step is relative to an open directory and follows no link;
+    a name that is there already is kept (a re-delivered wake)."""
+    if fname != os.path.basename(fname) or fname in ("", ".", ".."):
+        return False
+    ws, wfd, ifd = os.path.join(AGENT_ROOT, name), -1, -1
+    try:
+        if not os.path.lexists(ws):
+            own_guest_dir(ws)
+        wfd = os.open(ws, _DIR)
+        try:
+            os.mkdir("inbox", dir_fd=wfd)
+        except FileExistsError:
+            pass
+        ifd = os.open("inbox", _DIR, dir_fd=wfd)
+        _guest_own(ifd, 0o2750)
+        fd = os.open(fname, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o660, dir_fd=ifd)
+        with os.fdopen(fd, "wb") as fh:
+            _guest_own(fd, 0o660)
+            fh.write(data)
+        return True
+    except FileExistsError:
+        return True
+    except OSError as e:
+        print(f"[quiet] inbox {fname} to {name}: {e!r}", flush=True)
+        return False
+    finally:
+        for d in (ifd, wfd):
+            if d >= 0:
+                os.close(d)
+
+
 def workspace_dir(inst):
     return os.path.join(AGENT_ROOT, inst["name"])
 

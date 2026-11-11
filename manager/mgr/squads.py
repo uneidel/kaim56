@@ -34,6 +34,7 @@ import time
 
 from mgr import instances as _instances
 from mgr import llmproxy as _llmproxy
+from mgr import mounts as _mounts
 from mgr import paths as _paths
 from mgr import projects as _projects
 from mgr import squadmetrics as _squadmetrics
@@ -89,6 +90,7 @@ _ENV_REF = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
 TC_PKGS, TC_SCRIPT, TC_ENV, TC_ENV_VAL = 100, 8192, 50, 512
 LIMITS = {"max_wakes_per_hour": (0, 1000), "daily_token_budget": (0, 10**10), "max_depth": (1, 20)}
 TEXT_MAX = 8000
+LONG_MAX, BRIEF = 200_000, 1500   # a person's message may be long: members get its start, the whole as a file (brief)
 ASK_TTL = 3600                  # an unanswered ask expires after this
 QUEUE_TTL = 1800                # a member's queued reply expires after this (or once its addressee posted)
 CODE_LINES = 30                 # a longer code block / any diff goes through git, not the channel
@@ -385,6 +387,15 @@ def _frame(project, sender, mid, text, kind, sid="", member_id=""):
     return f"[squad {project}] from {sender} ({how}): {text}{ids}\n{NOTE}\n{WORK}"
 
 
+def brief(mid, text):
+    """A long message as a member gets it: its start and where the whole text
+    lies (_deliver puts it there). The channel keeps the whole text."""
+    if len(text) <= TEXT_MAX:
+        return text
+    return (text[:BRIEF].rstrip() + f"\n\n[… {len(text):,} characters in all — read the whole message in "
+            f"inbox/msg-{mid}.md at the top of your workspace before you act]")
+
+
 def _guard(proj, targets, depth, now, operator=False):
     """'' or why the targets may not be woken. `operator`: a person wrote it —
     the hourly wake limit (against members waking each other in a loop) does
@@ -432,8 +443,9 @@ def post(proj, sender, to, text, reply_to=None, kind="post", depth=1, hints=None
     text = str(text or "").strip()
     if not text:
         return None, "text missing"
-    if len(text) > TEXT_MAX:
-        return None, f"text longer than {TEXT_MAX} characters"
+    cap = LONG_MAX if str(sender).startswith("user:") else TEXT_MAX
+    if len(text) > cap:
+        return None, f"text longer than {cap} characters"
     code = "" if str(sender).startswith("user:") or kind in ("turn", "note", "hitl") else code_in_text(text)
     if kind in LOG_KINDS:
         to, reply_to = ["all"], None
@@ -504,7 +516,10 @@ def _deliver(proj, mid, sender, text, kind, targets, depth, level=0, hints=None)
     tree = set(_projects.writers(proj)) if proj.get("strategy") == "worktree" else set()
     for m in targets:
         hint = (hints or {}).get(m)
-        msg = _frame(proj["name"], sender, mid, text + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
+        body = text                      # a long one: the file first, else the member gets it whole
+        if len(text) > TEXT_MAX and _mounts.put_inbox(m, f"msg-{mid}.md", text.encode()):
+            body = brief(mid, text)
+        msg = _frame(proj["name"], sender, mid, body + ("\n" + hint if hint else ""), kind, (rec or {}).get("id", ""),
                      _squadrec.member_id(rec, m))
         if m in tree:
             msg += "\n" + TREE_NOTE.format(path=_projects.guest_path(proj["name"]))
@@ -778,7 +793,8 @@ def read(project, viewer=None, since=0, limit=200, kinds=(), ticket=""):
         rows = c.execute(sql + " ORDER BY id", args).fetchall()
     out = [_out(r) for r in rows]
     if viewer is not None:
-        out = [m for m in out if m["from"] == viewer or viewer in m["to"] or "all" in m["to"]]
+        out = [m | {"text": brief(m["id"], m["text"])} for m in out
+               if m["from"] == viewer or viewer in m["to"] or "all" in m["to"]]
     return out[-limit:]
 
 
