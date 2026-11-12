@@ -6202,6 +6202,10 @@ class ManagerFunctions(unittest.TestCase):
         order = [sq.index(x) for x in ("id=sk-cards", "id=sk-board", "id=sk-working", "class=sk-comp", "<details id=sk-chatbox", "id=sk-thread")]
         self.assertEqual(order, sorted(order))
         self.assertNotIn("<details id=sk-chatbox open", page)
+        # … which the workspace script lifts above the tabs: always there, no "Chat" tab
+        self.assertIn(".after(...['#sk-chatbox','#sk-working','.sk-comp','#sk-files','#sk-msg'].map(s=>chat.querySelector(s)),tabs)", page)
+        self.assertNotIn("['chat','Chat']", page)
+        self.assertNotIn("data-view=chat", page)
         for s in ("localStorage.getItem('sk-chat-open')", "skChatPref(!this.parentNode.open)", "Chat (${msgs.length} message",
                   ".sk-kick>#sk-chatbox{order:1}", "skMode(true)", "skMode(false)",
                   "(p.members||[]).map(m=>m.suggested||0)",          # a merge proposal has no members: the board still renders

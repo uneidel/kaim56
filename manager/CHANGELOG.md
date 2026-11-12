@@ -5,6 +5,9 @@ entry (root causes, measurements, alternatives considered) lives in git
 history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in the
 commit messages.
 
+## 2026-11-12
+- Squads page: the chat is its own block above the tabs (always visible, height draggable; no Chat tab), and a short page starts at the top instead of floating in the middle (`main{margin:auto}` centred it vertically).
+
 ## 2026-11-11
 - Squad chat: a person's attachments show in the chat — an image as a small preview (click = full size), other files as download links; the copy lives in the squad archive (`attachments/`).
 - Squad board: a column keeps its scroll position over the 5 s refresh (it jumped back to the top whenever a member was working).

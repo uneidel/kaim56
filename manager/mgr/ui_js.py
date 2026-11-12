@@ -1881,7 +1881,7 @@ function skPick(name){
   document.getElementById('sk-arch').hidden=true;document.getElementById('sk-repo').hidden=true;document.getElementById('sk-namef').hidden=true;document.getElementById('sk-teambox').hidden=true;document.getElementById('sk-dec').hidden=true;document.getElementById('sk-send').textContent='Send';
   document.getElementById('sk-board').hidden=true; SKB=''; skMsg(''); skMode(false); skLoad();
 }
-/* a squad: board first, the chat collapsible below (remembered per browser); new squad / kickoff: the chat is the main view */
+/* a squad: the chat on top, the tabs (board first) below — the workspace script moves it there; new squad / kickoff: the chat is the main view */
 function skChatPref(on){try{localStorage.setItem('sk-chat-open',on?'1':'')}catch(e){}}
 function skMode(kick){
   document.querySelector('#s-squads .sk-chat').classList.toggle('sk-kick',kick);
@@ -3462,22 +3462,21 @@ loadMe();
 function setup(){
  const chat=document.querySelector('#s-squads .sk-chat');if(!chat||chat.dataset.workspaceReady)return;chat.dataset.workspaceReady='1';
  const tabs=document.createElement('nav');tabs.className='squad-workspace-tabs';tabs.setAttribute('aria-label','Squad workspace');
- const views=[['board','Board'],['chat','Chat'],['approvals','Approvals'],['results','Results'],['graph','Graph'],['team','Team'],['settings','Settings']];
+ const views=[['board','Board'],['approvals','Approvals'],['results','Results'],['graph','Graph'],['team','Team'],['settings','Settings']];
  const empty=document.createElement('div');empty.className='squad-no-approvals';empty.textContent='All caught up. No proposals or decisions are waiting for you.';
  const actions=document.createElement('details');actions.className='squad-action-menu';const summary=document.createElement('summary');summary.textContent='Actions';actions.append(summary);const menu=document.createElement('div');menu.className='squad-menu-items';actions.append(menu);
  const act=(label,fn,danger=false)=>{const b=document.createElement('button');b.type='button';b.textContent=label;if(danger)b.className='danger';b.onclick=async()=>{actions.open=false;await fn()};menu.append(b)};
  act('Pause / resume',()=>{if(SK)skPause(!SKB_D.d.settings?.paused)});act('Restart members',()=>{if(SK)skRestart()});if(INDEX_HOST){act('Reindex project',()=>{if(SK)skReindex()});act('Code dashboard',()=>{if(SK)window.open('https://'+INDEX_HOST+'/indexer/open/'+encodeURIComponent(SK),'_blank','noopener')})}act('Delete squad',()=>{if(SK)skDelete()},true);
  chat.querySelector('.sk-head').append(actions);
- chat.querySelector('.sk-head').after(tabs);
+ chat.querySelector('.sk-head').after(...['#sk-chatbox','#sk-working','.sk-comp','#sk-files','#sk-msg'].map(s=>chat.querySelector(s)),tabs);   /* the chat, what you type, then the tabs */
  const settings=document.getElementById('sq-panel');chat.append(settings);chat.append(empty);
  let selected='board';
  function counts(){const approvals=document.getElementById('sk-cards').children.length;tabs.querySelector('[data-view="approvals"] .squad-tab-count').textContent=String(approvals);tabs.querySelector('[data-view="team"] .squad-tab-count').textContent=String((typeof SK_MEMBERS!=='undefined'?SK_MEMBERS:[]).length);tabs.querySelector('[data-view="results"] .squad-tab-count').textContent=String(rvCount());empty.hidden=approvals>0;}
- function select(view){selected=view;chat.dataset.view=view;tabs.querySelectorAll('button').forEach(b=>{const active=b.dataset.view===view;b.setAttribute('aria-current',active?'page':'false')});if(view==='chat'){document.getElementById('sk-chatbox').open=true;document.getElementById('sk-text').focus({preventScroll:true})}if(view==='graph')skGraph();if(view==='settings'&&typeof SK!=='undefined'&&SK){sqOpen(SK)}else if(settings.style.display!=='none'){sqClose()}counts();}
+ function select(view){selected=view;chat.dataset.view=view;tabs.querySelectorAll('button').forEach(b=>{const active=b.dataset.view===view;b.setAttribute('aria-current',active?'page':'false')});if(view==='graph')skGraph();if(view==='settings'&&typeof SK!=='undefined'&&SK){sqOpen(SK)}else if(settings.style.display!=='none'){sqClose()}counts();}
  views.forEach(([view,label])=>{const b=document.createElement('button');b.type='button';b.dataset.view=view;b.append(document.createTextNode(label));if(view==='approvals'||view==='team'||view==='results'){const count=document.createElement('span');count.className='squad-tab-count';b.append(count)}b.onclick=()=>select(view);tabs.append(b)});
  const watch=new MutationObserver(counts);watch.observe(document.getElementById('sk-cards'),{childList:true});watch.observe(document.getElementById('sk-board'),{childList:true});watch.observe(document.getElementById('sk-results'),{childList:true});window.skView=select;
- const baseMode=skMode;skMode=function(kick){baseMode(kick);if(!kick)select('board');};
+ const baseMode=skMode;skMode=function(kick){baseMode(kick);if(!kick){document.getElementById('sk-chatbox').open=true;select('board')}};
  const baseClose=sqClose;sqClose=function(){baseClose();if(selected==='settings')select('board')};
- const baseChat=skChat;skChat=function(){select('chat');baseChat()};
  const basePick=skPick;skPick=function(name){basePick(name);select('board')};
  select('board');
 }
