@@ -1,6 +1,6 @@
 [package]
 name = "kaim56-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "kAIm56 desktop client (macOS): chat, waiting queue, notifications — over iroh"

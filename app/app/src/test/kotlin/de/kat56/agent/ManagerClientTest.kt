@@ -83,6 +83,12 @@ class ManagerClientTest {
     }
 
     @Test
+    fun squadMembersAreNotAgentsToChatWith() {
+        val j = """[{"name":"a","running":true,"squad":""},{"name":"b","squad":"zz"},{"name":"old"}]"""
+        assertEquals(listOf("a", "old"), ManagerClient.parseInstances(j).map { it.name })   // no "squad" (older manager) = shown
+    }
+
+    @Test
     fun msgFailed() {
         for (m in listOf("'x' already exists", "invalid name", "unknown template 'y'", "error: boom")) assertTrue(m, ManagerClient.msgFailed(m))
         for (m in listOf("started (pid 7)", "instance 'x' created from template 'openrouter'")) assertFalse(m, ManagerClient.msgFailed(m))

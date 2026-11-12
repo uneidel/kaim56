@@ -2666,15 +2666,19 @@ class ManagerFunctions(unittest.TestCase):
         """The fleet table: instances without a squad first, then one header per
         squad over its members (data-group); a project without a squad does not group."""
         m = self.m
-        old = m._projects.load, m._instances.is_running
+        old = m._projects.load, m._instances.is_running, m._instances.load_instances, m._vm.image_state
         m._projects.load = lambda: [{"name": "zz", "squad": {"enabled": True}, "members": {"b": {"role": "lead"}, "c": {"role": "writer"}}},
                                     {"name": "aa", "members": {"a": {"role": "writer"}}}]
         m._instances.is_running = lambda i: i["name"] == "b"
         mk = lambda n: {"name": n, "index": 3, "template": "openrouter", "rootfs": "x", "config": {}, "mounts": []}
+        m._instances.load_instances = lambda: [mk("b"), mk("a"), mk("c")]
+        m._vm.image_state = lambda i: (False, 0, 0)
         try:
             rows = m._ui._fleet_rows([mk("b"), mk("a"), mk("c")])
+            api = json.loads(m._routes_admin._rt_instances(None)[0])
         finally:
-            m._projects.load, m._instances.is_running = old
+            m._projects.load, m._instances.is_running, m._instances.load_instances, m._vm.image_state = old
+        self.assertEqual({i["name"]: i["squad"] for i in api}, {"a": "", "b": "zz", "c": "zz"})   # the apps hide a squad's members
         order = re.findall(r"<tbody class=(icard|fgrp) data-(?:name|group)='(\w+)'", rows)
         self.assertEqual(order, [("icard", "a"), ("fgrp", "zz"), ("icard", "b"), ("icard", "c")])
         self.assertIn("2 members · 1 running", rows)

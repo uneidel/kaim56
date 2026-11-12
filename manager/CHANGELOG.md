@@ -6,6 +6,7 @@ history — `git log -p -- manager/CHANGELOG.md` before 2026-09-08 — and in th
 commit messages.
 
 ## 2026-11-12
+- `/api/instances` names each instance's squad (`squad`, empty = none); the Android app (5.52) and the desktop app leave a squad's members out of their agent lists.
 - Instance Config dialog: MODEL_ROUTER is a dropdown of the router policies; AGENT_SYSTEM and SKILLS are always listed, with a Persona picker (swaps the persona's prompt at the head of the text) and a Skills picker (adds a catalog skill).
 - Squads page: the chat is its own block above the tabs (always visible, height draggable; no Chat tab), and a short page starts at the top instead of floating in the middle (`main{margin:auto}` centred it vertically).
 

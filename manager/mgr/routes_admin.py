@@ -80,7 +80,9 @@ from mgr import voice as _voice
 
 @_routes.ROUTER.get("/api/instances", admin=True)
 def _rt_instances(h):
-    return (json.dumps([{**i, "running": _instances.is_running(i), "stale": _vm.image_state(i)[0]}
+    squad = _ui._squad_of()   # "squad": the clients (apps) leave a squad's members out of their chat pickers
+    return (json.dumps([{**i, "running": _instances.is_running(i), "stale": _vm.image_state(i)[0],
+                         "squad": squad.get(i["name"], "")}
                         for i in _instances.load_instances()]).encode(),
             "application/json")
 

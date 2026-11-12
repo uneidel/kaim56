@@ -409,12 +409,13 @@ class ManagerClient(baseUrl: String, private val user: String, private val pass:
             } catch (e: Exception) { emptyList() }
         }
 
+        /** The agents to talk to: a squad's members are left out — they are
+         *  reached through their squad, not as a chat of their own. */
         fun parseInstances(json: String?): List<AgentInstance> {
             if (json == null) return emptyList()
             return try {
                 val arr = JSONArray(json)
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
+                (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("squad").isEmpty() }.map { o ->
                     val cfg = o.optJSONObject("config") ?: JSONObject()
                     AgentInstance(
                         name = o.optString("name"),

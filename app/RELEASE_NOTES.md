@@ -5,6 +5,12 @@ User-facing, one section per version, newest first. The release pipeline
 body of the GitHub release, followed by the generated commit list. Write it
 BEFORE bumping `versionName` — no section, no release.
 
+## 5.52
+
+- The agent list (drawer and **Server agents**) no longer shows the members of
+  a squad — you talk to a squad through its chat, not to each member. Needs a
+  manager from 2026-11-12 on; an older one shows them as before.
+
 ## 5.51
 
 - **Waiting for you** now also holds the squad gates: a new squad's

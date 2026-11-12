@@ -1,5 +1,9 @@
 # kAIm56 for Mac — release notes
 
+## 0.1.1
+
+- The agent picker no longer shows the members of a squad — you talk to a squad through its chat, not to each member. Needs a manager from 2026-11-12 on; an older one shows them as before.
+
 ## 0.1.0
 
 - First version: chat with your agents — the same chats as on the phone and in the web UI, replies stream in, Stop ends one.

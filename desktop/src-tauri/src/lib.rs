@@ -252,9 +252,14 @@ async fn settings_set(app: AppHandle, st: State<'_, App>, gateway: String, user:
 
 #[tauri::command]
 async fn agents(st: State<'_, App>) -> Result<Value, String> {
-    let v = api_of(&st).await?.get("/api/instances", 30).await.map_err(|e| e.to_string())?;
-    Ok(Value::Array(v.as_array().cloned().unwrap_or_default().into_iter()
-        .map(|i| json!({"name": i["name"], "running": i["running"], "template": i["template"]})).collect()))
+    Ok(chat_agents(&api_of(&st).await?.get("/api/instances", 30).await.map_err(|e| e.to_string())?))
+}
+
+/// The agents to talk to: a squad's members are left out — they are reached through their squad.
+fn chat_agents(v: &Value) -> Value {
+    Value::Array(v.as_array().cloned().unwrap_or_default().into_iter()
+        .filter(|i| i["squad"].as_str().unwrap_or("").is_empty())
+        .map(|i| json!({"name": i["name"], "running": i["running"], "template": i["template"]})).collect())
 }
 
 #[tauri::command]
@@ -487,6 +492,13 @@ mod tests {
     fn versions_compare_as_numbers() {
         assert!(super::newer("0.10.0", "0.9.1"));
         assert!(!super::newer("0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn squad_members_are_not_agents_to_chat_with() {
+        let v = serde_json::json!([{"name": "a", "squad": ""}, {"name": "b", "squad": "zz"}, {"name": "old"}]);
+        let names: Vec<_> = super::chat_agents(&v).as_array().unwrap().iter().map(|a| a["name"].clone()).collect();
+        assert_eq!(names, ["a", "old"]);   // no "squad" (older manager) = shown
     }
 
     #[test]
