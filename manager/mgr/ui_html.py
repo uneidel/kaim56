@@ -702,7 +702,7 @@ HTML_BOTTOM = """
 <div id=cfdlg class=dialog-backdrop style="display:none" onclick="if(event.target===this)cfdlgClose()">
   <div class="dialog blueprint" style="width:min(820px,100%)">
     <div class=dialog-title>Config &#8212; <span id=cfdlgname class=mono style="font-size:16px"></span></div>
-    <div class=dialog-body>The instance's environment. Most keys apply after a restart, a few (budget, rate, delegation, katfs, router, apps) at once. API keys and passwords are not here &#8212; they live in the Secrets tab.</div>
+    <div class=dialog-body>The instance's environment. Most keys apply after a restart, a few (budget, rate, delegation, katfs, router, apps) at once. A persona and skills are picked under AGENT_SYSTEM and SKILLS. API keys and passwords are not here &#8212; they live in the Secrets tab.</div>
     <div id=cfdlgrows class=cf-rows></div>
     <div><button type=button class="btn btn-secondary btn-sm" onclick="cfAddRow('','',true)">+ Key</button></div>
     <div class=dialog-body id=cfdlgmsg style="margin-top:10px"></div>

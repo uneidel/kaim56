@@ -376,12 +376,14 @@ function savePolApps(name){
       if(el)el.textContent=(!r.ok||/error/.test(m)?'⚠️ ':'✓ ')+m;
     });
 }
+function rtOptions(cur){   /* off, the policies, and the current one when it is none of them */
+  const pols=window.ROUTER_POLICIES||['default'];
+  return '<option value="">off</option>'+pols.concat(cur&&pols.indexOf(cur)<0?[cur]:[]).map(n=>`<option${n===cur?' selected':''}>${escT(n)}</option>`).join('');
+}
 function polRouterRow(p){
-  const pols=window.ROUTER_POLICIES||['default'], cur=p.model_router||'';
-  const opts=['<option value="">off</option>'].concat(pols.map(n=>`<option${n===cur?' selected':''}>${escT(n)}</option>`));
-  if(cur&&pols.indexOf(cur)<0)opts.push(`<option selected>${escT(cur)}</option>`);
+  const cur=p.model_router||'';
   return `<div class=kv><b>Model router</b><span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px">`+
-    `<select class=input data-rt="${esc(p.name)}" style="width:auto;font-size:12.5px" onchange="savePolRouter('${esc(p.name)}')">${opts.join('')}</select>`+
+    `<select class=input data-rt="${esc(p.name)}" style="width:auto;font-size:12.5px" onchange="savePolRouter('${esc(p.name)}')">${rtOptions(cur)}</select>`+
     `<span class=text-muted>${cur?'each turn may run on another running model (Models tab → Model router)':'the instance always uses its own model'} · applies at once</span>`+
     `<span class=msg data-rtmsg="${esc(p.name)}"></span></span></div>`;
 }
@@ -3152,7 +3154,9 @@ function copyKey(){
   else{inp.select();try{document.execCommand('copy');done()}catch(e){h.textContent='select + copy manually'}}
 }
 /* Config editor: every key of the instance's config, edited in place; Save
-   posts only the changes (one /config call each, the server validates). */
+   posts only the changes (one /config call each, the server validates).
+   AGENT_SYSTEM and SKILLS are always there, each with a picker: Persona swaps
+   the persona's prompt at the head of the text, Skills appends a catalog name. */
 let CFDLG='', CFORIG={};
 async function editConfig(name){
   const inst=(await (await fetch('/api/instances')).json()).find(i=>i.name===name)||{};
@@ -3160,21 +3164,38 @@ async function editConfig(name){
   document.getElementById('cfdlgname').textContent=name;
   document.getElementById('cfdlgmsg').textContent='';
   document.getElementById('cfdlgrestart').style.display='none';
-  const box=document.getElementById('cfdlgrows'); box.innerHTML='';
-  Object.keys(CFORIG).sort().forEach(k=>cfAddRow(k,CFORIG[k],false));
+  cfRows();
   document.getElementById('cfdlg').style.display='grid';
+}
+function cfRows(){
+  document.getElementById('cfdlgrows').innerHTML='';
+  [...new Set(Object.keys(CFORIG).concat('AGENT_SYSTEM','SKILLS'))].sort().forEach(k=>cfAddRow(k,CFORIG[k],false));
 }
 function cfAddRow(k,v,isNew){
   const row=document.createElement('div'); row.className='cf-row'; row.dataset.orig=isNew?'':k;
   const key=document.createElement('input'); key.className='input'; key.value=k; key.placeholder='KEY';
   key.readOnly=!isNew; key.spellcheck=false;
-  const val=document.createElement('textarea'); val.className='input cf-v'; val.value=v==null?'':String(v);
-  val.rows=Math.min(8,Math.max(1,val.value.split('\\n').length,Math.ceil(val.value.length/70)));
+  const text=v==null?'':String(v), val=document.createElement(k==='MODEL_ROUTER'?'select':'textarea'); val.className='input cf-v';
+  if(k==='MODEL_ROUTER')val.innerHTML=rtOptions(text); else{val.value=text;cfFit(val)}   /* a policy is picked, not typed */
   const del=document.createElement('button'); del.type='button'; del.className='btn btn-icon'; del.title='Remove key';
   del.setAttribute('aria-label','Remove key'); del.textContent='✕';
   del.onclick=()=>{if(isNew)row.remove();else row.classList.toggle('del')};
   row.append(key,val,del); document.getElementById('cfdlgrows').append(row);
+  if(k==='AGENT_SYSTEM'){const cur=cfPersonaOf(text);
+    row.append(cfPick('Persona','<option value="">— none / own text —</option>'+PERSONAS.map(p=>`<option${cur&&p.name===cur.name?' selected':''}>${escT(p.name)}</option>`).join(''),s=>{
+      const old=cfPersonaOf(val.value), p=PERSONAS.find(x=>x.name===s.value), rest=old?val.value.slice(old.prompt.length):p?'':val.value;
+      val.value=p?(p.prompt||'')+rest:rest.trimStart(); cfFit(val)}))}
+  if(k==='SKILLS')row.append(cfPick('Skills','<option value="">+ add a skill…</option>'+SKILLS.filter(s=>!s.default).map(s=>`<option title="${esc(s.description||'')}">${escT(s.name)}</option>`).join(''),s=>{
+    const have=val.value.split(',').map(x=>x.trim()).filter(Boolean);
+    if(s.value&&!have.includes(s.value))val.value=have.concat(s.value).join(',');
+    s.value=''; cfFit(val)}));
   if(isNew)key.focus();
+}
+function cfFit(t){t.rows=Math.min(8,Math.max(1,t.value.split('\\n').length,Math.ceil(t.value.length/70)))}
+function cfPersonaOf(t){return PERSONAS.filter(p=>p.prompt&&t.startsWith(p.prompt)).sort((a,b)=>b.prompt.length-a.prompt.length)[0]}
+function cfPick(label,opts,on){
+  const l=document.createElement('label'), s=document.createElement('select'); l.className='cf-pick'; s.className='input';
+  s.innerHTML=opts; s.onchange=()=>on(s); l.append(label,s); return l;
 }
 async function saveConfig(){
   const out=[], rows=[...document.querySelectorAll('#cfdlgrows .cf-row')];
@@ -3200,8 +3221,7 @@ async function saveConfig(){
     b.onclick=()=>act(CFDLG,'restart');
   }
   if(out.length){const inst=(await (await fetch('/api/instances')).json()).find(i=>i.name===CFDLG)||{};CFORIG={...(inst.config||{})};
-    [...document.querySelectorAll('#cfdlgrows .cf-row')].forEach(r=>r.remove());
-    Object.keys(CFORIG).sort().forEach(k=>cfAddRow(k,CFORIG[k],false));}
+    cfRows();}
 }
 function cfdlgClose(){document.getElementById('cfdlg').style.display='none'}
 async function act(n,a){await fetch(`/api/instances/${n}/${a}`,{method:'POST'});location.reload()}

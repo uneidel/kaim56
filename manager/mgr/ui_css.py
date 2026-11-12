@@ -334,8 +334,9 @@ main>.screen{margin-bottom:var(--space-8)}
 .cf-row{display:grid;grid-template-columns:minmax(120px,220px) minmax(0,1fr) 32px;gap:8px;align-items:start}
 .cf-row .input{font-family:var(--font-mono,monospace);font-size:12.5px}
 .cf-row textarea.input{min-height:36px;resize:vertical}
+.cf-pick{grid-column:2;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--color-neutral-600)}.cf-pick select.input{width:auto;max-width:100%}
 .cf-row.del{opacity:.45}.cf-row.del .input{text-decoration:line-through}
-@media (max-width:640px){.cf-row{grid-template-columns:minmax(0,1fr) 32px}.cf-row .cf-v{grid-column:1/2}}
+@media (max-width:640px){.cf-row{grid-template-columns:minmax(0,1fr) 32px}.cf-row .cf-v,.cf-row .cf-pick{grid-column:1/2}}
 /* Collapsed by default: only the row; the triangle opens the details row. */
 .icard:not(.open) .ic-more{display:none}
 .ic-tog{flex:none;width:28px;height:28px;border:0;border-radius:var(--radius-md);background:transparent;

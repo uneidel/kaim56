@@ -2698,6 +2698,9 @@ class ManagerFunctions(unittest.TestCase):
         page = m._ui.render()
         self.assertIn("id=cfdlg", page)
         self.assertIn("/api/instances/${CFDLG}/config", page)
+        for s in ("function rtOptions(cur)", "k==='MODEL_ROUTER'?'select':'textarea'",   # a policy is picked, not typed
+                  "concat('AGENT_SYSTEM','SKILLS')", "cfPick('Persona'", "cfPick('Skills'"):   # persona and skills are always offered
+            self.assertIn(s, page)
 
     def test_footer_code_link_optional(self):
         """The editor link is host-specific (site.json CODE_URL): set = link in
